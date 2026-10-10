@@ -179,6 +179,20 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn('code: "SEAL-INSTALL-702u"', unknown_rejection)
         self.assertIn("action: .copyDiagnostics", unknown_rejection)
 
+    def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
+            encoding="utf-8"
+        )
+        pairing = source.split("if normalized.contains(\"pair\")", 1)[1].split(
+            "if normalized.contains(\"trust\")", 1
+        )[0]
+
+        self.assertIn('code: "SEAL-INSTALL-703"', pairing)
+        self.assertIn("condition: .pairingRequired", pairing)
+        self.assertIn("action: .repairPairing", pairing)
+        self.assertIn("route: .pairing", pairing)
+        self.assertIn("operation: .install", pairing)
+
 
 if __name__ == "__main__":
     unittest.main()

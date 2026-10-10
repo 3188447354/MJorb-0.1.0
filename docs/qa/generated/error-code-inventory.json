@@ -4816,7 +4816,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1866,
+          "line": 1872,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -4870,7 +4870,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1721,
+          "line": 1727,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4913,7 +4913,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1713,
+          "line": 1719,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4943,7 +4943,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1655,
+          "line": 1661,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -4986,7 +4986,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1638,
+          "line": 1644,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5038,7 +5038,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1948,
+          "line": 1954,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5082,7 +5082,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1698,
+          "line": 1704,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5125,7 +5125,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1676,
+          "line": 1682,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5152,7 +5152,7 @@
       }
     },
     "SEAL-INSTALL-703": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 5
       },
@@ -5198,9 +5198,23 @@
           "line": 1587,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-INSTALL-703\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "route",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".repairPairing",
+            "condition": ".pairingRequired",
+            "operation": ".install",
+            "origin": ".deviceChannel",
+            "retryDisposition": ".manual",
+            "route": ".pairing"
+          },
+          "source": "code: \"SEAL-INSTALL-703\","
         }
       ],
       "occurrenceCount": 5,
@@ -5218,7 +5232,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1595,
+          "line": 1601,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5269,7 +5283,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1618,
+          "line": 1624,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -5371,7 +5385,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1891,
+          "line": 1897,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5425,7 +5439,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1918,
+          "line": 1924,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5647,7 +5661,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1879,
+          "line": 1885,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5692,7 +5706,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1780,
+          "line": 1786,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -5824,7 +5838,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1787,
+          "line": 1793,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -6704,7 +6718,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1966,
+          "line": 1972,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -8716,7 +8730,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1853,
+          "line": 1859,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -8781,7 +8795,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1839,
+          "line": 1845,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -9077,7 +9091,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1767,
+          "line": 1773,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -10236,7 +10250,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1911,
+          "line": 1917,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -10267,7 +10281,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1904,
+          "line": 1910,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -13019,11 +13033,11 @@
   "scope": "Seal/**/*.swift",
   "summary": {
     "auditStatuses": {
-      "contracted": 38,
+      "contracted": 39,
       "diagnostic_only": 6,
       "mixed": 2,
       "reference_only": 286,
-      "unreviewed": 94
+      "unreviewed": 93
     },
     "identifierKinds": {
       "diagnostic_tag": 74,
@@ -13040,8 +13054,8 @@
     },
     "structuredFailureContracts": {
       "directOccurrences": 144,
-      "withExplicitSemantics": 43,
-      "withoutExplicitSemantics": 101
+      "withExplicitSemantics": 44,
+      "withoutExplicitSemantics": 100
     },
     "uniqueIdentifiers": 426
   }

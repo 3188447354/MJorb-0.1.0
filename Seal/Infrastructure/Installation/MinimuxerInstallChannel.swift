@@ -1584,7 +1584,13 @@ actor MinimuxerInstallChannel: InstallChannel {
                 title: "设备配对不可用",
                 reason: "当前 iPhone 的配对信息不可用或已失效，无法用于安装。",
                 recovery: "重新配对当前设备",
-                code: "SEAL-INSTALL-703"
+                code: "SEAL-INSTALL-703",
+                condition: .pairingRequired,
+                action: .repairPairing,
+                route: .pairing,
+                retryDisposition: .manual,
+                operation: .install,
+                origin: .deviceChannel
             )
         }
         if normalized.contains("trust") || normalized.contains("trusted") {
