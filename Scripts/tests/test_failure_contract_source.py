@@ -450,6 +450,45 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn("alertFailure = operationConflictFailure(requested: .installing)", installation)
         self.assertIn("alertFailure = operationConflictFailure(requested: .maintainingStorage)", deletion)
 
+    def test_manual_settings_operations_never_silently_drop_a_lock_timeout(self) -> None:
+        source = (ROOT / "Seal/Features/Settings/SettingsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        # A Settings action can modify the same account, certificate, pairing,
+        # or storage state that signing uses.  After beginWaiting expires, a
+        # user-initiated action must explain the conflict instead of returning
+        # as if the tap did nothing.  Automatic inbox consumption remains
+        # deliberately silent because it is not a user action.
+        helper = source.split("private func operationConflictFailure", 1)[1].split(
+            "private func acquireOperation", 1
+        )[0]
+        self.assertIn("operationCoordinator?.conflictFailure(requested: requested)", helper)
+
+        expectations = {
+            "func createLocalCertificate": ".managingCertificate",
+            "func revokeCertificate(": ".managingCertificate",
+            "func revokeCertificateAndCreateLocal": ".managingCertificate",
+            "func prepareCertificateCleanup": ".managingCertificate",
+            "func executeCertificateCleanup": ".managingCertificate",
+            "func resetSigningEnvironment": ".managingAccount",
+            "func addAccount": ".managingAccount",
+            "func completeTeamSelection": ".managingAccount",
+            "func deleteAccount": ".managingAccount",
+            "func startPhonePairing": ".resettingPairing",
+            "func importPairingFile": ".resettingPairing",
+            "func clearTemporaryFiles": ".maintainingStorage",
+            "func clearUnusedStorageFiles": ".maintainingStorage",
+            "func clearStoredSignedPackages": ".maintainingStorage",
+            "func resetCertificate": ".managingCertificate",
+        }
+        for marker, kind in expectations.items():
+            body = source.split(marker, 1)[1].split(
+                "defer { releaseOperation(operationLease) }", 1
+            )[0]
+            self.assertIn("operationConflictFailure", body, marker)
+            self.assertIn(kind, body, marker)
+
     def test_app_id_session_expiry_does_not_claim_a_confirmed_rate_limit(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
             encoding="utf-8"

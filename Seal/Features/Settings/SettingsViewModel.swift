@@ -542,7 +542,10 @@ final class SettingsViewModel: ObservableObject {
               let accountRepository,
               let applePortalCertificateService else { return }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 创建本地证书: 账号 \(account.id.uuidString.prefix(8))")
-        guard let operationLease = await acquireOperation(.managingCertificate) else { return }
+        guard let operationLease = await acquireOperation(.managingCertificate) else {
+            alertFailure = operationConflictFailure(requested: .managingCertificate)
+            return
+        }
         defer { releaseOperation(operationLease) }
 
         isCertificateOperationRunning = true
@@ -600,7 +603,10 @@ final class SettingsViewModel: ObservableObject {
               let keychain,
               let accountRepository,
               let applePortalCertificateService else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else { return }
+        guard let operationLease = await acquireOperation(.managingCertificate) else {
+            alertFailure = operationConflictFailure(requested: .managingCertificate)
+            return
+        }
         defer { releaseOperation(operationLease) }
 
         isCertificateOperationRunning = true
@@ -710,7 +716,10 @@ final class SettingsViewModel: ObservableObject {
               let accountRepository,
               let applePortalCertificateService,
               let applePortalInventoryService else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else { return }
+        guard let operationLease = await acquireOperation(.managingCertificate) else {
+            alertFailure = operationConflictFailure(requested: .managingCertificate)
+            return
+        }
         defer { releaseOperation(operationLease) }
 
         isCertificateOperationRunning = true
@@ -856,7 +865,10 @@ final class SettingsViewModel: ObservableObject {
         guard isCertificateOperationRunning == false,
               let keychain,
               let applePortalInventoryService else { return nil }
-        guard let operationLease = await acquireOperation(.managingCertificate) else { return nil }
+        guard let operationLease = await acquireOperation(.managingCertificate) else {
+            alertFailure = operationConflictFailure(requested: .managingCertificate)
+            return nil
+        }
         defer { releaseOperation(operationLease) }
 
         isCertificateOperationRunning = true
@@ -943,7 +955,10 @@ final class SettingsViewModel: ObservableObject {
               let accountRepository,
               let applePortalCertificateService,
               let applePortalInventoryService else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else { return }
+        guard let operationLease = await acquireOperation(.managingCertificate) else {
+            alertFailure = operationConflictFailure(requested: .managingCertificate)
+            return
+        }
         defer { releaseOperation(operationLease) }
 
         isCertificateOperationRunning = true
@@ -1912,7 +1927,10 @@ final class SettingsViewModel: ObservableObject {
     func resetSigningEnvironment() async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 重置签名环境")
         guard let anisetteEnvironment else { return }
-        guard let operationLease = await acquireOperation(.managingAccount) else { return }
+        guard let operationLease = await acquireOperation(.managingAccount) else {
+            alertFailure = operationConflictFailure(requested: .managingAccount)
+            return
+        }
         defer { releaseOperation(operationLease) }
         await anisetteEnvironment.resetProvisioning()
         try? await logStore?.append(
@@ -1930,7 +1948,10 @@ final class SettingsViewModel: ObservableObject {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 添加账号")
         guard accountPhase == .idle,
               let accountClient else { return false }
-        guard let operationLease = await acquireOperation(.managingAccount) else { return false }
+        guard let operationLease = await acquireOperation(.managingAccount) else {
+            alertFailure = operationConflictFailure(requested: .managingAccount)
+            return false
+        }
         defer { releaseOperation(operationLease) }
         let normalizedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedEmail.isEmpty == false, password.isEmpty == false else {
@@ -2039,7 +2060,10 @@ final class SettingsViewModel: ObservableObject {
         guard accountPhase == .idle,
               let pending = pendingTeamSelection,
               pending.teams.contains(team) else { return false }
-        guard let operationLease = await acquireOperation(.managingAccount) else { return false }
+        guard let operationLease = await acquireOperation(.managingAccount) else {
+            alertFailure = operationConflictFailure(requested: .managingAccount)
+            return false
+        }
         defer { releaseOperation(operationLease) }
         accountPhase = .authenticating
         defer { accountPhase = .idle }
@@ -2145,7 +2169,10 @@ final class SettingsViewModel: ObservableObject {
     func deleteAccount(_ account: AppleAccountRecord) async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 删除账号: \(account.id.uuidString.prefix(8))")
         guard let accountRepository, let keychain else { return }
-        guard let operationLease = await acquireOperation(.managingAccount) else { return }
+        guard let operationLease = await acquireOperation(.managingAccount) else {
+            alertFailure = operationConflictFailure(requested: .managingAccount)
+            return
+        }
         defer { releaseOperation(operationLease) }
         let relatedApps = (try? await appStore?.fetchAll())?
             .filter { $0.accountID == account.id } ?? []
@@ -2301,8 +2328,13 @@ final class SettingsViewModel: ObservableObject {
             alertFailure = failure
             return
         }
-        guard phonePairingHost == nil,
-              let operationLease = await acquireOperation(.resettingPairing) else {
+        guard phonePairingHost == nil else {
+            return
+        }
+        guard let operationLease = await acquireOperation(.resettingPairing) else {
+            let failure = operationConflictFailure(requested: .resettingPairing)
+            phonePairingState = .failed(failure)
+            alertFailure = failure
             return
         }
 
@@ -2423,7 +2455,10 @@ final class SettingsViewModel: ObservableObject {
     func importPairingFile(at sourceURL: URL) async -> Bool {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 导入配对文件: \(sourceURL.lastPathComponent)")
         guard let pairingStore else { return false }
-        guard let operationLease = await acquireOperation(.resettingPairing) else { return false }
+        guard let operationLease = await acquireOperation(.resettingPairing) else {
+            alertFailure = operationConflictFailure(requested: .resettingPairing)
+            return false
+        }
         defer { releaseOperation(operationLease) }
 
         let didAccess = sourceURL.startAccessingSecurityScopedResource()
@@ -2954,7 +2989,10 @@ final class SettingsViewModel: ObservableObject {
     func clearTemporaryFiles() async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 清理临时缓存")
         guard let fileStore else { return }
-        guard let operationLease = await acquireOperation(.maintainingStorage) else { return }
+        guard let operationLease = await acquireOperation(.maintainingStorage) else {
+            alertFailure = operationConflictFailure(requested: .maintainingStorage)
+            return
+        }
         defer { releaseOperation(operationLease) }
         do {
             await refreshStorageUsage()
@@ -2983,7 +3021,10 @@ final class SettingsViewModel: ObservableObject {
     func clearUnusedStorageFiles() async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 清理未使用文件")
         guard let fileStore, let appStore else { return }
-        guard let operationLease = await acquireOperation(.maintainingStorage) else { return }
+        guard let operationLease = await acquireOperation(.maintainingStorage) else {
+            alertFailure = operationConflictFailure(requested: .maintainingStorage)
+            return
+        }
         defer { releaseOperation(operationLease) }
         do {
             await refreshStorageUsage()
@@ -3021,7 +3062,10 @@ final class SettingsViewModel: ObservableObject {
     func clearStoredSignedPackages() async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 清理已签名 IPA")
         guard let fileStore, let appStore else { return }
-        guard let operationLease = await acquireOperation(.maintainingStorage) else { return }
+        guard let operationLease = await acquireOperation(.maintainingStorage) else {
+            alertFailure = operationConflictFailure(requested: .maintainingStorage)
+            return
+        }
         defer { releaseOperation(operationLease) }
 
         do {
@@ -3142,7 +3186,10 @@ final class SettingsViewModel: ObservableObject {
     func resetCertificate(for account: AppleAccountRecord) async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 重置证书: 账号 \(account.id.uuidString.prefix(8))")
         guard let accountRepository else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else { return }
+        guard let operationLease = await acquireOperation(.managingCertificate) else {
+            alertFailure = operationConflictFailure(requested: .managingCertificate)
+            return
+        }
         defer { releaseOperation(operationLease) }
         var updated = account
         updated.certificateSerialNumber = nil
@@ -3167,6 +3214,16 @@ final class SettingsViewModel: ObservableObject {
                 code: "SEAL-CERT-101"
             )
         }
+    }
+
+    private func operationConflictFailure(requested: OperationCoordinator.Kind) -> ImportFailure {
+        operationCoordinator?.conflictFailure(requested: requested)
+            ?? Self.failure(
+                title: "暂时无法执行",
+                reason: "另一项操作仍在完成，为避免签名、证书或文件状态互相覆盖，当前操作已阻止。",
+                recovery: "等待当前操作完成后重试",
+                code: "SEAL-OP-001"
+            )
     }
 
     private func acquireOperation(
