@@ -311,7 +311,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 681,
+          "line": 686,
           "path": "Seal/Features/Apps/SigningProgressView.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -406,7 +406,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 681,
+          "line": 686,
           "path": "Seal/Features/Apps/SigningProgressView.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -499,7 +499,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 558,
+          "line": 548,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -1939,7 +1939,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 665,
+          "line": 670,
           "path": "Seal/Features/Apps/SigningProgressView.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -5240,7 +5240,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 684,
+          "line": 689,
           "path": "Seal/Features/Apps/SigningProgressView.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -5845,7 +5845,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 700,
+          "line": 705,
           "path": "Seal/Features/Apps/SigningProgressView.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -10894,7 +10894,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 804,
+          "line": 794,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -10976,7 +10976,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 787,
+          "line": 777,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11066,7 +11066,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 741,
+          "line": 731,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11075,7 +11075,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 818,
+          "line": 823,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11084,7 +11084,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 842,
+          "line": 847,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11232,7 +11232,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 707,
+          "line": 697,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11313,7 +11313,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 861,
+          "line": 866,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11327,43 +11327,46 @@
       }
     },
     "SEAL-RENEW-404": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
-        "standard_error_code": 3
+        "standard_error_code": 2
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 512,
-          "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-RENEW-404\""
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 542,
-          "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-RENEW-404\""
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 793,
+          "line": 783,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
           "semanticValues": {},
           "source": "failureCode: \"SEAL-RENEW-404\","
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 812,
+          "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
+          "role": "structured_failure_emission",
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".reimportIPA",
+            "condition": ".unexpected",
+            "operation": ".batchRenew",
+            "origin": ".unknown",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-RENEW-404\","
         }
       ],
-      "occurrenceCount": 3,
+      "occurrenceCount": 2,
       "roles": {
         "executable_reference": 1,
-        "structured_failure_emission": 2
+        "structured_failure_emission": 1
       }
     },
     "SEAL-RENEW-500": {
@@ -11426,7 +11429,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 679,
+          "line": 669,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11468,7 +11471,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 635,
+          "line": 625,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -11489,7 +11492,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 771,
+          "line": 761,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -13288,29 +13291,29 @@
   "scope": "Seal/**/*.swift",
   "summary": {
     "auditStatuses": {
-      "contracted": 60,
+      "contracted": 61,
       "diagnostic_only": 6,
       "mixed": 3,
       "reference_only": 286,
-      "unreviewed": 71
+      "unreviewed": 70
     },
     "identifierKinds": {
       "diagnostic_tag": 74,
       "legacy_error_identifier": 1,
-      "standard_error_code": 723
+      "standard_error_code": 722
     },
-    "occurrences": 798,
+    "occurrences": 797,
     "roles": {
       "comment_reference": 138,
       "executable_reference": 108,
       "failure_emission_candidate": 207,
       "internal_event_or_log": 201,
-      "structured_failure_emission": 144
+      "structured_failure_emission": 143
     },
     "structuredFailureContracts": {
-      "directOccurrences": 144,
-      "withExplicitSemantics": 66,
-      "withoutExplicitSemantics": 78
+      "directOccurrences": 143,
+      "withExplicitSemantics": 67,
+      "withoutExplicitSemantics": 76
     },
     "uniqueIdentifiers": 426
   }

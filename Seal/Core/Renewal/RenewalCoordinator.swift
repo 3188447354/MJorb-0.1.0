@@ -505,12 +505,7 @@ actor RenewalCoordinator {
         // 先确认记录存在；具体最新状态在每次尝试时重新读取（失败可能已改写 Bundle ID/证书）
         guard cachedApp != nil else {
             // 本地记录确实不存在，无法续签
-            let failure = ImportFailure(
-                title: "无法续签应用",
-                reason: "续签时未找到这个应用的本地记录，它可能已被删除。",
-                recovery: "重新导入 IPA 并签名安装",
-                code: "SEAL-RENEW-404"
-            )
+            let failure = Self.missingRenewalRecordFailure()
             try? await queueStore.markFailed(appID: item.appID, errorCode: failure.code)
             await emitFailure(progress: progress, offset: offset, total: total, item: item, failure: failure)
             let roundItem = RenewalRoundItem(
@@ -535,12 +530,7 @@ actor RenewalCoordinator {
                 cachedApp = (try? await appStore.fetchAll())?.first(where: { $0.id == item.appID })
             }
             guard let app = cachedApp else {
-                lastError = ImportFailure(
-                    title: "无法续签应用",
-                    reason: "续签时未找到这个应用的本地记录，它可能已被删除。",
-                    recovery: "重新导入 IPA 并签名安装",
-                    code: "SEAL-RENEW-404"
-                )
+                lastError = Self.missingRenewalRecordFailure()
                 break
             }
             do {
@@ -810,6 +800,21 @@ actor RenewalCoordinator {
             reason: reason ?? "该应用缺少续签所需的前置条件。",
             recovery: "按上述说明处理后重新续签",
             code: requiresActionCode
+        )
+    }
+
+    /// 队列项所指向的本地记录已不存在，重试同一个 UUID 没有意义；必须重新导入来源 IPA。
+    private static func missingRenewalRecordFailure() -> ImportFailure {
+        ImportFailure(
+            title: "无法续签应用",
+            reason: "续签时未找到这个应用的本地记录，它可能已被删除。",
+            recovery: "重新导入 IPA 并签名安装",
+            code: "SEAL-RENEW-404",
+            condition: .unexpected,
+            action: .reimportIPA,
+            retryDisposition: .manual,
+            operation: .batchRenew,
+            origin: .unknown
         )
     }
 

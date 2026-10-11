@@ -6600,3 +6600,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：新增 `appleRequestTransportUnavailable`，公共 `networkFailure` 统一输出 `retry → manual → applePortal`；认证与验证调用点标明各自操作，签名门户标记 `sign`。`FailureClassifier` 的网络分支改用新条件，503 分支仍保持 `appleServiceUnavailable → waitThenRetry`。恢复文案仅为“稍后重试”，不再建议梯子、Wi-Fi 或 LocalDevVPN。
 
 **验证**：测试先红后绿，断言新条件、动作、来源并防止“梯子／检查网络”回归；更新 Swift 单元测试对公共合同字段的断言。Python 错误审计／合同测试 35 项通过，`git diff --check` 通过；完整 iOS CI run `38112750896` 正在验证上一批。
+
+## 2026-10-11 — 批量续签的已删除本地记录提示“重新导入”却没有实际导入出口
+
+**症状**：批量续签 `SEAL-RENEW-404` 在本地应用记录已删除时提示“重新导入 IPA 并签名安装”，但没有失败合同；即便迁移为 `reimportIPA`，签名结果抽屉此前也将该动作归为“知道了”并关闭，仍不能执行承诺的恢复。
+
+**根因**：同一队列项会在首轮预取后、自动重试前两次读取本地记录；记录消失后，重试原 UUID 永远不可能恢复。`SigningProgressView` 的语义动作只支持重新签名／重新安装，没有消费 `.reimportIPA`。
+
+**修复**：抽出单一 `missingRenewalRecordFailure`，标注 `unexpected → reimportIPA → batchRenew / unknown`；签名结果抽屉将 `.reimportIPA` 的按钮命名为“重新选择 IPA”，关闭当前结果后打开真实文件选择器，不再重试已删除项目。
+
+**验证**：新增测试先红后绿，断言合同字段和结果抽屉确实调用 `presentImporter()`；本地 Python 错误审计／合同测试 36 项通过，`git diff --check` 通过。完整 iOS CI run `38112750896` 仍在执行，结束后再推送本批。

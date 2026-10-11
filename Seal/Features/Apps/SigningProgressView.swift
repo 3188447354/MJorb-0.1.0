@@ -623,8 +623,9 @@ struct SigningProgressView: View {
         case .addAccount: "添加 Apple ID"
         case .reauthenticateAccount: "重新验证 Apple ID"
         case .enterNewVerificationCode: "输入新验证码"
+        case .reimportIPA: "重新选择 IPA"
         case .waitThenRetry, .trustDevice, .freeDeviceStorage,
-             .removeInstalledApp, .checkInstallationResult, .reimportIPA, .restartSeal, .copyDiagnostics:
+             .removeInstalledApp, .checkInstallationResult, .restartSeal, .copyDiagnostics:
             "知道了"
         }
     }
@@ -638,13 +639,17 @@ struct SigningProgressView: View {
             Task { await viewModel.retryInstallationForCurrentSigningSession() }
         case .retry:
             viewModel.retrySigning()
+        case .reimportIPA:
+            viewModel.dismissSigningResult()
+            viewModel.presentImporter()
+            dismiss()
         case .repairPairing, .openLocalDevVPN, .addAccount, .reauthenticateAccount:
             // 这些动作应该随 `FailureRoute` 一起到达；缺少 route 时不猜测目标页面。
             viewModel.dismissSigningResult()
             dismiss()
         case .waitThenRetry, .trustDevice, .freeDeviceStorage,
              .removeInstalledApp, .checkInstallationResult, .enterNewVerificationCode,
-             .reimportIPA, .restartSeal, .copyDiagnostics:
+              .restartSeal, .copyDiagnostics:
             viewModel.dismissSigningResult()
             dismiss()
         }

@@ -415,6 +415,29 @@ class FailureContractSourceTests(unittest.TestCase):
         )[0]
         self.assertIn("condition: .appleRequestTransportUnavailable", network_branch)
 
+    def test_missing_renewal_record_opens_a_new_import_instead_of_retrying_a_deleted_item(self) -> None:
+        source = (ROOT / "Seal/Core/Renewal/RenewalCoordinator.swift").read_text(
+            encoding="utf-8"
+        )
+        missing_record = source.split("private static func missingRenewalRecordFailure", 1)[1].split(
+            "/// 描述文件身份", 1
+        )[0]
+
+        self.assertIn("condition: .unexpected", missing_record)
+        self.assertIn("action: .reimportIPA", missing_record)
+        self.assertIn("retryDisposition: .manual", missing_record)
+        self.assertIn("operation: .batchRenew", missing_record)
+        self.assertIn("origin: .unknown", missing_record)
+
+        progress = (ROOT / "Seal/Features/Apps/SigningProgressView.swift").read_text(
+            encoding="utf-8"
+        )
+        semantic_recovery = progress.split("private func performSemanticPrimaryRecovery", 1)[1].split(
+            "private func userFacingReason", 1
+        )[0]
+        self.assertIn("case .reimportIPA:", semantic_recovery)
+        self.assertIn("viewModel.presentImporter()", semantic_recovery)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"
