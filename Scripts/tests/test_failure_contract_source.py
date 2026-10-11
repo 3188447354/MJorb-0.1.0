@@ -335,6 +335,42 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("说明登录状态其实还在", session_failure)
         self.assertNotIn("更常见的原因", session_failure)
 
+    def test_ambiguous_certificate_auth_failure_waits_without_claiming_a_cause(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        certificate_failure = source.split("private static func certificateFailure", 1)[1]
+        start = certificate_failure.index('if normalized.contains("unauthorized")')
+        code_offset = certificate_failure.index('code: "SEAL-AUTH-102c"', start)
+        end = certificate_failure.index("        }\n\n        return ImportFailure(", code_offset)
+        ambiguous_auth = certificate_failure[start:end]
+
+        self.assertIn('code: "SEAL-AUTH-102c"', ambiguous_auth)
+        self.assertIn("condition: .unexpected", ambiguous_auth)
+        self.assertIn("action: .waitThenRetry", ambiguous_auth)
+        self.assertIn("retryDisposition: .manual", ambiguous_auth)
+        self.assertIn("operation: .sign", ambiguous_auth)
+        self.assertIn("origin: .applePortal", ambiguous_auth)
+        self.assertNotIn("两种常见成因", ambiguous_auth)
+        self.assertNotIn("更可能是后者", ambiguous_auth)
+
+    def test_unclassified_certificate_preparation_failure_does_not_claim_network_or_storage(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        code_offset = source.index('code: "SEAL-CERT-203"')
+        start = source.rindex("        return ImportFailure(", 0, code_offset)
+        end = source.index("        )\n    }", code_offset)
+        generic = source[start:end]
+
+        self.assertIn("condition: .unexpected", generic)
+        self.assertIn("action: .waitThenRetry", generic)
+        self.assertIn("retryDisposition: .manual", generic)
+        self.assertIn("operation: .sign", generic)
+        self.assertIn("origin: .applePortal", generic)
+        self.assertNotIn("检查网络", generic)
+        self.assertNotIn("存储空间", generic)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"
