@@ -113,11 +113,16 @@ enum ApplePortalSigningFailure {
         case .appID:
             return appIDFailure(error: error, diagnostic: diagnostic)
         case .provisioningProfile:
-            details = (
-                "描述文件失败",
-                "Apple 返回：描述文件生成失败。",
-                "重试",
-                "SEAL-PROFILE-303"
+            return ImportFailure(
+                title: "Apple 未完成描述文件生成",
+                reason: "Apple 未返回可识别的描述文件生成失败原因。此结果不能据此判断为网络、账号或扩展问题。",
+                recovery: "稍后重新签名；若持续出现，请导出日志后联系支持。",
+                code: "SEAL-PROFILE-303",
+                condition: .unexpected,
+                action: .waitThenRetry,
+                retryDisposition: .manual,
+                operation: .sign,
+                origin: .applePortal
             )
         case .signing:
             details = (
@@ -2557,21 +2562,12 @@ actor ApplePortalSigningService {
             } catch {
                 guard mappedBundleID != mappedMainBundleID else { throw error }
                 guard allowDroppingExtensions else {
-                    // 扩展 App ID 创建失败时，先识别是否 App ID 7 天限额（1009/3013）：
-                    // 限额是全局的，「移除扩展」也救不了，应透传准确原因，
-                    // 而不是包成误导性的「移除扩展后重试」。
-                    if ApplePortalSigningFailure.isAppIDRegistrationLimit(error, normalized: (error as NSError).localizedDescription.lowercased()) {
-                        let ns = error as NSError
-                        throw ApplePortalSigningFailure.appIDFailure(
-                            error: error,
-                            diagnostic: "[\(ns.domain) \(ns.code)] \(ns.localizedDescription)"
-                        )
-                    }
-                    throw Self.failure(
-                        title: "签名失败",
-                        reason: "Apple 返回：扩展无法创建 App ID。请等待 7 天窗口滚动后重试；不要移除扩展，以免改变原应用功能。",
-                        recovery: "等待窗口滚动后重试",
-                        code: "SEAL-EXT-401"
+                    // 扩展是产品的一部分。与主 App 走同一个门户错误分类：只有 Apple
+                    // 明确返回名额/限流/传输事实时才显示该事实；未知错误不能编造
+                    // “7 天窗口”，也不能让 UI 给出“移除扩展”的矛盾动作。
+                    throw ApplePortalSigningFailure.make(
+                        stage: .appID,
+                        error: error
                     )
                 }
                 try signingWorkspace.removeExtension(
@@ -2621,11 +2617,10 @@ actor ApplePortalSigningService {
                     )
                 }
                 guard allowDroppingExtensions else {
-                    throw Self.failure(
-                        title: "签名失败",
-                        reason: "Apple 返回：扩展无法生成描述文件。请等待 7 天窗口滚动后重试；不要移除扩展，以免改变原应用功能。",
-                        recovery: "等待窗口滚动后重试",
-                        code: "SEAL-EXT-401a"
+                    // 与主 App 的描述文件失败保持同一份可审计语义；不改变 IPA 的扩展集。
+                    throw ApplePortalSigningFailure.make(
+                        stage: .provisioningProfile,
+                        error: error
                     )
                 }
                 try signingWorkspace.removeExtension(

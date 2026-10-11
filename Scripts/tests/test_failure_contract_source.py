@@ -370,6 +370,48 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("检查网络", generic)
         self.assertNotIn("重新验证 Apple ID", generic)
 
+    def test_extension_preparation_failure_uses_the_same_truthful_contract_as_main_app(self) -> None:
+        portal = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        progress = (ROOT / "Seal/Features/Apps/SigningProgressView.swift").read_text(
+            encoding="utf-8"
+        )
+        view_model = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        index = (ROOT / "docs/qa/log-code-index.md").read_text(encoding="utf-8")
+        checklist = (ROOT / "docs/qa/device-regression-checklist.md").read_text(encoding="utf-8")
+
+        # An extension is part of the installed product.  A portal error must
+        # neither assert the 7-day App ID limit without proof nor surface a
+        # contradictory action that silently changes that product.
+        self.assertIn(
+            "throw ApplePortalSigningFailure.make(\n"
+            "                        stage: .appID,\n"
+            "                        error: error\n"
+            "                    )",
+            portal,
+        )
+        self.assertIn(
+            "throw ApplePortalSigningFailure.make(\n"
+            "                        stage: .provisioningProfile,\n"
+            "                        error: error\n"
+            "                    )",
+            portal,
+        )
+        profile = portal.split("case .provisioningProfile:", 1)[1].split("case .signing:", 1)[0]
+        self.assertIn("condition: .unexpected", profile)
+        self.assertIn("action: .waitThenRetry", profile)
+        self.assertIn("retryDisposition: .manual", profile)
+        self.assertIn("operation: .sign", profile)
+        self.assertIn("origin: .applePortal", profile)
+        self.assertNotIn("SEAL-EXT-401", portal)
+        self.assertNotIn("SEAL-EXT-401", progress)
+        self.assertNotIn("retryWithoutExtensions", view_model)
+        self.assertNotIn("SEAL-EXT-401", index)
+        self.assertNotIn("SEAL-EXT-401", checklist)
+
     def test_app_id_session_expiry_does_not_claim_a_confirmed_rate_limit(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
             encoding="utf-8"

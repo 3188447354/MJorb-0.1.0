@@ -568,7 +568,6 @@ struct SigningProgressView: View {
         if isAppIDFailure(failure) || failure.code.hasPrefix("SEAL-BUNDLE-") { return "返回修改" }
         if isPairingFailure(failure) { return "重新配对设备" }
         if failure.code.hasPrefix("SEAL-VPN-") { return "重新签名" }
-        if failure.code == "SEAL-EXT-401" { return "移除扩展并重试" }
         return "重新签名"
     }
 
@@ -603,8 +602,6 @@ struct SigningProgressView: View {
             openSettings(.pairing)
         } else if failure.code.hasPrefix("SEAL-VPN-") {
             viewModel.retrySigning()
-        } else if failure.code == "SEAL-EXT-401" {
-            viewModel.retryWithoutExtensions()
         } else {
             viewModel.retrySigning()
         }

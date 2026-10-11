@@ -6712,3 +6712,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：新增单一 `AppGroupOrderingPolicy`，以「去重后稳定字典序」作为 Seal 所有门户边界的唯一规范化规则。它用于请求 entitlement、Apple 绑定输入、写入 `ALTAppGroups` 和诊断读取；SideSign 仍在最终二进制写入前独立做同一规范化，因而既能修复既有 App ID 绑定顺序不可靠的问题，也能保证最终安装包的 entitlement 顺序。
 
 **验证**：新增 LiveContainer 主包／LC2 反向顺序与重复绑定输入两项纯函数回归测试；本机错误编号审计 11 项、错误合同 25 项和 `git diff --check` 通过。Windows 主机无 Swift/Xcode 工具链，完整 iOS CI 负责 Swift 编译、签名内核与回归测试。
+
+## 2026-10-12 — 扩展准备失败把未知 Apple 返回伪装成 7 天窗口，并给出相反的“移除扩展”动作
+
+**症状**：扩展 App ID 或描述文件准备失败时，`SEAL-EXT-401`／`SEAL-EXT-401a` 不论 Apple 实际返回什么，都会说“等待 7 天窗口、不要移除扩展”；但签名结果抽屉又仅对 `401` 显示“移除扩展并重试”。这既可能把未知错误误说成 App ID 限额，也让用户在同一页面收到相反指引。
+
+**根因**：扩展分支绕开了 `ApplePortalSigningFailure.make` 的统一事实分类，自行制造了两个没有结构化语义的错误码；UI 又按其中一个旧错误码触发会改变 IPA 功能集的降级重试。
+
+**修复**：扩展 App ID／描述文件失败现在与主 App 走同一门户分类：仅在 Apple 明确给出限额、限流或传输事实时展示该事实；未识别失败为 `unexpected → waitThenRetry → sign / applePortal`。删除旧码、矛盾按钮和无入口的“去扩展重试”方法；本轮失败始终保留原 IPA 的全部扩展。
+
+**验证**：新增回归测试先红后绿，覆盖两条扩展边界、描述文件合同字段、旧码／旧动作及用户文档的移除；错误编号清单重新生成，合同增量测试与编号清单测试 12 项通过，`git diff --check` 通过。完整 iOS CI 将负责 Swift 编译与回归测试。

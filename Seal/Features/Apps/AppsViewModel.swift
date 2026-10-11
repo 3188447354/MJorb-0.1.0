@@ -1718,15 +1718,6 @@ final class AppsViewModel: ObservableObject {
         )
     }
 
-    func retryWithoutExtensions() {
-        guard let session = signingSession else { return }
-        Task { try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 去扩展重试签名: \(session.app.displayName)") }
-        restartSigning(
-            session,
-            allowDroppingExtensions: true
-        )
-    }
-
     /// 签名失败页「撤销并继续签名」（SEAL-CERT-204e）一键流程：
     /// 撤销账号下所有本机无私钥的证书 → 自动重试本次签名 → 成功后自动重签因此失效的
     /// 其余已装 App。撤销会让仍用旧证书的 App 立即打不开，确认弹窗已在失败页给出。
