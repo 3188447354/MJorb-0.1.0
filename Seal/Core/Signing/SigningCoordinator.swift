@@ -268,7 +268,7 @@ actor SigningCoordinator {
         requestedBundleIdentifier: String? = nil,
         selectedCertificateSerialNumber: String? = nil,
         // 扩展是已安装产品的一部分；后台流程绝不能因门户暂时失败而静默产出删扩展的 IPA。
-        // 只有 UI 的“去扩展重试”会显式传入 true。
+        // 当前所有产品入口都传 false；保留参数只是让底层策略在迁移期保持显式可审计。
         allowDroppingExtensions: Bool = false,
         installAfterSigning: Bool = true,
         forceResign: Bool = false,

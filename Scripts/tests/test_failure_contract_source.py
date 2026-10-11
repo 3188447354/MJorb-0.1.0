@@ -411,6 +411,44 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("retryWithoutExtensions", view_model)
         self.assertNotIn("SEAL-EXT-401", index)
         self.assertNotIn("SEAL-EXT-401", checklist)
+        start_signing = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        ).split("private func startSigning(", 1)[1].split("private func restartSigning", 1)[0]
+        self.assertNotIn("app.removedExtensionBundleIdentifiers.isEmpty == false", start_signing)
+
+    def test_manual_app_operations_never_silently_drop_a_lock_timeout(self) -> None:
+        source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        # Batch renewal and signing already surface a timed-out lease.  Import,
+        # replacement confirmation, cached-package installation, and a user
+        # delete must not be the silent exceptions to that transaction rule.
+        helper = source.split("private func operationConflictFailure", 1)[1].split(
+            "private func acquireOperation", 1
+        )[0]
+        self.assertIn("operationCoordinator?.conflictFailure(requested: requested)", helper)
+        self.assertIn("Self.operationInProgressFailure", helper)
+
+        selected_import = source.split("private func importSelectedFile(", 1)[1].split(
+            "func confirmImport()", 1
+        )[0]
+        confirmation = source.split("func confirmImport()", 1)[1].split(
+            "func retryImport()", 1
+        )[0]
+        retry = source.split("func retryImport()", 1)[1].split(
+            "/// 导入确认页", 1
+        )[0]
+        installation = source.split("func installSignedArtifact", 1)[1].split(
+            "/// 墓碑", 1
+        )[0]
+        deletion = source.split("func delete(", 1)[1].split("func refreshAll()", 1)[0]
+
+        self.assertIn("alertFailure = operationConflictFailure(requested: .importing)", selected_import)
+        self.assertIn("sheetFailure = operationConflictFailure(requested: .importing)", confirmation)
+        self.assertIn("sheetFailure = operationConflictFailure(requested: .importing)", retry)
+        self.assertIn("alertFailure = operationConflictFailure(requested: .installing)", installation)
+        self.assertIn("alertFailure = operationConflictFailure(requested: .maintainingStorage)", deletion)
 
     def test_app_id_session_expiry_does_not_claim_a_confirmed_rate_limit(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(

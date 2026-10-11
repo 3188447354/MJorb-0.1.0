@@ -1157,7 +1157,10 @@ final class AppsViewModel: ObservableObject {
     @discardableResult
     private func importSelectedFile(_ url: URL, autoOpenSigning: Bool) async -> Bool {
         guard let workflow, phase == .idle else { return false }
-        guard let operationLease = await acquireOperation(.importing) else { return false }
+        guard let operationLease = await acquireOperation(.importing) else {
+            alertFailure = operationConflictFailure(requested: .importing)
+            return false
+        }
         defer { releaseOperation(operationLease) }
         let hasSecurityScope = url.startAccessingSecurityScopedResource()
         defer {
@@ -1183,7 +1186,11 @@ final class AppsViewModel: ObservableObject {
     func confirmImport() async {
         guard let workflow else { return }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 确认导入: 覆盖更新=\(importReplacementCandidate != nil)")
-        guard let operationLease = await acquireOperation(.importing) else { return }
+        guard let operationLease = await acquireOperation(.importing) else {
+            sheetFailure = operationConflictFailure(requested: .importing)
+            isImportSheetPresented = true
+            return
+        }
         defer { releaseOperation(operationLease) }
         guard let draft = sheetDraft else {
             sheetFailure = ImportFailure(
@@ -1210,7 +1217,11 @@ final class AppsViewModel: ObservableObject {
     func retryImport() async {
         guard let workflow, sheetDraft != nil else { return }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 重试导入")
-        guard let operationLease = await acquireOperation(.importing) else { return }
+        guard let operationLease = await acquireOperation(.importing) else {
+            sheetFailure = operationConflictFailure(requested: .importing)
+            isImportSheetPresented = true
+            return
+        }
         defer { releaseOperation(operationLease) }
         phase = .committing
         sheetFailure = nil
@@ -1960,7 +1971,10 @@ final class AppsViewModel: ObservableObject {
         guard signingTask == nil, batchRefreshTask == nil, installingCachedPackageAppID == nil,
               let signingCoordinator else { return false }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 安装已签名包: \(app.displayName) (\(app.id.uuidString.prefix(8)))")
-        guard let operationLease = await acquireOperation(.installing, appID: app.id) else { return false }
+        guard let operationLease = await acquireOperation(.installing, appID: app.id) else {
+            alertFailure = operationConflictFailure(requested: .installing)
+            return false
+        }
         defer { releaseOperation(operationLease) }
         installingCachedPackageAppID = app.id
         defer { installingCachedPackageAppID = nil }
@@ -2025,7 +2039,13 @@ final class AppsViewModel: ObservableObject {
     func delete(_ app: AppRecord, refreshAfterDeletion: Bool = true) async -> Bool {
         guard let appStore, let fileStore else { return false }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 删除应用: \(app.displayName) (\(app.id.uuidString.prefix(8)))")
-        guard let operationLease = await acquireOperation(.maintainingStorage, appID: app.id) else { return false }
+        guard let operationLease = await acquireOperation(.maintainingStorage, appID: app.id) else {
+            // 后台的去重清理与前台删除共用此方法；仅前台用户动作需要弹出冲突提示。
+            if refreshAfterDeletion {
+                alertFailure = operationConflictFailure(requested: .maintainingStorage)
+            }
+            return false
+        }
         defer { releaseOperation(operationLease) }
         do {
             try await appStore.delete(id: app.id)
@@ -3060,8 +3080,9 @@ final class AppsViewModel: ObservableObject {
                     knownAccountIDs: Set(accounts.map(\.id))
                 )
         }
+        // 旧记录曾经丢过扩展，不等于本次用户同意再丢更多扩展。继承这个旧标记会让
+        // 续签在没有任何确认的情况下继续改变产品功能；每一轮都必须从保留全量扩展开始。
         let resolvedAllowDroppingExtensions = allowDroppingExtensions
-            || app.removedExtensionBundleIdentifiers.isEmpty == false
         signingSession = SigningSession(
             app: app,
             account: account,
@@ -3673,6 +3694,11 @@ final class AppsViewModel: ObservableObject {
             try await accountRepository.save(repaired[index])
         }
         return repaired
+    }
+
+    private func operationConflictFailure(requested: OperationCoordinator.Kind) -> ImportFailure {
+        operationCoordinator?.conflictFailure(requested: requested)
+            ?? Self.operationInProgressFailure(blockedBy: activeOperationDescription)
     }
 
     private func acquireOperation(
