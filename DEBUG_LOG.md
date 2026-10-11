@@ -6480,3 +6480,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：`SEAL-INSTALL-707a`（阳性对照可查、目标不可查）声明为 `installationVerificationFailed → reinstallFromSignedArtifact`；`707b`（阳性对照也不可查）声明为 `deviceServiceUnavailable → checkInstallationResult`，并明确“暂不重新安装”。两条均标注安装操作和设备通道来源。
 
 **验证**：新增 Swift 单元测试断言合同字段，并新增静态合同测试；本地 Python 错误审计／合同测试 23 项通过。完整 iOS CI 运行中，待其完成后再推送本地这一批。
+
+## 2026-10-11 — App ID 七天注册窗口被误当作网络或通用创建失败
+
+**症状**：免费账号连续注册 App ID 达到 Apple 的七天滑动窗口上限后，`SEAL-APPID-304` 虽有正确文案，却未进入结构化合同；上层无法可靠区分它和通用 App ID 创建失败。
+
+**根因**：`appIDFailure` 已依据 Apple 错误码 1009 / 3013 和限额文本识别这一事实，但 `ImportFailure` 没有声明该判据。该窗口不能靠删除当前 App ID 或检查网络解除。
+
+**修复**：将 `304` 声明为 `appIDRegistrationLimit → waitThenRetry`，操作为签名、来源为 Apple Portal；不新增猜测式网络动作。
+
+**验证**：新增静态合同回归测试；本地 Python 错误审计／合同测试 24 项通过。完整 iOS CI 将在推送后验证 Swift 编译。

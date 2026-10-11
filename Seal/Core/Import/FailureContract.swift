@@ -4,6 +4,7 @@ import Foundation
 enum FailureCondition: String, Codable, Equatable, Sendable {
     case appleServiceUnavailable
     case appleRateLimited
+    case appIDRegistrationLimit
     case credentialsRejected
     case verificationCodeRejected
     case twoFactorAuthenticationRequired

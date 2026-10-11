@@ -179,6 +179,21 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn('code: "SEAL-INSTALL-702u"', unknown_rejection)
         self.assertIn("action: .copyDiagnostics", unknown_rejection)
 
+    def test_app_id_registration_limit_waits_without_guessing_a_network_fix(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        limit = source.split("if Self.isAppIDRegistrationLimit", 1)[1].split(
+            "        }\n\n        return ImportFailure(", 1
+        )[0]
+
+        self.assertIn('code: "SEAL-APPID-304"', limit)
+        self.assertIn("condition: .appIDRegistrationLimit", limit)
+        self.assertIn("action: .waitThenRetry", limit)
+        self.assertIn("operation: .sign", limit)
+        self.assertIn("origin: .applePortal", limit)
+        self.assertNotIn("检查网络", limit)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"

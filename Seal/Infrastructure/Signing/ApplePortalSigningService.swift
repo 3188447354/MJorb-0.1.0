@@ -187,7 +187,12 @@ enum ApplePortalSigningFailure {
                 title: "7 天内最多注册 10 个 App ID",
                 reason: "已达到 App ID 数量上限。App ID 无法手动删除，7 天后自动过期。请到「已签名 App」查看过期时间，或换其他 Apple ID 签名。",
                 recovery: "App ID 无法手动删除，7 天后自动过期；或换其他 Apple ID 签名",
-                code: "SEAL-APPID-304"
+                code: "SEAL-APPID-304",
+                condition: .appIDRegistrationLimit,
+                action: .waitThenRetry,
+                retryDisposition: .manual,
+                operation: .sign,
+                origin: .applePortal
             )
         }
 
