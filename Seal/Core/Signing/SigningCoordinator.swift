@@ -267,7 +267,9 @@ actor SigningCoordinator {
         accountID: UUID,
         requestedBundleIdentifier: String? = nil,
         selectedCertificateSerialNumber: String? = nil,
-        allowDroppingExtensions: Bool = true,
+        // 扩展是已安装产品的一部分；后台流程绝不能因门户暂时失败而静默产出删扩展的 IPA。
+        // 只有 UI 的“去扩展重试”会显式传入 true。
+        allowDroppingExtensions: Bool = false,
         installAfterSigning: Bool = true,
         forceResign: Bool = false,
         bypassFreeAccountDeviceLimit: Bool = false,
@@ -1775,6 +1777,7 @@ actor SigningCoordinator {
                     accountID: accountID,
                     requestedBundleIdentifier: candidate.mappedBundleIdentifier ?? candidate.preferredBundleIdentifier,
                     selectedCertificateSerialNumber: nil,
+                    allowDroppingExtensions: false,
                     forceResign: true,
                     bypassFreeAccountDeviceLimit: true,
                     progress: progress,

@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-12 后台续签与证书轮换可能静默移除 LiveContainer 扩展
+
+- **现象**：LiveContainer 运行时报告 `LiveProcess extension not found`，并提示重新安装且保留扩展。
+- **根因**：普通单项签名默认禁止删除扩展，但 `SigningCoordinator.signAndInstall` 的默认参数却是允许；批量续签与证书轮换自动恢复没有显式覆盖该默认。若 Apple 为某个扩展创建 App ID 或生成描述文件失败，门户层会在允许降级时移除扩展并继续安装，后台路径因而可能把已安装产品替换为缺失 `LiveProcess` 的版本。
+- **修复**：协调器默认改为禁止删除扩展；批量续签和证书轮换自动恢复显式传入 `false`。唯一仍允许的路径是用户在失败抽屉主动选择“移除扩展并重试”。后台无法保留扩展时会如实失败，不再用功能残缺的 IPA 伪装成功。
+- **涉及文件**：`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Scripts/tests/test_failure_contract_source.py`。
+- **验证状态**：新增回归先红后绿；失败合同静态套件 28/28、错误码清单 11/11、清单生成和 `git diff --check` 通过。Windows 无 Swift/Xcode，完整 iOS CI 将编译和运行 Swift 回归。
+
+---
+
 ## 2026-10-12 Seal 覆盖更新确认、列表可见性与单项结果日志互相打架
 
 - **现象**：① 导入 Seal 更新包，在确认“覆盖更新”后会失败为 `SEAL-IPA-217`；② 覆盖更新签名期间，新旧两条 Seal 会同时出现在已安装列表，稍后才消失一条；③ 单独续签完成后日志出现一条新描述文件结果和一条旧格式结果。
