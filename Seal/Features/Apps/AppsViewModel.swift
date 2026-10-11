@@ -3035,14 +3035,21 @@ final class AppsViewModel: ObservableObject {
     ///
     /// 这一步不依赖应用列表、设备探测或维护作业。若 Seal 自替换仍待新进程
     /// 对账，保留启动流程的原有顺序，绝不提前显示成功。
-    func presentSettledBackgroundBatchResultIfNeeded() {
+    func hasSettledBackgroundBatchResultReadyForPresentation() -> Bool {
         // 快捷指令尚在运行时不展示半成品；通知只会在它结算后发出。
-        guard isBackgroundBatchRefresh == false else { return }
+        guard isBackgroundBatchRefresh == false else { return false }
         guard let payload = loadPendingBatchResultPayload(),
               PendingBatchResultPayload.isReadyForImmediatePresentation(payload) else {
-            return
+            return false
         }
+        return true
+    }
+
+    @discardableResult
+    func presentSettledBackgroundBatchResultIfNeeded() -> Bool {
+        guard hasSettledBackgroundBatchResultReadyForPresentation() else { return false }
         restorePendingBatchResultIfNeeded()
+        return isBatchRefreshSheetPresented
     }
 
     private func schedulePendingBatchResultRecheckIfNeeded(_ result: BatchRefreshResult) {

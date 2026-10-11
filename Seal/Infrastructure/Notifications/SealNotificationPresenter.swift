@@ -18,4 +18,19 @@ final class SealNotificationPresenter: NSObject, UNUserNotificationCenterDelegat
     ) async -> UNNotificationPresentationOptions {
         [.banner, .list, .sound, .badge]
     }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard BackgroundRenewalNotificationRoute.shouldRequestResultPresentation(
+            requestIdentifier: response.notification.request.identifier
+        ) else {
+            return
+        }
+
+        await MainActor.run {
+            NotificationCenter.default.post(name: BackgroundRenewalNotificationRoute.opened, object: nil)
+        }
+    }
 }

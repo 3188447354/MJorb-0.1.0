@@ -1,6 +1,18 @@
 import Foundation
 import UserNotifications
 
+/// Routes only the notification emitted by the App Shortcut renewal flow.
+///
+/// Expiry reminders and other Seal notifications may also foreground the app;
+/// they must not reopen a stale batch-renewal result drawer.
+enum BackgroundRenewalNotificationRoute {
+    static let opened = Notification.Name("sealBackgroundRenewalNotificationOpened")
+
+    static func shouldRequestResultPresentation(requestIdentifier: String) -> Bool {
+        requestIdentifier == BackgroundRenewalNotifier.identifier
+    }
+}
+
 /// 「快捷指令触发的后台续签」结束后的系统通知 —— **该不该发 + 说什么**。
 ///
 /// 纯值类型 + 纯计算属性：`AppsViewModel` 是 `@MainActor`、依赖一大堆，测试构造不出来，

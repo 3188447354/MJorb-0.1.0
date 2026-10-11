@@ -45,6 +45,27 @@ struct PendingBatchResultPayloadTests {
                 hasInstalledAppAction: true
             )
         )
+        #expect(
+            BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
+                hasPendingRequest: true,
+                isHostReady: true,
+                isAppActive: true
+            )
+        )
+        #expect(
+            BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
+                hasPendingRequest: true,
+                isHostReady: true,
+                isAppActive: false
+            ) == false
+        )
+        #expect(
+            BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
+                hasPendingRequest: true,
+                isHostReady: false,
+                isAppActive: true
+            ) == false
+        )
     }
 
     private func payload(_ items: [[String: Any]]) -> [String: Any] {

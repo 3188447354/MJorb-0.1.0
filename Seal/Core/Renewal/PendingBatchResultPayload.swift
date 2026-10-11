@@ -23,6 +23,16 @@ enum BatchResultPresentationPolicy {
     ) -> Bool {
         hasBatchResultSheet == false && hasInstalledAppAction
     }
+
+    /// 通知唤醒期间，只有根 sheet host 已建立且 App 已进入 active，才允许把持久化结果
+    /// 写入呈现状态。否则会出现状态先拦住列表操作、系统却尚不能展示 sheet 的死锁。
+    static func shouldFlushPendingResultPresentation(
+        hasPendingRequest: Bool,
+        isHostReady: Bool,
+        isAppActive: Bool
+    ) -> Bool {
+        hasPendingRequest && isHostReady && isAppActive
+    }
 }
 
 /// 「待恢复的批量续签结果」载荷 → 续签队列状态的映射。

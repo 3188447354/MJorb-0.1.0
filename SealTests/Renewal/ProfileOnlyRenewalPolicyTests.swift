@@ -82,7 +82,7 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func profileOnlyRenewalDoesNotClaimToRepairLegacyAppGroupOrder() {
+    func profileOnlyRenewalDoesNotClaimToRepairLegacyAppGroupOrder() throws {
         // 只续签的定义是「更新描述文件，不重写已安装二进制」。历史产物的 App Group
         // 顺序因此必须原样保留在身份对账记录中；真正的顺序修复只发生在下一次完整签名。
         let legacyGroups: [ProvisioningEntitlementValue] = [
@@ -90,11 +90,12 @@ struct ProfileOnlyRenewalPolicyTests {
             .string("group.com.SideStore.SideStore")
         ]
         var app = makeEligibleApp(includeExtension: false)
+        let expiry = try #require(app.expiryDate)
         app.signingTargets = [
             target(
                 bundleIdentifier: "com.example.demo.TEAM123456",
                 profileUUID: "MAIN-PROFILE",
-                expiry: app.expiryDate,
+                expiry: expiry,
                 entitlements: [
                     "com.apple.security.application-groups": .array(legacyGroups)
                 ]

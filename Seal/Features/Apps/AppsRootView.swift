@@ -20,6 +20,10 @@ struct AppsRootView: View {
     @State private var installedActionApp: AppRecord?
     @State private var operationAppID: UUID?
     @State private var didResolveInitialMode = false
+    /// 系统通知点进来时，SwiftUI 的 sheet host 可能尚未挂载。先等根视图出现，
+    /// 再在下一次主循环请求结果抽屉，避免状态已锁住列表而系统 sheet 没有呈现。
+    @State private var isResultPresentationHostReady = false
+    @State private var hasPendingBackgroundResultPresentation = false
 
     var body: some View {
         NavigationStack {
@@ -150,7 +154,7 @@ struct AppsRootView: View {
             .task {
                 // 后台续签已经得到终态时，通知进入必须先展示结果；不能被启动维护、
                 // 设备核验或列表加载拖住，造成用户得点几次应用才看到抽屉。
-                viewModel.presentSettledBackgroundBatchResultIfNeeded()
+                requestSettledBackgroundBatchResultPresentation()
                 await settingsViewModel.load()
                 // ── 启动关键路径（阻塞首屏，只做最少必要）──
                 // 记录恢复（设备扫描发现 App）是新安装时列表有数据的唯一来源，
@@ -172,7 +176,7 @@ struct AppsRootView: View {
             }
             .onChange(of: scenePhase) { phase in
                 guard phase == .active else { return }
-                viewModel.presentSettledBackgroundBatchResultIfNeeded()
+                requestSettledBackgroundBatchResultPresentation()
                 Task {
                     await viewModel.refreshInstalledApps(userInitiated: false)
                     if mode == .unsigned {
@@ -186,6 +190,11 @@ struct AppsRootView: View {
                 detailApp = nil
                 // 批量抽屉弹出时，单个操作的 sheet 必须一起清掉，否则批量关掉后它会闪出来。
                 viewModel.dismissOperation()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: BackgroundRenewalNotificationRoute.opened)) { _ in
+                // 快捷指令成功通知的点击是一个明确的用户意图；不要只赌 scenePhase
+                // 变化（冷启动和从通知中心回到已在后台的进程时序不同）。
+                requestSettledBackgroundBatchResultPresentation()
             }
             // 真正要导入时才切到待签名页：
             // 2026-10-09 重设计：覆盖更新（含 Seal 自更新）也进待签名页，不再留在已安装页。
@@ -205,6 +214,8 @@ struct AppsRootView: View {
                 }
             }
             .onAppear {
+                isResultPresentationHostReady = true
+                requestSettledBackgroundBatchResultPresentation()
                 // 安装后重开 App，提示不消失，要点别的页再回来才刷——强制重载
                 Task {
                     await viewModel.syncSelfRecordOnLaunch()
@@ -398,13 +409,42 @@ struct AppsRootView: View {
         case .installed:
             // 通知进入时可能恰好还没有完成启动任务；先恢复已结算结果，不能让一次
             // 列表点击把应用操作抽屉与结果抽屉并发打开。
-            viewModel.presentSettledBackgroundBatchResultIfNeeded()
+            if viewModel.hasSettledBackgroundBatchResultReadyForPresentation() {
+                requestSettledBackgroundBatchResultPresentation()
+                return
+            }
             guard BatchResultPresentationPolicy.allowsInstalledAppAction(
                 hasBatchResultSheet: viewModel.isBatchRefreshSheetPresented
             ) else {
                 return
             }
             installedActionApp = app
+        }
+    }
+
+    /// `task` 与通知 delegate 都可能早于 sheet presenter 建立，且通知唤醒会先经历
+    /// inactive。先记住用户的打开意图，直到根 host 已挂载且 App 回到 active，才把它
+    /// 转成唯一的业务抽屉状态；这样不会出现“列表被结果状态锁住，抽屉却没弹出来”。
+    private func requestSettledBackgroundBatchResultPresentation() {
+        hasPendingBackgroundResultPresentation = true
+        flushSettledBackgroundBatchResultPresentationIfPossible()
+    }
+
+    private func flushSettledBackgroundBatchResultPresentationIfPossible() {
+        guard BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
+            hasPendingRequest: hasPendingBackgroundResultPresentation,
+            isHostReady: isResultPresentationHostReady,
+            isAppActive: scenePhase == .active
+        ) else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
+                hasPendingRequest: hasPendingBackgroundResultPresentation,
+                isHostReady: isResultPresentationHostReady,
+                isAppActive: scenePhase == .active
+            ) else { return }
+            hasPendingBackgroundResultPresentation = false
+            _ = viewModel.presentSettledBackgroundBatchResultIfNeeded()
         }
     }
 

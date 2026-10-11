@@ -6650,3 +6650,25 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：四项测试更新为传输未完成条件；Portal 测试改为仅断言“请求未完成、已保存 Apple ID 状态未改变”以及不泄露底层 NSError，而不再断言未证实的已签应用结论。
 
 **验证**：本地错误合同测试将重新执行；完整 iOS CI 用于编译和运行更新后的 Swift 测试。
+
+## 2026-10-11 — 快捷指令续签通知进入后，结果抽屉未出现且已安装列表失去响应
+
+**症状**：快捷指令后台续签完成后，用户点系统通知回到 Seal，结果抽屉有时不出现；此时点已安装应用也没有反应，只有杀掉 Seal 后重新打开才恢复并出现抽屉。
+
+**根因（源码证据）**：`SealNotificationPresenter` 过去只实现 `willPresent`，没有处理 `UNUserNotificationCenterDelegate.didReceive`，所以通知点击没有明确路由。与此同时，启动任务和场景切换会直接调用 `presentSettledBackgroundBatchResultIfNeeded()`；该调用能先将 `isBatchRefreshSheetPresented` 置为真，而 SwiftUI 的 sheet host 在通知冷启动／inactive 阶段尚未可呈现。`AppsRootView.openApp` 看到这个状态后会按互斥策略拒绝应用操作，形成“列表被结果状态锁住、抽屉没有显示”的事务死锁。
+
+**修复**：为后台续签通知添加唯一标识路由与 `didReceive` 回调；根视图把通知／启动／回到前台统一为待呈现请求，只在 root host 已挂载且 `scenePhase == .active` 后的下一主循环恢复结果抽屉。已安装列表发现已结算结果时只排队呈现，不再直接写 sheet 状态；批量结果仍保持对应用操作抽屉的独占优先级。
+
+**回归保护**：新增通知标识路由测试；新增三态呈现策略测试，覆盖「请求存在 + host 就绪 + active 才能写呈现状态」，阻止 inactive 或 host 未挂载时再次锁住列表。
+
+**验证状态**：Windows 主机没有 Swift/Xcode 工具链；已完成静态检查和 Python 合同测试，等待下一轮完整 iOS CI 编译及 Swift 测试。真机验收：快捷指令成功通知→点通知→结果抽屉一次出现；关闭后已安装列表可立即打开应用操作，不需杀后台。
+
+## 2026-10-11 — 完整 iOS CI `38139124010` 的两项可复现构建失败
+
+**现象**：`signer-tests` 已通过，但完整 CI 的 `build-package` 被 R56 安全守卫拒绝；`swift-regression` 在 `ProfileOnlyRenewalPolicyTests.swift:97` 因 `Date?` 传给 `Date` 编译失败。
+
+**根因**：R56 仍保留“不得测试 SideSign”的过时假设，和当前已新增、且通过的 SideSign 签名边界测试相冲突；新测试夹具的 `AppRecord.expiryDate` 是可选值，传给要求非可选日期的辅助构造器前未作测试前提校验。
+
+**修复**：R56 更新为同时要求 `Vendor/CodeSignKit` 与 Seal 实际使用的 `Vendor/SideSign` 签名边界回归门，仍明确禁止已删除的 `Vendor/rork-sign`；测试改用 `try #require(app.expiryDate)`，将夹具不变量写成明确测试失败而非 Swift 编译错误。
+
+**验证状态**：下一轮完整 iOS CI 将重新验证发布守卫、Swift 编译与测试；不会检查或触发 Fast IPA。
