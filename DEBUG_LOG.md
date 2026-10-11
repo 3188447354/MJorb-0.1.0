@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-10-11 SideSign 回归测试按 Swift 6 Sendable 合同修正
+
+- **现象**：完整 iOS CI `38138797034` 的新 SideSign 签名边界测试编译失败，错误为 `NSArray` 和 `[Any]` 不符合 Swift 6 的 `Sendable`。
+- **根因**：生产接口的输入类型是 `[String: any Sendable]`，而测试试图把非 Sendable 的 Foundation 容器和 `Any` 数组直接塞入该接口；这不是签名器的运行失败，也不是可由该类型系统合法表达的描述文件值。
+- **修复**：规范化器保持真实描述文件会解码出的 `[String]` 路径；删除不可表达输入的伪测试，改为验证一个合法但不受支持的 `Sendable` 标量会原样保留。这样继续验证“只排序 App Group 字符串数组、不猜测其他值”的产品合同。
+- **验证状态**：已根据 CI 精确报错调整测试；待下一次完整 iOS CI 编译运行。
+
+---
+
 ## 2026-10-11 App Group 顺序修复落在未编译签名器，删除 App ID 不是长期解法
 
 - **复核结论**：工程 `project.yml` 的 `SideSign` 依赖实际指向 `Vendor/SideSign`；此前二进制 entitlement 排序只写进 `upstream/SideSign`，不会进入 Seal 构建产物。因此 build 171 中 LC2 恢复共享的直接原因是一次性删除并重建 App ID，而不是签名器规范化。

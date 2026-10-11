@@ -14,9 +14,11 @@ import CodeSignKit
 /// App Group entitlement order is not a portal-level contract, but some apps
 /// incorrectly choose their shared container from the first value. Signing two
 /// related apps from profiles that list the same groups in a different order
-/// must therefore produce the same binary entitlement order. This deliberately
-/// does not touch other entitlement arrays: keychain access groups, for
-/// example, can have first-item semantics.
+/// must therefore produce the same binary entitlement order. Provisioning
+/// profiles are decoded as `[String: any Sendable]`, where a plist string array
+/// is represented as `[String]`; unsupported values are deliberately left
+/// untouched. This deliberately does not touch other entitlement arrays:
+/// keychain access groups, for example, can have first-item semantics.
 enum AppGroupEntitlementCanonicalizer {
     static let key = "com.apple.security.application-groups"
 
@@ -32,18 +34,7 @@ enum AppGroupEntitlementCanonicalizer {
     }
 
     private static func strings(from value: any Sendable) -> [String]? {
-        if let groups = value as? [String] {
-            return groups
-        }
-        if let groups = value as? NSArray {
-            let strings = groups.compactMap { $0 as? String }
-            return strings.count == groups.count ? strings : nil
-        }
-        if let groups = value as? [Any] {
-            let strings = groups.compactMap { $0 as? String }
-            return strings.count == groups.count ? strings : nil
-        }
-        return nil
+        value as? [String]
     }
 }
 

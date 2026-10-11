@@ -22,27 +22,13 @@ struct AppGroupEntitlementCanonicalizerTests {
     }
 
     @Test
-    func canonicalizesNSArrayOfStrings() {
+    func preservesUnsupportedSendableValueWithoutGuessing() {
+        let original = 42
         let result = AppGroupEntitlementCanonicalizer.apply(to: [
-            appGroupsKey: NSArray(array: [
-                "group.com.rileytestut.AltStore",
-                "group.com.SideStore.SideStore"
-            ])
+            appGroupsKey: original
         ])
 
-        #expect(result[appGroupsKey] as? [String] == [
-            "group.com.SideStore.SideStore",
-            "group.com.rileytestut.AltStore"
-        ])
-    }
-
-    @Test
-    func retainsMixedTypeGroupsWithoutGuessing() {
-        let original: [Any] = ["group.example", 1]
-        let result = AppGroupEntitlementCanonicalizer.apply(to: [appGroupsKey: original])
-
-        #expect((result[appGroupsKey] as? [Any])?.count == original.count)
-        #expect((result[appGroupsKey] as? [Any])?[1] as? Int == 1)
+        #expect(result[appGroupsKey] as? Int == original)
     }
 
     @Test
