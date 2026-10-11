@@ -7242,7 +7242,7 @@
       }
     },
     "SEAL-IPA-201": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 1
       },
@@ -7252,9 +7252,21 @@
           "line": 103,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-201\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".restartSeal",
+            "condition": ".localStorageWriteFailed",
+            "operation": ".importIPA",
+            "origin": ".fileStore",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-IPA-201\","
         }
       ],
       "occurrenceCount": 1,
@@ -7263,19 +7275,31 @@
       }
     },
     "SEAL-IPA-202": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 1
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 168,
+          "line": 173,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-202\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".reimportIPA",
+            "condition": ".unexpected",
+            "operation": ".importIPA",
+            "origin": ".fileStore",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-IPA-202\","
         }
       ],
       "occurrenceCount": 1,
@@ -7284,19 +7308,31 @@
       }
     },
     "SEAL-IPA-203": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 1
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 386,
+          "line": 396,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-203\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".retry",
+            "condition": ".localStorageWriteFailed",
+            "operation": ".importIPA",
+            "origin": ".fileStore",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-IPA-203\","
         }
       ],
       "occurrenceCount": 1,
@@ -7305,19 +7341,31 @@
       }
     },
     "SEAL-IPA-204": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 1
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1078,
+          "line": 1103,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-204\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".reimportIPA",
+            "condition": ".unexpected",
+            "operation": ".importIPA",
+            "origin": ".fileStore",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-IPA-204\","
         }
       ],
       "occurrenceCount": 1,
@@ -7384,7 +7432,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 195,
+          "line": 205,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7405,7 +7453,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 266,
+          "line": 276,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7426,7 +7474,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 288,
+          "line": 298,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7447,7 +7495,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 299,
+          "line": 309,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7482,19 +7530,31 @@
       }
     },
     "SEAL-IPA-211a": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 1
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 423,
+          "line": 438,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-211a\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".reimportIPA",
+            "condition": ".unexpected",
+            "operation": ".importIPA",
+            "origin": ".fileStore",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-IPA-211a\","
         }
       ],
       "occurrenceCount": 1,
@@ -7503,7 +7563,7 @@
       }
     },
     "SEAL-IPA-212": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 2
       },
@@ -7519,12 +7579,24 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 462,
+          "line": 482,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-212\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".retry",
+            "condition": ".localStorageWriteFailed",
+            "operation": ".importIPA",
+            "origin": ".fileStore",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-IPA-212\","
         }
       ],
       "occurrenceCount": 2,
@@ -7593,7 +7665,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1060,
+          "line": 1085,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7614,7 +7686,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1069,
+          "line": 1094,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -12627,7 +12699,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1051,
+          "line": 1076,
           "path": "Seal/Infrastructure/Storage/AppFileStore.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -13081,11 +13153,11 @@
   "scope": "Seal/**/*.swift",
   "summary": {
     "auditStatuses": {
-      "contracted": 43,
+      "contracted": 49,
       "diagnostic_only": 6,
       "mixed": 2,
       "reference_only": 286,
-      "unreviewed": 89
+      "unreviewed": 83
     },
     "identifierKinds": {
       "diagnostic_tag": 74,
@@ -13102,8 +13174,8 @@
     },
     "structuredFailureContracts": {
       "directOccurrences": 144,
-      "withExplicitSemantics": 48,
-      "withoutExplicitSemantics": 96
+      "withExplicitSemantics": 54,
+      "withoutExplicitSemantics": 90
     },
     "uniqueIdentifiers": 426
   }
