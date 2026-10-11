@@ -24,6 +24,8 @@ enum FailureCondition: String, Codable, Equatable, Sendable {
     case deviceStorageFull
     case deviceAppLimitReached
     case installationStillRunning
+    case installationVerificationFailed
+    case deviceServiceUnavailable
     case signedArtifactInvalid
     case localStorageWriteFailed
     case logServiceUnavailable

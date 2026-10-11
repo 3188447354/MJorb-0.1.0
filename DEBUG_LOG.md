@@ -6470,3 +6470,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：安全校验改为以稳定的 `static func failure(from error: Error) -> ImportFailure {` 签名定位函数体，继续验证双重认证优先于限流和网络的实际业务顺序，不再绑定无关修饰符。
 
 **验证**：运行发布安全校验及错误合同回归测试；下一次完整 iOS CI 将验证打包流程。
+
+## 2026-10-11 — 安装后验证把“确实未安装”和“设备服务不可查询”混在旧码动作里
+
+**症状**：安装完成后若目标 Bundle ID 未被 iOS 服务查到，旧 UI 的动作来自错误码兜底；当 Seal 自身也无法查询时，用户仍可能把“无法确认”误解成需要重新安装。
+
+**根因**：`verificationFailure` 已使用 Seal 自身作为阳性对照区分两种事实，但两个 `ImportFailure` 尚未声明该判据与动作，界面只能继续依赖历史错误码集合。
+
+**修复**：`SEAL-INSTALL-707a`（阳性对照可查、目标不可查）声明为 `installationVerificationFailed → reinstallFromSignedArtifact`；`707b`（阳性对照也不可查）声明为 `deviceServiceUnavailable → checkInstallationResult`，并明确“暂不重新安装”。两条均标注安装操作和设备通道来源。
+
+**验证**：新增 Swift 单元测试断言合同字段，并新增静态合同测试；本地 Python 错误审计／合同测试 23 项通过。完整 iOS CI 运行中，待其完成后再推送本地这一批。

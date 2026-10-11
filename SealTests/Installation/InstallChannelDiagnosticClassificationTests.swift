@@ -238,6 +238,10 @@ struct InstallChannelDiagnosticClassificationTests {
         )
 
         #expect(failure.code == "SEAL-INSTALL-707a")
+        #expect(failure.condition == .installationVerificationFailed)
+        #expect(failure.action == .reinstallFromSignedArtifact)
+        #expect(failure.operation == .install)
+        #expect(failure.origin == .deviceChannel)
         #expect(
             failure.reason.contains("com.example.target"),
             "必须带 Bundle ID，否则日志与弹窗都分不清是哪个 App"
@@ -261,6 +265,10 @@ struct InstallChannelDiagnosticClassificationTests {
                 failure.code == "SEAL-INSTALL-707b",
                 "对照是「\(control.logName)」时不能下「没装上」的结论"
             )
+            #expect(failure.condition == .deviceServiceUnavailable)
+            #expect(failure.action == .checkInstallationResult)
+            #expect(failure.operation == .install)
+            #expect(failure.origin == .deviceChannel)
         }
     }
 

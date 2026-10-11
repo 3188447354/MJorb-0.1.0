@@ -193,6 +193,28 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn("route: .pairing", pairing)
         self.assertIn("operation: .install", pairing)
 
+    def test_install_verification_only_reinstalls_after_a_trusted_positive_control(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
+            encoding="utf-8"
+        )
+        verification = source.split("static func verificationFailure(", 1)[1].split(
+            "    #if !targetEnvironment", 1
+        )[0]
+        unverifiable = verification.split("guard positiveControl == .installed else", 1)[1].split(
+            "        }\n        return ImportFailure(", 1
+        )[0]
+        definitive = verification.rsplit("        return ImportFailure(", 1)[1]
+
+        self.assertIn('code: "SEAL-INSTALL-707b"', unverifiable)
+        self.assertIn("condition: .deviceServiceUnavailable", unverifiable)
+        self.assertIn("action: .checkInstallationResult", unverifiable)
+        self.assertIn("暂不重新安装", unverifiable)
+
+        self.assertIn('code: "SEAL-INSTALL-707a"', definitive)
+        self.assertIn("condition: .installationVerificationFailed", definitive)
+        self.assertIn("action: .reinstallFromSignedArtifact", definitive)
+        self.assertIn("operation: .install", definitive)
+
 
 if __name__ == "__main__":
     unittest.main()

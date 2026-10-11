@@ -1474,15 +1474,25 @@ actor MinimuxerInstallChannel: InstallChannel {
             return ImportFailure(
                 title: "无法确认安装结果",
                 reason: "iOS 安装服务查不到 \(bundleID)，但连 Seal 自己也查不到 —— 这是设备通道不可信，不能据此判定这个 App 没装上。",
-                recovery: "确认 LocalDevVPN 已连接、开发者模式已开启后重试",
-                code: "SEAL-INSTALL-707b"
+                recovery: "暂不重新安装；稍后在「已安装」列表刷新确认结果",
+                code: "SEAL-INSTALL-707b",
+                condition: .deviceServiceUnavailable,
+                action: .checkInstallationResult,
+                retryDisposition: .manual,
+                operation: .install,
+                origin: .deviceChannel
             )
         }
         return ImportFailure(
             title: "安装后验证失败",
             reason: "iOS 安装服务未返回已安装的 Bundle ID（\(bundleID)）。",
-            recovery: "重试",
-            code: "SEAL-INSTALL-707a"
+            recovery: "重新安装已签名的应用",
+            code: "SEAL-INSTALL-707a",
+            condition: .installationVerificationFailed,
+            action: .reinstallFromSignedArtifact,
+            retryDisposition: .manual,
+            operation: .install,
+            origin: .deviceChannel
         )
     }
 

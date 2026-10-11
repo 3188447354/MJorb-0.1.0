@@ -4816,7 +4816,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1872,
+          "line": 1882,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -4870,7 +4870,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1727,
+          "line": 1737,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4913,7 +4913,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1719,
+          "line": 1729,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4943,7 +4943,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1661,
+          "line": 1671,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -4986,7 +4986,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1644,
+          "line": 1654,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5038,7 +5038,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1954,
+          "line": 1964,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5082,7 +5082,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1704,
+          "line": 1714,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5125,7 +5125,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1682,
+          "line": 1692,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5195,7 +5195,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1587,
+          "line": 1597,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5232,7 +5232,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1601,
+          "line": 1611,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5283,7 +5283,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1624,
+          "line": 1634,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -5385,7 +5385,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1897,
+          "line": 1907,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5439,7 +5439,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1924,
+          "line": 1934,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5546,7 +5546,7 @@
       }
     },
     "SEAL-INSTALL-707a": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 2
       },
@@ -5562,12 +5562,24 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1485,
+          "line": 1490,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-INSTALL-707a\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".reinstallFromSignedArtifact",
+            "condition": ".installationVerificationFailed",
+            "operation": ".install",
+            "origin": ".deviceChannel",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-INSTALL-707a\","
         }
       ],
       "occurrenceCount": 2,
@@ -5577,7 +5589,7 @@
       }
     },
     "SEAL-INSTALL-707b": {
-      "auditStatus": "unreviewed",
+      "auditStatus": "contracted",
       "identifierKinds": {
         "standard_error_code": 3
       },
@@ -5605,9 +5617,21 @@
           "line": 1478,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-INSTALL-707b\""
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".checkInstallationResult",
+            "condition": ".deviceServiceUnavailable",
+            "operation": ".install",
+            "origin": ".deviceChannel",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-INSTALL-707b\","
         }
       ],
       "occurrenceCount": 3,
@@ -5661,7 +5685,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1885,
+          "line": 1895,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -5706,7 +5730,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1786,
+          "line": 1796,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -5838,7 +5862,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1793,
+          "line": 1803,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -6718,7 +6742,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1972,
+          "line": 1982,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -8730,7 +8754,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1859,
+          "line": 1869,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -8795,7 +8819,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1845,
+          "line": 1855,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -9091,7 +9115,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1773,
+          "line": 1783,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -10250,7 +10274,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1917,
+          "line": 1927,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -10281,7 +10305,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1910,
+          "line": 1920,
           "path": "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -13033,11 +13057,11 @@
   "scope": "Seal/**/*.swift",
   "summary": {
     "auditStatuses": {
-      "contracted": 39,
+      "contracted": 41,
       "diagnostic_only": 6,
       "mixed": 2,
       "reference_only": 286,
-      "unreviewed": 93
+      "unreviewed": 91
     },
     "identifierKinds": {
       "diagnostic_tag": 74,
@@ -13054,8 +13078,8 @@
     },
     "structuredFailureContracts": {
       "directOccurrences": 144,
-      "withExplicitSemantics": 44,
-      "withoutExplicitSemantics": 100
+      "withExplicitSemantics": 46,
+      "withoutExplicitSemantics": 98
     },
     "uniqueIdentifiers": 426
   }
