@@ -299,6 +299,24 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn("origin: .applePortal", limit)
         self.assertNotIn("检查网络", limit)
 
+    def test_unclassified_app_id_creation_failure_does_not_invent_a_cause(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        code_offset = source.index('code: "SEAL-APPID-303"')
+        start = source.rindex("        return ImportFailure(", 0, code_offset)
+        end = source.index("        )\n    }", code_offset)
+        generic = source[start:end]
+
+        self.assertIn('code: "SEAL-APPID-303"', source)
+        self.assertIn("condition: .unexpected", generic)
+        self.assertIn("action: .waitThenRetry", generic)
+        self.assertIn("retryDisposition: .manual", generic)
+        self.assertIn("operation: .sign", generic)
+        self.assertIn("origin: .applePortal", generic)
+        self.assertNotIn("检查网络", generic)
+        self.assertNotIn("重新验证 Apple ID", generic)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"

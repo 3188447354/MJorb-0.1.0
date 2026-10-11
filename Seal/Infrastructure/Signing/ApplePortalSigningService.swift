@@ -197,10 +197,15 @@ enum ApplePortalSigningFailure {
         }
 
         return ImportFailure(
-            title: "App ID 创建失败",
-            reason: "Apple 服务器未能创建该应用的 App ID。",
-            recovery: "若提示会话已过期，请先前往「我的」页面重新验证 Apple ID；否则检查网络后重试，或尝试更换 Bundle ID / 使用其他开发者账号",
-            code: "SEAL-APPID-303"
+            title: "Apple 未完成 App ID 注册",
+            reason: "Apple 未返回可识别的 App ID 注册失败原因。此结果不能据此判断为网络、账号或 Bundle ID 问题。",
+            recovery: "稍后重新签名；若持续出现，请导出日志后联系支持。",
+            code: "SEAL-APPID-303",
+            condition: .unexpected,
+            action: .waitThenRetry,
+            retryDisposition: .manual,
+            operation: .sign,
+            origin: .applePortal
         )
     }
 
