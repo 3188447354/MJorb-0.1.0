@@ -1272,23 +1272,27 @@ def violations(load=read):
           "R22: 「已移除」表里的码又回到源码里了（要么删掉该行、要么它其实没被移除）："
           + "、".join(resurrected[:6]))
 
-    # R23: 证书阶段的「认证状态无效」不许只给「去重新验证」一条路（2026-09-17 用户反馈）。
+    # R23: 证书阶段的宽泛认证文本不许被推断为确定的账号失效或服务限流。
     #
-    # 同一个「认证状态无效」有两种成因：①登录真失效；②**短时间请求过密被 Apple 限流**
-    # （多扩展 App 的典型症状：抖音 = 主 App + 8 扩展，一次签名连发 9 次 `addAppID`）。
-    # 只给 ① 会把用户推进死循环：「重新验证 → 再签 → 又被限流 → 又被要求验证」——
-    # 这正是用户反馈的原话（「无论怎样在验证 Apple ID 就报错失效」）。
-    # `appIDFailure` 里早就为同一个 1100 修过，但**证书阶段漏了**。
+    # `unauthorized` / `authentication` / `session` / `forbidden` 仅说明 Apple 没有
+    # 完成当前证书请求；源码无法从中确认凭据、服务端限流或设备网络。用户反馈过
+    # 「反复重新验证仍失败」，因此该出口先给等待后重签，只有提示持续时才建议验证。
     cert_failure = squash(section_or_empty(
         portal_source,
-        "private static func certificateFailure(",
-        "title: \"证书准备失败\""
+        'if normalized.contains("unauthorized")',
+        "\n\n        return ImportFailure("
     ))
-    check("被 Apple 限流" in cert_failure,
-          "R23: 证书阶段必须点明「可能是限流」—— 只写「登录失效」会让用户去反复重新验证，"
-          "而限流情况下重新验证根本没用")
-    check("先等几分钟重试" in cert_failure,
-          "R23: recovery 必须先给「等几分钟」—— 顺序反了就是那个死循环")
+    check('code: "SEAL-AUTH-102c"' in cert_failure
+          and "condition: .unexpected" in cert_failure
+          and "action: .waitThenRetry" in cert_failure
+          and "retryDisposition: .manual" in cert_failure,
+          "R23: 证书阶段宽泛认证失败必须保留未分类事实与等待后手动重试合同")
+    check("等几分钟后重新签名" in cert_failure,
+          "R23: recovery 必须先给等待后重新签名，不能先把用户推去重新验证")
+    check("两种常见成因" not in cert_failure
+          and "更可能是后者" not in cert_failure
+          and "已经确认当前账号被限流" not in cert_failure,
+          "R23: 证书阶段不能把认证文本推断为已确认的服务限流或账号状态")
     check('recovery: "前往「我的」页面重新登录该 Apple ID"' not in cert_failure,
           "R23: 不能退回「只让用户去重新验证」这一条路（那正是死循环的成因）")
 
@@ -7855,19 +7859,17 @@ def main():
          "## 已从源码移除（旧日志里还会看到，**别当成现在还在报**）",
          "## 历史码",
          "R22: 日志码索引必须有「已从源码移除」一节"),
-        # ── R23：证书阶段不许只给「去重新验证」一条路（2026-09-17 用户反馈）──
-        # 退回旧文案：用户会陷入「重新验证 → 再签 → 又被限流 → 又被要求验证」的死循环。
+        # ── R23：证书阶段不能把宽泛认证文本写成确定成因 ──
+        # 退回“立即重新登录”会跳过等待后重签，回到用户反馈的反复验证死循环。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         '                recovery: "先等几分钟重试；若多次重试仍失败，再到「我的」页面重新验证这个 Apple ID，"\n'
-         '                    + "或改用其它 Apple ID 签名",',
+         '                recovery: "等几分钟后重新签名；若持续出现，再到「我的」重新验证 Apple ID。",',
          '                recovery: "前往「我的」页面重新登录该 Apple ID",',
          "R23: 不能退回「只让用户去重新验证」这一条路"),
-        # 去掉「限流」这个成因：只剩「登录失效」一种解释，用户就会去反复重新验证。
+        # 把未分类结果写成已确认限流，会让用户把推测当作根因。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         '                    + "这个错误有两种常见成因：登录真的失效，或者短时间内请求过密被 Apple 限流"\n'
-         '                    + "（扩展较多的 App 一次签名要连续注册多个 App ID，最容易触发）。\\n"',
-         '                    + "这个错误的成因是登录失效。\\n"',
-         "R23: 证书阶段必须点明「可能是限流」"),
+         '                reason: "Apple 在证书请求阶段返回了认证相关信息，但未提供足以确认账号状态的具体原因。",',
+         '                reason: "Apple 已经确认当前账号被限流。",',
+         "R23: 证书阶段不能把认证文本推断为已确认的服务限流或账号状态"),
         # ── R24：三个 portal 变更都要过退避重试（2026-09-17 补）──
         # 把证书创建退回「直接请求」：它是流程里第一个真正落到 Apple 侧的变更，
         # 最容易撞上限流，而漏掉它会让限流被误报成「账号需要重新验证」。

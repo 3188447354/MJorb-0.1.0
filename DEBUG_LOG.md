@@ -6610,3 +6610,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：抽出单一 `missingRenewalRecordFailure`，标注 `unexpected → reimportIPA → batchRenew / unknown`；签名结果抽屉将 `.reimportIPA` 的按钮命名为“重新选择 IPA”，关闭当前结果后打开真实文件选择器，不再重试已删除项目。
 
 **验证**：新增测试先红后绿，断言合同字段和结果抽屉确实调用 `presentImporter()`；本地 Python 错误审计／合同测试 36 项通过，`git diff --check` 通过。完整 iOS CI run `38112750896` 仍在执行，结束后再推送本批。
+
+## 2026-10-11 — R23 发布安全守卫错误截取了默认分支
+
+**症状**：完整 iOS CI 的发布安全校验在 R23 失败，提示 `SEAL-AUTH-102c` 缺少结构化合同和“等待后重新签名”文案；但实际 Swift 源码已包含该分支及合同字段。
+
+**根因**：守卫从 `certificateFailure` 函数开头截取到第一个默认 `return ImportFailure`，得到的是前置网络分支，而非 `unauthorized`／`authentication` 等宽泛认证分支。因此守卫检查和变异检查均没有针对真实的 `SEAL-AUTH-102c` 出口。
+
+**修复**：R23 改为以认证条件为起点、以默认兜底返回为终点，只检查 `SEAL-AUTH-102c` 实际分支；保留“未分类事实、等待后重签、持续出现才验证”的合同，并继续阻止把限流写成已确认原因。
+
+**验证**：基础守卫重新执行为 `837` 项、`0` 失败；两项 R23 变异（直接要求重新登录、声称已确认限流）都被准确拒绝。完整 593 项变异复验将重新运行后再推送。
