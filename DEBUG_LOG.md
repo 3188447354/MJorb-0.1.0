@@ -6460,3 +6460,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：`703` 现在声明 `pairingRequired → repairPairing → pairing`，操作为安装、来源为设备通道。该合同会优先让现有 UI 打开配对页；没有把不明确的连接失败一并归为配对问题。
 
 **验证**：新增静态合同测试。完整 iOS CI 将在下一次推送后编译验证。
+
+## 2026-10-11 — 发布安全校验把合法访问修饰符调整误判为失败
+
+**症状**：完整 iOS CI run `38095175602` 的 `build-package` 在编译前退出，报 `section start marker not found: private nonisolated static func failure(from error: Error) -> ImportFailure {`。
+
+**根因**：`verify-release-safety.py` 用完整函数声明（包括 `private nonisolated`）切分双重认证的错误映射函数。源码为满足并发调用改为 `nonisolated static` 后，函数语义和测试保护不变，但校验器将访问修饰符当成了业务边界。
+
+**修复**：安全校验改为以稳定的 `static func failure(from error: Error) -> ImportFailure {` 签名定位函数体，继续验证双重认证优先于限流和网络的实际业务顺序，不再绑定无关修饰符。
+
+**验证**：运行发布安全校验及错误合同回归测试；下一次完整 iOS CI 将验证打包流程。

@@ -840,7 +840,7 @@ def violations(load=read):
          "func validate(",
          "nonisolated static func mask(_ appleID: String) -> String {"),
         ("AppleAccountClient.failure(from:)",
-         "private nonisolated static func failure(from error: Error) -> ImportFailure {",
+         "static func failure(from error: Error) -> ImportFailure {",
          "private struct AuthObjects"),
     ):
         entry_body = section(client_source, start_marker, end_marker)
