@@ -469,6 +469,7 @@ class FailureContractSourceTests(unittest.TestCase):
             "alertFailure = operationConflictFailure(requested: .importing)",
             selected_import,
         )
+        self.assertIn("return false\n        }\n        guard let operationLease", selected_import)
 
     def test_manual_settings_operations_never_silently_drop_a_lock_timeout(self) -> None:
         source = (ROOT / "Seal/Features/Settings/SettingsViewModel.swift").read_text(
