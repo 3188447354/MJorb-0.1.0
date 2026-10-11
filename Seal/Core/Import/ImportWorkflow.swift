@@ -240,8 +240,13 @@ actor ImportWorkflow {
                     throw ImportFailure(
                         title: "覆盖目标已变化",
                         reason: "要覆盖的已安装应用已被移除或状态已变化，因此没有导入新副本。",
-                        recovery: "返回后重新选择覆盖目标，或选择新建副本",
-                        code: "SEAL-IPA-217"
+                        recovery: "重新选择 IPA 后再确认覆盖目标",
+                        code: "SEAL-IPA-217",
+                        condition: .unexpected,
+                        action: .reimportIPA,
+                        retryDisposition: .manual,
+                        operation: .importIPA,
+                        origin: .unknown
                     )
                 }
                 existing = replacement
@@ -696,15 +701,25 @@ actor ImportWorkflow {
             title: "无法导入 IPA",
             reason: "IPA 解析失败，文件结构或元数据不可读取。",
             recovery: "选择其他 IPA",
-            code: "SEAL-IPA-200"
+            code: "SEAL-IPA-200",
+            condition: .unexpected,
+            action: .reimportIPA,
+            retryDisposition: .manual,
+            operation: .importIPA,
+            origin: .unknown
         )
     }
 
     private static let persistenceFailure = ImportFailure(
         title: "无法保存 IPA",
         reason: "应用记录保存失败（IPA 文件已就绪，但记录未能写入应用列表）。",
-        recovery: "检查本机存储空间后重试",
-        code: "SEAL-IPA-205"
+        recovery: "重新尝试导入",
+        code: "SEAL-IPA-205",
+        condition: .unexpected,
+        action: .retry,
+        retryDisposition: .manual,
+        operation: .importIPA,
+        origin: .unknown
     )
 
     private static let temporaryCleanupFailure = ImportFailure(

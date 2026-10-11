@@ -1218,6 +1218,34 @@ final class AppsViewModel: ObservableObject {
         await consumeWorkflowState()
     }
 
+    /// 导入确认页不能把所有失败都错误地送进同一条 `workflow.retry()`：
+    /// 重新选择 IPA 与重新提交当前事务是两种不同的恢复动作。这里只消费已结构化的
+    /// failure action；历史失败则维持旧行为，直到各发射点完成迁移。
+    func performImportPrimaryAction() async {
+        guard let failure = sheetFailure else {
+            await confirmImport()
+            return
+        }
+        guard failure.hasStructuredSemantics else {
+            await retryImport()
+            return
+        }
+        switch failure.action {
+        case .retry:
+            await retryImport()
+        case .reimportIPA:
+            await reselectImportIPA()
+        default:
+            break
+        }
+    }
+
+    private func reselectImportIPA() async {
+        await cancelImport()
+        guard alertFailure == nil else { return }
+        presentImporter()
+    }
+
     func cancelImport() async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 取消导入")
         var cleanupFailure: ImportFailure?

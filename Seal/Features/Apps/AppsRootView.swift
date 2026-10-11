@@ -54,8 +54,7 @@ struct AppsRootView: View {
                         onCancel: { Task { await viewModel.cancelImport() } },
                         onPrimaryAction: {
                             Task {
-                                if viewModel.sheetFailure == nil { await viewModel.confirmImport() }
-                                else { await viewModel.retryImport() }
+                                await viewModel.performImportPrimaryAction()
                             }
                         },
                         onCreateCopy: { Task { await viewModel.confirmImportAsNewRecord() } },

@@ -198,6 +198,55 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn("case .reimportIPA:", recovery)
         self.assertIn("presentImporter()", recovery)
 
+    def test_import_workflow_failures_keep_their_actual_recovery_owner(self) -> None:
+        source = (ROOT / "Seal/Core/Import/ImportWorkflow.swift").read_text(
+            encoding="utf-8"
+        )
+
+        parse_failure = source.split("private static func importFailure", 1)[1].split(
+            "private static let persistenceFailure", 1
+        )[0]
+        persistence_failure = source.split("private static let persistenceFailure", 1)[1].split(
+            "private static let temporaryCleanupFailure", 1
+        )[0]
+        replacement_failure = source.split("guard let replacement", 1)[1].split(
+            "let preferenceSource", 1
+        )[0]
+
+        self.assertIn('code: "SEAL-IPA-200"', parse_failure)
+        self.assertIn("action: .reimportIPA", parse_failure)
+        self.assertIn("operation: .importIPA", parse_failure)
+        self.assertIn("origin: .unknown", parse_failure)
+
+        self.assertIn('code: "SEAL-IPA-205"', persistence_failure)
+        self.assertIn("action: .retry", persistence_failure)
+        self.assertIn("retryDisposition: .manual", persistence_failure)
+        self.assertNotIn("存储空间", persistence_failure)
+        self.assertIn("operation: .importIPA", persistence_failure)
+        self.assertIn("origin: .unknown", persistence_failure)
+
+        self.assertIn('code: "SEAL-IPA-217"', replacement_failure)
+        self.assertIn("action: .reimportIPA", replacement_failure)
+        self.assertIn("retryDisposition: .manual", replacement_failure)
+        self.assertIn("operation: .importIPA", replacement_failure)
+
+    def test_structured_import_recovery_chooses_the_action_instead_of_always_retrying(self) -> None:
+        root = (ROOT / "Seal/Features/Apps/AppsRootView.swift").read_text(
+            encoding="utf-8"
+        )
+        view_model = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("await viewModel.performImportPrimaryAction()", root)
+        recovery = view_model.split("func performImportPrimaryAction", 1)[1].split(
+            "func cancelImport", 1
+        )[0]
+        self.assertIn("case .retry:", recovery)
+        self.assertIn("await retryImport()", recovery)
+        self.assertIn("case .reimportIPA:", recovery)
+        self.assertIn("await reselectImportIPA()", recovery)
+
     def test_incomplete_profile_only_result_retries_instead_of_claiming_app_id_loss(self) -> None:
         source = (ROOT / "Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift").read_text(
             encoding="utf-8"
