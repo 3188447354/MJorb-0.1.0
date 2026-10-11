@@ -208,7 +208,7 @@ struct DeviceChannelTransientPolicyTests {
         let failure = AppsViewModel.signingFailure(for: URLError(.timedOut))
 
         #expect(failure.code == "SEAL-NET-102")
-        #expect(failure.condition == .appleServiceUnavailable)
+        #expect(failure.condition == .appleRequestTransportUnavailable)
         #expect(failure.action == .retry)
         #expect(failure.operation == .sign)
         #expect(failure.origin == .signing)
@@ -222,7 +222,7 @@ struct DeviceChannelTransientPolicyTests {
         )
 
         #expect(failure.code == "SEAL-NET-102")
-        #expect(failure.condition == .appleServiceUnavailable)
+        #expect(failure.condition == .appleRequestTransportUnavailable)
         #expect(failure.action == .retry)
         #expect(failure.operation == .batchRenew)
         #expect(failure.origin == .signing)

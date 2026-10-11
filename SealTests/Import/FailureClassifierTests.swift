@@ -12,7 +12,7 @@ struct FailureClassifierTests {
                 origin: .applePortal
             )
 
-            #expect(failure.condition == .appleServiceUnavailable)
+            #expect(failure.condition == .appleRequestTransportUnavailable)
             #expect(failure.action == .retry)
             #expect(failure.retryDisposition == .manual)
             #expect(failure.code == "SEAL-NET-102")

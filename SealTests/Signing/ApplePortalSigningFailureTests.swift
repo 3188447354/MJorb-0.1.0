@@ -92,8 +92,9 @@ struct ApplePortalSigningFailureTests {
         )
 
         #expect(failure.code.hasPrefix("SEAL-NET-"))
-        // 安抚语义保留（账号/已签应用不受影响），仅措辞随网络文案重写而更新；技术细节继续隐藏
-        #expect(failure.reason.contains("不受影响"))
+        // 传输未完成只能确认请求和已保存账号状态；不能推断为账号、Wi-Fi 或服务端故障。
+        #expect(failure.reason.contains("请求未完成"))
+        #expect(failure.reason.contains("状态未改变"))
         #expect(failure.reason.contains("NSURLErrorDomain") == false)
         #expect(failure.reason.contains("-1001") == false)
     }
