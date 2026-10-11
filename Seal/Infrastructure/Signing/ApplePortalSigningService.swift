@@ -3052,12 +3052,12 @@ actor ApplePortalSigningService {
                 // 描述文件返回的也是映射后 ID。这里若保留原始 ID，签后 `validateEntitlements`
                 // 用「原始请求」对「映射后 profile」必报 SEAL-ENTITLEMENT-402（权限值不一致）。
                 // 必须用同一个映射源，让「请求集」与「描述文件」两侧的 group ID 逐字一致。
-                filtered[entitlement] = groups.map {
+                filtered[entitlement] = AppGroupOrderingPolicy.canonicalize(groups.map {
                     signingWorkspace.bundleIDMapper.appGroupID(
                         original: $0,
                         teamID: team.identifier
                     )
-                }
+                })
             } else {
                 filtered[entitlement] = value
             }
@@ -3133,12 +3133,12 @@ actor ApplePortalSigningService {
         // 时取第 0 个当共享目录，顺序不同会导致两个 App 用不同的共享目录、互相看不见。
         // 注意用默认 `<`（区分大小写）：对本案即 [SideStore, AltStore]，主包第 0 个
         // 本来就是 SideStore，排序后不变，已转共享的数据不受影响。
-        let mappedIdentifiers = originalGroups.map {
+        let mappedIdentifiers = AppGroupOrderingPolicy.canonicalize(originalGroups.map {
             signingWorkspace.bundleIDMapper.appGroupID(
                 original: $0,
                 teamID: team.identifier
             )
-        }.sorted()
+        })
         let fetchedBox: LegacyBox<[ALTAppGroup]> =
             try await withAppleTimeout {
                 try await withCheckedThrowingContinuation { continuation in
@@ -3370,10 +3370,10 @@ actor ApplePortalSigningService {
                     // 描述文件里的数组顺序同样不可靠（Apple 原样保留 assign 顺序）；
                     // ALTAppGroups 写入 Info.plist 的顺序决定运行时的第 0 个共享目录，
                     // 必须与 assign 侧一致，否则两端看到的第 0 个仍可能不同。
-                    groups = values.compactMap { v in
+                    groups = AppGroupOrderingPolicy.canonicalize(values.compactMap { v in
                         if case let .string(s) = v { return s }
                         return nil
-                    }.sorted()
+                    })
                 } else {
                     groups = []
                 }
@@ -3426,10 +3426,10 @@ actor ApplePortalSigningService {
             if let data = mainProfileData,
                let details = try? ProvisioningProfileReader().details(from: data),
                case let .array(values) = details.entitlements["com.apple.security.application-groups"] {
-                appGroups = values.compactMap { v in
+                appGroups = AppGroupOrderingPolicy.canonicalize(values.compactMap { v in
                     if case let .string(s) = v { return s }
                     return nil
-                }
+                })
             } else {
                 appGroups = []
             }

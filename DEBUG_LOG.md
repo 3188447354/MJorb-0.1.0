@@ -6682,3 +6682,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：将通知标识的唯一来源移到非隔离的 `BackgroundRenewalNotificationRoute`，notifier 继续复用该值；重新生成 `docs/qa/generated/error-code-inventory.json`。
 
 **验证**：错误编号清单测试 11 项、错误合同测试 25 项及差异检查通过；下一轮完整 iOS CI 负责验证 Swift 编译与完整包。
+
+## 2026-10-11 — LiveContainer 相同 App Group 集合的重复绑定仍可能让签名边界漂移
+
+**症状**：LiveContainer 主包与 LiveContainer2 的 App Group 集合相同而原始顺序相反时，运行时若把第 0 项当共享目录，会分别落到不同容器。此前重建 LC2 的 Apple App ID 能改变当时的门户绑定顺序，但不能保证后续重签、续签或另一份带重复 group 的 IPA 保持同一输入。
+
+**根因**：现有修复已经在门户绑定、Info.plist 元数据和 SideSign 二进制 entitlement 三处按字母排序；但 Seal 门户边界仍把重复的原始 App Group 值直接交给 `assign`，而预期 entitlement / 元数据 / 诊断各自实现排序。重复项可能生成重复的 Apple 绑定输入，并让三处规范化规则再次漂移。
+
+**修复**：新增单一 `AppGroupOrderingPolicy`，以「去重后稳定字典序」作为 Seal 所有门户边界的唯一规范化规则。它用于请求 entitlement、Apple 绑定输入、写入 `ALTAppGroups` 和诊断读取；SideSign 仍在最终二进制写入前独立做同一规范化，因而既能修复既有 App ID 绑定顺序不可靠的问题，也能保证最终安装包的 entitlement 顺序。
+
+**验证**：新增 LiveContainer 主包／LC2 反向顺序与重复绑定输入两项纯函数回归测试；本机错误编号审计 11 项、错误合同 25 项和 `git diff --check` 通过。Windows 主机无 Swift/Xcode 工具链，完整 iOS CI 负责 Swift 编译、签名内核与回归测试。
