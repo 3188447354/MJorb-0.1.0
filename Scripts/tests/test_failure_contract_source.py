@@ -165,10 +165,14 @@ class FailureContractSourceTests(unittest.TestCase):
         expectations = {
             "SEAL-IPA-201": (".localStorageWriteFailed", ".restartSeal"),
             "SEAL-IPA-202": (".unexpected", ".reimportIPA"),
-            "SEAL-IPA-203": (".localStorageWriteFailed", ".retry"),
+            "SEAL-IPA-203": (".localStorageWriteFailed", ".reimportIPA"),
             "SEAL-IPA-204": (".unexpected", ".reimportIPA"),
             "SEAL-IPA-211a": (".unexpected", ".reimportIPA"),
-            "SEAL-IPA-212": (".localStorageWriteFailed", ".retry"),
+            "SEAL-IPA-212": (".localStorageWriteFailed", ".reimportIPA"),
+            "SEAL-IPA-207": (".unexpected", ".reimportIPA"),
+            "SEAL-IPA-208": (".unexpected", ".reimportIPA"),
+            "SEAL-IPA-209": (".unexpected", ".reimportIPA"),
+            "SEAL-IPA-210": (".unexpected", ".reimportIPA"),
         }
         for code, (condition, action) in expectations.items():
             failure = source.split(f'code: "{code}",', 1)[1].split(
@@ -181,6 +185,18 @@ class FailureContractSourceTests(unittest.TestCase):
             self.assertIn("origin: .fileStore", failure, code)
 
         self.assertNotIn("condition: .deviceStorageFull", source)
+
+    def test_structured_reimport_action_opens_the_importer_without_a_code_prefix_guess(self) -> None:
+        source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        recovery = source.split("func performAlertRecovery", 1)[1].split(
+            "    func openSettings", 1
+        )[0]
+
+        self.assertIn("if failure.hasStructuredSemantics", recovery)
+        self.assertIn("case .reimportIPA:", recovery)
+        self.assertIn("presentImporter()", recovery)
 
     def test_incomplete_profile_only_result_retries_instead_of_claiming_app_id_loss(self) -> None:
         source = (ROOT / "Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift").read_text(

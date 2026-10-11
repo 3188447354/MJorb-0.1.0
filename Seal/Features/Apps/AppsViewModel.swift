@@ -1327,6 +1327,17 @@ final class AppsViewModel: ObservableObject {
         }
         let recovery = failure.recovery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard recovery != "知道了" else { return }
+        if failure.hasStructuredSemantics {
+            switch failure.action {
+            case .reimportIPA:
+                presentImporter()
+            default:
+                if let route = settingsRoute(for: failure) {
+                    openSettings(route: route)
+                }
+            }
+            return
+        }
         if failure.code.hasPrefix("SEAL-IPA-") {
             presentImporter()
         } else if let route = settingsRoute(for: failure) {

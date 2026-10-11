@@ -9492,7 +9492,7 @@ def main():
         # ⑪ 让一条**非通道**失败的 recovery 也写成「检查是否打开 LocalDevVPN」⇒ R83③b 报红
         #    （用户读到一句「检查是否打开 LocalDevVPN」，却没有任何按钮能送他过去）。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
-         '                recovery: "确认 LocalDevVPN 已连接、开发者模式已开启后重试",\n',
+         '                recovery: "删除一个或多个 App 或在系统设置中清理存储空间后重试",\n',
          '                recovery: "检查是否打开 LocalDevVPN",\n',
          "R83③b: 「recovery 文案在引导用户去检查 LocalDevVPN」的每一条失败"),
         # ── R84：续签「全部不重装」的闭环（2026-09-26 构建 46 真机）──

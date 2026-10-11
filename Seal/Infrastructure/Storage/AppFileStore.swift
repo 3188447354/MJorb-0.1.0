@@ -202,7 +202,12 @@ actor AppFileStore {
             title: "无法导入 IPA",
             reason: "请选择 .ipa 文件，或包含单个 .ipa 的 GitHub 构建产物 zip。当前文件：\(sourceURL.lastPathComponent)",
             recovery: "重新选择文件",
-            code: "SEAL-IPA-207"
+            code: "SEAL-IPA-207",
+            condition: .unexpected,
+            action: .reimportIPA,
+            retryDisposition: .manual,
+            operation: .importIPA,
+            origin: .fileStore
         )
     }
 
@@ -273,7 +278,12 @@ actor AppFileStore {
                 title: "无法导入构建产物",
                 reason: "本机文件 \(sourceURL.lastPathComponent) 无法读取。",
                 recovery: "重新选择",
-                code: "SEAL-IPA-208"
+                code: "SEAL-IPA-208",
+                condition: .unexpected,
+                action: .reimportIPA,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
     }
@@ -295,7 +305,12 @@ actor AppFileStore {
                 title: "无法导入构建产物",
                 reason: ipaEntries.isEmpty ? "压缩包中没有找到 IPA。" : "压缩包中包含多个 IPA，无法判断要导入哪一个。",
                 recovery: "先在文件 App 中解压，再选择具体 IPA",
-                code: "SEAL-IPA-209"
+                code: "SEAL-IPA-209",
+                condition: .unexpected,
+                action: .reimportIPA,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
 
@@ -306,7 +321,12 @@ actor AppFileStore {
                 title: "无法导入构建产物",
                 reason: "无法从压缩包中取出 IPA。",
                 recovery: "先解压后再导入 IPA",
-                code: "SEAL-IPA-210"
+                code: "SEAL-IPA-210",
+                condition: .unexpected,
+                action: .reimportIPA,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
     }
@@ -395,7 +415,7 @@ actor AppFileStore {
                 recovery: "检查存储空间后重试",
                 code: "SEAL-IPA-203",
                 condition: .localStorageWriteFailed,
-                action: .retry,
+                action: .reimportIPA,
                 retryDisposition: .manual,
                 operation: .importIPA,
                 origin: .fileStore
@@ -481,7 +501,7 @@ actor AppFileStore {
                 recovery: "检查存储空间后重试",
                 code: "SEAL-IPA-212",
                 condition: .localStorageWriteFailed,
-                action: .retry,
+                action: .reimportIPA,
                 retryDisposition: .manual,
                 operation: .importIPA,
                 origin: .fileStore

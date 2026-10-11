@@ -6510,3 +6510,33 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：为 `SEAL-IPA-201/203/212` 标注 `localStorageWriteFailed`，但不标为 `deviceStorageFull`；为 `202/204/211a` 标注 `unexpected`，避免从宽泛 catch 推测根因。分别保留源码已有的 `restartSeal`、`reimportIPA` 或 `retry` 动作，全部限定在 `importIPA / fileStore`。
 
 **验证**：按测试先红后绿新增静态合同测试，覆盖六个出口并断言该文件不产生 `deviceStorageFull`；本地 Python 错误审计／合同测试 26 项通过，`git diff --check` 通过。完整 iOS CI 需在这批改动推送后验证 Swift 编译。
+
+## 2026-10-11 — 已迁移的导入恢复动作仍可能被旧错误码分流覆盖
+
+**症状**：`AppsViewModel.performAlertRecovery` 原先以 `SEAL-IPA-` 前缀决定是否重新打开文件选择器。导入失败增加结构化合同后，如果 UI 仍先看错误码，后续同前缀新错误会再次被强制导入；反之若直接把 `reimportIPA` 视作“知道了”，用户又无法执行源码承诺的“重新选择 IPA”。
+
+**根因**：恢复出口没有先消费 `FailureAction`。`SEAL-IPA-203/212` 的“检查后重试”也没有独立的原地重试事务，唯一真实可执行的下一步是重新选择 IPA 并重新导入。
+
+**修复**：结构化失败优先按合同分流：`.reimportIPA` 直接打开导入器，带 `route` 的失败仅按 `FailureRoute` 跳转，其余合同不再落到错误码前缀猜测；未迁移的历史错误才保留旧兼容分支。`203/212` 的动作改为 `reimportIPA`，但继续保留 `localStorageWriteFailed` 条件，不伪造“设备空间已满”。
+
+**验证**：新增先红后绿的静态回归测试，验证六个 IPA 合同以及结构化 `.reimportIPA` 不依赖错误码前缀即可打开导入器；本地 Python 错误审计／合同测试 27 项通过，`git diff --check` 通过。完整 iOS CI 将在推送后验证。
+
+## 2026-10-11 — 不合格的导入文件缺少可执行的统一出口
+
+**症状**：`SEAL-IPA-207/208/209/210` 分别表示文件类型不支持、压缩包不可读、压缩包内没有唯一 IPA、以及解压失败。旧实现只有文案；UI 只能依赖错误码前缀猜测是否打开导入器。
+
+**根因**：四个失败均发生在 `AppFileStore` 读取用户刚选取的本地文件时，源码没有证据指向 Apple 服务、设备通道或网络，但也没有把“重新选择 IPA”作为合同动作提供给界面。
+
+**修复**：四条出口统一标为 `unexpected → reimportIPA → importIPA / fileStore`，保留各自原始原因和更具体的操作提示（例如先解压再选择具体 IPA），不伪造格式损坏、存储不足或网络故障。
+
+**验证**：扩展本地 IPA 合同回归测试，先红后绿；Python 错误审计／合同测试 27 项通过，生成库存已从 54 个升至 58 个显式合同出口。完整 iOS CI 将在下一次推送后验证。
+
+## 2026-10-11 — 发布安全变异测试引用了已迁移的旧文案
+
+**症状**：完整 iOS CI run `38110171515` 的发布安全校验运行约 8 分钟后失败，报 `Mutation anchor missing`。守卫仍在 `MinimuxerInstallChannel.swift` 中寻找一条已经不存在的“确认 LocalDevVPN 已连接、开发者模式已开启后重试”文案。
+
+**根因**：该旧文案实际位于 `SigningCoordinator.swift` 的历史路径，且已被更准确的设备通道分类替代；变异测试的意图是验证“不能把非通道问题写成检查 LocalDevVPN”，但锚点文件和文本没有随迁移更新，导致守卫先因找不到锚点退出，未验证真正的不变量。
+
+**修复**：变异锚点改为 `MinimuxerInstallChannel` 中确实存在的 `SEAL-INSTALL-702s`（设备存储不足）恢复文案；把它突变为“检查是否打开 LocalDevVPN”时，R83③b 的同源闸门会正确检测 702s 不在本地隧道错误集合。没有恢复旧的误导性文案。
+
+**验证**：已用源码检索确认新锚点唯一存在且替换目标由 R83③b 消费；完整 iOS CI 在推送后将执行全部 836 条源码守卫和 593 条变异检查。
