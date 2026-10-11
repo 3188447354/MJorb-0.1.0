@@ -344,7 +344,12 @@ final class AppleAccountClient {
                 title: "无法验证 Apple ID",
                 reason: "Apple 验证返回了无法分类的错误，账号状态未改变。",
                 recovery: "稍后重试；如持续失败再重新验证 Apple ID",
-                code: "SEAL-VERIFY-500a"
+                code: "SEAL-VERIFY-500a",
+                condition: .unexpected,
+                action: .waitThenRetry,
+                retryDisposition: .manual,
+                operation: .validateAccount,
+                origin: .authentication
             )
         }
     }

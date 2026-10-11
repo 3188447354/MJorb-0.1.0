@@ -6490,3 +6490,23 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：将 `304` 声明为 `appIDRegistrationLimit → waitThenRetry`，操作为签名、来源为 Apple Portal；不新增猜测式网络动作。
 
 **验证**：新增静态合同回归测试；本地 Python 错误审计／合同测试 24 项通过。完整 iOS CI 将在推送后验证 Swift 编译。
+
+## 2026-10-11 — 已保存账号验证的未分类异常没有明确恢复边界
+
+**症状**：`SEAL-VERIFY-500a` 表示 Apple 账号验证返回了未能分类的异常，已有文案正确说明账号状态未改变，但缺少结构化条件、动作、操作和来源。UI 只能依赖旧错误码兜底，无法和“凭据被拒绝”或“验证码错误”等已确认事实稳定区分。
+
+**根因**：这是 `AppleAccountClient.validate` 的最终兜底分支；在网络、双重认证、验证码与已知认证错误均已排除后，源码没有更多可证明的具体原因。把它写成网络、VPN、账号失效或要求立即重登都会超出证据。
+
+**修复**：将该出口标注为 `unexpected → waitThenRetry`，操作为 `validateAccount`、来源为 `authentication`、手动重试；保留“账号状态未改变，稍后重试；持续失败再重新验证 Apple ID”的原始恢复顺序。
+
+**验证**：新增静态合同回归测试，断言代码、合同字段和“账号状态未改变”的透明文案；本地 Python 错误审计／合同测试 25 项通过。完整 iOS CI run `38109505934` 仍在执行，完成后才会提交此批修改，避免取消正在验证的 App ID 限额修复。
+
+## 2026-10-11 — IPA 本地文件失败被笼统写成存储空间不足
+
+**症状**：导入中的应用目录不可访问、复制源 IPA 失败、待提交暂存目录丢失、文件提交失败和暂存文件越界，均缺少失败合同；其中两条文案要求检查存储空间，但捕获边界包含权限、文件系统和事务异常，源码不能证明设备空间已满。
+
+**根因**：`AppFileStore` 在每个文件操作边界保留了用户恢复文案，却没有把已确认的本地存取事实、操作范围和来源交给 UI。旧错误码兜底无法区分“重开 Seal”“重新选择 IPA”和“重新导入”。
+
+**修复**：为 `SEAL-IPA-201/203/212` 标注 `localStorageWriteFailed`，但不标为 `deviceStorageFull`；为 `202/204/211a` 标注 `unexpected`，避免从宽泛 catch 推测根因。分别保留源码已有的 `restartSeal`、`reimportIPA` 或 `retry` 动作，全部限定在 `importIPA / fileStore`。
+
+**验证**：按测试先红后绿新增静态合同测试，覆盖六个出口并断言该文件不产生 `deviceStorageFull`；本地 Python 错误审计／合同测试 26 项通过，`git diff --check` 通过。完整 iOS CI 需在这批改动推送后验证 Swift 编译。

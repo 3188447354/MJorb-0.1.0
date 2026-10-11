@@ -100,7 +100,12 @@ actor AppFileStore {
                 title: "无法保存 IPA",
                 reason: "无法访问本机应用目录（Documents / Caches / Application Support）。",
                 recovery: "重新打开 Seal",
-                code: "SEAL-IPA-201"
+                code: "SEAL-IPA-201",
+                condition: .localStorageWriteFailed,
+                action: .restartSeal,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
         return AppFileStore(
@@ -165,7 +170,12 @@ actor AppFileStore {
                 title: "无法导入 IPA",
                 reason: "文件 \(sourceURL.lastPathComponent) 复制失败。",
                 recovery: "重新选择 IPA",
-                code: "SEAL-IPA-202"
+                code: "SEAL-IPA-202",
+                condition: .unexpected,
+                action: .reimportIPA,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
     }
@@ -383,7 +393,12 @@ actor AppFileStore {
                 title: "无法保存 IPA",
                 reason: "本地存储准备失败。",
                 recovery: "检查存储空间后重试",
-                code: "SEAL-IPA-203"
+                code: "SEAL-IPA-203",
+                condition: .localStorageWriteFailed,
+                action: .retry,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
     }
@@ -420,7 +435,12 @@ actor AppFileStore {
                 title: "无法保存 IPA",
                 reason: "待提交的暂存目录缺失（\(pendingDirectory.lastPathComponent)）。",
                 recovery: "重新导入 IPA",
-                code: "SEAL-IPA-211a"
+                code: "SEAL-IPA-211a",
+                condition: .unexpected,
+                action: .reimportIPA,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
 
@@ -459,7 +479,12 @@ actor AppFileStore {
                 title: "无法保存 IPA",
                 reason: "文件提交失败。",
                 recovery: "检查存储空间后重试",
-                code: "SEAL-IPA-212"
+                code: "SEAL-IPA-212",
+                condition: .localStorageWriteFailed,
+                action: .retry,
+                retryDisposition: .manual,
+                operation: .importIPA,
+                origin: .fileStore
             )
         }
     }
@@ -1075,7 +1100,12 @@ actor AppFileStore {
             title: "无法保存 IPA",
             reason: "暂存文件无效（不在可用临时目录内）。",
             recovery: "重新选择 IPA",
-            code: "SEAL-IPA-204"
+            code: "SEAL-IPA-204",
+            condition: .unexpected,
+            action: .reimportIPA,
+            retryDisposition: .manual,
+            operation: .importIPA,
+            origin: .fileStore
         )
     }
 }

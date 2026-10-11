@@ -142,6 +142,46 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("更换网络", handshake)
         self.assertNotIn("系统时间", handshake)
 
+    def test_unclassified_account_validation_is_transparent_and_waits_before_reauth(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Accounts/AppleAccountClient.swift").read_text(
+            encoding="utf-8"
+        )
+        validation = source.split("func validate(", 1)[1].split(
+            "nonisolated static func mask", 1
+        )[0]
+
+        self.assertIn('code: "SEAL-VERIFY-500a"', validation)
+        self.assertIn("condition: .unexpected", validation)
+        self.assertIn("action: .waitThenRetry", validation)
+        self.assertIn("operation: .validateAccount", validation)
+        self.assertIn("origin: .authentication", validation)
+        self.assertIn("账号状态未改变", validation)
+
+    def test_local_import_storage_boundaries_keep_only_source_proven_recovery_actions(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Storage/AppFileStore.swift").read_text(
+            encoding="utf-8"
+        )
+
+        expectations = {
+            "SEAL-IPA-201": (".localStorageWriteFailed", ".restartSeal"),
+            "SEAL-IPA-202": (".unexpected", ".reimportIPA"),
+            "SEAL-IPA-203": (".localStorageWriteFailed", ".retry"),
+            "SEAL-IPA-204": (".unexpected", ".reimportIPA"),
+            "SEAL-IPA-211a": (".unexpected", ".reimportIPA"),
+            "SEAL-IPA-212": (".localStorageWriteFailed", ".retry"),
+        }
+        for code, (condition, action) in expectations.items():
+            failure = source.split(f'code: "{code}",', 1)[1].split(
+                "\n            )", 1
+            )[0]
+            self.assertIn(f"condition: {condition}", failure, code)
+            self.assertIn(f"action: {action}", failure, code)
+            self.assertIn("retryDisposition: .manual", failure, code)
+            self.assertIn("operation: .importIPA", failure, code)
+            self.assertIn("origin: .fileStore", failure, code)
+
+        self.assertNotIn("condition: .deviceStorageFull", source)
+
     def test_incomplete_profile_only_result_retries_instead_of_claiming_app_id_loss(self) -> None:
         source = (ROOT / "Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift").read_text(
             encoding="utf-8"
