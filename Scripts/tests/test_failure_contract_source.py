@@ -450,6 +450,26 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn("alertFailure = operationConflictFailure(requested: .installing)", installation)
         self.assertIn("alertFailure = operationConflictFailure(requested: .maintainingStorage)", deletion)
 
+    def test_self_update_import_reports_an_active_import_instead_of_disappearing(self) -> None:
+        source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        # RootTabView can hand the downloaded Seal IPA to this entry point while
+        # a prior user import is still parsing or awaiting confirmation.  The
+        # old combined guard returned false, so the update sheet closed and the
+        # user received no explanation.  A manual self-update must surface the
+        # same transaction conflict as every other foreground import.
+        selected_import = source.split("private func importSelectedFile(", 1)[1].split(
+            "func confirmImport()", 1
+        )[0]
+        self.assertIn("guard let workflow else { return false }", selected_import)
+        self.assertIn("guard phase == .idle else", selected_import)
+        self.assertIn(
+            "alertFailure = operationConflictFailure(requested: .importing)",
+            selected_import,
+        )
+
     def test_manual_settings_operations_never_silently_drop_a_lock_timeout(self) -> None:
         source = (ROOT / "Seal/Features/Settings/SettingsViewModel.swift").read_text(
             encoding="utf-8"

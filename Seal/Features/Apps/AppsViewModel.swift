@@ -1156,7 +1156,16 @@ final class AppsViewModel: ObservableObject {
 
     @discardableResult
     private func importSelectedFile(_ url: URL, autoOpenSigning: Bool) async -> Bool {
-        guard let workflow, phase == .idle else { return false }
+        guard let workflow else { return false }
+        // `RootTabView` can hand a downloaded Seal update to this method after
+        // another user-selected IPA has already entered its confirmation flow.
+        // Do not silently discard that deliberate update request: the file is
+        // retained by the downloader, and the user gets the same actionable
+        // transaction conflict as every other foreground import.
+        guard phase == .idle else {
+            alertFailure = operationConflictFailure(requested: .importing)
+            return false
+        }
         guard let operationLease = await acquireOperation(.importing) else {
             alertFailure = operationConflictFailure(requested: .importing)
             return false
