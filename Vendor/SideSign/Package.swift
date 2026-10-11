@@ -62,20 +62,20 @@ let package = Package(
             ],
             path: "Sources"
         ),
+        .testTarget(
+            name: "SideSignTests",
+            dependencies: ["SideSign"],
+            path: "Tests/SideSignTests"
+        ),
         // ⚠️ **`.executableTarget(name: "SideSignCLI")` 已移除**（2026-09-19）✗ ——
         // 它的 `CLI/` 目录**整段建立在已删掉的门户层上**（`import AnisetteKit` +
         // `DeveloperPortal` / `CertificateRequest` / `CertificateType` / `ProfileType` ✗）
         // ⇒ 删掉那层之后**根本编译不过** ✗，而 Seal 只用 `SideSign` 这个库 ✓。
         // ⇒ 留着它会让 `swift build` / `swift test` 在 `Vendor/SideSign/` 下直接报错 ✗。
         //
-        // ⚠️ **`.testTarget(name: "SideSignTests")` 也已移除**（2026-09-20）✗ ——
-        // 上游那个测试文件**本身就编译不过** ✗（CI 实报：`cannot find 'FileManager' in scope`
-        // —— 它缺 `import Foundation` ✓；另有一处 `entries.map(\.filename)` 的 key path
-        // 推断失败 ✓）。剩下的 3 个用例测的是 `Device` 模型与 `Archive` 往返，
-        // 而 **Seal 完全不使用 `SideSign.Archive`** ✓（grep 为空 ✓）⇒ 对 Seal **零价值** ✓。
-        // ⇒ 按用户死命令「**不要打补丁**」⇒ **移除**（而不是给它加 `import` ✓）；
-        //    签名内核的回归门由 **`Vendor/CodeSignKit` 的测试**承担 ✓（`ios.yml` 的
-        //    `signer-tests` job ✓ —— 那套测试在 CI 里是**全绿**的 ✓）。
+        // SideSign 的旧上游测试只覆盖未使用的 Archive/Device 模型，所以不恢复它们。
+        // 上面的 SideSignTests 只覆盖 Seal 实际调用的 AppBundleSigner entitlement
+        // 准备边界，并由完整 iOS workflow 的 signer-tests job 运行。
     ],
 
     swiftLanguageModes: [.v6],

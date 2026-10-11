@@ -82,6 +82,32 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
+    func profileOnlyRenewalDoesNotClaimToRepairLegacyAppGroupOrder() {
+        // 只续签的定义是「更新描述文件，不重写已安装二进制」。历史产物的 App Group
+        // 顺序因此必须原样保留在身份对账记录中；真正的顺序修复只发生在下一次完整签名。
+        let legacyGroups: [ProvisioningEntitlementValue] = [
+            .string("group.com.rileytestut.AltStore"),
+            .string("group.com.SideStore.SideStore")
+        ]
+        var app = makeEligibleApp(includeExtension: false)
+        app.signingTargets = [
+            target(
+                bundleIdentifier: "com.example.demo.TEAM123456",
+                profileUUID: "MAIN-PROFILE",
+                expiry: app.expiryDate,
+                entitlements: [
+                    "com.apple.security.application-groups": .array(legacyGroups)
+                ]
+            )
+        ]
+
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app)
+                == .eligible(targetBundleIdentifiers: ["com.example.demo.TEAM123456"])
+        )
+    }
+
+    @Test
     func installedThirdPartyAppKeepsProfileOnlyEligibilityAfterSignedCacheMetadataIsRemoved() {
         // `Signed.ipa` 是可重建的安装缓存，不是设备上已安装包的续签身份。
         // 清缓存后只要签名目标、证书、设备和描述文件身份仍完整，就必须继续走
@@ -667,7 +693,8 @@ struct ProfileOnlyRenewalPolicyTests {
     private func target(
         bundleIdentifier: String,
         profileUUID: String,
-        expiry: Date
+        expiry: Date,
+        entitlements: [String: ProvisioningEntitlementValue] = [:]
     ) -> SigningTargetRecord {
         SigningTargetRecord(
             bundleIdentifier: bundleIdentifier,
@@ -678,7 +705,7 @@ struct ProfileOnlyRenewalPolicyTests {
             teamIdentifier: "TEAM123456",
             certificateSerialNumbers: ["00AABB"],
             deviceIdentifiers: ["DEVICE-UDID"],
-            entitlements: [:]
+            entitlements: entitlements
         )
     }
 }

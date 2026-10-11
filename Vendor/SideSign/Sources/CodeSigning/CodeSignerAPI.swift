@@ -9,6 +9,44 @@
 import Foundation
 import CodeSignKit
 
+/// Normalizes the one entitlement whose value is a set of App Group identifiers.
+///
+/// App Group entitlement order is not a portal-level contract, but some apps
+/// incorrectly choose their shared container from the first value. Signing two
+/// related apps from profiles that list the same groups in a different order
+/// must therefore produce the same binary entitlement order. This deliberately
+/// does not touch other entitlement arrays: keychain access groups, for
+/// example, can have first-item semantics.
+enum AppGroupEntitlementCanonicalizer {
+    static let key = "com.apple.security.application-groups"
+
+    static func apply(to entitlements: [String: any Sendable]) -> [String: any Sendable] {
+        guard let rawGroups = entitlements[key],
+              let groups = strings(from: rawGroups) else {
+            return entitlements
+        }
+
+        var canonical = entitlements
+        canonical[key] = Array(Set(groups)).sorted()
+        return canonical
+    }
+
+    private static func strings(from value: any Sendable) -> [String]? {
+        if let groups = value as? [String] {
+            return groups
+        }
+        if let groups = value as? NSArray {
+            let strings = groups.compactMap { $0 as? String }
+            return strings.count == groups.count ? strings : nil
+        }
+        if let groups = value as? [Any] {
+            let strings = groups.compactMap { $0 as? String }
+            return strings.count == groups.count ? strings : nil
+        }
+        return nil
+    }
+}
+
 public protocol CodeSignerAPI: Sendable {
     var team: Team { get }
     var keyStore: KeyStore { get }
@@ -92,7 +130,9 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
                 throw SignerError.missingProvisioningProfile(bundleIdentifier: app.bundleIdentifier)
             }
 
-            var filteredEntitlements = matchedProfile.entitlements
+            var filteredEntitlements = AppGroupEntitlementCanonicalizer.apply(
+                to: matchedProfile.entitlements
+            )
             verboseLog("[SideSign] Original profile entitlements: \(filteredEntitlements)")
 
             let applicationEntitlements = app.entitlements

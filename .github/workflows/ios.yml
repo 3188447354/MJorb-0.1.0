@@ -327,7 +327,7 @@ jobs:
           path: build/TestResults.xcresult
           retention-days: 14
 
-  # 签名内核（上游 `CodeSignKit`）**自带**的测试：Mach-O 签名、CodeDirectory、
+  # 签名内核（上游 `CodeSignKit`）和 Seal 实际调用的 SideSign 准备层测试：Mach-O 签名、CodeDirectory、
   # CodeResources、DER、Requirements、签名校验 ✓。在 macOS host 上用 SPM 直接 swift test，
   # 作为**签名核心的独立回归门**，与主 App 完整门并行 —— 避免签名器演进悄悄破坏既有行为。
   #
@@ -335,11 +335,8 @@ jobs:
   # 用户死命令「签名器不一样你就换」之后，`Vendor/rork-sign` **整个目录已删除** ✗
   # ⇒ 改成测**现在真正在跑的签名内核** ✓。
   #
-  # ⚠️ **2026-09-20 收窄：只留 `CodeSignKit`** ✗ —— `Vendor/SideSign` 的测试
-  # **上游自己就编译不过** ✓（CI 实报：缺 `import Foundation` ⇒ `cannot find 'FileManager'` ✓，
-  # 另有一处 key path 推断失败 ✓），而它剩下的用例测的是 `Device` 模型与 `Archive` 往返，
-  # **Seal 完全不用 `SideSign.Archive`** ✓ ⇒ 零价值 ✓。
-  # 按「**不要打补丁**」⇒ 删掉那一步（连同它的测试 target ✓），不给它加 `import` ✓。
+  # 上游 SideSign 的 Archive/Device 测试仍不恢复；这里新增的是 Seal 自有的
+  # AppBundleSigner entitlement 测试，防止实际签名产物再次绕过规范化边界。
   signer-tests:
     # CodeSignKit 的测试仅依赖 Foundation / Swift Crypto / Swift ASN.1；
     # 不构建 IPA，也不调用 Xcode。放到 Linux 可让两个真正依赖 Xcode 26.5 的
@@ -359,6 +356,10 @@ jobs:
 
       - name: Run CodeSignKit unit tests
         working-directory: Vendor/CodeSignKit
+        run: swift test
+
+      - name: Run SideSign signing-boundary unit tests
+        working-directory: Vendor/SideSign
         run: swift test
 
   # 全绿后可选发布 GitHub Release：手动 dispatch 时勾选 publish_release。

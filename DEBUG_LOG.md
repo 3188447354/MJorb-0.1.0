@@ -5,6 +5,17 @@
 
 ---
 
+## 2026-10-11 App Group 顺序修复落在未编译签名器，删除 App ID 不是长期解法
+
+- **复核结论**：工程 `project.yml` 的 `SideSign` 依赖实际指向 `Vendor/SideSign`；此前二进制 entitlement 排序只写进 `upstream/SideSign`，不会进入 Seal 构建产物。因此 build 171 中 LC2 恢复共享的直接原因是一次性删除并重建 App ID，而不是签名器规范化。
+- **风险**：Apple 官方说明删除 App ID 会使包含它的描述文件失效。把单个 Bundle ID 和 Team ID 写死在正常签名路径中，既会破坏已有 profile，又无法覆盖其他存在同类 App Group 顺序差异的应用。
+- **替换方案**：在实际构建依赖 `Vendor/SideSign` 的 `AppBundleSigner.prepare` 统一规范化 `com.apple.security.application-groups`：只接受全字符串数组、去重并排序；主包与每个扩展都经过该边界。Keychain access groups 等其他数组完全不改。门户侧继续稳定映射/排序，但二进制签名不再依赖 Apple 返回顺序。
+- **续签边界**：profile-only 续签只更新描述文件、不重写二进制；历史逆序产物不会被伪称为已修复，下一次完整重签才会获得规范顺序。
+- **删除**：移除 LC2 专用的一次性 `deleteAppID` 迁移，并把 R24 门户退避守卫从 9 个实际调用点调整为 8 个，同时新增禁止该硬编码迁移回归的守卫。
+- **验证状态**：已新增 vendored signer 的排序/去重/类型保守/Keychain 不变测试和 profile-only 边界测试；Windows 本机没有 Swift/Xcode 工具链，Swift 测试待完整 iOS CI 编译执行。Python 语法、静态硬编码扫描、R24 调用点计数（8）与 `git diff --check` 通过。
+
+---
+
 ## 2026-10-10 App Group 数组顺序导致多容器共享目录不一致（LiveContainer 主包 / LiveContainer2）
 
 - **现象**：MJ 在主 LiveContainer 里把 App 转为共享 App，LiveContainer2 里看不见；LC2 提示"将 App 转换为共享 App 以在 livecontainer2 中使用"。
