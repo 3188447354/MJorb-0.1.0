@@ -34,7 +34,7 @@ enum FailureClassifier {
                 reason: "与 Apple 开发者服务的请求没有完成。",
                 recovery: "稍后重试",
                 code: "SEAL-NET-102",
-                condition: .appleServiceUnavailable,
+                condition: .appleRequestTransportUnavailable,
                 action: .retry,
                 retryDisposition: .manual,
                 operation: operation,

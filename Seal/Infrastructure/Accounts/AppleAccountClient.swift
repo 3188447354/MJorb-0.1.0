@@ -19,8 +19,8 @@ enum AppleAuthenticationFailure {
         }
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return AppleServiceFailurePolicy.networkFailure(
-                title: "连不上 Apple",
-                reason: "连不上 Apple 服务器，请检查网络或梯子。账号状态不会改变。"
+                underlying: error,
+                operation: .authenticateAccount
             )
         }
         switch stage {
@@ -335,8 +335,8 @@ final class AppleAccountClient {
             }
             if AppleServiceFailurePolicy.isNetworkError(error) {
                 throw AppleServiceFailurePolicy.networkFailure(
-                    title: "连不上 Apple",
-                    reason: "连不上 Apple 服务器，请检查网络或梯子。已保存的 Apple ID 仍可继续选择。"
+                    underlying: error,
+                    operation: .validateAccount
                 )
             }
             let nsError = error as NSError
@@ -622,8 +622,8 @@ final class AppleAccountClient {
         }
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return AppleServiceFailurePolicy.networkFailure(
-                title: "连不上 Apple",
-                reason: "连不上 Apple 服务器，请检查网络或梯子。账号状态不会改变。"
+                underlying: error,
+                operation: .authenticateAccount
             )
         }
         let nsError = error as NSError

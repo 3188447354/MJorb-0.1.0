@@ -24,16 +24,22 @@ enum AppleServiceFailurePolicy {
 
     static func networkFailure(
         underlying _: Error? = nil,
-        title: String = "连不上 Apple",
-        reason: String = "连不上 Apple 服务器，请检查网络或梯子。已保存的 Apple ID 不受影响。",
-        recovery: String = "网络恢复后重试",
-        code: String = "SEAL-NET-101"
+        title: String = "Apple 请求未完成",
+        reason: String = "与 Apple 开发者服务的请求未完成。已保存的 Apple ID 状态未改变。",
+        recovery: String = "稍后重试",
+        code: String = "SEAL-NET-101",
+        operation: FailureOperation = .unknown
     ) -> ImportFailure {
         ImportFailure(
             title: title,
             reason: reason,
             recovery: recovery,
-            code: code
+            code: code,
+            condition: .appleRequestTransportUnavailable,
+            action: .retry,
+            retryDisposition: .manual,
+            operation: operation,
+            origin: .applePortal
         )
     }
 

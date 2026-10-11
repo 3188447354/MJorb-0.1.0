@@ -2012,7 +2012,10 @@ final class SettingsViewModel: ObservableObject {
         } catch {
             pendingTeamSelection = nil
             let failure = AppleServiceFailurePolicy.isNetworkError(error)
-                ? AppleServiceFailurePolicy.networkFailure(underlying: error)
+                ? AppleServiceFailurePolicy.networkFailure(
+                    underlying: error,
+                    operation: .authenticateAccount
+                )
                 : Self.failure(
                     title: "无法添加账号",
                     reason: "Apple ID 验证失败。",
@@ -2557,8 +2560,8 @@ final class SettingsViewModel: ObservableObject {
             } catch {
                 if AppleServiceFailurePolicy.isNetworkError(error) {
                     throw AppleServiceFailurePolicy.networkFailure(
-                        title: "无法连接 Apple",
-                        reason: "当前网络或 Apple 服务不可用。Apple ID 状态未改变。"
+                        underlying: error,
+                        operation: .validateAccount
                     )
                 }
                 throw Self.failure(

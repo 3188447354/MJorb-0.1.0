@@ -3,6 +3,8 @@ import Foundation
 /// 源码已经确认的失败事实。未知状态不允许伪装成具体问题。
 enum FailureCondition: String, Codable, Equatable, Sendable {
     case appleServiceUnavailable
+    /// Apple 请求在传输阶段未完成；不等同于用户网络、VPN 或 Apple 服务端的确定故障。
+    case appleRequestTransportUnavailable
     case appleRateLimited
     case appIDRegistrationLimit
     case credentialsRejected

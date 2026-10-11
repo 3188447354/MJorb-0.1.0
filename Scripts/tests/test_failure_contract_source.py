@@ -389,6 +389,32 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("检查网络", connection_failure)
         self.assertNotIn("打开 LocalDevVPN", connection_failure)
 
+    def test_apple_request_transport_failure_has_its_own_fact_and_no_proxy_advice(self) -> None:
+        contract = (ROOT / "Seal/Core/Import/FailureContract.swift").read_text(
+            encoding="utf-8"
+        )
+        policy = (ROOT / "Seal/Core/Accounts/AppleServiceFailurePolicy.swift").read_text(
+            encoding="utf-8"
+        )
+        classifier = (ROOT / "Seal/Core/Import/FailureClassifier.swift").read_text(
+            encoding="utf-8"
+        )
+        factory = policy.split("static func networkFailure", 1)[1].split(
+            "/// Apple 服务端返回 503", 1
+        )[0]
+
+        self.assertIn("case appleRequestTransportUnavailable", contract)
+        self.assertIn("condition: .appleRequestTransportUnavailable", factory)
+        self.assertIn("action: .retry", factory)
+        self.assertIn("retryDisposition: .manual", factory)
+        self.assertIn("origin: .applePortal", factory)
+        self.assertNotIn("梯子", factory)
+        self.assertNotIn("检查网络", factory)
+        network_branch = classifier.split("if AppleServiceFailurePolicy.isNetworkError", 1)[1].split(
+            "        }\n\n        return ImportFailure(", 1
+        )[0]
+        self.assertIn("condition: .appleRequestTransportUnavailable", network_branch)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"

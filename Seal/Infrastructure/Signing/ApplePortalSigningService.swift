@@ -73,9 +73,9 @@ enum ApplePortalSigningFailure {
         }
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return AppleServiceFailurePolicy.networkFailure(
-                title: "连不上 Apple",
-                reason: "连不上 Apple 开发者服务器，请检查网络或梯子。已保存的 Apple ID 和已签应用不受影响。",
-                code: "SEAL-NET-102"
+                underlying: error,
+                code: "SEAL-NET-102",
+                operation: .sign
             )
         }
         let nsError = error as NSError

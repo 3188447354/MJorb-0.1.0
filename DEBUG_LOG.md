@@ -6590,3 +6590,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：迁移为 `unexpected → retry → sign / applePortal`，保留“稍后重新签名”的手动恢复，并明确不据此判断 Wi-Fi、LocalDevVPN 或账号问题；持续失败才导出日志。
 
 **验证**：新增测试先红后绿，断言合同字段且禁止“检查网络”或“打开 LocalDevVPN”重新成为该出口动作；本地 Python 错误审计／合同测试 34 项通过，`git diff --check` 通过。完整 iOS CI run `38111925127` 正在打包 IPA。
+
+## 2026-10-11 — Apple 请求传输中断与 Apple 服务不可用被混为一类
+
+**症状**：认证、账号验证、签名门户和通用失败分类都把 `URLError`／超时一类 Apple 请求未完成提示为“检查网络或梯子”；同时 `FailureClassifier` 还把它标为 `appleServiceUnavailable`，与 HTTP 503 的服务端不可用事实混淆。
+
+**根因**：NSError 的请求传输失败只能证明请求没有完成，无法区分本地网络、DNS/TLS、远端服务或账号；而 HTTP 503 才能确认 Apple 服务暂不可用。旧公共工厂没有自己的事实条件和操作域，调用点只能各自编写猜测式文案。
+
+**修复**：新增 `appleRequestTransportUnavailable`，公共 `networkFailure` 统一输出 `retry → manual → applePortal`；认证与验证调用点标明各自操作，签名门户标记 `sign`。`FailureClassifier` 的网络分支改用新条件，503 分支仍保持 `appleServiceUnavailable → waitThenRetry`。恢复文案仅为“稍后重试”，不再建议梯子、Wi-Fi 或 LocalDevVPN。
+
+**验证**：测试先红后绿，断言新条件、动作、来源并防止“梯子／检查网络”回归；更新 Swift 单元测试对公共合同字段的断言。Python 错误审计／合同测试 35 项通过，`git diff --check` 通过；完整 iOS CI run `38112750896` 正在验证上一批。
