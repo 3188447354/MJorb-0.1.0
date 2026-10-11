@@ -4,6 +4,7 @@ import Foundation
 final class OperationCoordinator {
     enum Kind: String, Equatable, Sendable {
         case importing
+        case updatingApp
         case signing
         case installing
         case renewing
@@ -15,6 +16,7 @@ final class OperationCoordinator {
         var title: String {
             switch self {
             case .importing: return "正在导入"
+            case .updatingApp: return "正在更新应用资料"
             case .signing: return "正在签名"
             case .installing: return "正在安装"
             case .renewing: return "正在续签"

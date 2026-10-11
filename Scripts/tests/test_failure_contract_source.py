@@ -489,6 +489,25 @@ class FailureContractSourceTests(unittest.TestCase):
             self.assertIn("operationConflictFailure", body, marker)
             self.assertIn(kind, body, marker)
 
+    def test_app_customization_cannot_overwrite_an_inflight_signing_snapshot(self) -> None:
+        source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+
+        # Signing persists a complete AppRecord near installation completion.
+        # A simultaneous customization save based on an older record can erase
+        # signing fields or be erased itself, so customization is a foreground
+        # transaction just like import and delete.
+        expectations = (
+            "func updatePreferredBundleIdentifier",
+            "func updatePreferredDisplayName",
+            "func updatePreferredIcon",
+        )
+        for marker in expectations:
+            body = source.split(marker, 1)[1].split("do {", 1)[0]
+            self.assertIn("acquireOperation(.updatingApp, appID: app.id)", body, marker)
+            self.assertIn("operationConflictFailure(requested: .updatingApp)", body, marker)
+
     def test_app_id_session_expiry_does_not_claim_a_confirmed_rate_limit(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
             encoding="utf-8"

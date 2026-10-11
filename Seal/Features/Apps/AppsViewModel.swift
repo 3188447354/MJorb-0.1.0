@@ -1850,6 +1850,11 @@ final class AppsViewModel: ObservableObject {
     func updatePreferredBundleIdentifier(for app: AppRecord, value: String) async -> Bool {
         guard let appStore, BundleIDPolicy.isEditable(app) else { return false }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 修改 Bundle ID: \(app.displayName) -> \(value)")
+        guard let operationLease = await acquireOperation(.updatingApp, appID: app.id) else {
+            alertFailure = operationConflictFailure(requested: .updatingApp)
+            return false
+        }
+        defer { releaseOperation(operationLease) }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if let validationError = BundleIDPolicy.validationError(for: trimmed) {
             alertFailure = ImportFailure(
@@ -1881,6 +1886,11 @@ final class AppsViewModel: ObservableObject {
     func updatePreferredDisplayName(for app: AppRecord, name: String) async -> Bool {
         guard let appStore else { return false }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 修改显示名: \(app.displayName) -> \(name)")
+        guard let operationLease = await acquireOperation(.updatingApp, appID: app.id) else {
+            alertFailure = operationConflictFailure(requested: .updatingApp)
+            return false
+        }
+        defer { releaseOperation(operationLease) }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else {
             alertFailure = ImportFailure(
@@ -1912,6 +1922,11 @@ final class AppsViewModel: ObservableObject {
     func updatePreferredIcon(for app: AppRecord, data: Data?) async -> Bool {
         guard let appStore, let fileStore else { return false }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 修改图标: \(app.displayName) (\(app.id.uuidString.prefix(8)))")
+        guard let operationLease = await acquireOperation(.updatingApp, appID: app.id) else {
+            alertFailure = operationConflictFailure(requested: .updatingApp)
+            return false
+        }
+        defer { releaseOperation(operationLease) }
         do {
             var updated = app
             if let data {
