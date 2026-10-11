@@ -317,6 +317,24 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("检查网络", generic)
         self.assertNotIn("重新验证 Apple ID", generic)
 
+    def test_app_id_session_expiry_does_not_claim_a_confirmed_rate_limit(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        app_id_failure = source.index("fileprivate static func appIDFailure")
+        start = source.index("if ApplePortalSigningService.isSessionExpiredError", app_id_failure)
+        end = source.index("        if nsError.code == 3011", start)
+        session_failure = source[start:end]
+
+        self.assertIn('code: "SEAL-AUTH-107"', session_failure)
+        self.assertIn("condition: .unexpected", session_failure)
+        self.assertIn("action: .waitThenRetry", session_failure)
+        self.assertIn("retryDisposition: .manual", session_failure)
+        self.assertIn("operation: .sign", session_failure)
+        self.assertIn("origin: .applePortal", session_failure)
+        self.assertNotIn("说明登录状态其实还在", session_failure)
+        self.assertNotIn("更常见的原因", session_failure)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"

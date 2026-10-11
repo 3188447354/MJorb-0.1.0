@@ -147,23 +147,19 @@ enum ApplePortalSigningFailure {
         let rawMessage = nsError.localizedDescription
         let normalized = rawMessage.lowercased()
 
-        // Apple 会话过期（1100）在 App ID 创建阶段也会出现（如抖音签名时），
-        // 必须与账户阶段一致归为 SEAL-AUTH-107，否则会落进下方「App ID 创建失败」
-        // 分支被误报成网络/标注问题。
-        //
-        // 但**同一个 1100 在两个阶段的含义不同**，文案不能共用：
-        // 走到这里时本次签名刚申请完证书且已成功，说明 session 在 Apple 服务端仍然有效，
-        // 所以这通常不是真的登录过期，而是「多扩展 App 连续建号」触发了 Apple 的短时限流
-        //（抖音 = 主 App + 8 扩展，需连发 9 次 addAppID）。
-        // 若沿用账户阶段那句「去重新验证」，用户会陷入
-        //「重新验证 → 再签 → 又被限流 → 再被要求验证」的死循环（用户反馈的
-        //「无论怎样在验证 Apple ID 就报错失效」）。因此这里必须先给出「稍后重试」。
+        // 此时 Apple 返回了会话过期，但源码只有「发生于 App ID 注册」这一事实；
+        // 它不足以证明账号已失效、服务限流或本地网络故障，不能将其中任何一种写成原因。
         if ApplePortalSigningService.isSessionExpiredError(error) {
             return ImportFailure(
-                title: "Apple 暂时拒绝了请求",
-                reason: "Apple 在注册 App ID 时返回了「会话已过期」。本次签名的证书申请刚刚成功，说明登录状态其实还在 —— 更常见的原因是该 App 的扩展较多（每个扩展都要单独注册一个 App ID），短时间内连续请求触发了 Apple 的限制。\n\n请先等几分钟再重试；如果多次重试仍然失败，再到「我的」页面重新验证这个 Apple ID。",
-                recovery: "等几分钟后重试",
-                code: "SEAL-AUTH-107"
+                title: "Apple 未完成 App ID 注册",
+                reason: "Apple 在注册 App ID 时返回了「会话已过期」。仅凭这一结果无法确认是登录状态、Apple 服务还是其他环节导致。",
+                recovery: "等几分钟后重新签名；若仍提示会话已过期，再到「我的」重新验证 Apple ID。",
+                code: "SEAL-AUTH-107",
+                condition: .unexpected,
+                action: .waitThenRetry,
+                retryDisposition: .manual,
+                operation: .sign,
+                origin: .applePortal
             )
         }
 
