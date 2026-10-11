@@ -7,7 +7,7 @@ struct BackgroundRenewalNotificationRouteTests {
     func onlyBackgroundRenewalNotificationRequestsResultPresentation() {
         #expect(
             BackgroundRenewalNotificationRoute.shouldRequestResultPresentation(
-                requestIdentifier: BackgroundRenewalNotifier.identifier
+                requestIdentifier: BackgroundRenewalNotificationRoute.identifier
             )
         )
         #expect(

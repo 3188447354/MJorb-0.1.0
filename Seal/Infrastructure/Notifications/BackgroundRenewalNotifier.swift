@@ -6,10 +6,12 @@ import UserNotifications
 /// Expiry reminders and other Seal notifications may also foreground the app;
 /// they must not reopen a stale batch-renewal result drawer.
 enum BackgroundRenewalNotificationRoute {
+    /// Kept outside the main-actor notifier so notification routing stays a pure, testable value rule.
+    static let identifier = "com.mjorb.seal.background-renewal"
     static let opened = Notification.Name("sealBackgroundRenewalNotificationOpened")
 
     static func shouldRequestResultPresentation(requestIdentifier: String) -> Bool {
-        requestIdentifier == BackgroundRenewalNotifier.identifier
+        requestIdentifier == identifier
     }
 }
 
@@ -171,5 +173,5 @@ final class BackgroundRenewalNotifier {
         }
     }
 
-    static let identifier = "com.mjorb.seal.background-renewal"
+    static let identifier = BackgroundRenewalNotificationRoute.identifier
 }

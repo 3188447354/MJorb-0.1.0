@@ -6672,3 +6672,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：R56 更新为同时要求 `Vendor/CodeSignKit` 与 Seal 实际使用的 `Vendor/SideSign` 签名边界回归门，仍明确禁止已删除的 `Vendor/rork-sign`；测试改用 `try #require(app.expiryDate)`，将夹具不变量写成明确测试失败而非 Swift 编译错误。
 
 **验证状态**：下一轮完整 iOS CI 将重新验证发布守卫、Swift 编译与测试；不会检查或触发 Fast IPA。
+
+## 2026-10-11 — CI `38140406484` 的通知路由测试隔离与错误编号清单漂移
+
+**现象**：完整 CI 的签名内核门和 R56 发布安全守卫已通过，但 `swift-regression` 在新通知路由测试中报 `BackgroundRenewalNotifier.identifier` 是 MainActor 隔离属性；`build-package` 的错误编号审计则因源码行号变化拒绝未更新的生成清单。
+
+**根因**：`BackgroundRenewalNotifier` 是 `@MainActor` 类型，测试中的纯路由断言不应读取它的静态成员；错误编号清单是受版本控制的生成物，前序源码插入改变了记录位置，生成结果必须同步更新。
+
+**修复**：将通知标识的唯一来源移到非隔离的 `BackgroundRenewalNotificationRoute`，notifier 继续复用该值；重新生成 `docs/qa/generated/error-code-inventory.json`。
+
+**验证**：错误编号清单测试 11 项、错误合同测试 25 项及差异检查通过；下一轮完整 iOS CI 负责验证 Swift 编译与完整包。
