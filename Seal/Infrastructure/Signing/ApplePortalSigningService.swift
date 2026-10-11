@@ -241,10 +241,15 @@ enum ApplePortalSigningFailure {
             || normalized.contains("cannot connect")
             || nsError.domain == NSURLErrorDomain {
             return ImportFailure(
-                title: "证书服务连接失败",
-                reason: "无法连接 Apple 证书服务（网络超时或无法连接）。",
-                recovery: "检查网络后重试",
-                code: "SEAL-CERT-205"
+                title: "Apple 证书请求未完成",
+                reason: "与 Apple 证书服务的请求超时或未能连接。此结果不能据此判断为本地 Wi-Fi、LocalDevVPN 或账号问题。",
+                recovery: "稍后重新签名；若持续出现，请导出日志后联系支持。",
+                code: "SEAL-CERT-205",
+                condition: .unexpected,
+                action: .retry,
+                retryDisposition: .manual,
+                operation: .sign,
+                origin: .applePortal
             )
         }
 

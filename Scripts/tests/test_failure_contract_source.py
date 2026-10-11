@@ -371,6 +371,24 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("检查网络", generic)
         self.assertNotIn("存储空间", generic)
 
+    def test_certificate_connection_signal_does_not_prescribe_local_vpn_or_wifi(self) -> None:
+        source = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
+            encoding="utf-8"
+        )
+        certificate_failure = source.split("private static func certificateFailure", 1)[1]
+        start = certificate_failure.index('if normalized.contains("network")')
+        code_offset = certificate_failure.index('code: "SEAL-CERT-205"', start)
+        end = certificate_failure.index("        }\n\n        if normalized.contains(\"unauthorized\")", code_offset)
+        connection_failure = certificate_failure[start:end]
+
+        self.assertIn("condition: .unexpected", connection_failure)
+        self.assertIn("action: .retry", connection_failure)
+        self.assertIn("retryDisposition: .manual", connection_failure)
+        self.assertIn("operation: .sign", connection_failure)
+        self.assertIn("origin: .applePortal", connection_failure)
+        self.assertNotIn("检查网络", connection_failure)
+        self.assertNotIn("打开 LocalDevVPN", connection_failure)
+
     def test_explicit_pairing_rejection_routes_to_pairing_instead_of_reinstall(self) -> None:
         source = (ROOT / "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift").read_text(
             encoding="utf-8"

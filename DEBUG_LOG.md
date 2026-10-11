@@ -6580,3 +6580,13 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：`102c` 与 `203` 均迁移为 `unexpected → waitThenRetry → sign / applePortal`，明确告诉用户 Apple 未提供可识别原因；前者仅在同一提示持续出现后再建议重新验证，后者仅建议稍后重签、持续失败导出日志。没有增加 WiFi、VPN、换账号或空间不足等未经证实的动作。
 
 **验证**：针对两个出口新增测试先红后绿，覆盖合同字段并禁止“两个常见成因”“检查网络”“存储空间”等回归；本地 Python 错误审计／合同测试 33 项通过，`git diff --check` 通过。完整 iOS CI run `38111925127` 仍在执行。
+
+## 2026-10-11 — 证书请求连接失败被不当地引导到本地网络设置
+
+**症状**：`SEAL-CERT-205` 由 `NSURLErrorDomain`、超时或“无法连接”文本触发，旧恢复动作是“检查网络后重试”。这把 Apple 请求未完成误写成用户本地网络已被确认有问题，也容易被误解为需要 LocalDevVPN。
+
+**根因**：该转换边界只能观察到 Apple 证书服务请求没有完成，不能从 NSError 文本区分本地 Wi-Fi、DNS/TLS、Apple 服务或账户状态；并且签名门户请求不依赖设备安装通道。
+
+**修复**：迁移为 `unexpected → retry → sign / applePortal`，保留“稍后重新签名”的手动恢复，并明确不据此判断 Wi-Fi、LocalDevVPN 或账号问题；持续失败才导出日志。
+
+**验证**：新增测试先红后绿，断言合同字段且禁止“检查网络”或“打开 LocalDevVPN”重新成为该出口动作；本地 Python 错误审计／合同测试 34 项通过，`git diff --check` 通过。完整 iOS CI run `38111925127` 正在打包 IPA。
