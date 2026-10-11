@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-12 Seal 覆盖更新确认、列表可见性与单项结果日志互相打架
+
+- **现象**：① 导入 Seal 更新包，在确认“覆盖更新”后会失败为 `SEAL-IPA-217`；② 覆盖更新签名期间，新旧两条 Seal 会同时出现在已安装列表，稍后才消失一条；③ 单独续签完成后日志出现一条新描述文件结果和一条旧格式结果。
+- **根因**：① 界面专门把已安装 Seal 作为覆盖候选，但 `ImportWorkflow.commit` 又只调用刻意排除 `isSeal` 的普通覆盖校验，前后合同矛盾；② `AppRecord.belongsInInstalledList` 只在更新记录仍为 `.imported` 时排除它，签名协调器推进到 `.preflightPassed` / `.signing` 后，`isSeal` 兜底把它重新列入已安装页；③ `runSigning` 已在结果产生时写入统一的 `RenewalRoundSummary`，`dismissSigningResult` 又在关闭抽屉时写一份历史格式摘要。
+- **修复**：① 仅当确认目标正是本次解析到的当前 Seal 记录时，进入既有自更新事务；普通应用仍使用严格的按 ID 覆盖复核；② 只要 `replacesInstalledAppID` 尚未由 `commitInstalledReplacement` 清空，Seal 更新记录始终留在待签名列表，设备验证成功后才原子接管；③ 关闭抽屉只做 UI 清理与后续重签调度，结果日志只在操作完成时写一次。
+- **涉及文件**：`Seal/Core/Import/ImportWorkflow.swift`、`Seal/Core/Apps/AppRecord.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`SealTests/Import/ImportWorkflowTests.swift`、`SealTests/Apps/AppRecordTests.swift`、`Scripts/tests/test_failure_contract_source.py`。
+- **验证状态**：两个新静态回归先红后绿；失败合同静态套件 27/27、错误码清单 11/11 与 `git diff --check` 通过。Windows 无 Swift/Xcode；覆盖 Seal 的 Swift 回归将由完整 iOS CI 编译执行。
+
+---
+
 ## 2026-10-11 SideSign 回归测试按 Swift 6 Sendable 合同修正
 
 - **现象**：完整 iOS CI `38138797034` 的新 SideSign 签名边界测试编译失败，错误为 `NSArray` 和 `[Any]` 不符合 Swift 6 的 `Sendable`。

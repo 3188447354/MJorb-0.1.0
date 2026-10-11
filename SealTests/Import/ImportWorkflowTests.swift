@@ -268,7 +268,10 @@ struct ImportWorkflowTests {
         let workflow = makeWorkflow(environment: environment, appID: UUID())
 
         await workflow.prepare(sourceURL: source)
-        await workflow.confirm()
+        // AppsViewModel presents the installed Seal record as the explicit
+        // overwrite target. This confirmation must enter the self-update
+        // transaction, not be rejected by the ordinary-app-only policy.
+        await workflow.confirm(target: .replaceInstalled(appID: sealID))
 
         let imported = try requireCompleted(await workflow.state)
         let records = try await environment.appStore.fetchAll()

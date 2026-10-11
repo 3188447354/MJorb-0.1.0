@@ -1835,48 +1835,10 @@ final class AppsViewModel: ObservableObject {
         if case .running = signingSession.status { return }
         var signingSucceeded = false
         if case .succeeded = signingSession.status { signingSucceeded = true }
-        let appName = signingSession.app.displayName
-        let status = signingSession.status
-        let expiryDate = signingSession.app.expiryDate
         self.signingSession = nil
         selectedOperationApp = nil
-        // 单独签名/续签也要写日志轮次，格式对齐批量续签
-        Task { [weak self] in
-            let timeFormatter = DateFormatter()
-            timeFormatter.dateFormat = "HH:mm:ss"
-            let now = timeFormatter.string(from: Date())
-            let dateTimeFormatter = DateFormatter()
-            dateTimeFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-            let expiryText = expiryDate.map { dateTimeFormatter.string(from: $0) } ?? "未知"
-            let resultText: String
-            let footerText: String
-            switch status {
-            case .succeeded:
-                resultText = "✓ \(appName) 成功，有效期至 \(expiryText)"
-                footerText = "■ 完成 · 1/1 成功"
-            case .failed(let failure):
-                resultText = "✗ \(appName) 失败：\(failure.userMessage)"
-                footerText = "■ 完成 · 0/1 成功"
-            case .running:
-                resultText = "○ \(appName) 未完成"
-                footerText = "■ 未完成"
-            }
-            let message = """
-                ━━━━━━━━━━━━━━━━━━━━━━━━
-                ▶ 今天 · \(now) · 手动 · 1个App
-                ────────────────────────────────
-                \(resultText)
-                ────────────────────────────────
-                \(footerText)
-                ━━━━━━━━━━━━━━━━━━━━━━━━
-                """
-            try? await self?.logStore?.append(
-                category: .signing,
-                level: signingSucceeded ? .info : .warning,
-                message: message,
-                code: "SEAL-SIGN-SINGLE"
-            )
-        }
+        // 结果已在 runSigning 结束时作为 RenewalRoundSummary 写入；关闭抽屉只是 UI
+        // 清理，不能再制造一条旧格式结果日志，否则单独续签会显示两次结果。
         // 进度页关闭后再发起批量重签：两个 sheet 同挂 AppsRootView，
         // 同时弹出会导致批量续签页被盖住。
         resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)

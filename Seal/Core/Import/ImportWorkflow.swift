@@ -232,6 +232,14 @@ actor ImportWorkflow {
             case .newRecord:
                 existing = nil
             case .replaceInstalled(let appID):
+                // Seal 自更新同样经过“用户已确认覆盖”的入口，但它不能借用普通
+                // 应用的 replacement policy：该 policy 刻意排除 `isSeal`，以免把
+                // 自更新误当作普通应用覆盖。只接受本次解析出的当前 Seal 记录本身，
+                // 其余目标仍走普通应用的严格复核，避免确认页停留期间覆盖错记录。
+                if existingSeal?.id == appID {
+                    existing = nil
+                    break
+                }
                 guard let replacement = ImportReplacementPolicy.confirmedReplacement(
                     appID: appID,
                     for: draft.parsedIPA,

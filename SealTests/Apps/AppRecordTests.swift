@@ -186,7 +186,7 @@ struct AppRecordTests {
     func pendingSealUpdateBelongsInUnsignedList() {
         // Seal 待签名更新包：不进已安装，只进待签名
         let oldID = UUID()
-        let record = AppRecord(
+        var record = AppRecord(
             originalBundleIdentifier: "com.seal.app",
             name: "Seal",
             version: "1.0.0",
@@ -198,6 +198,12 @@ struct AppRecordTests {
             importedAt: Date(),
             replacesInstalledAppID: oldID
         )
+        #expect(record.belongsInInstalledList == false)
+        #expect(record.belongsInUnsignedList == true)
+
+        // 签名协调器会在安装完成前推进 transient state；该过程中不能让
+        // 更新记录回到已安装页，和旧 Seal 并列。
+        record.state = .signing
         #expect(record.belongsInInstalledList == false)
         #expect(record.belongsInUnsignedList == true)
     }

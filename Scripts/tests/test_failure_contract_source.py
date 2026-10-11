@@ -8,6 +8,34 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FailureContractSourceTests(unittest.TestCase):
+    def test_single_operation_result_is_not_logged_again_when_the_drawer_closes(self) -> None:
+        source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
+            encoding="utf-8"
+        )
+        dismissal = source.split("func dismissSigningResult()", 1)[1].split(
+            "@discardableResult", 1
+        )[0]
+
+        # runSigning writes the authoritative round summary at completion.
+        # Closing its presentation is UI cleanup, never a second result event.
+        self.assertNotIn("logStore?.append", dismissal)
+        self.assertNotIn("SEAL-SIGN-SINGLE", dismissal)
+
+    def test_pending_seal_replacement_never_reenters_installed_list_during_signing(self) -> None:
+        source = (ROOT / "Seal/Core/Apps/AppRecord.swift").read_text(encoding="utf-8")
+        installed_list = source.split("var belongsInInstalledList: Bool", 1)[1].split(
+            "var belongsInSignedList", 1
+        )[0]
+        unsigned_list = source.split("var belongsInUnsignedList: Bool", 1)[1]
+
+        # The replacement link is cleared only by commitInstalledReplacement after
+        # device verification. Its visibility policy must not depend on a transient
+        # signing state, otherwise old and new Seal rows coexist during signing.
+        self.assertIn("if isSeal, replacesInstalledAppID != nil {", installed_list)
+        self.assertNotIn("state == .imported", installed_list)
+        self.assertIn("if isSeal, replacesInstalledAppID != nil {", unsigned_list)
+        self.assertNotIn("state == .imported", unsigned_list)
+
     def test_service_unavailable_factory_has_no_network_route_guess(self) -> None:
         source = (ROOT / "Seal/Core/Accounts/AppleServiceFailurePolicy.swift").read_text(
             encoding="utf-8"
@@ -473,7 +501,6 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertIn("condition: .installationVerificationFailed", definitive)
         self.assertIn("action: .reinstallFromSignedArtifact", definitive)
         self.assertIn("operation: .install", definitive)
-
 
 if __name__ == "__main__":
     unittest.main()

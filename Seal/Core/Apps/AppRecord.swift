@@ -355,9 +355,11 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var belongsInInstalledList: Bool {
-        // 2026-10-09：待签名的 Seal 更新包（replacesInstalledAppID 非空）不进已安装列表，
-        // 进待签名列表。否则覆盖更新的新包会和已安装的 Seal 并列显示。
-        if isSeal, replacesInstalledAppID != nil, state == .imported {
+        // 待签名的 Seal 更新包在设备核验成功前始终不进已安装列表。签名阶段会把
+        // state 从 .imported 改成 .preflightPassed / .signing 等；若只排除 .imported，
+        // 新旧 Seal 会在这段事务窗口并列显示。replacesInstalledAppID 仅在原子接管
+        // commitInstalledReplacement 后清空，因此它是这里唯一可靠的可见性边界。
+        if isSeal, replacesInstalledAppID != nil {
             return false
         }
         return isSeal || state == .installed || lastInstalledAt != nil || signedArtifactStatus == .installed
@@ -368,8 +370,9 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var belongsInUnsignedList: Bool {
-        // 2026-10-09：待签名的 Seal 更新包进待签名列表。
-        if isSeal, replacesInstalledAppID != nil, state == .imported {
+        // 待签名的 Seal 更新包在整个签名/安装事务内都留在待签名列表；成功接管后
+        // replacesInstalledAppID 才会清空并进入已安装列表。
+        if isSeal, replacesInstalledAppID != nil {
             return true
         }
         return isSeal == false && belongsInInstalledList == false
