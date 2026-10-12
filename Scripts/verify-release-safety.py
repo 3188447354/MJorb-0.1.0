@@ -4306,8 +4306,9 @@ def violations(load=read):
           "R64: `advanceStage` 必须记 `stageStartedAt` ✗ —— 没有每阶段起点，"
           "轨道格内的爬动恒等于 0 秒，整条轨道会钉在地板上")
 
-    # R65: 1.3.5 的「共享主描述文件」策略必须**真的省下配额**，且四条消费链路都接上
-    # 同一份判据（2026-09-24）。
+    # R65: 扩展签名拓扑必须完整。普通的**无扩展** IPA 可共享主描述文件；只要
+    # 原包有 .appex，就必须逐 target 建立 App ID/profile，不能拿省配额换取 iOS
+    # 未注册 LiveProcess 等运行时扩展（2026-10-12）。
     #
     # 立意（DEBUG_LOG「多扩展 IPA 续签重复消耗 Apple 门户配额」）：普通 IPA 含多个扩展时，
     # 门户**只注册/请求主 App 一次**，扩展仍在本地各自重签、但嵌入**主描述文件**；
@@ -4318,10 +4319,9 @@ def violations(load=read):
     #  ③ 校验点写死成扩展自己的 Bundle ID ⇒ 共享描述文件必然校验失败。
     # ⇒ 全部钉住；另有 ⑨ 钉住 profile-only 续签**有意**的独立策略不对称。
     strategy_source = strip_comments(load("Seal/Core/Signing/AppExtensionProfileStrategy.swift"))
-    check("isSeal ? .independentProfiles : .sharedMainProfile" in strategy_source,
-          "R65①: 默认策略必须是「普通 IPA 共享主描述文件、Seal 自己独立描述文件」✗ —— "
-          "反了就是把省配额的优化关掉（普通 App 又按每个扩展各申请一个 App ID），"
-          "而 Seal 自身共享主描述文件会让自签身份错乱")
+    check("isSeal || hasExtensions ? .independentProfiles : .sharedMainProfile" in strategy_source,
+          "R65①: 默认策略必须是「含扩展或 Seal 独立、无扩展普通 IPA 共享」✗ —— "
+          "把含扩展包降回共享 profile 会使 LiveProcess 没有自己的 App ID/profile/Group 绑定")
     shared_mapping_body = section_or_empty(
         strategy_source,
         "case .sharedMainProfile:",
@@ -4348,8 +4348,10 @@ def violations(load=read):
         "var effectiveExtensionProfileStrategy: AppExtensionProfileStrategy {",
         "\n    var requiresLockedSigningIdentity",
     )
-    check("AppExtensionProfileStrategy.defaultFor(isSeal: isSeal)" in effective_body,
-          "R65⑤: `effectiveExtensionProfileStrategy` 必须**委托**给 `defaultFor(isSeal:)` ✗ —— "
+    check("AppExtensionProfileStrategy.defaultFor(" in effective_body
+          and "isSeal: isSeal" in effective_body
+          and "hasExtensions: extensions.isEmpty == false" in effective_body,
+          "R65⑤: `effectiveExtensionProfileStrategy` 必须**委托**给带扩展拓扑的 `defaultFor` ✗ —— "
           "自己再 switch 一份就是同一条规则两份实现，改一处另一处静默失效")
     portal_source = strip_comments(load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift"))
     check("let portalMappings = resolvedExtensionProfileStrategy.portalMappings(" in portal_source,
@@ -4391,9 +4393,10 @@ def violations(load=read):
           "否则记录里那个字段永远是 nil，后续日志与迁移辨识就查不出「这个 App 当初用的哪种策略」")
     strategy_tests = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
     check("func sealAlwaysUsesIndependentProfiles()" in strategy_tests
-          and "AppExtensionProfileStrategy.defaultFor(isSeal: true) == .independentProfiles" in strategy_tests
-          and "AppExtensionProfileStrategy.defaultFor(isSeal: false) == .sharedMainProfile" in strategy_tests,
-          "R65⑫: 策略单测必须仍在断言「Seal 独立、普通共享」两个方向 ✗ —— "
+          and "AppExtensionProfileStrategy.defaultFor(isSeal: true, hasExtensions: false) == .independentProfiles" in strategy_tests
+          and "AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: true) == .independentProfiles" in strategy_tests
+          and "AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: false) == .sharedMainProfile" in strategy_tests,
+          "R65⑫: 策略单测必须仍在断言「含扩展独立、无扩展普通共享、Seal 独立」✗ —— "
           "测试被删空或改宽之后，纯策略的行为就没有任何东西在守")
 
     # ⑬–⑰：共享主描述文件的两个真机回归（2026-09-24，构建 27 / 29）。它们的错法同样
@@ -4404,13 +4407,10 @@ def violations(load=read):
     #  ⑯ 去掉回退诊断 ⇒ 真机上看不出「为什么这次又慢又费配额」；
     #  ⑰ 共享续签的「份数」判据写成独立模式那句 ⇒ 正常续签被误判「描述文件不完整」而失败。
     renewal_policy_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift"))
-    check("sharedMainProfileHasNoExtensionAppIDs" not in renewal_policy_source
-          and "effectiveExtensionProfileStrategy" not in renewal_policy_source,
-          "R65⑬: 续签准入**不得**再按描述文件策略一刀切 ✗ —— "
-          "2026-09-24 真机（构建 29）：曾用「共享主描述文件 + 含扩展 ⇒ 完整重签」把抖音的快路径整个丢掉"
-          "（变成 658 MB 完整重签 + 安装）；而 `effectiveExtensionProfileStrategy` 是 "
-          "`defaultFor(isSeal:)`、**不看记录** ⇒ 连历史上按独立描述文件签过、扩展 App ID 明明存在的"
-          "应用也被误判。准入只判「记录是否完整」，策略交回续签侧按记录分流")
+    check("extensionProfileIntegrityBlock(app) == nil" in renewal_policy_source
+          and "extensionProfileStrategy == .independentProfiles" in renewal_policy_source,
+          "R65⑬: 含扩展的旧共享 profile 续签必须先完整重签迁移 ✗ —— "
+          "profile-only 不能修复已安装二进制的逐 target 注册与 App Group 绑定")
     strategy_tests_source = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
     renewal_policy_tests_source = load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift")
     renewal_record_tests_source = load("SealTests/Renewal/ProfileOnlyRenewalRecordUpdaterTests.swift")
@@ -4419,13 +4419,14 @@ def violations(load=read):
           and "func resolvedForSigningFallsBackToIndependentProfilesWhenAnExtensionNeedsExtraEntitlements()"
           in strategy_tests_source
           and "func resolvedForSigningNeverUpgradesIndependentProfilesToShared()" in strategy_tests_source
-          and "func eligibilityDoesNotDependOnTheExtensionProfileStrategy()" in renewal_policy_tests_source
+          and "func sharedProfileWithExtensionsForcesAFullResignMigration()" in renewal_policy_tests_source
+          and "func liveIdentityCannotBypassTheLegacyExtensionProfileMigration()" in renewal_policy_tests_source
           and "func sharedMainProfileIsRecordedForEveryTargetWithoutCollapsingThem()"
           in renewal_record_tests_source,
-          "R65⑭: 回退判据与共享续签的关键单测必须仍在 ✗ —— "
+          "R65⑭: 扩展完整性迁移与共享续签的关键单测必须仍在 ✗ —— "
           "① 共享描述文件装不下扩展独有的能力（真机实证：LiveContainer 的 LiveProcess 请求 "
           "increased-memory-limit，连续 5 次报 SEAL-ENTITLEMENT-401）；"
-          "② 续签准入不得再按策略一刀切（否则含扩展应用的快路径又被丢掉）；"
+          "② 历史共享策略必须完整重签迁移，不能让实时身份或 profile-only 绕过；"
           "③ 共享续签的记录**不得塌成一条**（`SigningTargetRecord(binding:)` 拿 profile 内的 "
           "Bundle ID 当键 ⇒ 多个目标全并到主 App，缓存与安装前逐项校验失配）。"
           "测试被删空或改宽之后，这三条不变量就没有任何东西在守")
@@ -8739,12 +8740,12 @@ def main():
          "            stageStartedAt = now",
          "            stageStartedAt = nil",
          "R64: `advanceStage` 必须记 `stageStartedAt`"),
-        # ── R65：1.3.5 的共享主描述文件策略（2026-09-24）──
-        # ① 默认方向写反 ⇒ 普通 App 又按每个扩展各申请一个 App ID（优化被关掉，不报错）✓ 报红。
+        # ── R65：扩展完整性策略（2026-10-12）──
+        # ① 默认方向写反 ⇒ 含扩展包退回共享 profile，系统可能不注册 LiveProcess ✓ 报红。
         ("Seal/Core/Signing/AppExtensionProfileStrategy.swift",
-         "isSeal ? .independentProfiles : .sharedMainProfile",
-         "isSeal ? .sharedMainProfile : .independentProfiles",
-         "R65①: 默认策略必须是「普通 IPA 共享主描述文件、Seal 自己独立描述文件」"),
+         "isSeal || hasExtensions ? .independentProfiles : .sharedMainProfile",
+         "isSeal || hasExtensions ? .sharedMainProfile : .independentProfiles",
+         "R65①: 默认策略必须是「含扩展或 Seal 独立、无扩展普通 IPA 共享」"),
         # ② 共享模式的门户映射退回全量 ⇒ 配额一点没省，而策略看起来仍然「在」✓ 报红。
         ("Seal/Core/Signing/AppExtensionProfileStrategy.swift",
          "return [originalMainBundleID: mappedMainBundleID]",
@@ -8760,11 +8761,11 @@ def main():
          "return mappings",
          "return [:]",
          "R65④: 独立模式必须**原样透传**"),
-        # ⑤ `AppRecord` 自己再写一份判据（不再委托）⇒ 同一条规则两份实现 ✓ 报红。
+        # ⑤ `AppRecord` 不再传入扩展拓扑 ⇒ 含扩展包会错误共享 profile ✓ 报红。
         ("Seal/Core/Apps/AppRecord.swift",
-         "AppExtensionProfileStrategy.defaultFor(isSeal: isSeal)",
-         "AppExtensionProfileStrategy.defaultFor(isSeal: false)",
-         "R65⑤: `effectiveExtensionProfileStrategy` 必须**委托**给 `defaultFor(isSeal:)`"),
+         "hasExtensions: extensions.isEmpty == false",
+         "hasExtensions: false",
+         "R65⑤: `effectiveExtensionProfileStrategy` 必须把扩展拓扑委托给 `defaultFor`"),
         # ⑥ 门户映射不再经策略 ⇒ 共享模式只剩一个纯声明（配额照旧全花）✓ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "let portalMappings = resolvedExtensionProfileStrategy.portalMappings(",
@@ -8803,15 +8804,16 @@ def main():
          "R65⑪: 签名结果里的策略必须落回记录、待签 App 也必须带上策略"),
         # ⑫ 把单测改宽（两个方向断言成同一个值）⇒ 纯策略的行为没人守 ✓ 报红。
         ("SealTests/Signing/AppExtensionProfileStrategyTests.swift",
-         "AppExtensionProfileStrategy.defaultFor(isSeal: true) == .independentProfiles",
-         "AppExtensionProfileStrategy.defaultFor(isSeal: true) == .sharedMainProfile",
-         "R65⑫: 策略单测必须仍在断言「Seal 独立、普通共享」两个方向"),
+         "AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: true) == .independentProfiles",
+         "AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: true) == .sharedMainProfile",
+         "R65⑫: 策略单测必须仍在断言「含扩展独立、无扩展普通共享、Seal 独立」"),
         # ⑬ 又把「按策略一刀切」加回准入 ⇒ 含扩展应用的快路径被丢掉（构建 29：抖音 658 MB 完整重签）✓ 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "        return .eligible(targetBundleIdentifiers: targetBundleIdentifiers)",
-         "        _ = app.effectiveExtensionProfileStrategy\n"
-         "        return .eligible(targetBundleIdentifiers: targetBundleIdentifiers)",
-         "R65⑬: 续签准入**不得**再按描述文件策略一刀切"),
+         "        guard extensionProfileIntegrityBlock(app) == nil else {\n"
+         "            return .requiresFullResign(.extensionProfileIntegrityMigration)\n"
+         "        }",
+         "        // extension-profile migration disabled",
+         "R65⑬: 含扩展的旧共享 profile 续签必须先完整重签迁移"),
         # ⑭ 回退判据的关键单测被改名/删掉 ⇒ 不变量没人守 ✓ 报红。
         ("SealTests/Signing/AppExtensionProfileStrategyTests.swift",
          "func resolvedForSigningFallsBackToIndependentProfilesWhenAnExtensionNeedsExtraEntitlements()",
@@ -8819,9 +8821,9 @@ def main():
          "R65⑭: 回退判据与共享续签的关键单测必须仍在"),
         # ⑭b 续签准入的关键单测被改名/删掉 ✓ 报红（与 ⑭ 同一条断言，多条锚点分别证明每处都在守）。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
-         "func eligibilityDoesNotDependOnTheExtensionProfileStrategy()",
-         "func eligibilityLegacy()",
-         "R65⑭: 回退判据与共享续签的关键单测必须仍在"),
+         "func sharedProfileWithExtensionsForcesAFullResignMigration()",
+         "func extensionProfileMigrationLegacy()",
+         "R65⑭: 扩展完整性迁移与共享续签的关键单测必须仍在"),
         # ⑭c 共享续签「记录不塌」的关键单测被改名/删掉 ✓ 报红。
         ("SealTests/Renewal/ProfileOnlyRenewalRecordUpdaterTests.swift",
          "func sharedMainProfileIsRecordedForEveryTargetWithoutCollapsingThem()",
