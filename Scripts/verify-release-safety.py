@@ -8763,8 +8763,8 @@ def main():
          "R65④: 独立模式必须**原样透传**"),
         # ⑤ `AppRecord` 不再传入扩展拓扑 ⇒ 含扩展包会错误共享 profile ✓ 报红。
         ("Seal/Core/Apps/AppRecord.swift",
-         "AppExtensionProfileStrategy.defaultFor(",
-         "AppExtensionProfileStrategy.defaultForLegacy(",
+         "hasExtensions: extensions.isEmpty == false",
+         "hasExtensions: false",
          "R65⑤: `effectiveExtensionProfileStrategy` 必须把扩展拓扑委托给 `defaultFor`"),
         # ⑥ 门户映射不再经策略 ⇒ 共享模式只剩一个纯声明（配额照旧全花）✓ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
