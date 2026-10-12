@@ -1708,10 +1708,7 @@ final class AppsViewModel: ObservableObject {
     func retrySigning() {
         guard let session = signingSession else { return }
         Task { try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 重试签名: \(session.app.displayName)") }
-        restartSigning(
-            session,
-            allowDroppingExtensions: session.allowsDroppingExtensions
-        )
+        restartSigning(session)
     }
 
     /// 「重新签名」场景：签名包已缺失/损坏/过期/设备不符/结构不完整，
@@ -1721,7 +1718,6 @@ final class AppsViewModel: ObservableObject {
         Task { try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 从头重新签名: \(session.app.displayName)") }
         restartSigning(
             session,
-            allowDroppingExtensions: session.allowsDroppingExtensions,
             forceResign: true
         )
     }
@@ -1733,7 +1729,6 @@ final class AppsViewModel: ObservableObject {
         Task { try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 绕过设备限制继续签名: \(session.app.displayName)") }
         restartSigning(
             session,
-            allowDroppingExtensions: session.allowsDroppingExtensions,
             bypassFreeAccountDeviceLimit: true
         )
     }
@@ -1762,8 +1757,7 @@ final class AppsViewModel: ObservableObject {
                 signingTask = nil
                 if let retrySession {
                     restartSigning(
-                        retrySession,
-                        allowDroppingExtensions: retrySession.allowsDroppingExtensions
+                        retrySession
                     )
                 }
             }
@@ -3089,8 +3083,7 @@ final class AppsViewModel: ObservableObject {
         app: AppRecord,
         account: AppleAccountRecord,
         requestedBundleIdentifier: String? = nil,
-        completionMode: SigningCompletionMode = .signAndInstall,
-        allowDroppingExtensions: Bool = false
+        completionMode: SigningCompletionMode = .signAndInstall
     ) {
         guard signingCoordinator != nil else { return }
         guard signingTask == nil,
@@ -3110,16 +3103,12 @@ final class AppsViewModel: ObservableObject {
                     knownAccountIDs: Set(accounts.map(\.id))
                 )
         }
-        // 旧记录曾经丢过扩展，不等于本次用户同意再丢更多扩展。继承这个旧标记会让
-        // 续签在没有任何确认的情况下继续改变产品功能；每一轮都必须从保留全量扩展开始。
-        let resolvedAllowDroppingExtensions = allowDroppingExtensions
         signingSession = SigningSession(
             app: app,
             account: account,
             requestedBundleIdentifier: requestedBundleIdentifier,
             selectedCertificateSerialNumber: selectedCertificateSerialNumber,
             completionMode: completionMode,
-            allowsDroppingExtensions: resolvedAllowDroppingExtensions,
             status: .running(.waitingForChannel)
         )
         // 新会话 ⇒ 子流程的簿记也要清空，否则上一轮留下的「上次停在 .installing」
@@ -3147,15 +3136,13 @@ final class AppsViewModel: ObservableObject {
                 account: account,
                 requestedBundleIdentifier: requestedBundleIdentifier,
                 selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-                completionMode: completionMode,
-                allowDroppingExtensions: resolvedAllowDroppingExtensions
+                completionMode: completionMode
             )
         }
     }
 
     private func restartSigning(
         _ session: SigningSession,
-        allowDroppingExtensions: Bool,
         bypassFreeAccountDeviceLimit: Bool = false,
         forceResign: Bool = false
     ) {
@@ -3166,7 +3153,6 @@ final class AppsViewModel: ObservableObject {
             alertFailure = Self.operationInProgressFailure(blockedBy: activeOperationDescription)
             return
         }
-        signingSession?.allowsDroppingExtensions = allowDroppingExtensions
         signingSession?.renewalExecutionPath = nil
         // 重试 = 又要跑一遍 `signAndInstall` ⇒ 子流程簿记同样清空（理由见 `startSigning`）。
         rotationSubflowStage = nil
@@ -3179,7 +3165,6 @@ final class AppsViewModel: ObservableObject {
                 requestedBundleIdentifier: session.requestedBundleIdentifier,
                 selectedCertificateSerialNumber: session.selectedCertificateSerialNumber,
                 completionMode: session.completionMode,
-                allowDroppingExtensions: allowDroppingExtensions,
                 bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
                 forceResign: forceResign
             )
@@ -3192,7 +3177,6 @@ final class AppsViewModel: ObservableObject {
         requestedBundleIdentifier: String? = nil,
         selectedCertificateSerialNumber: String?,
         completionMode: SigningCompletionMode,
-        allowDroppingExtensions: Bool,
         bypassFreeAccountDeviceLimit: Bool = false,
         forceResign: Bool = false
     ) async {
@@ -3232,7 +3216,6 @@ final class AppsViewModel: ObservableObject {
                 account: account,
                 requestedBundleIdentifier: requestedBundleIdentifier,
                 selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-                allowDroppingExtensions: allowDroppingExtensions,
                 bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
                 forceResign: forceResign || isRenewal
             )
@@ -3347,7 +3330,6 @@ final class AppsViewModel: ObservableObject {
         account: AppleAccountRecord,
         requestedBundleIdentifier: String?,
         selectedCertificateSerialNumber: String?,
-        allowDroppingExtensions: Bool,
         bypassFreeAccountDeviceLimit: Bool,
         forceResign: Bool
     ) async throws -> AppRecord {
@@ -3368,7 +3350,6 @@ final class AppsViewModel: ObservableObject {
                     accountID: account.id,
                     requestedBundleIdentifier: requestedBundleIdentifier,
                     selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-                    allowDroppingExtensions: allowDroppingExtensions,
                     forceResign: forceResign,
                     bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
                     progress: { [weak self] update in

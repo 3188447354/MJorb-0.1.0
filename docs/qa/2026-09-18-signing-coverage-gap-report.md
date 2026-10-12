@@ -44,7 +44,7 @@
 | Watch app（`Watch/`、`WKApplication`、watchOS 平台标记） | ✅ | `isWatchBundle` 三重判据 + 独立 profile 回退 |
 | 加密二进制（App Store FairPlay） | ✅ | `IPAParserService.isEncryptedBinary` 解析 `LC_ENCRYPTION_INFO_64` 的 `cryptid`，**导入时**就拦 |
 | dylib 注入 / 移除 | ✅ | `AppSigningOptions.dylibInjections` / `dylibLoadCommandsToRemove` + `BundleDylibEditor` |
-| 扩展丢弃（免费账号不支持某能力时） | ✅ | `extensionsToRemove` / `allowDroppingExtensions` |
+| 扩展完整性（免费账号不支持某能力时） | ✅ | 任何扩展无法完整配置即停止签名，绝不删除目标 |
 | entitlements 按账号能力过滤 | ✅ | `filteredAppIDEntitlements` |
 | 路径安全（`..`、绝对路径、控制字符、盘符） | ✅ | `ArchivePathValidator` |
 | 大包门槛（条目数 / 解压总量 / 元数据 / 图标） | ✅ **宽松** | `ArchiveLimits`：50,000 条目 / 8 GB 解压 / 2 MB 元数据 / 20 MB 图标 —— 抖音 5,053 / 1.46 GB，**远低于** |
@@ -64,7 +64,7 @@
 | 元数据 / 图标单文件 | 2 MB / 20 MB | ✅ |
 | **磁盘空间** | **`IPA × 4 + 200MB`**（`ipaSize` 取的是**压缩**体积）⇒ 抖音需 **3.32 GB** | ⚠️ 大包的真实门槛。对抖音这种包**偏保守**（实测峰值 ≈3.0 GB）；**但对高压缩比的包会严重低估** —— 见下 |
 | 单请求超时 | 20 秒（描述文件 30 秒） | ⚠️ Apple 慢时 Seal 主动放弃，而**超时不属于「会话过期」，不会退避重试** |
-| 扩展默认不可丢弃 | `allowDroppingExtensions` 默认 false | ⚠️ 任一扩展失败 ⇒ 整个 App 失败（**安全设计**，有用户确认通道） |
+| 扩展不可丢弃 | 无降级开关 | ⚠️ 任一扩展失败 ⇒ 整个 App 失败（**安全设计**） |
 | 证书剩余寿命须覆盖 7 天 | `SEAL-CERT-229` | ⚠️ 设备时钟不对时触发；Apple 正常发的是 1 年期证书 |
 | `Payload/` 下必须恰好 1 个 `.app` | `SEAL-IPA-103` | ⚠️ 多 App 的 IPA 直接拒绝（罕见） |
 | 本地预检「存活 App ID ≥ 10 就拦」 | **已删除** | ✅ 不再是限制 |

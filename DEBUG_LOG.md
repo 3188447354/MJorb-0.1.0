@@ -26,9 +26,9 @@
 
 - **现象**：LiveContainer 运行时报告 `LiveProcess extension not found`，并提示重新安装且保留扩展。
 - **根因**：普通单项签名默认禁止删除扩展，但 `SigningCoordinator.signAndInstall` 的默认参数却是允许；批量续签与证书轮换自动恢复没有显式覆盖该默认。若 Apple 为某个扩展创建 App ID 或生成描述文件失败，门户层会在允许降级时移除扩展并继续安装，后台路径因而可能把已安装产品替换为缺失 `LiveProcess` 的版本。
-- **修复**：协调器默认改为禁止删除扩展；批量续签和证书轮换自动恢复显式传入 `false`。唯一仍允许的路径是用户在失败抽屉主动选择“移除扩展并重试”。后台无法保留扩展时会如实失败，不再用功能残缺的 IPA 伪装成功。
-- **涉及文件**：`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Scripts/tests/test_failure_contract_source.py`。
-- **验证状态**：新增回归先红后绿；失败合同静态套件 28/28、错误码清单 11/11、清单生成和 `git diff --check` 通过。Windows 无 Swift/Xcode，完整 iOS CI 将编译和运行 Swift 回归。
+- **修复**：删除整个 `allowDroppingExtensions` 参数链及门户层物理删除扩展实现；所有单签、续签、批量续签和证书轮换都只能保留完整目标集。任一扩展无法取得正确 App ID 或描述文件时，整次签名停止，绝不安装残缺 IPA。
+- **涉及文件**：`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Scripts/tests/test_failure_contract_source.py`。
+- **验证状态**：源级合同断言不再存在扩展删除入口；Windows 无 Swift/Xcode，完整 iOS CI 将编译和运行 Swift 回归。
 
 ---
 
@@ -4266,7 +4266,7 @@ docs/qa 与一处测试夹具的 `maskedEmail`）。
 - 批量结果里 Seal 项**预写 `completed`**（`AppsViewModel.persistPendingBatchResultForSealUpdate`）：
   这是 2026-09-17 为消除「同一批次三份互相矛盾结论」做的取舍，只翻这一处会把那个 bug 放回来，
   必须连 `recoverInterruptedQueueIfNeeded` 的顺序与「待确认」这一档 UI 一起设计。
-- `SEAL-EXT-401a` 在按钮映射里未登记（只有 `SEAL-EXT-401`）⇒ 撞到它时没有「移除扩展并重试」入口。
+- 旧版曾把 `SEAL-EXT-401a` 映射为“移除扩展并重试”；现已废弃该降级策略，扩展失败统一保留完整包并停止本次签名。
 - 审查另发现的签名侧结构性问题（`applications` 字典按**改写后** ID 建键、却按**原始** ID 查找 ⇒
   首签第三方 IPA 时 `updateFeatures` 与 entitlement 校验整体空转；Phase 2 丢扩展不回收已建 App ID；
   `removeExtension` 不清理 `SC_Info/Manifest.plist`）**必须与"减少门户写入量"同批处理**——
@@ -6732,7 +6732,7 @@ CMake Error at CMakeLists.txt:394 (message):
 
 ## 2026-10-12 — 扩展准备失败把未知 Apple 返回伪装成 7 天窗口，并给出相反的“移除扩展”动作
 
-**症状**：扩展 App ID 或描述文件准备失败时，`SEAL-EXT-401`／`SEAL-EXT-401a` 不论 Apple 实际返回什么，都会说“等待 7 天窗口、不要移除扩展”；但签名结果抽屉又仅对 `401` 显示“移除扩展并重试”。这既可能把未知错误误说成 App ID 限额，也让用户在同一页面收到相反指引。
+**症状**：扩展 App ID 或描述文件准备失败时，`SEAL-EXT-401`／`SEAL-EXT-401a` 不论 Apple 实际返回什么，都会说“等待 7 天窗口、不要移除扩展”；旧版签名结果抽屉还曾对 `401` 显示“移除扩展并重试”。这既可能把未知错误误说成 App ID 限额，也让用户在同一页面收到相反指引。
 
 **根因**：扩展分支绕开了 `ApplePortalSigningFailure.make` 的统一事实分类，自行制造了两个没有结构化语义的错误码；UI 又按其中一个旧错误码触发会改变 IPA 功能集的降级重试。
 
@@ -6752,11 +6752,11 @@ CMake Error at CMakeLists.txt:394 (message):
 
 ## 2026-10-12 — 旧的“已移除扩展”记录会授权后续续签继续删扩展
 
-**症状**：某条历史记录只要保存过 `removedExtensionBundleIdentifiers`，后续签名或续签即使没有任何“移除扩展”确认，仍会把 `allowDroppingExtensions` 设为真；新的扩展准备失败可能再次被当作可丢弃处理。
+**症状**：某条历史记录只要保存过 `removedExtensionBundleIdentifiers`，旧版后续签名或续签即使没有任何“移除扩展”确认，仍会把删除扩展开关设为真；新的扩展准备失败可能再次被当作可丢弃处理。
 
 **根因**：AppsViewModel 把“以前发生过降级”的历史状态与“本轮用户授权降级”混为同一个布尔值。旧记录只是描述当前安装产物，并不构成本轮改变产品功能的授权。
 
-**修复**：移除历史状态对本轮 `allowDroppingExtensions` 的隐式提升。所有当前产品入口均从 `false` 开始；旧记录若无法完整重签会如实失败，而不会继续静默删减功能。
+**修复**：删除历史状态对本轮删扩展行为的隐式提升，并彻底删除删扩展 API 与门户实现。旧记录若无法完整重签会如实失败，而不会继续静默删减功能。
 
 **验证**：扩展失败合同回归测试先红后绿，新增断言防止 `removedExtensionBundleIdentifiers` 再次变成自动降级开关；与事务闸门增量测试共同通过。
 

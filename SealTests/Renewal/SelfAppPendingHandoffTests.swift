@@ -380,8 +380,12 @@ private struct ReplacementRegistrarFixture {
             .appending(path: "SealReplacementRegistrar-\(UUID().uuidString)", directoryHint: .isDirectory)
         let documents = root.appending(path: "Documents", directoryHint: .isDirectory)
         let cache = root.appending(path: "Caches", directoryHint: .isDirectory)
+        // `.settle` 后会按当前运行包重建 Seal 的本地 IPA；该夹具必须提供一个
+        // 与真机运行包等价的源目录，不能只伪造 metadata 而让文件系统分支失真。
+        let runningBundle = root.appending(path: "Running.app", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: runningBundle, withIntermediateDirectories: true)
         let appStore = try CoreDataAppStore(inMemory: true)
         let fileStore = AppFileStore(documentsDirectory: documents, cacheDirectory: cache)
 

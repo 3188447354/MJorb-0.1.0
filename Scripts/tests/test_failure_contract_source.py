@@ -8,30 +8,19 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class FailureContractSourceTests(unittest.TestCase):
-    def test_background_renewal_never_silently_allows_extension_removal(self) -> None:
+    def test_extension_removal_has_no_signing_entry_point(self) -> None:
         coordinator = (ROOT / "Seal/Core/Signing/SigningCoordinator.swift").read_text(
             encoding="utf-8"
         )
-        renewal = (ROOT / "Seal/Core/Renewal/RenewalCoordinator.swift").read_text(
+        portal = (ROOT / "Seal/Infrastructure/Signing/ApplePortalSigningService.swift").read_text(
             encoding="utf-8"
         )
 
         # Removing an embedded extension changes the product the user installed.
-        # Only the explicit "retry without extensions" action may opt into it;
-        # unattended renewal and certificate-rotation recovery must fail instead.
-        signature = coordinator.split("func signAndInstall(", 1)[1].split(
-            ") async throws -> AppRecord", 1
-        )[0]
-        rotation = coordinator.split(
-            "private func resignAppsAffectedByCertificateRotation", 1
-        )[1].split("private func pendingRotationRecovery", 1)[0]
-        renewal_call = renewal.split("let updated = try await signingCoordinator.signAndInstall(", 1)[1].split(
-            "progress: { update in", 1
-        )[0]
-
-        self.assertIn("allowDroppingExtensions: Bool = false", signature)
-        self.assertIn("allowDroppingExtensions: false", rotation)
-        self.assertIn("allowDroppingExtensions: false", renewal_call)
+        # It is never a fallback: no UI/session/coordinator/portal API may expose it.
+        self.assertNotIn("allowDroppingExtensions", coordinator)
+        self.assertNotIn("allowDroppingExtensions", portal)
+        self.assertNotIn("removeExtension(", portal)
 
     def test_single_operation_result_is_not_logged_again_when_the_drawer_closes(self) -> None:
         source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(

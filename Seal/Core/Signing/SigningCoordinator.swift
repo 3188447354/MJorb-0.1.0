@@ -267,9 +267,6 @@ actor SigningCoordinator {
         accountID: UUID,
         requestedBundleIdentifier: String? = nil,
         selectedCertificateSerialNumber: String? = nil,
-        // 扩展是已安装产品的一部分；后台流程绝不能因门户暂时失败而静默产出删扩展的 IPA。
-        // 当前所有产品入口都传 false；保留参数只是让底层策略在迁移期保持显式可审计。
-        allowDroppingExtensions: Bool = false,
         installAfterSigning: Bool = true,
         forceResign: Bool = false,
         bypassFreeAccountDeviceLimit: Bool = false,
@@ -656,7 +653,6 @@ actor SigningCoordinator {
                     targetBundleIdentifier: targetBundleIdentifier,
                     preferredIconData: preferredIconData,
                     selectedCertificateSerialNumber: signSelectedSerial,
-                    allowDroppingExtensions: allowDroppingExtensions,
                     persistSigningMaterial: { updatedSecret, serialNumber in
                         try await self.persistNewSigningMaterial(
                             updatedSecret,
@@ -718,7 +714,6 @@ actor SigningCoordinator {
                     targetBundleIdentifier: targetBundleIdentifier,
                     preferredIconData: preferredIconData,
                     selectedCertificateSerialNumber: nil,
-                    allowDroppingExtensions: allowDroppingExtensions,
                     persistSigningMaterial: { updatedSecret, serialNumber in
                         try await self.persistNewSigningMaterial(
                             updatedSecret,
@@ -1777,7 +1772,6 @@ actor SigningCoordinator {
                     accountID: accountID,
                     requestedBundleIdentifier: candidate.mappedBundleIdentifier ?? candidate.preferredBundleIdentifier,
                     selectedCertificateSerialNumber: nil,
-                    allowDroppingExtensions: false,
                     forceResign: true,
                     bypassFreeAccountDeviceLimit: true,
                     progress: progress,

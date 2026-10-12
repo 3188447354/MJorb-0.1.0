@@ -123,7 +123,7 @@ var usedBundleIDCount: Int {
 这是 Apple 侧的产品约束，代码层面无解。可选的应对：
 
 1. **抖音优先用付费账号签**（付费账号上限 100+，且可删 App ID）
-2. 接受**丢弃部分扩展**（`allowDroppingExtensions`，Seal 已实现降级路径）
+2. 不接受丢弃扩展；扩展能力无法完整签入时，必须保留原包并停止本次签名
 3. 给抖音单独留一个 Apple ID，不与其他 App 混用
 
 ---

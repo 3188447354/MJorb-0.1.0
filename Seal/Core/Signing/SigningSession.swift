@@ -61,7 +61,6 @@ struct SigningSession: Identifiable, Equatable, Sendable {
     // 让进度/失败回看界面显示真实证书而非“未准备”。
     var selectedCertificateSerialNumber: String?
     let completionMode: SigningCompletionMode
-    var allowsDroppingExtensions: Bool
     /// Nil until `SigningCoordinator` has verified which renewal path is safe.
     var renewalExecutionPath: RenewalExecutionPath?
     var status: Status
@@ -100,7 +99,6 @@ struct SigningSession: Identifiable, Equatable, Sendable {
         requestedBundleIdentifier: String? = nil,
         selectedCertificateSerialNumber: String? = nil,
         completionMode: SigningCompletionMode = .signAndInstall,
-        allowsDroppingExtensions: Bool = false,
         renewalExecutionPath: RenewalExecutionPath? = nil,
         stageStartedAt: Date? = Date(),
         status: Status
@@ -111,7 +109,6 @@ struct SigningSession: Identifiable, Equatable, Sendable {
         self.requestedBundleIdentifier = requestedBundleIdentifier
         self.selectedCertificateSerialNumber = selectedCertificateSerialNumber
         self.completionMode = completionMode
-        self.allowsDroppingExtensions = allowsDroppingExtensions
         self.renewalExecutionPath = renewalExecutionPath
         // 默认「会话开始 = 当前阶段开始」：会话总是在一个运行中的阶段里被创建的，
         // 起点留空会让进度停在阶段地板值上直到第一次阶段推进。

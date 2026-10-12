@@ -542,7 +542,6 @@ actor RenewalCoordinator {
                     accountID: accountID,
                     requestedBundleIdentifier: latestApp.mappedBundleIdentifier ?? latestApp.preferredBundleIdentifier,
                     selectedCertificateSerialNumber: nil,
-                    allowDroppingExtensions: false,
                     forceResign: true,
                     // 续签是覆盖已装应用，不新增免费账号设备槽位；已绕过 3-app 上限
                     // （设备级跨 team）装 6 个应用的用户，批量续签时必须跳过本机预检，
