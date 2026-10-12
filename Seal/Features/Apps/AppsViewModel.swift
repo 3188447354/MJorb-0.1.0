@@ -1992,8 +1992,14 @@ final class AppsViewModel: ObservableObject {
     }
 
     func installSignedArtifact(_ app: AppRecord) async -> Bool {
-        guard signingTask == nil, batchRefreshTask == nil, installingCachedPackageAppID == nil,
-              let signingCoordinator else { return false }
+        guard let signingCoordinator else { return false }
+        // “重新安装”是用户主动操作。若签名、批量续签或另一条安装已占用
+        // 设备通道，不能像旧实现一样直接 false（界面看起来像按钮失效）。
+        // 与其他前台入口一致，明确告诉用户当前事务完成后再试。
+        guard signingTask == nil, batchRefreshTask == nil, installingCachedPackageAppID == nil else {
+            alertFailure = operationConflictFailure(requested: .installing)
+            return false
+        }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 安装已签名包: \(app.displayName) (\(app.id.uuidString.prefix(8)))")
         guard let operationLease = await acquireOperation(.installing, appID: app.id) else {
             alertFailure = operationConflictFailure(requested: .installing)
