@@ -93,6 +93,26 @@ struct SelfAppPendingHandoffTests {
         #expect(try await fixture.transactionStore.loadPending() == nil)
     }
 
+    @Test
+    func confirmedImportedSealUpdatePromotesReplacementInsteadOfLeavingItUnsigned() async throws {
+        let fixture = try await ReplacementRegistrarFixture.make(
+            action: .settle,
+            importedSealReplacement: true
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+        try await fixture.registrar.ensureRegistered()
+
+        let records = try await fixture.appStore.fetchAll().filter(\.isSeal)
+        let app = try #require(records.first)
+        #expect(records.count == 1)
+        #expect(app.id == fixture.importedReplacementID)
+        #expect(app.replacesInstalledAppID == nil)
+        #expect(app.belongsInInstalledList)
+        #expect(app.belongsInUnsignedList == false)
+        #expect(app.provisioningProfileUUID == ReplacementRegistrarFixture.candidateProfileUUID)
+    }
+
     /// 结算清理的保留集合**只有 Seal 自己一个条目** ⇒ 其它 App 的 Bundle ID 全是候选。
     /// 主 App 靠设备端核验能救回来，**扩展救不回来**（扩展不是独立安装的 App，
     /// `isAppInstalled` 恒为 `false`）—— 2026-09-17 真机（构建 95）就是这么丢掉
@@ -349,10 +369,12 @@ private struct ReplacementRegistrarFixture {
     let transactionStore: SelfReplacementTransactionStore
     let replacement: StubSelfReplacement
     let profileCleaner: RecordingProfileCleaner
+    let importedReplacementID: UUID?
 
     static func make(
         action: SelfReplacementReconcileAction,
-        logStore: SealLogStore? = nil
+        logStore: SealLogStore? = nil,
+        importedSealReplacement: Bool = false
     ) async throws -> ReplacementRegistrarFixture {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "SealReplacementRegistrar-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -389,6 +411,28 @@ private struct ReplacementRegistrarFixture {
             isSeal: true,
             importedAt: .distantPast
         ))
+        let importedReplacementID: UUID?
+        if importedSealReplacement {
+            let replacementID = UUID()
+            try await appStore.save(AppRecord(
+                id: replacementID,
+                originalBundleIdentifier: "com.mjorb.seal",
+                mappedBundleIdentifier: "com.mjorb.seal",
+                name: "Seal",
+                version: "2.0",
+                buildNumber: "2",
+                size: 1,
+                state: .imported,
+                ipaRelativePath: "Apps/\(replacementID.uuidString)/Original.ipa",
+                signedArtifactStatus: .notBuilt,
+                isSeal: true,
+                importedAt: Date(),
+                replacesInstalledAppID: sealID
+            ))
+            importedReplacementID = replacementID
+        } else {
+            importedReplacementID = nil
+        }
 
         let transactionStore = SelfReplacementTransactionStore(
             fileURL: root.appending(path: "SelfSigningHandoff.json")
@@ -447,7 +491,8 @@ private struct ReplacementRegistrarFixture {
             appStore: appStore,
             transactionStore: transactionStore,
             replacement: replacement,
-            profileCleaner: profileCleaner
+            profileCleaner: profileCleaner,
+            importedReplacementID: importedReplacementID
         )
     }
 }

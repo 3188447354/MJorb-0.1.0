@@ -339,9 +339,13 @@ actor SelfAppRegistrar {
                 )
             }
             if let existing {
+                let recordToPromote = SelfAppRecordSelection.importedReplacement(
+                    for: existing,
+                    in: allRecords
+                ) ?? existing
                 try await atomicallyApplyInstalledIdentity(
                     settled.installedIdentity,
-                    to: existing,
+                    to: recordToPromote,
                     accounts: accounts
                 )
             }
@@ -433,7 +437,12 @@ actor SelfAppRegistrar {
             updated.installedFingerprint = pending
         }
         updated.pendingUpdateSourceFingerprint = nil
-        try await appStore.save(updated)
+        if let replacedID = updated.replacesInstalledAppID {
+            updated.replacesInstalledAppID = nil
+            try await appStore.commitInstalledReplacement(updated, replacing: replacedID)
+        } else {
+            try await appStore.save(updated)
+        }
     }
 
     // MARK: - 清理重复的 Seal 记录

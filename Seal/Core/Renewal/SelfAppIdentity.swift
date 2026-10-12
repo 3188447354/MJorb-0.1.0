@@ -88,6 +88,26 @@ enum SelfAppRecordSelection {
         }.first
     }
 
+    /// 自替换事务已确认新进程实际运行时，优先接管导入时创建的替换记录，
+    /// 而不是更新将被替换的旧记录。这样待签名列表的可见性标记会与旧记录
+    /// 在同一事务中完成交接，不会留下永远待签名的 Seal 更新包。
+    static func importedReplacement(
+        for existing: AppRecord,
+        in records: [AppRecord]
+    ) -> AppRecord? {
+        records
+            .filter { record in
+                record.isSeal && record.replacesInstalledAppID == existing.id
+            }
+            .sorted { lhs, rhs in
+                if lhs.importedAt != rhs.importedAt {
+                    return lhs.importedAt > rhs.importedAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            .first
+    }
+
     private static func matchesSealBundleIdentifier(
         _ bundleIdentifier: String,
         record: AppRecord
