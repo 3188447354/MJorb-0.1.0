@@ -22,13 +22,9 @@ enum ApplePortalAppIDResolver {
 
     /// 创建 App ID 的**顺序**：主 App 必须排在最前。
     ///
-    /// ⚠️ 顺序就是安全本身（2026-09-17）。免费账号「7 天内最多注册 10 个 App ID」是**共享**名额，
-    /// 而多扩展 App（抖音 = 主 App + 8 扩展）一次签名要连发 9 次 `addAppID`。名额不够时：
-    /// **扩展创建失败会被「丢弃降级」继续签名，主 App 创建失败则整个签名抛错**。
-    /// 原实现按 Bundle ID 字母序创建 ⇒ 只要有一个扩展的 Bundle ID 排在主 App 之前，
-    /// 它就会先把有限名额吃掉，轮到主 App 时名额已空 ⇒ **整个签名失败，而名额已经白花**。
-    /// 主 App 优先之后最坏只是「部分扩展被丢弃」（界面本来就会列出被丢弃的扩展），
-    /// 而不是「这个 App 签不上」。
+    /// ⚠️ 顺序就是安全本身（2026-09-17）。免费账号的 App ID 名额是共享资源，而多扩展
+    /// App 一次会连续建立多个 ID。主 App 优先能在名额不足时尽早给出准确失败，避免
+    /// 先消耗扩展 ID 再发现主包无法完成；扩展永远不会被删除来换取半成品安装。
     ///
     /// 抽成纯函数是为了能写单测 —— 它的错法只在真机上可见：名额充足时两种顺序结果完全一样。
     static func preparationOrder(
@@ -1231,6 +1227,22 @@ actor ApplePortalSigningService {
             )
             try Task.checkCancellation()
 
+            // 签名后的 bundle 集必须与准备阶段完全相同。描述文件、App Group 或门户异常
+            // 绝不能通过删除 .appex 换取“可安装”的半成品；这条核验同时覆盖主包与每个
+            // 扩展，阻止残缺产物进入打包和覆盖安装事务。
+            let expectedSignedBundleIDs = Set(prepared.bundleIDMappings.values)
+            let actualSignedBundleIDs = Set(
+                try signingWorkspace.signedBundleTargets(in: prepared).map(\.bundleIdentifier)
+            )
+            guard actualSignedBundleIDs == expectedSignedBundleIDs else {
+                throw Self.failure(
+                    title: "签名产物不完整",
+                    reason: "签名前后 Bundle 目标不一致，已拒绝安装不含全部扩展的 IPA。",
+                    recovery: "重新签名；若持续发生，请导出日志并反馈。",
+                    code: "SEAL-SIGN-412"
+                )
+            }
+
             let profileBindings = try validateEmbeddedProfiles(
                 in: prepared,
                 teamID: team.identifier,
@@ -2180,8 +2192,10 @@ actor ApplePortalSigningService {
         // ⇒ 主描述文件不授予它 ⇒ 签后逐 bundle 校验必报 `SEAL-ENTITLEMENT-401`
         // （LiveContainer 连续 5 次签不上）。
         // ⇒ 出现这种扩展就回退独立描述文件：独立模式下扩展有自己的 App ID，能力提交到它自己那份上。
-        // ⚠️ 这里的能力集与下面 `requestedEntitlements` 必须**同源**（都用 `filteredAppIDEntitlements`）——
-        // 判据错了会「回退判断说没事、事后校验说缺权限」，两边互相打架。
+        // ⚠️ 拓扑判据与门户 feature 请求不能混为一谈：后者只能包含可提交 feature，
+        // 前者必须保留原 IPA 中所有非签名器托管的能力，才能给 LiveProcess 一类扩展
+        // 建立独立 App ID / profile / App Group 绑定。签后校验仍只使用可由 profile
+        // 授予的请求集，避免把 Apple 不公开支持的能力伪报成 profile 缺失。
         // ⚠️ 用**赋值式**累加而不是 `Dictionary(uniqueKeysWithValues:)`：后者遇到重复键会
         // **直接 trap（崩溃）**，而 `mappings` 是 `[原始 ID: 映射后 ID]`，映射后 ID 在
         // 「扩展 ID 需要哈希缩短」那条路径上理论上存在碰撞面 —— 签名链路上崩溃远糟于静默取后者。
@@ -2196,14 +2210,11 @@ actor ApplePortalSigningService {
         var entitlementsByBundleID: [String: Set<String>] = [:]
         for mappedBundleID in mappings.values {
             guard let application = applications[mappedBundleID] else { continue }
-            let keys = filteredAppIDEntitlements(
-                from: application,
-                team: team,
-                cachedEntitlements: cachedEntitlementsByBundleID[mappedBundleID]
-            )
+            let rawKeys = Set((cachedEntitlementsByBundleID[mappedBundleID] ?? application.entitlements)
                 .keys
-                .map(\.rawValue)
-            entitlementsByBundleID[mappedBundleID] = Set(keys)
+                .map(\.rawValue))
+            entitlementsByBundleID[mappedBundleID] =
+                AppExtensionProfileStrategy.profileTopologyEntitlements(from: rawKeys)
         }
         let resolvedExtensionProfileStrategy = AppExtensionProfileStrategy.resolvedForSigning(
             requested: extensionProfileStrategy,
@@ -2392,8 +2403,8 @@ actor ApplePortalSigningService {
         }
 
         // Phase 1: only read/create/update App IDs. No provisioning profile is fetched here.
-        // 顺序：**主 App 优先**（见 `ApplePortalAppIDResolver.preparationOrder`）——
-        // 名额不足时让扩展去「丢弃降级」，而不是让主 App 拿不到名额、整个签名失败。
+        // 主 App 优先（见 `ApplePortalAppIDResolver.preparationOrder`）；任何目标失败都
+        // 保留完整 IPA 并停止，不能删除扩展继续。
         for (originalBundleID, mappedBundleID) in ApplePortalAppIDResolver.preparationOrder(
             mappings: portalMappings,
             mappedMainBundleID: mappedMainBundleID
@@ -2541,9 +2552,10 @@ actor ApplePortalSigningService {
                                 )
                             }
                         }
-                    } catch where mappedBundleID != mappedMainBundleID {
-                        // 扩展降级：清空 features，用空 entitlements 继续签名
-                        requestedEntitlements[mappedBundleID] = [:]
+                    } catch {
+                        // 完整 IPA 的任一扩展无法完成 App ID / capability / App Group
+                        // 准备时，不能把它清空后继续产出一个表面成功的包。
+                        throw ApplePortalSigningFailure.make(stage: .appID, error: error)
                     }
                 }
                 preparedAppIDs.append((originalBundleID, mappedBundleID, appID))
@@ -2560,22 +2572,9 @@ actor ApplePortalSigningService {
             } catch let failure as ImportFailure where requiresExistingAppIDs {
                 throw failure
             } catch {
-                guard mappedBundleID != mappedMainBundleID else { throw error }
-                guard allowDroppingExtensions else {
-                    // 扩展是产品的一部分。与主 App 走同一个门户错误分类：只有 Apple
-                    // 明确返回名额/限流/传输事实时才显示该事实；未知错误不能编造
-                    // “7 天窗口”，也不能让 UI 给出“移除扩展”的矛盾动作。
-                    throw ApplePortalSigningFailure.make(
-                        stage: .appID,
-                        error: error
-                    )
-                }
-                try signingWorkspace.removeExtension(
-                    mappedBundleIdentifier: mappedBundleID,
-                    from: workspace
-                )
-                requestedEntitlements.removeValue(forKey: mappedBundleID)
-                droppedExtensionBundleIdentifiers.append(originalBundleID)
+                // App ID 阶段必须原样保留所有扩展；删除扩展会制造一个能安装但功能
+                // 残缺的 IPA，且后续 profile-only 续签无法把二进制扩展补回来。
+                throw ApplePortalSigningFailure.make(stage: .appID, error: error)
             }
         }
 
@@ -2601,34 +2600,10 @@ actor ApplePortalSigningService {
             } catch is CancellationError {
                 throw CancellationError()
             } catch let failure as ImportFailure {
-                if preparedAppID.mapped == mappedMainBundleID { throw failure }
-                guard allowDroppingExtensions else { throw failure }
-                try signingWorkspace.removeExtension(
-                    mappedBundleIdentifier: preparedAppID.mapped,
-                    from: workspace
-                )
-                requestedEntitlements.removeValue(forKey: preparedAppID.mapped)
-                droppedExtensionBundleIdentifiers.append(preparedAppID.original)
+                throw failure
             } catch {
-                if preparedAppID.mapped == mappedMainBundleID {
-                    throw ApplePortalSigningFailure.make(
-                        stage: .provisioningProfile,
-                        error: error
-                    )
-                }
-                guard allowDroppingExtensions else {
-                    // 与主 App 的描述文件失败保持同一份可审计语义；不改变 IPA 的扩展集。
-                    throw ApplePortalSigningFailure.make(
-                        stage: .provisioningProfile,
-                        error: error
-                    )
-                }
-                try signingWorkspace.removeExtension(
-                    mappedBundleIdentifier: preparedAppID.mapped,
-                    from: workspace
-                )
-                requestedEntitlements.removeValue(forKey: preparedAppID.mapped)
-                droppedExtensionBundleIdentifiers.append(preparedAppID.original)
+                // 描述文件缺失与主包同等严重：不删除扩展，直接保留准确失败。
+                throw ApplePortalSigningFailure.make(stage: .provisioningProfile, error: error)
             }
         }
 

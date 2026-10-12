@@ -187,6 +187,32 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
+    func profileTopologyKeepsUnsupportedExtensionCapabilitiesAsAnIndependentProfileBlocker() {
+        // `increased-memory-limit` 不是当前门户 feature API 可提交的开关，但它仍然是
+        // IPA 的真实扩展能力。不能因为它不会送进 updateAppId 就把 LiveProcess 错判为
+        // 可以共用主描述文件；否则扩展会失去自己的 App ID / profile / App Group 绑定链路。
+        let topology = AppExtensionProfileStrategy.profileTopologyEntitlements(from: [
+            "application-identifier",
+            "com.apple.developer.team-identifier",
+            "keychain-access-groups",
+            "get-task-allow",
+            "com.apple.developer.kernel.increased-memory-limit"
+        ])
+
+        #expect(topology == ["com.apple.developer.kernel.increased-memory-limit"])
+        #expect(
+            AppExtensionProfileStrategy.resolvedForSigning(
+                requested: .sharedMainProfile,
+                mainBundleID: mappedMain,
+                entitlementsByBundleID: [
+                    mappedMain: [],
+                    mappedShare: topology
+                ]
+            ) == .independentProfiles
+        )
+    }
+
+    @Test
     func resolvedForSigningNeverUpgradesIndependentProfilesToShared() {
         // 只允许「共享 → 独立」这一个方向；反向会静默丢扩展能力，正是这条要防的。
         #expect(

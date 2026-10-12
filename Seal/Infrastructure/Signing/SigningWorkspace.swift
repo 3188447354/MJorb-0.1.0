@@ -315,18 +315,6 @@ struct SigningWorkspace: Sendable {
         return targets
     }
 
-    func removeExtension(
-        mappedBundleIdentifier: String,
-        from workspace: PreparedSigningWorkspace
-    ) throws {
-        for extensionURL in try appExtensionURLs(in: workspace.appURL) {
-            if try bundleIdentifier(at: extensionURL) == mappedBundleIdentifier {
-                try FileManager.default.removeItem(at: extensionURL)
-                return
-            }
-        }
-    }
-
     /// 校验条目数 / 路径安全 / 解压总量上限，**并把解压后总量返回出去**。
     ///
     /// ⚠️ 返回值的用途是**判磁盘空间**（见 `validateFreeSpace`）——

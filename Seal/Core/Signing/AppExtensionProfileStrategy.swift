@@ -13,6 +13,20 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
         isSeal ? .independentProfiles : .sharedMainProfile
     }
 
+    /// 为「共用主描述文件是否安全」保留 IPA 的真实能力边界。
+    ///
+    /// 这不是门户 `updateAppId` 的 feature 请求集：后者只能包含 Apple 当前公开 API
+    /// 能提交的开关；这里必须额外看到像 LiveProcess 的 increased-memory-limit 这类原始
+    /// entitlement，否则会把需要独立 App ID、profile 和 App Group 关联的扩展误判成共享。
+    static func profileTopologyEntitlements(from rawEntitlements: Set<String>) -> Set<String> {
+        rawEntitlements.subtracting([
+            "application-identifier",
+            "com.apple.developer.team-identifier",
+            "keychain-access-groups",
+            "get-task-allow"
+        ])
+    }
+
     func portalMappings(
         from mappings: [String: String],
         originalMainBundleID: String

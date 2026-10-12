@@ -56,6 +56,9 @@ enum ProfileOnlyRenewalPolicy {
         case missingInstalledArtifact
         case incompleteSigningIdentity
         case missingTargetRecord
+        /// 记录证实上一份产物曾移除扩展。profile-only 只能换描述文件，无法把已
+        /// 删除的二进制扩展装回去；必须完整重签并覆盖安装一次才能自愈。
+        case incompleteExtensionSet
         /// 🔴 **本机没有「该应用当前使用的那张证书」的私钥**（2026-09-26，构建 48 真机）。
         ///
         /// 记录里的 `certificateSerialNumber` 可以指向一张**只有 Apple 门户上还在、本机
@@ -145,6 +148,7 @@ enum ProfileOnlyRenewalPolicy {
         case .missingInstalledArtifact: "记录里缺少已安装产物"
         case .incompleteSigningIdentity: "记录里的签名身份不完整"
         case .missingTargetRecord: "记录里缺少签名目标"
+        case .incompleteExtensionSet: "上一份签名产物缺少扩展，需要完整重签修复"
         case .missingLocalCertificateMaterial: "本机没有该证书的私钥"
         case .pendingSelfUpdateSource: "已导入的更新源尚未安装"
         }
@@ -230,6 +234,12 @@ enum ProfileOnlyRenewalPolicy {
     /// ⚠️ 这里删掉的是「按身份一刀切」，**不是安全边界**：记录不完整（缺已装产物 /
     /// 缺签名身份 / 缺目标记录）时，下面几条判据**一条都没有放松**，照旧回落完整重签。
     static func evaluate(app: AppRecord) -> Decision {
+        // `removedExtensionBundleIdentifiers` 是历史完整签名曾物理移除扩展的唯一记录。
+        // 只续签无法修复二进制布局，若继续走快路径会把“已续签”写回一个仍缺
+        // LiveProcess / Share Extension 的安装包，令用户永远无法通过续签恢复功能。
+        guard app.removedExtensionBundleIdentifiers.isEmpty else {
+            return .requiresFullResign(.incompleteExtensionSet)
+        }
         // `Signed.ipa` 是可再生的安装缓存，不是手机上已安装产物的续签身份。
         // 维护页删除缓存后仍可只更新描述文件；真正的身份完整性由后续字段逐项验证。
         guard app.state == .installed,

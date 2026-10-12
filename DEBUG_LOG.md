@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-10-12 LiveContainer 扩展与 App Group 完整性
+
+- **现象**：LiveContainer 运行时报告 `LiveProcess extension not found`；过去的签名链路仍有在扩展 App ID 或描述文件失败后移除 `.appex` 并继续打包的遗留分支。共享 profile 的判据又只看可提交的门户 feature，忽略 LiveProcess 的 `com.apple.developer.kernel.increased-memory-limit`。
+- **根因**：把“可由 `updateAppId` 提交的 feature”误当成“可共用主描述文件”的能力边界。LiveProcess 因此错误共用主 profile，不能建立独立 App ID、profile 与 App Group 绑定；一旦旧降级分支被触发，profile-only 续签只能续描述文件，永远无法恢复已删二进制扩展。
+- **修复**：拓扑判据读取原始且非 signer-managed entitlement，扩展存在主包未覆盖能力即使用独立 App ID/profile；门户 feature 请求仍只发送 Apple 支持的项。删除工作区删除扩展 API 和所有降级调用，任一扩展准备失败均不产出 IPA。签名后逐项核对 bundle 集；历史记录标记过已删扩展时强制完整重签，成功后才清除标记。
+- **回归**：新增未映射 capability 仍触发独立 profile 的策略测试，以及历史缺扩展记录拒绝 profile-only 的策略测试。完整 iOS CI 将验证 Swift 编译、Signer、发布安全与 IPA 构建。
+
+---
+
 ## 2026-10-12 Seal 覆盖更新已安装却永久停在待签名
 
 - **现象**：导入 Seal IPA 后覆盖安装成功，新进程日志已记录 `SEAL-SELF-113`（运行包身份与候选一致），但应用仍在待签名页；刷新无效，再点签名又回到待签名。
