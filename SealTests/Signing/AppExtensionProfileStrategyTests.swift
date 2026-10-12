@@ -58,12 +58,38 @@ struct AppExtensionProfileStrategyTests {
 
     @Test
     func sealAlwaysUsesIndependentProfiles() {
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true) == .independentProfiles)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: false) == .sharedMainProfile)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: true) == .independentProfiles)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, hasExtensions: false) == .independentProfiles)
     }
 
     @Test
-    func legacyAppWithDifferentExtensionProfileMovesToTheSharedDefault() {
+    func ordinaryAppWithExtensionsUsesIndependentProfiles() {
+        let app = AppRecord(
+            originalBundleIdentifier: originalMain,
+            name: "Video",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .imported,
+            ipaRelativePath: "Video.ipa",
+            importedAt: .now,
+            extensions: [
+                AppExtensionRecord(
+                    name: "LiveProcess",
+                    originalBundleIdentifier: "com.example.video.LiveProcess"
+                )
+            ]
+        )
+
+        // 每个 .appex 都必须使用自身的 App ID 与描述文件；主包能力恰好覆盖扩展
+        // 不是将它们共用同一 profile 的安全条件。否则 IPA 内虽保留扩展，iOS 仍可能
+        // 不把它注册为可运行扩展（真机：LiveProcess extension not found）。
+        #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
+    }
+
+    @Test
+    func legacyAppWithExtensionsUsesTheIndependentDefaultForItsNextFullSign() {
         let app = AppRecord(
             originalBundleIdentifier: originalMain,
             name: "Video",
@@ -83,7 +109,7 @@ struct AppExtensionProfileStrategyTests {
             ]
         )
 
-        #expect(app.effectiveExtensionProfileStrategy == .sharedMainProfile)
+        #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
     }
 
     @Test

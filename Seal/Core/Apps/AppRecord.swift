@@ -303,12 +303,14 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
             && provisioningProfileExpirationDate != nil
     }
 
-    /// 普通 IPA 一律共享主描述文件；Seal 自身暂不进入这一期策略。
-    ///
-    /// 字段仍会记录实际产物，供后续日志与迁移辨识，但不作为用户可选择的分支，
-    /// 避免续签时重新落回逐扩展 App ID/profile 的慢路径。
+    /// 只要原始包含 `.appex`，每个 target 都必须使用独立 App ID/profile。共享主
+    /// profile 无法证明 iOS 会注册 LiveProcess 等运行时扩展，也无法把 App Group 绑定
+    /// 到正确 target；历史共享产物由续签准入回落完整重签一次后迁移。
     var effectiveExtensionProfileStrategy: AppExtensionProfileStrategy {
-        AppExtensionProfileStrategy.defaultFor(isSeal: isSeal)
+        AppExtensionProfileStrategy.defaultFor(
+            isSeal: isSeal,
+            hasExtensions: extensions.isEmpty == false
+        )
     }
 
     var requiresLockedSigningIdentity: Bool {

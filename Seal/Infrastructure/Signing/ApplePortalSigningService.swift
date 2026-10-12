@@ -728,9 +728,9 @@ actor ApplePortalSigningService {
 
         await progress(.preparingBundle)
         // ⚠️ 续签**必须沿用应用当初实际签名时用的策略**（`app.extensionProfileStrategy`），
-        // 不能用 `app.effectiveExtensionProfileStrategy` —— 后者是 `defaultFor(isSeal:)`、
-        // **不看记录**（见 `AppRecord` 注释「字段仍会记录实际产物」）⇒ 会把历史上按独立描述文件
-        // 签过的应用也当成共享，于是只取主 App 一份描述文件注入设备 ⇒
+        // 不能用 `app.effectiveExtensionProfileStrategy` —— 后者按当前源包拓扑选择默认值、
+        // **不看记录**。若误把历史上按独立描述文件签过的应用当成共享，只会取主 App
+        // 一份描述文件注入设备 ⇒
         // **扩展自己的描述文件根本没续上，而记录却写着已续签** ✗。
         // 1.3.5 之前的记录没有这个字段（那时只有独立模式）⇒ 回退 `.independentProfiles`。
         // 守卫 **R65⑨** 钉住「必须取自记录、不得用 effective、不得写死」。

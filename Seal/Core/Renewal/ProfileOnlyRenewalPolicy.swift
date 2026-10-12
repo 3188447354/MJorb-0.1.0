@@ -59,6 +59,10 @@ enum ProfileOnlyRenewalPolicy {
         /// 记录证实上一份产物曾移除扩展。profile-only 只能换描述文件，无法把已
         /// 删除的二进制扩展装回去；必须完整重签并覆盖安装一次才能自愈。
         case incompleteExtensionSet
+        /// 旧版本允许含 `.appex` 的应用共用主描述文件。即使 IPA 文件内的扩展仍在，
+        /// 这种产物也没有逐 target 的 App ID/profile/App Group 绑定，iOS 可能不会注册
+        /// LiveProcess 等运行时扩展。profile-only 不能改变已安装二进制，必须完整重签迁移。
+        case extensionProfileIntegrityMigration
         /// 🔴 **本机没有「该应用当前使用的那张证书」的私钥**（2026-09-26，构建 48 真机）。
         ///
         /// 记录里的 `certificateSerialNumber` 可以指向一张**只有 Apple 门户上还在、本机
@@ -149,6 +153,7 @@ enum ProfileOnlyRenewalPolicy {
         case .incompleteSigningIdentity: "记录里的签名身份不完整"
         case .missingTargetRecord: "记录里缺少签名目标"
         case .incompleteExtensionSet: "上一份签名产物缺少扩展，需要完整重签修复"
+        case .extensionProfileIntegrityMigration: "扩展仍使用旧共享描述文件，需要完整重签修复"
         case .missingLocalCertificateMaterial: "本机没有该证书的私钥"
         case .pendingSelfUpdateSource: "已导入的更新源尚未安装"
         }
@@ -240,6 +245,9 @@ enum ProfileOnlyRenewalPolicy {
         guard app.removedExtensionBundleIdentifiers.isEmpty else {
             return .requiresFullResign(.incompleteExtensionSet)
         }
+        guard extensionProfileIntegrityBlock(app) == nil else {
+            return .requiresFullResign(.extensionProfileIntegrityMigration)
+        }
         // `Signed.ipa` 是可再生的安装缓存，不是手机上已安装产物的续签身份。
         // 维护页删除缓存后仍可只更新描述文件；真正的身份完整性由后续字段逐项验证。
         guard app.state == .installed,
@@ -285,12 +293,6 @@ enum ProfileOnlyRenewalPolicy {
             }
         }
 
-        // ⚠️ **这里曾经按「共享主描述文件 + 含扩展 ⇒ 完整重签」一刀切，已撤销**（2026-09-24）。
-        // 那条判据能签上，但把快路径整个丢掉了：抖音续签变成 658 MB 完整重签 + 安装（约 4 分钟），
-        // 而用户要的是「续签就该是仅更新描述文件」。真正的问题是**续签侧不支持共享策略**，
-        // 已在 `prepareProfileOnlyRenewal` 修好（共享模式只取主 App 一份描述文件注入设备，
-        // 与设备端本来就只登记这一份相符）⇒ 准入判据不再需要区分策略，交回续签侧按
-        // **应用当初实际签名用的策略**分流。
         return .eligible(targetBundleIdentifiers: targetBundleIdentifiers)
     }
 
@@ -449,6 +451,11 @@ enum ProfileOnlyRenewalPolicy {
         app: AppRecord,
         liveIdentity: LiveProfileOnlyIdentity?
     ) -> Decision {
+        // 实时运行身份只能证明“当前 IPA 可读”，不能把历史共享 profile 的扩展产物
+        // 伪装成已完成逐 target 注册。迁移必须先于 Seal 自身的实时身份快路径。
+        if extensionProfileIntegrityBlock(app) != nil {
+            return .requiresFullResign(.extensionProfileIntegrityMigration)
+        }
         if let liveIdentity,
            let mappedMainBundleIdentifier = nonBlank(app.mappedBundleIdentifier),
            liveIdentity.mainBundleIdentifier.caseInsensitiveCompare(mappedMainBundleIdentifier)
@@ -507,5 +514,13 @@ enum ProfileOnlyRenewalPolicy {
         guard let serialNumber = nonBlank(serialNumber) else { return nil }
         let normalized = serialNumber.uppercased().drop(while: { $0 == "0" })
         return normalized.isEmpty ? "0" : String(normalized)
+    }
+
+    /// 含扩展的应用只能在已经按独立 profile 完整签名过一次后进入 profile-only。
+    /// `nil` 是旧版本未持久化策略的记录，也必须迁移；把它当作共享会让旧产物永久
+    /// 无法修复 LiveProcess 等运行时扩展的注册状态。
+    private static func extensionProfileIntegrityBlock(_ app: AppRecord) -> Bool? {
+        guard app.extensions.isEmpty == false else { return nil }
+        return app.extensionProfileStrategy == .independentProfiles ? nil : true
     }
 }

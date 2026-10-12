@@ -139,25 +139,47 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func eligibilityDoesNotDependOnTheExtensionProfileStrategy() {
-        // 回归钉（2026-09-24 真机）：曾经按「共享主描述文件 + 含扩展 ⇒ 完整重签」一刀切，
-        // 把含扩展应用的快路径整个丢掉 —— 抖音续签从「仅更新描述文件」变成
-        // 658 MB 完整重签 + 安装（约 4 分钟）。准入判据**不再看策略**：
-        // 共享/独立由**续签侧**按记录里的实际策略分流（`prepareProfileOnlyRenewal`）。
-        for strategy in AppExtensionProfileStrategy.allCases {
-            var app = makeEligibleApp()
-            app.extensionProfileStrategy = strategy
+    func sharedProfileWithExtensionsForcesAFullResignMigration() {
+        var app = makeEligibleApp()
+        app.extensionProfileStrategy = .sharedMainProfile
 
-            #expect(
-                ProfileOnlyRenewalPolicy.evaluate(app: app)
-                    == .eligible(
-                        targetBundleIdentifiers: [
-                            "com.example.demo.TEAM123456",
-                            "com.example.demo.TEAM123456.share"
-                        ]
-                    )
-            )
-        }
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app)
+                == .requiresFullResign(.extensionProfileIntegrityMigration)
+        )
+    }
+
+    @Test
+    func unrecordedLegacyExtensionStrategyAlsoForcesTheMigration() {
+        var app = makeEligibleApp()
+        app.extensionProfileStrategy = nil
+
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app)
+                == .requiresFullResign(.extensionProfileIntegrityMigration)
+        )
+    }
+
+    @Test
+    func liveIdentityCannotBypassTheLegacyExtensionProfileMigration() {
+        var app = makeEligibleApp()
+        app.extensionProfileStrategy = .sharedMainProfile
+        let live = LiveProfileOnlyIdentity(
+            mainBundleIdentifier: "com.example.demo.TEAM123456",
+            profileUUID: "MAIN-PROFILE",
+            certificateSerialNumber: "00AABB",
+            teamIdentifier: "TEAM123456",
+            targetBundleIdentifiers: [
+                "com.example.demo.TEAM123456",
+                "com.example.demo.TEAM123456.share"
+            ],
+            runningVersion: "1.0"
+        )
+
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: live)
+                == .requiresFullResign(.extensionProfileIntegrityMigration)
+        )
     }
 
     @Test
@@ -698,7 +720,8 @@ struct ProfileOnlyRenewalPolicyTests {
             signedArtifactStatus: .installed,
             isSeal: isSeal,
             importedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            extensions: extensions
+            extensions: extensions,
+            extensionProfileStrategy: includeExtension ? .independentProfiles : .sharedMainProfile
         )
     }
 

@@ -2,15 +2,15 @@ import Foundation
 
 /// 含扩展 IPA 的描述文件分配策略。
 ///
-/// 免费个人团队的默认策略只为主应用处理 Apple App ID 与 Team profile；扩展仍保留，
-/// 但由上游 SideSign 使用主描述文件重签。独立模式仅保留给 Seal 自身的内部签名链路，
-/// 普通 IPA 不提供切换入口。
+/// 每个保留的 `.appex` 都必须拥有自己的 App ID 与描述文件。仅没有扩展的普通 IPA
+/// 可以共享主描述文件；这既保证门户能力和 App Group 绑定落在正确 target，也让 iOS
+/// 能在安装时注册每一个运行时扩展。
 enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Sendable {
     case sharedMainProfile
     case independentProfiles
 
-    static func defaultFor(isSeal: Bool) -> Self {
-        isSeal ? .independentProfiles : .sharedMainProfile
+    static func defaultFor(isSeal: Bool, hasExtensions: Bool = false) -> Self {
+        isSeal || hasExtensions ? .independentProfiles : .sharedMainProfile
     }
 
     /// 为「共用主描述文件是否安全」保留 IPA 的真实能力边界。
