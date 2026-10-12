@@ -1993,10 +1993,10 @@ final class AppsViewModel: ObservableObject {
 
     func installSignedArtifact(_ app: AppRecord) async -> Bool {
         guard let signingCoordinator else { return false }
-        // “重新安装”是用户主动操作。若签名、批量续签或另一条安装已占用
-        // 设备通道，不能像旧实现一样直接 false（界面看起来像按钮失效）。
-        // 与其他前台入口一致，明确告诉用户当前事务完成后再试。
-        guard signingTask == nil, batchRefreshTask == nil, installingCachedPackageAppID == nil else {
+        // 签名或批量续签占用设备通道时，由下方的 OperationCoordinator
+        // 等待并串行化；它们是正常连续操作，不应让用户手动重试。
+        // 这里只拦住另一条“已签名包安装”本身，避免同一份 IPA 被重复下发。
+        guard installingCachedPackageAppID == nil else {
             alertFailure = operationConflictFailure(requested: .installing)
             return false
         }

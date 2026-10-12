@@ -46,7 +46,7 @@ class FailureContractSourceTests(unittest.TestCase):
         self.assertNotIn("logStore?.append", dismissal)
         self.assertNotIn("SEAL-SIGN-SINGLE", dismissal)
 
-    def test_manual_cached_package_install_reports_an_active_operation(self) -> None:
+    def test_manual_cached_package_install_waits_for_an_active_operation(self) -> None:
         source = (ROOT / "Seal/Features/Apps/AppsViewModel.swift").read_text(
             encoding="utf-8"
         )
@@ -55,11 +55,11 @@ class FailureContractSourceTests(unittest.TestCase):
         )[0]
 
         # A user can tap “install again” while signing or a batch renewal owns
-        # the device channel. That must not look like a no-op: the existing
-        # batch-renewal entry point surfaces the same conflict instead.
+        # the device channel. Those normal, serializable operations must wait
+        # for the shared coordinator instead of turning into an avoidable error.
         self.assertIn("guard let signingCoordinator else { return false }", installation)
-        self.assertIn("guard signingTask == nil, batchRefreshTask == nil, installingCachedPackageAppID == nil else {", installation)
-        self.assertIn("alertFailure = operationConflictFailure(requested: .installing)", installation)
+        self.assertNotIn("guard signingTask == nil, batchRefreshTask == nil", installation)
+        self.assertIn("await acquireOperation(.installing, appID: app.id)", installation)
 
     def test_pending_seal_replacement_never_reenters_installed_list_during_signing(self) -> None:
         source = (ROOT / "Seal/Core/Apps/AppRecord.swift").read_text(encoding="utf-8")
