@@ -8763,8 +8763,8 @@ def main():
          "R65④: 独立模式必须**原样透传**"),
         # ⑤ `AppRecord` 不再传入扩展拓扑 ⇒ 含扩展包会错误共享 profile ✓ 报红。
         ("Seal/Core/Apps/AppRecord.swift",
-         "hasExtensions: extensions.isEmpty == false",
-         "hasExtensions: false",
+         "AppExtensionProfileStrategy.defaultFor(",
+         "AppExtensionProfileStrategy.defaultForLegacy(",
          "R65⑤: `effectiveExtensionProfileStrategy` 必须把扩展拓扑委托给 `defaultFor`"),
         # ⑥ 门户映射不再经策略 ⇒ 共享模式只剩一个纯声明（配额照旧全花）✓ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
@@ -8818,7 +8818,7 @@ def main():
         ("SealTests/Signing/AppExtensionProfileStrategyTests.swift",
          "func resolvedForSigningFallsBackToIndependentProfilesWhenAnExtensionNeedsExtraEntitlements()",
          "func resolvedForSigningLegacy()",
-         "R65⑭: 回退判据与共享续签的关键单测必须仍在"),
+         "R65⑭: 扩展完整性迁移与共享续签的关键单测必须仍在"),
         # ⑭b 续签准入的关键单测被改名/删掉 ✓ 报红（与 ⑭ 同一条断言，多条锚点分别证明每处都在守）。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func sharedProfileWithExtensionsForcesAFullResignMigration()",
@@ -8828,7 +8828,7 @@ def main():
         ("SealTests/Renewal/ProfileOnlyRenewalRecordUpdaterTests.swift",
          "func sharedMainProfileIsRecordedForEveryTargetWithoutCollapsingThem()",
          "func sharedMainProfileLegacy()",
-         "R65⑭: 回退判据与共享续签的关键单测必须仍在"),
+         "R65⑭: 扩展完整性迁移与共享续签的关键单测必须仍在"),
         # ⑮ 调用点不再解析策略 ⇒ 回退空转（策略类型里那个纯函数变成死代码，而测试仍全绿）✓ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "let resolvedExtensionProfileStrategy = AppExtensionProfileStrategy.resolvedForSigning(",

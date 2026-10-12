@@ -10,7 +10,7 @@
 - **现象**：LC2 的多任务小窗口调用 LiveProcess 时报告 `LiveProcess extension not found`。真机日志能证明签后 IPA 含有 `LiveProcess` target，却同时显示该 target 使用主包的描述文件；因此“扩展文件没有被删除”不是可运行性的充分条件。
 - **根因**：`AppExtensionProfileStrategy` 把普通含扩展 IPA 默认设为 `sharedMainProfile`，并只在扩展的原始 entitlement 比主包多时才切换独立 profile。LiveProcess 的运行时注册还依赖该 target 自己的 App ID、profile 和 App Group 绑定，不能由“能力集合恰好被主包覆盖”推导出来。旧记录继续走 profile-only 时只更新描述文件，无法重写这个已安装的错误拓扑。
 - **修复**：任何包含 `.appex` 的原始包默认并强制使用 `independentProfiles`：主包与每个扩展均建立自己的 App ID/profile，原有 Group 继续按既有确定性顺序绑定。续签准入拒绝旧的 `.sharedMainProfile` 及未记录策略的扩展包，自动回落一次完整重签覆盖安装；成功后持久化独立策略，后续续签才继续走 profile-only。实时身份快路径同样先经过该迁移闸门，不能绕过。
-- **回归**：新增“普通含扩展包默认独立 profile”、“历史共享策略必须完整重签”、“缺失策略记录也必须迁移”与“实时身份不得绕过迁移”测试。CI `38210442046` 的 Swift 回归与 signer 测试已通过；其 release-safety job 失败仅因 R65 仍硬编码旧的共享默认合同，现已同步为新合同及对应变异锚点，等待替换 CI。
+- **回归**：新增“普通含扩展包默认独立 profile”、“历史共享策略必须完整重签”、“缺失策略记录也必须迁移”与“实时身份不得绕过迁移”测试。CI `38210442046` 的 Swift 回归与 signer 测试已通过；其 release-safety job 失败仅因 R65 仍硬编码旧的共享默认合同。替换 CI `38212976469` 再次确认 Swift 与 signer 通过，但暴露 R65 的三个变异锚点仍使用旧断言前缀/过宽调用锚点；现已收紧并同步文案，等待下一条完整 CI。
 
 ---
 
