@@ -208,6 +208,16 @@ actor SelfAppRegistrar {
                 accounts: accounts,
                 fallbackAccountID: existing?.accountID
             )
+            // 启动对账已经确认过当前运行包的身份时，它是重建本地 IPA 后唯一可信的
+            // profile 真相。不能因重新封装本地缓存而把刚结算的 UUID / 到期时间擦空，
+            // 否则列表虽已转正，后续续签又会误判为缺失签名身份。
+            let installedMain = metadata.installedIdentity?.mainTarget
+            let installedProfileUUID = installedMain?.profileUUID
+                ?? metadata.provisioningProfileUUID
+                ?? existing?.provisioningProfileUUID
+            let installedProfileExpiry = installedMain?.profileExpirationDate
+                ?? metadata.expirationDate
+                ?? existing?.provisioningProfileExpirationDate
 
             // 8. 更新记录（复用 ID，不删除重建）
             let record = AppRecord(
@@ -224,16 +234,23 @@ actor SelfAppRegistrar {
                 size: size,
                 iconRelativePath: files.iconRelativePath ?? existing?.iconRelativePath,
                 state: .installed,
-                expiryDate: metadata.expirationDate,
+                expiryDate: installedProfileExpiry,
                 accountID: resolvedAccountID,
-                signingTeamID: metadata.signingTeamIdentifier ?? existing?.signingTeamID,
+                signingTeamID: installedMain?.teamIdentifier
+                    ?? metadata.signingTeamIdentifier
+                    ?? existing?.signingTeamID,
                 // 关键：Seal 的证书序列号只能取运行包主程序的真实 CMS 签名者，
                 // 绝不把描述文件授权证书列表当成实际签名者；身份读取失败时保留既有记录。
                 // 爱思/其他工具签的 Seal，证书不是 Seal 创建的，旧记录里可能是 nil 或过期值，
                 // 导致前置清理误撤 Seal 在用的证书 → 变砖（2026-09-15 真机确认）。
                 certificateSerialNumber: metadata.installedIdentity?.mainTarget?.signerSerialNumber
                     ?? existing?.certificateSerialNumber,
-                provisioningProfileExpirationDate: metadata.expirationDate,
+                provisioningProfileUUID: installedProfileUUID,
+                provisioningProfileName: metadata.provisioningProfileName ?? existing?.provisioningProfileName,
+                provisioningProfileCreationDate: metadata.provisioningProfileCreationDate
+                    ?? existing?.provisioningProfileCreationDate,
+                provisioningProfileExpirationDate: installedProfileExpiry,
+                signingTargets: existing?.signingTargets ?? [],
                 ipaRelativePath: files.ipaRelativePath,
                 signedIPARelativePath: nil,
                 preferredBundleIdentifier: metadata.bundleIdentifier,

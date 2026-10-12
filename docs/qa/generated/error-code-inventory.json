@@ -9870,7 +9870,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 375,
+          "line": 392,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11213,7 +11213,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 392,
+          "line": 409,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11234,7 +11234,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 399,
+          "line": 416,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11829,7 +11829,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 311,
+          "line": 328,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11851,7 +11851,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 327,
+          "line": 344,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11872,7 +11872,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 338,
+          "line": 355,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11914,7 +11914,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 303,
+          "line": 320,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
