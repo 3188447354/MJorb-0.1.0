@@ -11,7 +11,7 @@
 - **根因**：导入路径为候选 Seal 建立带 `replacesInstalledAppID` 的新记录。该字段决定 `belongsInUnsignedList`，只有原子 `commitInstalledReplacement` 才应清除。自替换结算此前只把运行身份保存到首次取到的旧记录，普通 `save` 既未接管候选记录也未清字段；随后重复记录清理还可能删除候选，状态永远无法转正。
 - **修复**：仅在新进程的 `.settle` 已确认安装分支中，查找指向当前旧 Seal 的最新导入替换记录；将真实运行身份写入该记录并通过 `commitInstalledReplacement` 原子移除旧记录、清除替换标记。未确认安装的 `.awaitNextLaunch` / `.closeAsNotInstalled` / `.requireRecovery` 均不改变。
 - **回归**：新增 `confirmedImportedSealUpdatePromotesReplacementInsteadOfLeavingItUnsigned`，断言结算后只保留新 Seal 记录、替换字段为空、进入已安装列表而不在待签名列表。
-- **验证状态**：Windows 无 Xcode；错误合同与码清单 Python 回归 45/45 通过、`git diff --check` 通过；完整 iOS CI 将编译 Swift 回归和构建产物。
+- **验证状态**：首次完整 iOS CI（38190613101）准确暴露测试夹具误写了不存在的 `SignedArtifactStatus.notBuilt`，已改为未签名应有的 `nil`；同时提交错误码库存因源码行号变化而更新。Windows 无 Xcode；修正后将由新的完整 iOS CI 编译 Swift 回归和构建产物。
 
 ## 2026-10-12 后台续签与证书轮换可能静默移除 LiveContainer 扩展
 

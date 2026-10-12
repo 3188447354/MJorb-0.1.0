@@ -424,7 +424,6 @@ private struct ReplacementRegistrarFixture {
                 size: 1,
                 state: .imported,
                 ipaRelativePath: "Apps/\(replacementID.uuidString)/Original.ipa",
-                signedArtifactStatus: .notBuilt,
                 isSeal: true,
                 importedAt: Date(),
                 replacesInstalledAppID: sealID
