@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small source-regression guard. This is NOT compilation or a runtime test."""
 from pathlib import Path
+import os
 import re
 import sys
 import runpy
@@ -8765,7 +8766,7 @@ def main():
         ("Seal/Core/Apps/AppRecord.swift",
          "hasExtensions: extensions.isEmpty == false",
          "hasExtensions: false",
-         "R65⑤: `effectiveExtensionProfileStrategy` 必须把扩展拓扑委托给 `defaultFor`"),
+         "R65⑤: `effectiveExtensionProfileStrategy` 必须**委托**给带扩展拓扑的 `defaultFor`"),
         # ⑥ 门户映射不再经策略 ⇒ 共享模式只剩一个纯声明（配额照旧全花）✓ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "let portalMappings = resolvedExtensionProfileStrategy.portalMappings(",
@@ -10728,6 +10729,9 @@ def main():
     if failures:
         for failure in failures:
             print("FAIL: " + failure)
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                annotation = failure.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                print("::error title=Release safety invariant::" + annotation)
         return 1
     print("PASS. Static guards only; Swift/Rust compilation and device regression still required.")
     return 0

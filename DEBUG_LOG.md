@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-10-13 本地 Anisette 库打包失败被静默忽略
+
+- **检查证据**：使用 REA 6.4.0 `inspect-artifact` 检查 `libCoreADI.so` 与 `libstoreservicescore.so`，两份均识别为 ELF 动态库；这只是静态清点，不证明运行时行为。现有 AnisetteKit 使用 ELF loader，打包脚本明确依赖这两份资源。
+- **根因**：打包脚本的 `cp ... 2>/dev/null || true` 会掩盖复制失败，源目录缺失也仅发警告；IPA 校验只检查 Info.plist、扩展与敏感材料，未检查 Anisette 资源。
+- **修复**：在 Xcode 构建前检查两份源库存在且非空；复制失败直接终止；IPA 校验要求包含两份库。不改变本地/远程 Anisette 的运行时选择。
+- **验证状态**：两个 Shell 脚本的 `bash -n` 与 `git diff --check` 通过；隔离样本验证源库缺失、源库为空、IPA 分别缺少任一库时都以退出码 1 拒绝。完整 iOS 编译与运行时回归仍需 CI 和真机。
+
+---
+
+## 2026-10-13 iOS #370 的 R65⑤ 变异检查误报
+
+- **现象**：提交 `7dfdea6` 的 iOS #370 在 `Check release safety invariants` 失败，未生成 IPA；公开注解只有退出码，无法直接辨认具体守卫。
+- **根因**：R65⑤ 的变异预期仍是“必须把扩展拓扑委托给”，实际守卫已输出“必须**委托**给带扩展拓扑的”；变异循环用 `startswith(expected)` 匹配，故即使成功拒绝 `hasExtensions: false` 也会误报失败。
+- **修复**：同步 R65⑤ 的预期前缀，保留扩展拓扑断言和变异；CI 中额外输出经过 `%`、CR、LF 转义的 GitHub error 注解，让具体失败原因可公开查看。不改签名、安装和续签行为，不跳过检查。
+- **验证状态**：已核对断言、变异锚点和预期前缀；按项目规则，完整守卫、Swift 回归和 signer 测试交由推送后的 CI。GitHub 已连接，读取 #370 完整日志确认唯一守卫失败为此 R65⑤ 变异匹配；新 CI 结果待回填。
+
+---
+
 ## 2026-10-12 LiveContainer2 的 LiveProcess 虽在 IPA 内仍未被系统注册
 
 - **现象**：LC2 的多任务小窗口调用 LiveProcess 时报告 `LiveProcess extension not found`。真机日志能证明签后 IPA 含有 `LiveProcess` target，却同时显示该 target 使用主包的描述文件；因此“扩展文件没有被删除”不是可运行性的充分条件。

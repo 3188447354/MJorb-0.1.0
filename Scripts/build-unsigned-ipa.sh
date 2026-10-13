@@ -6,6 +6,15 @@ derived_data="$PWD/build/DerivedData"
 product="$derived_data/Build/Products/${configuration}-iphoneos/Seal.app"
 package_root="$PWD/build/package"
 
+# Fail before compiling if local Anisette resources cannot be packaged.
+anisette_src="$PWD/Seal/Resources/Anisette"
+for library in libCoreADI.so libstoreservicescore.so; do
+  if [[ ! -s "$anisette_src/$library" ]]; then
+    echo "::error::Required Anisette library is missing or empty: $library" >&2
+    exit 1
+  fi
+done
+
 # 从 project.yml 读版本号，产物命名为 Seal_<版本号>.ipa
 version=$(grep -m 1 'MARKETING_VERSION:' project.yml | awk '{print $2}')
 archive="$PWD/build/Seal_${version}.ipa"
@@ -40,17 +49,12 @@ ditto "$product" "$package_root/Payload/Seal.app"
 # Xcode treats .so as Mach-O binaries and skips them in resources;
 # without these, local anisette generation falls back to remote servers
 # (machineID drift -> Apple ID session invalidation).
-anisette_src="$PWD/Seal/Resources/Anisette"
 anisette_dst="$package_root/Payload/Seal.app/Anisette"
-if [ -d "$anisette_src" ]; then
-  mkdir -p "$anisette_dst"
-  cp "$anisette_src"/libCoreADI.so "$anisette_dst/" 2>/dev/null || true
-  cp "$anisette_src"/libstoreservicescore.so "$anisette_dst/" 2>/dev/null || true
-  echo "Copied Anisette libraries:"
-  ls -la "$anisette_dst/"
-else
-  echo "WARNING: $anisette_src not found, Anisette libraries will be missing" >&2
-fi
+mkdir -p "$anisette_dst"
+cp "$anisette_src"/libCoreADI.so "$anisette_dst/"
+cp "$anisette_src"/libstoreservicescore.so "$anisette_dst/"
+echo "Copied Anisette libraries:"
+ls -la "$anisette_dst/"
 
 (cd "$package_root" && /usr/bin/zip -qry "$archive" Payload)
 shasum -a 256 "$archive" > "$archive.sha256"
