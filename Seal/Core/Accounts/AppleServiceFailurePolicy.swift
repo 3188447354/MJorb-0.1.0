@@ -1,6 +1,13 @@
 ﻿import Foundation
 
 enum AppleServiceFailurePolicy {
+    /// Apple APIError -80045: "This action cannot be completed at this time."
+    ///
+    /// The code alone only establishes that Apple temporarily rejected this
+    /// request. It does not establish an incorrect password, a locked account,
+    /// or a device-specific restriction.
+    static let temporaryAuthenticationRejectionCode = -80045
+
     static func isNetworkError(_ error: Error) -> Bool {
         if let urlError = error as? URLError {
             return networkCodes.contains(urlError.code)
@@ -65,6 +72,36 @@ enum AppleServiceFailurePolicy {
             action: .waitThenRetry,
             retryDisposition: .manual,
             origin: .applePortal
+        )
+    }
+
+    static func isTemporaryAuthenticationRejection(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == "Apple.APIError",
+           nsError.code == temporaryAuthenticationRejectionCode {
+            return true
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isTemporaryAuthenticationRejection(underlying)
+        }
+        return false
+    }
+
+    static func temporaryAuthenticationRejectionFailure(
+        underlying _: Error? = nil,
+        operation: FailureOperation = .authenticateAccount,
+        origin: FailureOrigin = .authentication
+    ) -> ImportFailure {
+        ImportFailure(
+            title: "Apple 认证暂时不可用",
+            reason: "Apple 暂时拒绝了登录请求（-80045）。这不能说明 Apple ID 被标记、密码错误或账号被锁定。",
+            recovery: "等待一段时间后再重试；不要连续重复登录或修改密码。",
+            code: "SEAL-AUTH-80045",
+            condition: .appleServiceUnavailable,
+            action: .waitThenRetry,
+            retryDisposition: .manual,
+            operation: operation,
+            origin: origin
         )
     }
 

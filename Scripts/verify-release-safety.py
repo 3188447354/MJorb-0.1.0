@@ -846,8 +846,10 @@ def violations(load=read):
     ):
         entry_body = section(client_source, start_marker, end_marker)
         two_factor_at = entry_body.find("isTwoFactorRequired(error)")
+        temporary_rejection_at = entry_body.find("isTemporaryAuthenticationRejection(error)")
         rate_limit_at = entry_body.find("isRateLimited(error)")
-        check(two_factor_at != -1 and rate_limit_at != -1 and two_factor_at < rate_limit_at,
+        check(two_factor_at != -1 and temporary_rejection_at != -1 and rate_limit_at != -1
+              and two_factor_at < temporary_rejection_at < rate_limit_at,
               f"R13: {entry_name} must check two-factor before rate-limit/network — "
               "the more specific diagnosis has to win")
 
@@ -7609,11 +7611,23 @@ def main():
          "            if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {\n"
          "                throw AppleAuthenticationDiagnosis.twoFactorFailure(for: error)\n"
          "            }\n"
+         "            if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {\n"
+         "                throw AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(\n"
+         "                    underlying: error,\n"
+         "                    operation: .validateAccount\n"
+         "                )\n"
+         "            }\n"
          "            if AppleServiceFailurePolicy.isRateLimited(error) {\n"
          "                throw AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)\n"
          "            }\n",
          "            if AppleServiceFailurePolicy.isRateLimited(error) {\n"
          "                throw AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)\n"
+         "            }\n"
+         "            if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {\n"
+         "                throw AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(\n"
+         "                    underlying: error,\n"
+         "                    operation: .validateAccount\n"
+         "                )\n"
          "            }\n"
          "            if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {\n"
          "                throw AppleAuthenticationDiagnosis.twoFactorFailure(for: error)\n"

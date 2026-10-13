@@ -13,6 +13,14 @@ enum FailureClassifier {
             return failure
         }
 
+        if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
+            return AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(
+                underlying: error,
+                operation: operation,
+                origin: origin
+            )
+        }
+
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return ImportFailure(
                 title: "Apple 服务暂时繁忙",

@@ -26,6 +26,7 @@
 | `SEAL-AUTH-105a` | 本机 Keychain 里缺少该 Apple ID 的登录凭据（**重装 Seal 会清空 Keychain**） | `SigningCoordinator.swift` |
 | `SEAL-AUTH-107` | **登录过期了**（1100 会话过期）—— 该码在账户阶段与 App ID 阶段**文案不同**，见源码 | `AppleAccountClient.swift` 等多处 |
 | `SEAL-AUTH-107a` | Apple ID 验证失败（带诊断信息） | `AppleAccountClient.swift` |
+| `SEAL-AUTH-80045` | Apple 临时拒绝登录请求；**不表示** Apple ID 被标记、密码错误或已锁定，等待后重试，勿连续登录或改密码 | `AppleServiceFailurePolicy.swift` |
 | `SEAL-VERIFY-500` | Apple 验证返回了**无法分类**的错误；账号状态未改变 | `SettingsViewModel.swift` |
 
 ## 证书

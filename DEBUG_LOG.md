@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-10-13 Apple APIError -80045 被误导为凭据问题
+
+- **现象**：添加 Apple ID 时返回 `Apple.APIError / -80045 / This action cannot be completed at this time.`。Seal 只将 503 归为 Apple 暂不可用，因而把该错误落入泛化“核对 Apple ID 与密码”。
+- **外部证据**：2026-10-12 至 13 同一错误同时出现在 AltServer、Sideloadly、SideStore 与 iLoader 用户；Apple 官方状态页仍显示 Apple Account 可用。这能支持“认证/开发签名链路发生广泛临时拒绝或策略变化”，不能证明任一个账号被标记。
+- **修复**：按精确域 `Apple.APIError` 与码 `-80045` 归为 `SEAL-AUTH-80045`，提示等待后重试、不连续重复登录或修改密码，并明确该错误本身不能判断账号被标记或锁定。三个账号映射入口、签名入口和通用失败入口统一使用此分类；不将账号标记为需重新验证。
+- **验证状态**：新增精确命中、同码不同域排除、语义和账号状态回归测试；完整 Swift/iOS 验证待 CI。
+
+---
+
 ## 2026-10-13 本地 Anisette 库打包失败被静默忽略
 
 - **检查证据**：使用 REA 6.4.0 `inspect-artifact` 检查 `libCoreADI.so` 与 `libstoreservicescore.so`，两份均识别为 ELF 动态库；这只是静态清点，不证明运行时行为。现有 AnisetteKit 使用 ELF loader，打包脚本明确依赖这两份资源。
@@ -19,7 +28,7 @@
 - **现象**：提交 `7dfdea6` 的 iOS #370 在 `Check release safety invariants` 失败，未生成 IPA；公开注解只有退出码，无法直接辨认具体守卫。
 - **根因**：R65⑤ 的变异预期仍是“必须把扩展拓扑委托给”，实际守卫已输出“必须**委托**给带扩展拓扑的”；变异循环用 `startswith(expected)` 匹配，故即使成功拒绝 `hasExtensions: false` 也会误报失败。
 - **修复**：同步 R65⑤ 的预期前缀，保留扩展拓扑断言和变异；CI 中额外输出经过 `%`、CR、LF 转义的 GitHub error 注解，让具体失败原因可公开查看。不改签名、安装和续签行为，不跳过检查。
-- **验证状态**：已核对断言、变异锚点和预期前缀；按项目规则，完整守卫、Swift 回归和 signer 测试交由推送后的 CI。GitHub 已连接，读取 #370 完整日志确认唯一守卫失败为此 R65⑤ 变异匹配；新 CI 结果待回填。
+- **验证状态**：GitHub 已连接；读取 #370 完整日志确认唯一守卫失败为此 R65⑤ 变异匹配。已核对断言、变异锚点和预期前缀；按项目规则，完整守卫、Swift 回归和 signer 测试交由推送后的 CI，结果待回填。
 
 ---
 

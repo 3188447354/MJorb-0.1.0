@@ -14,6 +14,12 @@ enum AppleAuthenticationFailure {
         if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {
             return AppleAuthenticationDiagnosis.twoFactorFailure(for: error)
         }
+        if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
+            return AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(
+                underlying: error,
+                operation: .authenticateAccount
+            )
+        }
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
         }
@@ -330,6 +336,12 @@ final class AppleAccountClient {
             if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {
                 throw AppleAuthenticationDiagnosis.twoFactorFailure(for: error)
             }
+            if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
+                throw AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(
+                    underlying: error,
+                    operation: .validateAccount
+                )
+            }
             if AppleServiceFailurePolicy.isRateLimited(error) {
                 throw AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
             }
@@ -616,6 +628,12 @@ final class AppleAccountClient {
         // 3018，但「靠另一个判据恰好不命中」不是设计，顺序本身就是设计。
         if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {
             return AppleAuthenticationDiagnosis.twoFactorFailure(for: error)
+        }
+        if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
+            return AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(
+                underlying: error,
+                operation: .authenticateAccount
+            )
         }
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)

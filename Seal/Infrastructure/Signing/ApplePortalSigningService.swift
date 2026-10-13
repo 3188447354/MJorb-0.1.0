@@ -64,6 +64,13 @@ enum ApplePortalSigningFailure {
     }
 
     static func make(stage: ApplePortalSigningStage, error: Error) -> ImportFailure {
+        if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
+            return AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(
+                underlying: error,
+                operation: .sign,
+                origin: .applePortal
+            )
+        }
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
         }

@@ -54,6 +54,40 @@ struct AppleServiceFailurePolicyTests {
     }
 
     @Test
+    func temporaryAppleAuthenticationRejectionDoesNotImplyAccountRestriction() {
+        let error = NSError(
+            domain: "Apple.APIError",
+            code: -80045,
+            userInfo: [NSLocalizedDescriptionKey: "This action cannot be completed at this time."]
+        )
+
+        #expect(AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error))
+        let failure = AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(
+            underlying: error
+        )
+        #expect(failure.code == "SEAL-AUTH-80045")
+        #expect(failure.condition == .appleServiceUnavailable)
+        #expect(failure.action == .waitThenRetry)
+        #expect(failure.recovery.contains("不要连续重复登录"))
+        #expect(failure.reason.contains("不能说明 Apple ID 被标记"))
+        #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure) == false)
+    }
+
+    @Test
+    func unrelatedAppleAPIErrorIsNotTemporaryAuthenticationRejection() {
+        #expect(
+            AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(
+                NSError(domain: "Apple.APIError", code: 1100)
+            ) == false
+        )
+        #expect(
+            AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(
+                NSError(domain: "Other", code: -80045)
+            ) == false
+        )
+    }
+
+    @Test
     func onlyExplicitAuthenticationFailuresRequireReverification() {
         let authenticationFailure = ImportFailure(
             title: "账号需要重新验证",
