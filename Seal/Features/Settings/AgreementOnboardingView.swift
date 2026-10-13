@@ -242,18 +242,19 @@ private struct AgreementConsentSheet: View {
     }
 
     private var agreementDescription: some View {
-        Text("继续即表示你已阅读并同意[《隐私政策》](seal-policy://privacy)与[《用户协议》](seal-policy://terms)。")
-            .multilineTextAlignment(.center)
-            .foregroundStyle(.secondary)
-            .font(.subheadline)
-            .environment(\.openURL, OpenURLAction { url in
-                switch url.host {
-                case "privacy": onOpenPolicy(.privacy)
-                case "terms": onOpenPolicy(.terms)
-                default: return .systemAction
-                }
-                return .handled
-            })
+        HStack(spacing: 0) {
+            Text("继续即表示你已阅读并同意")
+            Button("《隐私政策》") { onOpenPolicy(.privacy) }
+                .accessibilityIdentifier("agreement-privacy-link")
+            Text("与")
+            Button("《用户协议》") { onOpenPolicy(.terms) }
+                .accessibilityIdentifier("agreement-terms-link")
+            Text("。")
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.76)
+        .foregroundStyle(.secondary)
+        .font(.subheadline)
     }
 }
 
@@ -293,3 +294,4 @@ func needsAgreementOnboarding(
     }
     return UserDefaults.standard.integer(forKey: AgreementVersion.storageKey) < AgreementVersion.current
 }
+
