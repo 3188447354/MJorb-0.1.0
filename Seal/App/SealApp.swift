@@ -28,8 +28,6 @@ struct SealApp: App {
         // 锁屏下的后台续签要现读账号密钥与 anisette，条目若还是 `WhenUnlocked` 就会失败
         // （真机表现：日志只剩一句 `Seal.KeychainError 1`）。见 `SealKeychainAccessibility`。
         container.migrateKeychainAccessibilityIfNeeded()
-        // 首次启动请求通知权限：快捷指令续签需要通过通知告知结果
-        requestNotificationPermissionIfNeeded()
     }
 
     /// 首次启动时直接调系统原生权限框（只弹一次）。
@@ -65,7 +63,13 @@ struct SealApp: App {
                 } else {
                     NavigationStack {
                         AgreementOnboardingView(
-                            onAgreed: { agreementAccepted = true },
+                            onAgreed: {
+                                agreementAccepted = true
+                                // 协议确认后先显示主界面，再请求系统权限，避免两个弹层竞争。
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+                                    requestNotificationPermissionIfNeeded()
+                                }
+                            },
                             onDeclined: { /* 留在协议页，用户必须同意才能使用 */ }
                         )
                     }

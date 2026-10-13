@@ -20,7 +20,7 @@ struct InstallFailureSettingsRouteTests {
             (.account, .account),
             (.certificates, .certificates),
             (.pairing, .pairing),
-            (.localDevVPN, .localDevVPN)
+            (.localDevVPN, .pairingDiagnostic)
         ]
 
         for (route, expected) in routes {
@@ -48,7 +48,7 @@ struct InstallFailureSettingsRouteTests {
         #expect(InstallFailureSettingsRoute.route(for: failure) == nil)
     }
 
-    // MARK: - 通道 / 本地隧道类：只有这些才去 VPN 页
+    // MARK: - 通道 / 本地隧道类：只有这些才进入设备页中的连接诊断
 
     @Test(arguments: [
         "SEAL-INSTALL-701",
@@ -60,8 +60,8 @@ struct InstallFailureSettingsRouteTests {
         "SEAL-INSTALL-708",
         "SEAL-INSTALL-710"
     ])
-    func channelFailuresRouteToLocalDevVPN(code: String) {
-        #expect(InstallFailureSettingsRoute.route(forCode: code) == .localDevVPN)
+    func channelFailuresRouteToDeviceConnectionDiagnostic(code: String) {
+        #expect(InstallFailureSettingsRoute.route(forCode: code) == .pairingDiagnostic)
     }
 
     // MARK: - 与 VPN 无关的安装族错误：不得跳转

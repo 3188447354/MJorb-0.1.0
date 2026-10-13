@@ -2950,1044 +2950,263 @@ final class AppsViewModel: ObservableObject {
 
     /// è¯»å–ã€Œå¾…æ¢å¤çš„æ‰¹é‡ç»­ç­¾ç»“æœã€è½½è·ã€‚
     ///
-    /// ä¼˜å…ˆä»æ–‡ä»¶è¯»å–ï¼ˆæ›´å¯é ï¼Œé¿å… Seal è‡ªç­¾è¦†ç›–å®‰è£…æ—¶ UserDefaults ä¸¢å¤±ï¼‰ï¼Œ
-    /// æ–‡ä»¶æ²¡æœ‰å†å›é€€åˆ° UserDefaultsã€‚
-    private func loadPendingBatchResultPayload() -> [String: Any]? {
-        if let fileData = try? Data(contentsOf: Self.pendingBatchResultFileURL),
-           let filePayload = try? JSONSerialization.jsonObject(with: fileData) as? [String: Any] {
-            return filePayload
-        }
-        return UserDefaults.standard.dictionary(forKey: Self.pendingBatchResultKey)
-    }
+    /// ä¼˜å…ˆä»æ–‡ä»¶è¯»å–ï¼ˆæ›´å¯é ï¼Œé¿×­µçkh‘éì¶»§q«^u]J
+BˆHØ]Ú]˜Z[\™H\È[\Ü˜Z[\™HÂˆ[\˜Z[\™HH˜Z[\™Bˆ™]\›ˆš[ˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åykï9aîºacykîy¥¡ù.íˆ‹ˆ™X\ÛÛˆ¹§+9§.ºacykîy¥¡ù.í¹¥è9¬åz+îùcå¹¢%¹¨(zj£9§*º`&º/áøà ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬9kï9aizacykîy¥¡ù.í¹d#¹a£z+åH‹ˆÛÙNˆ”ÑPSTRT‹LŒXH‚ˆ
+Bˆ™]\›ˆš[ˆBˆB‚ˆ[˜È\İÛÛ›™Xİ[ÛŠ
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9­bú+åz/ç¹£©HŠBˆ]ØZ]ØY
+›Ü˜ÙNˆYJBˆİX\™XYÛ›ÜİXÔİ]HOHœ[›š[™Ë[œİ[Ú[›™[OHš[[ÙHÈ™]\›ˆBˆİX\™XØÛİ[Ëš\Ñ[\HOH˜[ÙKˆ]XØÛİ[ÛY[ˆ]Ù^XÚZ[‹ˆ]XØÛİ[™\ÜÚ]ÜH[ÙHÂˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+ˆÙ[‹™˜Z[\™Jˆ]Nˆ¹ï.¹l$yëo¹d#z-)¹cíÈ‹ˆ™X\ÛÛˆ¹l&¹§*¹­îùb¨\HQ‹ˆ™XÛİ™\Nˆ¹­îùb¨:-)¹cíÈ‹ˆÛÙNˆ”ÑPSPUULLH‚ˆ
+Bˆ
+Bˆ™]\›‚ˆBˆİX\™Z\š[™Ô™XÛÜ™OHš[[ÙHÂˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+ˆÙ[‹™˜Z[\™Jˆ]Nˆº+¯¹i!ù§*ºacykîH‹ˆ™X\ÛÛˆ¹l&¹§*¹k£9¢$9odùbcz+¯¹i!úacykîH‹ˆ™XÛİ™\Nˆº/ç¹£©z+¯¹i!È‹ˆÛÙNˆ”ÑPSTRT‹LŒÈ‚ˆ
+Bˆ
+Bˆ™]\›‚ˆB‚ˆ]Ù[XİYHXİ]™PXØÛİ[ˆÏÈXØÛİ[Ë™š\œİ
+Ú\™NˆÈXØÛİ[]˜Z[Xš[]TÛXŞKš\ÔÙ[XİX›J	
+HJBˆÏÈXØÛİ[Ë™š\œİˆİX\™˜\ˆXØÛİ[HÙ[XİY[ÙHÈ™]\›ˆBˆYˆXİ]™PXØÛİ[QOHXØÛİ[šYÂˆXİ]™PXØÛİ[QHXØÛİ[šYˆ]ØZ]ÚYÛš[™Ô™Y™\™[˜ÙTİÜ™OËœÙ]Xİ]™PXØÛİ[Q
+XØÛİ[šY
+BˆB‚ˆXYÛ›ÜİXÔİ]HHœ[›š[™ÂˆÈÂˆİX\™]ÙXÜ™]HH]ØZ]Ù^XÚZ[‹›ØY
+XØÛİ[QˆXØÛİ[šY
+H[ÙHÂˆ]ØZ]\œÚ\İ™\šYšXØ][Û‘˜Z[\™J›ØØ[Ü™Y[X[ÓZ\ÜÚ[™Ë›ÜˆXØÛİ[
+Bˆ›İÈÙ[‹™˜Z[\™Jˆ]Nˆº-)¹cíúg :) zj£:+àH‹ˆ™X\ÛÛˆ¹§+9§.¹¬¨y§"yodùbcH\HQ9æ¡9ænùoeyaëy£k¸à ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬:j£:+àH\HQ‹ˆÛÙNˆ”ÑPSPUULLYH‚ˆ
+BˆB‚ˆÈÂˆH]ØZ]XØÛİ[ÛY[˜[Y]JXØÛİ[ˆXØÛİ[ÙXÜ™]ˆÙXÜ™]
+BˆXØÛİ[œİ]\ÈH™\šYšYYˆXØÛİ[™\šYšXØ][Û‘˜Z[\™T™X\ÛÛˆHš[ˆXØÛİ[›X\ÚÙY[XZ[H\PXØÛİ[ÛY[›X\ÚÊÙXÜ™]™[XZ[
+BˆXØÛİ[›\İ™\šYšYY]H]J
+BˆH]ØZ]XØÛİ[™\ÜÚ]ÜKœØ]™JXØÛİ[
+BˆHØ]Ú]˜Z[\™H\È[\Ü˜Z[\™HÂˆYˆ]™X\ÛÛˆH\TÙ\šXÙQ˜Z[\™TÛXŞK™\šYšXØ][Û‘˜Z[\™T™X\ÛÛŠ›Üˆ˜Z[\™JHÂˆ]ØZ]\œÚ\İ™\šYšXØ][Û‘˜Z[\™J™X\ÛÛ‹›ÜˆXØÛİ[
+BˆBˆ›İÈ˜Z[\™BˆHØ]ÚÂˆYˆ\TÙ\šXÙQ˜Z[\™TÛXŞKš\Ó™]ÛÜšÑ\œ›ÜŠ\œ›ÜŠHÂˆ›İÈ\TÙ\šXÙQ˜Z[\™TÛXŞK›™]ÛÜšÑ˜Z[\™Jˆ[™\›Z[™Îˆ\œ›Ü‹ˆÜ\˜][Ûˆ˜[Y]PXØÛİ[ˆ
+BˆBˆ›İÈÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åzj£:+àH\HQ‹ˆ™X\ÛÛˆ\H:j£:+àz/å9fç¹.¡¹§*¹çéze&z+ëûï#:-)¹cíùâ­¹  y§*¹¥.ycæ8à ˆ‹ˆ™XÛİ™\Nˆ¹ê#yd#ºaãz+å{ï&ùi ¹£ yîëyi,z-)ya£zaãy¥¬:j£:+àH\HQ‹ˆÛÙNˆ”ÑPSU‘T’Q–KML‚ˆ
+BˆB‚ˆ]ØZ]™Yœ™\ÚÙ\YšXØ]R[™[ÜJ›ÜˆXØÛİ[›Ü˜ÙNˆYJBˆYˆ]˜Z[\™HHÙ\YšXØ]R[™[ÜQ˜Z[\™\ÖØXØÛİ[šYHÂˆ›İÈ˜Z[\™BˆBˆ]ØZ][’[œİ[Ú[›™[ÚXÚÊİXØÙ\ÜÓY\ÜØYÙNˆ¹ëo¹d#yã«ùh ù¨à9­bù«hùn.ŠBˆHØ]Ú]˜Z[\™H\È[\Ü˜Z[\™HÂˆ]ØZ]š[š\Ú[œİ[Ú[›™[ÚXÚÕÚ]˜Z[\™Jˆ˜Z[\™KˆÙÓY\ÜØYÙNˆ¹ëo¹d#yã«ùh ù¨à9­bùi,z-)H‚ˆ
+BˆHØ]ÚÂˆ]ØZ]š[š\Ú[œİ[Ú[›™[ÚXÚÕÚ]˜Z[\™JˆÙ[‹›ØØ[]•”•[˜]˜Z[X›Q˜Z[\™KˆÙÓY\ÜØYÙNˆ¹ëo¹d#yã«ùh ù¨à9­bùi,z-)H‚ˆ
+BˆBˆB‚ˆËËÈ9cê¹¨à9§ézacykîJÕ”ŠÓZ[š[]^\»ï#9.#zg :) H\HQ:-)¹cíÂˆ[˜È\İZ\š[™ĞÛÛ›™Xİ[ÛŠ
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9­bú+åzacykîz/ç¹£©HŠBˆ]ØZ]ØY
+›Ü˜ÙNˆYJBˆİX\™[œİ[Ú[›™[OHš[[ÙHÂˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+ˆÙ[‹™˜Z[\™Jˆ]Nˆº+¯¹i!ú/ç¹£©y§*¹l,yîêˆ‹ˆ™X\ÛÛˆ“ØØ[]•”ˆ9§*¹d+ùbª9¢%¹§*¹k¢z(áxà º+íùab:/ç¹£©HÚKQšH9nm¹¢dùo ØØ[]•”¸à ˆ‹ˆ™XÛİ™\Nˆ¹¢dùo ØØ[]•”ˆ9d#ºaãy¥¬9¨à9­bÈ‹ˆÛÙNˆ”ÑPSTRT‹LŒ‚ˆ
+Bˆ
+Bˆ™]\›‚ˆBˆİX\™Z\š[™Ô™XÛÜ™OHš[[ÙHÂˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+ˆÙ[‹™˜Z[\™Jˆ]Nˆº+¯¹i!ù§*ºacykîH‹ˆ™X\ÛÛˆ¹l&¹§*¹k£9¢$9odùbcz+¯¹i!úacykîH‹ˆ™XÛİ™\Nˆº/ç¹£©z+¯¹i!È‹ˆÛÙNˆ”ÑPSTRT‹LŒÈ‚ˆ
+Bˆ
+Bˆ™]\›‚ˆBˆËÈ9o.¹b-ºaãyïk¹â­¹  {ï#9èk¹/çy«ãù«(yà®yaîú`ïz ïzaãy¥¬:j£:+à{ï":`oùacyi,z-)yd#¹chy/cûï"BˆXYÛ›ÜİXÔİ]HHšYBˆ[œİ[XYÛ›ÜİXÜÈH™[\Bˆ]ØZ][œİ[Ú[›™[Ëœ™\Ù]
 
-    /// æ¢å¤ã€Œæ‰¹é‡ç»­ç­¾ç»“æœã€ã€‚
-    ///
-    /// âš ï¸ **è¿™é‡Œåˆ»æ„ä¸å†™è½®è¯¢æ—¥å¿—ã€‚** æœ¬å‡½æ•°ç”± `load()` æ¯ ~9 ç§’è°ƒç”¨ä¸€æ¬¡ï¼Œè€Œ
-    /// æœ¬æ¬¡å¯åŠ¨æ˜¯å¦å·²ç»æŠŠã€Œå¾…æ¢å¤çš„æ‰¹é‡ç»­ç­¾ç»“æœã€è£…è¿›ä¼šè¯ã€‚
-    ///
-    /// 021 çš„åˆ¤æ®æ˜¯ã€Œ**ç¡®å®æœ‰å¾…æ¢å¤çš„æ•°æ®ã€å´è¢«è·³è¿‡**ã€â€”â€” é‚£æ‰æ˜¯ã€Œç»“æœä¸¢äº†ã€çš„å¾å…†ã€‚
-    /// ä½†ã€Œå·²ç»æ¢å¤è¿›ä¼šè¯ã€ä¸æ˜¯è·³è¿‡ï¼šè½½è·è¦ç­‰æŠ½å±‰å…³é—­ï¼ˆ`dismissBatchRefresh`ï¼‰æ‰æ¸…ï¼Œ
-    /// è¿™ä¸­é—´æ¯æ¬¡ `load()` è½®è¯¢éƒ½ä¼šçœ‹åˆ°ã€Œè½½è·è¿˜åœ¨ + ä¼šè¯å¼€ç€ã€ï¼Œäºæ˜¯**åå¤æŠ¥åŒä¸€æ¡è­¦å‘Š**
-    /// ï¼ˆ2026-09-17 çœŸæœºå®æµ‹ï¼‰ã€‚ç”¨è¿™ä¸ªæ ‡å¿—æŠŠã€Œå·²æ¢å¤ã€ä¸ã€ŒçœŸè¢«è·³è¿‡ã€åˆ†å¼€ã€‚
-    private var hasRestoredPendingBatchResult = false
-    /// å·²è£…å…¥æŠ½å±‰çš„æŒä¹…åŒ–è½½è·æŒ‡çº¹ã€‚æ–°è¿›ç¨‹è‡ªæ›¿æ¢ç»“ç®—ä¼šæ”¹å†™åŒä¸€ä»½è½½è·ï¼›æ²¡æœ‰è¿™å±‚æ¯”è¾ƒï¼Œ
-    /// ç•Œé¢è‹¥æ°å¥½å…ˆè¯»åˆ°æ—§çš„ awaiting çŠ¶æ€ï¼Œå°±ä¼šæ°¸ä¹…æ˜¾ç¤ºè¿‡æœŸçš„ç­‰å¾…è®¡æ•°ã€‚
-    private var restoredPendingBatchResultFingerprint: String?
-    private var pendingBatchResultRecheckTask: Task<Void, Never>?
+Bˆ]ØZ][’[œİ[Ú[›™[ÚXÚÊİXØÙ\ÜÓY\ÜØYÙNˆº+¯¹i!ú/ç¹£©y«hùn.ŠBˆB‚ˆš]˜]H[˜È\œÚ\İ™\šYšXØ][Û‘˜Z[\™JˆÈ™X\ÛÛˆXØÛİ[™\šYšXØ][Û‘˜Z[\™T™X\ÛÛ‹ˆ›ÜˆXØÛİ[ˆ\PXØÛİ[™XÛÜ™ˆ
+H\Ş[˜ÈÂˆİX\™]XØÛİ[™\ÜÚ]ÜH[ÙHÈ™]\›ˆBˆ˜\ˆ\]YHXØÛİ[ˆ\]Yœİ]\ÈH›™YYÕ™\šYšXØ][Û‚ˆ\]Y™\šYšXØ][Û‘˜Z[\™T™X\ÛÛˆH™X\ÛÛ‚ˆOÈ]ØZ]XØÛİ[™\ÜÚ]ÜKœØ]™J\]Y
+BˆB‚ˆš]˜]H[˜È™\Z\“YØXŞPXØÛİ[İ]\Ù\ÊˆÈ™XÛÜ™ÎˆĞ\PXØÛİ[™XÛÜ™Bˆ
+H\Ş[˜È›İÜÈOˆĞ\PXØÛİ[™XÛÜ™HÂˆİX\™]XØÛİ[™\ÜÚ]ÜK]Ù^XÚZ[ˆ[ÙHÈ™]\›ˆ™XÛÜ™ÈBˆ˜\ˆ™\Z\™YH™XÛÜ™Âˆ›Üˆ[™^[ˆ™\Z\™Yš[™XÙ\ÈÚ\™H™\Z\™YÚ[™^Kœİ]\ÈOH›™YYÕ™\šYšXØ][ÛˆÂˆ]\ÓØØ[ÙXÜ™]HH]ØZ]Ù^XÚZ[‹›ØY
+XØÛİ[Qˆ™\Z\™YÚ[™^KšY
+HOHš[ˆ]İ]\ÈHXØÛİ[]˜Z[Xš[]TÛXŞKœ™\Z\™Yİ]\Êˆ›Üˆ™\Z\™YÚ[™^Kˆ\ÓØØ[ÙXÜ™]ˆ\ÓØØ[ÙXÜ™]ˆ
+BˆİX\™İ]\ÈOH™\Z\™YÚ[™^Kœİ]\È[ÙHÈÛÛ[YHBˆ™\Z\™YÚ[™^Kœİ]\ÈHİ]\ÂˆH]ØZ]XØÛİ[™\ÜÚ]ÜKœØ]™J™\Z\™YÚ[™^JBˆBˆ™]\›ˆ™\Z\™YˆB‚ˆ[˜È\İØØ[]•”Š
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9­bú+åHØØ[]•”ˆŠBˆ]ØZ]ØY
+›Ü˜ÙNˆYJBˆİX\™XYÛ›ÜİXÔİ]HOHœ[›š[™Ë[œİ[Ú[›™[OHš[[ÙHÈ™]\›ˆBˆİX\™Z\š[™Ô™XÛÜ™OHš[[ÙHÂˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+ˆÙ[‹™˜Z[\™Jˆ]Nˆº+¯¹i!ù§*ºacykîH‹ˆ™X\ÛÛˆ¹¨à9­bú/ç¹£©ybczg :) yab9k£9¢$9odùbcz+¯¹i!úacykîH‹ˆ™XÛİ™\Nˆº/ç¹£©z+¯¹i!È‹ˆÛÙNˆ”ÑPSTRT‹LŒØH‚ˆ
+Bˆ
+Bˆ™]\›‚ˆBˆ]ØZ][’[œİ[Ú[›™[ÚXÚÊİXØÙ\ÜÓY\ÜØYÙNˆ“ØØ[]•”ˆ9«hùn.ŠBˆËÈ”ˆ9fçº, ùd£:+¯¹ïkºhmz!ê¹bª9£¨¹­bú`ïz-l:/æzaã;ï&ùæí9£©y£ª:/æÈSÔÈÈ:acykîzf-¹«­{ï#ˆËÈ9.#z ïy/§z-e¹ê#yd#¹æ¡9d+ùbª9¨à9§éy¢cz+ªyåc:gh¹.ã¸ '9o¡z/ç¹£©x 'ycæ9..¸ '9k£9¢$8 'xà ‚ˆYˆÛ™TZ\š[™Ô™\Ù[][Û”ÛXŞJˆXZ›Ü“ÔÕ™\œÚ[Ûˆ›ØÙ\ÜÒ[™›Ëœ›ØÙ\ÜÒ[™›Ë›Ü\˜][™ÔŞ\İ[U™\œÚ[Û‹›XZ›Ü•™\œÚ[Û‚ˆ
+K\Ù\ÔÛ™TZ\š[™ÈÂˆÛ™TZ\š[™Ôİ]HHÙ[‹œÛ™TZ\š[™Ôİ]PY\]]ÛX]XĞÚXÚÊˆXYÛ›ÜİXÔİ]NˆXYÛ›ÜİXÔİ]Bˆ
+BˆBˆB‚ˆš]˜]H[˜È˜[Y]R[\ÜYZ\š[™ÕÚ[•[›™[]˜Z[X›JˆİXØÙ\ÜÓY\ÜØYÙNˆİš[™ËˆØZ][™ÓY\ÜØYÙNˆİš[™Âˆ
+H\Ş[˜ÈÂˆ][›™[™XXÚX›HH]ØZ]Z\š[™Õ[›™[›Ø™Kœ›Ø™U[›™[
 
-    /// å¯åŠ¨æ—¶æŠŠä¸Šä¸€è½®æŒä¹…åŒ–çš„æ‰¹é‡ç»­ç­¾ç»“æœè£…å›ä¼šè¯ã€‚
-    ///
-    /// è§ `AppsViewModel` é¡¶éƒ¨å…³äºã€Œæ²¡æœ‰æˆåŠŸæ—¥å¿— â‰  æ²¡æˆåŠŸã€çš„è¯´æ˜ï¼š
-    /// è¿™æ¡è·¯å¾„æ˜¯ã€ŒSeal è‡ªæ›¿æ¢æŠŠè‡ªå·±æ€æ‰ã€ä¹‹åï¼Œç”¨æˆ·è¿˜èƒ½çœ‹åˆ°ç»“æœ**å”¯ä¸€**çš„é€”å¾„ã€‚
-    /// ã€Œæ²¡æœ‰å¾…æ¢å¤çš„æ•°æ®ã€ä¸ã€Œå½“å‰æœ‰ä¼šè¯åœ¨è¿›è¡Œã€éƒ½æ˜¯**æ­£å¸¸è·¯å¾„**ã€‚
-    /// 2026-09-17 çœŸæœºæ—¥å¿—å®æµ‹ï¼šåŸå…ˆè¿™ä¸¤æ¡è½®è¯¢æ—¥å¿—å äº†å…¨éƒ¨æ—¥å¿—çš„ **30%**ï¼ˆ73/244 è¡Œï¼‰ï¼Œ
-    /// æŠŠçœŸå®ä¿¡å·æŒ¤å‡ºäº†åªä¿ç•™ 1000 æ¡çš„ç¯å½¢ç¼“å†²ã€‚
-    /// å”¯ä¸€å€¼å¾—ç•™ç—•çš„æ˜¯ã€Œ**ç¡®å®æœ‰å¾…æ¢å¤çš„æ•°æ®ã€å´è¢«è·³è¿‡**ã€â€”â€” é‚£æ‰æ˜¯ã€Œç»“æœä¸¢äº†ã€çš„å¾å…†ã€‚
-    private func restorePendingBatchResultIfNeeded(replacingRestoredSession: Bool = false) {
-        guard isBackgroundBatchRefresh == false else { return }
-        let pendingPayload = loadPendingBatchResultPayload()
-        let pendingFingerprint = pendingPayload.flatMap(PendingBatchResultPayload.restorationFingerprint(from:))
-        let canReplaceRestoredSession = replacingRestoredSession
-            && hasRestoredPendingBatchResult
-            && batchRefreshTask == nil
-        let hasUpdatedRestoredPayload = hasRestoredPendingBatchResult
-            && pendingFingerprint != restoredPendingBatchResultFingerprint
-            && batchRefreshTask == nil
-        guard batchRefreshSession == nil || canReplaceRestoredSession || hasUpdatedRestoredPayload,
-              batchRefreshTask == nil else {
-            if pendingPayload != nil, hasRestoredPendingBatchResult == false {
-                Task { try? await logStore?.append(category: .renewal, level: .warning, message: "å¾…æ¢å¤çš„æ‰¹é‡ç»­ç­¾ç»“æœè¢«è·³è¿‡ï¼šå½“å‰æœ‰è¿›è¡Œä¸­çš„ä¼šè¯æˆ–ç»“æœæŠ½å±‰ä»å¼€ç€", code: "SEAL-RENEW-021") }
-            }
-            return
-        }
-        guard let payload = pendingPayload else { return }
-        let result = PendingBatchResultPayload.restoredResult(from: payload)
-        // è½½è·ç»“ç®—åå¿…é¡»ä¿ç•™åŒä¸€å¼ æŠ½å±‰çš„èº«ä»½ã€‚æ¢ UUID ä¼šè®© SwiftUI è®¤ä¸ºæ—§ sheet
-        // å·²ç»“æŸã€éœ€è¦å†å±•ç¤ºä¸€å¼ æ–° sheetï¼Œé€ æˆâ€œå…ˆé—ªä¸€ä¸‹ç­‰å¾…æ ¸éªŒã€å†å¼¹å·²æ›´æ–°â€ã€‚
-        var restored = BatchRefreshSession(id: batchRefreshSession?.id ?? UUID())
-        // æ—§æŒä¹…åŒ–è½½è·æ²¡æœ‰ needsAction å­—æ®µï¼Œä½†è®¡æ•°ä¸å˜é‡ `æˆåŠŸ+å¤±è´¥+æœªæ‰§è¡Œ == æ€»æ•°` æˆç«‹ï¼Œ
-        // å› æ­¤ç¬¬ä¸‰ä¸ªæ¡¶å¯ä»¥ç›´æ¥ç”±å·®å€¼è¿˜åŸï¼ˆæ—§è½½è·çš„å·®å€¼æœ¬æ¥å°±æ˜¯ã€Œæœªå®Œæˆã€ï¼‰ã€‚
-        restored.status = .completed(result)
-        restored.currentIndex = result.total
-        restored.total = result.total
-        if let itemPayload = payload["items"] as? [[String: Any]] {
-            restored.items = itemPayload.compactMap { item in
-                guard let idString = item["id"] as? String,
-                      let id = UUID(uuidString: idString),
-                      let name = item["name"] as? String else { return nil }
-                let isSeal = item["isSeal"] as? Bool ?? false
-                let state = BatchRefreshSession.Item.State(storageValue: item["state"] as? String)
-                return BatchRefreshSession.Item(id: id, name: name, isSeal: isSeal, state: state)
-            }
-        }
-        batchRefreshSession = restored
-        isBatchRefreshSheetPresented = true
-        hasRestoredPendingBatchResult = true
-        restoredPendingBatchResultFingerprint = pendingFingerprint
-        schedulePendingBatchResultRecheckIfNeeded(result)
-        Task { try? await logStore?.append(category: .renewal, level: .info, message: "æ‰¹é‡ç»­ç­¾ç»“æœå·²ä»æŒä¹…åŒ–è½½è·æ¢å¤ï¼ˆå…± \(result.total)ï¼ŒæˆåŠŸ \(result.succeeded)ï¼Œå¤±è´¥ \(result.failed)ï¼Œç­‰å¾… Seal æ ¸éªŒ \(result.awaitingConfirmation)ï¼Œæ˜ç»† \(restored.items.count) é¡¹ï¼‰", code: "SEAL-RENEW-024") }
-    }
+BˆİX\™Z\š[™Õ˜[Y][Û”İ\ÛXŞKœÚİ[İ\]]ÛX]XØ[Jˆ[›™[™XXÚX›Nˆ[›™[™XXÚX›Bˆ
+H[ÙHÂˆXYÛ›ÜİXÔİ]HHšYBˆ[œİ[XYÛ›ÜİXÜÈH™[\BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœZ\š[™ËY\ÜØYÙNˆØZ][™ÓY\ÜØYÙJBˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    /// å¿«æ·æŒ‡ä»¤å®Œæˆåï¼Œç”¨æˆ·ä»ç³»ç»Ÿé€šçŸ¥å›åˆ° Seal æ—¶åº”ç«‹å³çœ‹åˆ°å·²ç»ç»“ç®—çš„ç»“æœã€‚
-    ///
-    /// è¿™ä¸€æ­¥ä¸ä¾èµ–åº”ç”¨åˆ—è¡¨ã€è®¾å¤‡æ¢æµ‹æˆ–ç»´æŠ¤ä½œä¸šã€‚è‹¥ Seal è‡ªæ›¿æ¢ä»å¾…æ–°è¿›ç¨‹
-    /// å¯¹è´¦ï¼Œä¿ç•™å¯åŠ¨æµç¨‹çš„åŸæœ‰é¡ºåºï¼Œç»ä¸æå‰æ˜¾ç¤ºæˆåŠŸã€‚
-    func hasSettledBackgroundBatchResultReadyForPresentation() -> Bool {
-        // å¿«æ·æŒ‡ä»¤å°šåœ¨è¿è¡Œæ—¶ä¸å±•ç¤ºåŠæˆå“ï¼›é€šçŸ¥åªä¼šåœ¨å®ƒç»“ç®—åå‘å‡ºã€‚
-        guard isBackgroundBatchRefresh == false else { return false }
-        guard let payload = loadPendingBatchResultPayload(),
-              PendingBatchResultPayload.isReadyForImmediatePresentation(payload) else {
-            return false
-        }
-        return true
-    }
+Bˆ™]\›‚ˆBˆ]ØZ][’[œİ[Ú[›™[ÚXÚÊİXØÙ\ÜÓY\ÜØYÙNˆİXØÙ\ÜÓY\ÜØYÙJBˆB‚ˆš]˜]H[˜È[’[œİ[Ú[›™[ÚXÚÊİXØÙ\ÜÓY\ÜØYÙNˆİš[™ÊH\Ş[˜ÈÂˆİX\™][œİ[Ú[›™[[ÙHÈ™]\›ˆBˆXYÛ›ÜİXÔİ]HHœ[›š[™ÂˆYˆ]Z\š[™ÔİÜ™KZ\š[™Ô™XÛÜ™OHš[ÂˆÈÂˆZ\š[™Ô™XÛÜ™HH]ØZ]Z\š[™ÔİÜ™K›X\šÕ˜[Y][™Ê
+BˆHØ]ÚÂˆ]˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆºacykîzj£:+àyi,z-)H‹ˆ™X\ÛÛˆ¹¥è9¬åy/çykf:+¯¹i!úacykîyæ¡:j£:+àyîäù§§8à ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬:acykîz+¯¹i!È‹ˆÛÙNˆ”ÑPSTRT‹LŒˆ‚ˆ
+BˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+˜Z[\™JBˆ[\˜Z[\™HH˜Z[\™Bˆ™]\›‚ˆBˆBˆ]XYÛ›ÜİXÜÈH]ØZ][œİ[Ú[›™[™XYÛ›ÜÙJ
+Bˆ[œİ[XYÛ›ÜİXÜÈHXYÛ›ÜİXÜÂˆYˆXYÛ›ÜİXÜËš\Ô™XYK]]šXÙRY[YšY\ˆHXYÛ›ÜİXÜË™]šXÙRY[YšY\ˆÂˆYˆ]Z\š[™ÔİÜ™HÂˆÈÂˆZ\š[™Ô™XÛÜ™HH]ØZ]Z\š[™ÔİÜ™K›X\šÕ˜[Y]Y
+ˆ]šXÙRY[YšY\ˆ]šXÙRY[YšY\‚ˆ
+BˆHØ]Ú]˜Z[\™H\È[\Ü˜Z[\™HÂˆ]ØZ]š[š\Ú[œİ[Ú[›™[ÚXÚÕÚ]˜Z[\™Jˆ˜Z[\™KˆXYÛ›ÜİXÜÎˆXYÛ›ÜİXÜËˆÙÓY\ÜØYÙNˆº+¯¹i!úacykîy¨(zj£9i,z-)H‚ˆ
+Bˆ™]\›‚ˆHØ]ÚÂˆ]ØZ]š[š\Ú[œİ[Ú[›™[ÚXÚÕÚ]˜Z[\™JˆÙ[‹™˜Z[\™Jˆ]Nˆºacykîzj£:+àyi,z-)H‹ˆ™X\ÛÛˆ¹¥è9¬åy/çykf9odùbcz+¯¹i!ùæ¡:acykîzj£:+àyîäù§§8à ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬:acykîz+¯¹i!È‹ˆÛÙNˆ”ÑPSTRT‹LŒØˆ‚ˆ
+KˆXYÛ›ÜİXÜÎˆXYÛ›ÜİXÜËˆÙÓY\ÜØYÙNˆº+¯¹i!úacykîy¨(zj£9i,z-)H‚ˆ
+Bˆ™]\›‚ˆBˆBˆXYÛ›ÜİXÔİ]HHœ™XYJ]šXÙRY[YšY\ˆ]šXÙRY[YšY\ŠBˆ]ØZ]ØY
+›Ü˜ÙNˆYJBˆ[œİ[XYÛ›ÜİXÜÈHXYÛ›ÜİXÜÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆš[œİ[][Û‹ˆY\ÜØYÙNˆİXØÙ\ÜÓY\ÜØYÙBˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    @discardableResult
-    func presentSettledBackgroundBatchResultIfNeeded() -> Bool {
-        guard hasSettledBackgroundBatchResultReadyForPresentation() else { return false }
-        restorePendingBatchResultIfNeeded()
-        return isBatchRefreshSheetPresented
-    }
+Bˆ™]\›‚ˆBˆ]ØZ]š[š\Ú[œİ[Ú[›™[ÚXÚÕÚ]˜Z[\™JˆXYÛ›ÜİXÜË™˜Z[\™HÏÈÙ[‹›ØØ[]•”•[˜]˜Z[X›Q˜Z[\™KˆXYÛ›ÜİXÜÎˆXYÛ›ÜİXÜËˆÙÓY\ÜØYÙNˆ“ØØ[]•”ˆ9¨à9­bùi,z-)H‚ˆ
+BˆB‚ˆš]˜]Hİ]XÈ[˜ÈÚİ[›Û˜XÚÔZ\š[™ÊY\ˆ˜Z[\™Nˆ[\Ü˜Z[\™JHOˆ›ÛÛÂˆÈ”ÑPSTRT‹LŒH‹”ÑPSTRT‹LŒˆ‹”ÑPSRS”ÕSMÌÈ—K˜ÛÛZ[œÊ˜Z[\™K˜ÛÙJBˆB‚ˆš]˜]H[˜Èš[š\Ú[œİ[Ú[›™[ÚXÚÕÚ]˜Z[\™JˆÈ˜Z[\™Nˆ[\Ü˜Z[\™KˆXYÛ›ÜİXÜÎˆ[œİ[Ú[›™[XYÛ›ÜİXÜÏÈHš[ˆÙÓY\ÜØYÙNˆİš[™Âˆ
+H\Ş[˜ÈÂˆ˜\ˆY™™Xİ]™Q˜Z[\™HH˜Z[\™Bˆ˜\ˆY™™Xİ]™QXYÛ›ÜİXÜÈHXYÛ›ÜİXÜÂˆYˆÙ[‹œÚİ[›Û˜XÚÔZ\š[™ÊY\ˆ˜Z[\™JK]Z\š[™ÔİÜ™HÂˆÈÂˆYˆ]™\İÜ™YHH]ØZ]Z\š[™ÔİÜ™Kœ™\İÜ™P˜XÚİ\Y”™\Ù[
 
-    private func schedulePendingBatchResultRecheckIfNeeded(_ result: BatchRefreshResult) {
-        guard result.awaitingConfirmation > 0, pendingBatchResultRecheckTask == nil else { return }
-        pendingBatchResultRecheckTask = Task { [weak self] in
-            defer { self?.pendingBatchResultRecheckTask = nil }
-            for _ in 0..<8 {
-                try? await Task.sleep(for: .milliseconds(500))
-                guard Task.isCancelled == false else { return }
-                self?.restorePendingBatchResultIfNeeded()
-                guard case .completed(let updated)? = self?.batchRefreshSession?.status,
-                      updated.awaitingConfirmation > 0 else { return }
-            }
-        }
-    }
+HÂˆZ\š[™Ô™XÛÜ™H™\İÜ™Yˆ]ØZ][œİ[Ú[›™[Ëœ™\Ù]
 
-    private func clearPendingBatchResult() {
-        pendingBatchResultRecheckTask?.cancel()
-        pendingBatchResultRecheckTask = nil
-        hasRestoredPendingBatchResult = false
-        restoredPendingBatchResultFingerprint = nil
-        UserDefaults.standard.removeObject(forKey: Self.pendingBatchResultKey)
-        try? FileManager.default.removeItem(at: Self.pendingBatchResultFileURL)
-    }
+BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆœZ\š[™ËˆY\ÜØYÙNˆ¹¥¬:acykîy/èy kúj£:+àyi,z-){ï#9mìº!ê¹bª9 h¹i#y."¹. 9.ïycëùå*:acykîy/èy kÈ‚ˆ
+BˆYˆ][œİ[Ú[›™[Âˆ]™XÛİ™\QXYÛ›ÜİXÜÈH]ØZ][œİ[Ú[›™[™XYÛ›ÜÙJ
+BˆY™™Xİ]™QXYÛ›ÜİXÜÈH™XÛİ™\QXYÛ›ÜİXÜÂˆYˆ™XÛİ™\QXYÛ›ÜİXÜËš\Ô™XYKˆ]]šXÙRY[YšY\ˆH™XÛİ™\QXYÛ›ÜİXÜË™]šXÙRY[YšY\ˆÂˆÈÂˆZ\š[™Ô™XÛÜ™HH]ØZ]Z\š[™ÔİÜ™K›X\šÕ˜[Y]Y
+ˆ]šXÙRY[YšY\ˆ]šXÙRY[YšY\‚ˆ
+BˆXYÛ›ÜİXÔİ]HHœ™XYJ]šXÙRY[YšY\ˆ]šXÙRY[YšY\ŠBˆ[œİ[XYÛ›ÜİXÜÈH™XÛİ™\QXYÛ›ÜİXÜÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆœZ\š[™ËˆY\ÜØYÙNˆ¹."¹. 9.ïzacykîy/èy kùmì¹ h¹i#ynmºaãy¥¬:j£:+ày¢$9b§È‚ˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    private static let pendingBatchResultKey = "seal.pendingBatchRefreshResult"
-    private static var pendingBatchResultFileURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent(AppConfiguration.Paths.applicationSupportSubdirectory, isDirectory: true)
-            .appendingPathComponent("PendingBatchResult.json")
-    }
+Bˆ™]\›‚ˆHØ]Ú]™\İÜ™Q˜Z[\™H\È[\Ü˜Z[\™HÂˆY™™Xİ]™Q˜Z[\™HH™\İÜ™Q˜Z[\™BˆHØ]ÚÂˆY™™Xİ]™Q˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆºacykîy h¹i#zj£:+àyi,z-)H‹ˆ™X\ÛÛˆ¹."¹. 9.ïzacykîy/èy kùmì¹ h¹i#{ï#9/aºj£:+àyîäù§§9¥è9¬åy/çykf8à ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬9¨à9­bÈ‹ˆÛÙNˆ”ÑPSTRT‹LŒL‚ˆ
+BˆBˆH[ÙHYˆ]™XÛİ™\Q˜Z[\™HH™XÛİ™\QXYÛ›ÜİXÜË™˜Z[\™HÂˆY™™Xİ]™Q˜Z[\™HH™XÛİ™\Q˜Z[\™BˆBˆBˆBˆHØ]ÚÂˆY™™Xİ]™Q˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆºacykîy h¹i#yi,z-)H‹ˆ™X\ÛÛˆ¹¥¬:acykîy/èy kù.#ycëùå*;ï#9.%9."¹. 9.ïzacykîy/èy kù§*º ïz!ê¹bª9 h¹i#xà ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬:acykîH‹ˆÛÙNˆ”ÑPSTRT‹LŒH‚ˆ
+Bˆ[\˜Z[\™HHY™™Xİ]™Q˜Z[\™BˆBˆBˆYˆ]Z\š[™ÔİÜ™HÂˆÈÂˆYˆ]]šXÙRY[YšY\ˆHY™™Xİ]™QXYÛ›ÜİXÜÏË™]šXÙRY[YšY\ˆÂˆZ\š[™Ô™XÛÜ™HH]ØZ]Z\š[™ÔİÜ™K›X\šÕ˜[Y]Y
+ˆ]šXÙRY[YšY\ˆ]šXÙRY[YšY\‚ˆ
+BˆH[ÙHÂˆZ\š[™Ô™XÛÜ™HH]ØZ]Z\š[™ÔİÜ™K›X\šÔ[™[™Õ˜[Y][ÛŠ
+BˆBˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆºacykîyâ­¹  y/çykf9i,z-)H‹ˆ™X\ÛÛˆ“ØØ[]•”ˆ9¨à9­bùi,z-)yd#»ï#:acykîyâ­¹  y¬¨z ïy/çykf9b,9§+9§.¸à ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬:acykîz+¯¹i!ùd#¹a£y¨à9­bÈ‹ˆÛÙNˆ”ÑPSTRT‹LŒˆ‚ˆ
+BˆBˆBˆ]ØZ]ØY
+›Ü˜ÙNˆYJBˆYˆ]Y™™Xİ]™QXYÛ›ÜİXÜÈÈ[œİ[XYÛ›ÜİXÜÈHY™™Xİ]™QXYÛ›ÜİXÜÈBˆXYÛ›ÜİXÔİ]HH™˜Z[Y
+Y™™Xİ]™Q˜Z[\™JBˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆš[œİ[][Û‹ˆ]™[ˆ™\œ›Ü‹ˆY\ÜØYÙNˆ—
+ÙÓY\ÜØYÙJ{ïg
+Y™™Xİ]™Q˜Z[\™K]J{ïg
+Y™™Xİ]™Q˜Z[\™Kœ™X\ÛÛŠH‹ˆÛÙNˆY™™Xİ]™Q˜Z[\™K˜ÛÙBˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    private func startSigning(
-        app: AppRecord,
-        account: AppleAccountRecord,
-        requestedBundleIdentifier: String? = nil,
-        completionMode: SigningCompletionMode = .signAndInstall
-    ) {
-        guard signingCoordinator != nil else { return }
-        guard signingTask == nil,
-              batchRefreshTask == nil else {
-            // ä¸å†é™é»˜ä¸¢å¼ƒï¼ˆ2026-09-27ï¼‰ï¼šç†ç”±ä¸æ–‡æ¡ˆè§ `operationInProgressFailure`ã€‚
-            alertFailure = Self.operationInProgressFailure(blockedBy: activeOperationDescription)
-            return
-        }
-        let selectedCertificateSerialNumber: String?
-        if app.belongsInInstalledList {
-            selectedCertificateSerialNumber = nil
-        } else {
-            selectedCertificateSerialNumber = try? SigningCertificateSelectionPolicy
-                .resolvedSerialNumber(
-                    for: app,
-                    account: account,
-                    knownAccountIDs: Set(accounts.map(\.id))
-                )
-        }
-        signingSession = SigningSession(
-            app: app,
-            account: account,
-            requestedBundleIdentifier: requestedBundleIdentifier,
-            selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-            completionMode: completionMode,
-            status: .running(.waitingForChannel)
-        )
-        // æ–°ä¼šè¯ â‡’ å­æµç¨‹çš„ç°¿è®°ä¹Ÿè¦æ¸…ç©ºï¼Œå¦åˆ™ä¸Šä¸€è½®ç•™ä¸‹çš„ã€Œä¸Šæ¬¡åœåœ¨ .installingã€
-        // ä¼šè®©æœ¬è½® Seal è‡ªæ›¿æ¢çš„ã€Œå›ä¸»å±ã€åˆ¤æ®æ‹¿ä¸åˆ° `.restart`ï¼ˆé™é»˜ä¸è§¦å‘ï¼‰ã€‚
-        rotationSubflowStage = nil
-        let targetBundleIdentifier = (try? BundleIDPolicy.targetBundleIdentifier(
-            for: app,
-            requestedBundleIdentifier: requestedBundleIdentifier
-        )) ?? app.mappedBundleIdentifier ?? app.originalBundleIdentifier
-        let startMessage: String
-        if app.belongsInInstalledList {
-            startMessage = "å¼€å§‹ç»­ç­¾ï¼š\(app.name)ï¼ŒApple IDï¼š\(account.maskedEmail)ï¼ŒTeamï¼š\(account.teamID)ï¼ŒBundle IDï¼š\(targetBundleIdentifier)"
-        } else {
-            startMessage = "å‡†å¤‡ç­¾åï¼š\(app.name)ï¼ŒApple IDï¼š\(account.maskedEmail)ï¼ŒTeamï¼š\(account.teamID)ï¼ŒBundle IDï¼š\(targetBundleIdentifier)"
-        }
-        Task { [weak self] in
-            try? await self?.logStore?.append(
-                category: app.belongsInInstalledList ? .renewal : .signing,
-                message: startMessage
-            )
-        }
-        signingTask = Task { [weak self] in
-            await self?.runSigning(
-                app: app,
-                account: account,
-                requestedBundleIdentifier: requestedBundleIdentifier,
-                selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-                completionMode: completionMode
-            )
-        }
-    }
+BˆB‚ˆ[˜ÈÙ]›İYšXØ][ÛœÑ[˜X›Y
+È[˜X›Yˆ›ÛÛ
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH:+¯¹ïkº`&¹çéyo 9alÎˆ
+[˜X›Y
+HŠBˆİX\™]›İYšXØ][Û”ØÚY[\‹ˆ]›İYšXØ][Û”™Y™\™[˜Ù\Ëˆ]\İÜ™H[ÙHÈ™]\›ˆBˆÈÂˆYˆ[˜X›YÂˆ]Ü˜[YHH]ØZ]›İYšXØ][Û”ØÚY[\‹œ™\]Y\İ]]Üš^˜][ÛŠ
+BˆİX\™Ü˜[Y[ÙHÂˆ›İYšXØ][Û”™Y™\™[˜Ù\Ëš\Ñ[˜X›YHYBˆ›İYšXØ][ÛœÑ[˜X›YHYBˆ›İYšXØ][Û”İ]\ÈH]ØZ]›İYšXØ][Û”ØÚY[\‹œİ]\ÊÙX[[˜X›YˆYJBˆ›İÈÙ[‹™˜Z[\™Jˆ]Nˆº`&¹çéy§*¹o 9d+È‹ˆ™X\ÛÛˆ”ÙX[9a¡y£ä:a¤¹mì¹o 9d+ûï#9/a¹ìîùîçù¬¨y§"y£¢9.¢:`&¹çéy§`úfd8à ˆ‹ˆ™XÛİ™\Nˆ¹bcyo TÛ™xà#:+¯¹ïk¸à#O¸à#ÙX[8à#O¸à#:`&¹çéxà#{ï#9a`z+®:`&¹çéyd#ºaãz+åxà ˆ‹ˆÛÙNˆ”ÑPSS“ÕQ–KLH‚ˆ
+BˆBˆBˆ›İYšXØ][Û”™Y™\™[˜Ù\Ëš\Ñ[˜X›YH[˜X›Yˆ›İYšXØ][ÛœÑ[˜X›YH[˜X›YˆH]ØZ]›İYšXØ][Û”ØÚY[\‹œ™\ØÚY[Jˆ\ÎˆH]ØZ]\İÜ™K™™]Ú[
 
-    private func restartSigning(
-        _ session: SigningSession,
-        bypassFreeAccountDeviceLimit: Bool = false,
-        forceResign: Bool = false
-    ) {
-        guard signingCoordinator != nil else { return }
-        guard signingTask == nil,
-              batchRefreshTask == nil else {
-            // ä¸å†é™é»˜ä¸¢å¼ƒï¼ˆ2026-09-27ï¼‰ï¼šç†ç”±ä¸æ–‡æ¡ˆè§ `operationInProgressFailure`ã€‚
-            alertFailure = Self.operationInProgressFailure(blockedBy: activeOperationDescription)
-            return
-        }
-        signingSession?.renewalExecutionPath = nil
-        // é‡è¯• = åˆè¦è·‘ä¸€é `signAndInstall` â‡’ å­æµç¨‹ç°¿è®°åŒæ ·æ¸…ç©ºï¼ˆç†ç”±è§ `startSigning`ï¼‰ã€‚
-        rotationSubflowStage = nil
-        // åŒä¸Šï¼šé˜¶æ®µæ¨è¿›ç»Ÿä¸€èµ° `updateSigningStage`ï¼Œè®©ã€Œæœ¬é˜¶æ®µèµ·ç‚¹ã€ä¸é˜¶æ®µä¸€èµ·è½ã€‚
-        updateSigningStage(.waitingForChannel)
-        signingTask = Task { [weak self] in
-            await self?.runSigning(
-                app: session.app,
-                account: session.account,
-                requestedBundleIdentifier: session.requestedBundleIdentifier,
-                selectedCertificateSerialNumber: session.selectedCertificateSerialNumber,
-                completionMode: session.completionMode,
-                bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
-                forceResign: forceResign
-            )
-        }
-    }
+Kˆ[˜X›Yˆ[˜X›YˆXYİ\œÎˆ™[Z[™\’İ\œÂˆ
+Bˆ›İYšXØ][Û”İ]\ÈH]ØZ]›İYšXØ][Û”ØÚY[\‹œİ]\ÊÙX[[˜X›Yˆ[˜X›Y
+BˆHØ]Ú]˜Z[\™H\È[\Ü˜Z[\™HÂˆ›İYšXØ][Û”İ]\ÈH]ØZ]›İYšXØ][Û”ØÚY[\‹œİ]\ÊˆÙX[[˜X›Yˆ›İYšXØ][Û”™Y™\™[˜Ù\Ëš\Ñ[˜X›YˆØÚY[[™Ñ˜Z[\™Nˆ˜Z[\™Kœ™X\ÛÛ‚ˆ
+Bˆ[\˜Z[\™HH˜Z[\™BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆ™\œ›Ü‹Y\ÜØYÙNˆ˜Z[\™Kœ™X\ÛÛ‹ÛÙNˆ˜Z[\™K˜ÛÙJBˆHØ]ÚÂˆ]XYÛ›ÜİXÈH›İYšXØ][Û”ØÚY[[™Ñ˜Z[\™K™XYÛ›ÜİXÊ›Üˆ\œ›ÜŠBˆ]˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åz+¯¹ïk¹£ä:a¤ˆ‹ˆ™X\ÛÛˆ¹£ä:a¤¹§*º ïy¦í9¥¬8à ˆ‹ˆ™XÛİ™\Nˆ¹c®ùìîùîçú+¯¹ïk¹¢dùo :`&¹çéy§`úfd9d#ºaãz+åH‹ˆÛÙNˆ”ÑPSS“ÕQ–KL˜H‚ˆ
+Bˆ›İYšXØ][Û”İ]\ÈH]ØZ]›İYšXØ][Û”ØÚY[\‹œİ]\ÊˆÙX[[˜X›Yˆ›İYšXØ][Û”™Y™\™[˜Ù\Ëš\Ñ[˜X›YˆØÚY[[™Ñ˜Z[\™Nˆ˜Z[\™Kœ™X\ÛÛ‚ˆ
+Bˆ[\˜Z[\™HH˜Z[\™BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆ™\œ›Ü‹Y\ÜØYÙNˆ”ÑPSS“ÕQ–KL˜H9n¥yl`º+â¹¥«{ï&—
+XYÛ›ÜİXÊH‹ÛÙNˆ˜Z[\™K˜ÛÙJBˆBˆB‚ˆØš˜Èš]˜]H[˜È™Yœ™\Ú›İYšXØ][Û”İ]\ĞY\”™[™]Ø[
 
-    private func runSigning(
-        app: AppRecord,
-        account: AppleAccountRecord,
-        requestedBundleIdentifier: String? = nil,
-        selectedCertificateSerialNumber: String?,
-        completionMode: SigningCompletionMode,
-        bypassFreeAccountDeviceLimit: Bool = false,
-        forceResign: Bool = false
-    ) async {
-        guard let signingCoordinator else { return }
-        defer { signingTask = nil }
-        let isRenewal = app.belongsInInstalledList
-        let operationKind: OperationCoordinator.Kind = isRenewal ? .renewing : .signing
-        guard let operationLease = await acquireOperation(operationKind, appID: app.id) else {
-            if Task.isCancelled {
-                signingSession = nil
-            } else if let operationCoordinator {
-                signingSession?.status = .failed(operationCoordinator.conflictFailure(requested: operationKind))
-            }
-            return
-        }
-        defer { releaseOperation(operationLease) }
-        let operationStartedAt = Date()
-        let attemptedBundleIdentifier = try? BundleIDPolicy.targetBundleIdentifier(
-            for: app,
-            requestedBundleIdentifier: requestedBundleIdentifier
-        )
-        do {
-            updateSigningStage(.waitingForChannel)
-            if completionMode == .signAndInstall {
-                // éš§é“è¯Šæ–­ä¸¢åˆ°åå°å¹¶è¡Œï¼Œç­¾åä¸å†å¹²ç­‰æ•´æ®µã€Œæ­£åœ¨è¿æ¥è®¾å¤‡ã€ã€‚
-                // å®‰è£…å‰ SigningCoordinator ä¼š await åŒä¸€æ¡é€šé“ï¼ˆé€šé“å±‚å•é£åˆå¹¶ï¼Œ
-                // ä¸ä¼šé‡å¤è·‘è¯Šæ–­ï¼‰ï¼›é€šé“çœŸå¤±è´¥æ—¶ç”±å®‰è£…é˜¶æ®µçš„è¯Šæ–­é”™è¯¯ç»™å‡ºå¯æ“ä½œæŒ‡å¼•ã€‚
-                //
-                // å…ˆæ¸…ç†”æ–­ï¼šè¿™æ˜¯ç”¨æˆ·å‘èµ·çš„æ–°ä¼šè¯ï¼Œå¿…é¡»çœŸå®é‡è·‘è¯Šæ–­ï¼Œ
-                // ä¸èƒ½å¤ç”¨ä¸Šä¸€è½®æ‰¹é‡ç»­ç­¾æ®‹ç•™çš„å¤±è´¥ â€”â€” å¦åˆ™ç”¨æˆ·ä¿®å¥½ VPN å†ç‚¹ä¸€æ¬¡
-                // ä¹Ÿä¼šè¢«ç¬é—´æ‹’ç»ï¼Œçœ‹èµ·æ¥åƒ Seal åäº†ã€‚
-                await installChannel?.clearFailureCooldown()
-                beginSigningChannel()
-            }
-            let completed = try await signWithChannelRetry(
-                app: app,
-                account: account,
-                requestedBundleIdentifier: requestedBundleIdentifier,
-                selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-                bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
-                forceResign: forceResign || isRenewal
-            )
-            let action: SigningHistoryRecord.Action = isRenewal ? .renew : .sign
-            signingSession?.status = .succeeded(completed)
-            await appendSingleOperationRound(
-                operation: isRenewal ? .singleRenewal : .singleSigning,
-                app: completed,
-                startedAt: operationStartedAt,
-                outcome: .succeeded
-            )
-            // ç­¾å/ç»­ç­¾å®Œæˆç«‹å³å¼ºåˆ¶é•œåƒæ—¥å¿—ï¼Œè®©æ—¥å¿—é¡µç«‹é©¬èƒ½çœ‹åˆ°ã€‚
-            // å¿…é¡» awaitï¼šfire-and-forget ä¼šé€ æˆ"åˆ·æ–°äº†ä½†è¯»åˆ°æ—§æ–‡ä»¶"çš„ç«æ€ï¼ˆæ‰¹é‡è·¯å¾„å·²ä¿®è¿‡ï¼‰ã€‚
-            await logStore?.forceMirrorToDocuments()
-            await recordSigningHistory(
-                app: completed,
-                account: account,
-                action: action,
-                result: .success,
-                attemptedBundleIdentifier: attemptedBundleIdentifier,
-                finalSignedBundleIdentifier: completed.mappedBundleIdentifier,
-                lifecycleStatus: completed.belongsInInstalledList ? .active : .unknown
-            )
-            await cleanTemporaryFilesIfNeeded(appID: completed.id)
-            await reconcileAfterSuccessfulSigning(completed)
-            await load(force: true)
-        } catch is CancellationError {
-            signingSession = nil
-        } catch let failure as ImportFailure {
-            signingSession?.status = .failed(failure)
+HÂˆ\ÚÈÈXZ[XİÜˆ[‚ˆ]ØZ]Ù[‹œ™Yœ™\Ú›İYšXØ][Û”İ]\Ê
+BˆBˆB‚ˆËËÈ:/núaãùb-ù¥¬:`&¹çéyâ­¹  {ï&¹«ãù«(z/æúhmzghº`ïz, ûï#9.#ycåÈ\ÓØYY9k¢9cjùolydãxà ‚ˆXZ[XİÜ‚ˆ[˜È™Yœ™\Ú›İYšXØ][Û”İ]\Ê
+H\Ş[˜ÈÂˆËÈ9.):f-¹«­y£ä9.©;ï&‹œÙX[™[™]Ø[ÛÛ\]Y9g*:aãy£¤¹k£9¢$9d#¹¢cycä{ï#9æí9£©z+îùl,y¦+ù¥¬9æ¡;ï#9.#yå*9çhL¹éä‚ˆİX\™]›İYšXØ][Û”ØÚY[\‹]›İYšXØ][Û”™Y™\™[˜Ù\È[ÙHÈ™]\›ˆBˆ›İYšXØ][Û”İ]\ÈH]ØZ]›İYšXØ][Û”ØÚY[\‹œİ]\ÊÙX[[˜X›Yˆ›İYšXØ][Û”™Y™\™[˜Ù\Ëš\Ñ[˜X›Y
+BˆB‚ˆ[˜È™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+H\Ş[˜ÈÂˆİX\™]š[TİÜ™H[ÙHÂˆİÜ˜YÙU\ØYÙHH™[\Bˆ™XÛZ[XX›TÚYÛ™YTPØXÚPÛİ[Hˆ™]\›‚ˆBˆÈÂˆ]\ÎˆĞ\™XÛÜ™BˆYˆ]\İÜ™HÂˆ\ÈH
+OÈ]ØZ]\İÜ™K™™]Ú[
 
-            await appendSingleOperationRound(
-                operation: isRenewal ? .singleRenewal : .singleSigning,
-                app: app,
-                startedAt: operationStartedAt,
-                outcome: .failed,
-                failure: failure
-            )
+JHÏÈ×BˆH[ÙHÂˆ\ÈH×BˆBˆ]\İÜNˆÔÚYÛš[™Ò\İÜT™XÛÜ™BˆYˆ]ÚYÛš[™Ò\İÜTİÜ™HÂˆ\İÜHH
+OÈ]ØZ]ÚYÛš[™Ò\İÜTİÜ™Kœ™XÛÜ™Ê
+JHÏÈ×BˆH[ÙHÂˆ\İÜHH×BˆBˆİÜ˜YÙU\ØYÙHHH]ØZ]š[TİÜ™KœİÜ˜YÙU\ØYÙJ\Îˆ\ËÚYÛš[™Ò\İÜNˆ\İÜJBˆ™XÛZ[XX›TÚYÛ™YTPØXÚPÛİ[H\Ë˜Ûİ[ÂˆÚYÛ™YTPØXÚPÛX[\ÛXŞK™XÚ\Ú[ÛŠ›Üˆ	
+HOHœ™XÛZ[XX›BˆBˆHØ]ÚÂˆİÜ˜YÙU\ØYÙHH™[\Bˆ™XÛZ[XX›TÚYÛ™YTPØXÚPÛİ[HˆBˆB‚ˆ[˜ÈÛX\•[\Ü˜\Qš[\Ê
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9®!yä!¹.-9¥í¹ï$ùkfŠBˆİX\™]š[TİÜ™H[ÙHÈ™]\›ˆBˆİX\™]Ü\˜][Û“X\ÙHH]ØZ]XÜ]Z\™SÜ\˜][ÛŠ›XZ[Z[š[™ÔİÜ˜YÙJH[ÙHÂˆ[\˜Z[\™HHÜ\˜][ÛÛÛ™›Xİ˜Z[\™J™\]Y\İYˆ›XZ[Z[š[™ÔİÜ˜YÙJBˆ™]\›‚ˆBˆY™\ˆÈ™[X\ÙSÜ\˜][ÛŠÜ\˜][Û“X\ÙJHBˆÈÂˆ]ØZ]™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+Bˆ][\Ü˜\P™Y›Ü™HHİÜ˜YÙU\ØYÙK[\Ü˜\BˆH]ØZ]š[TİÜ™K˜ÛX\•[\Ü˜\Qš[\Ê
+Bˆ]ØZ]™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+BˆİÜ˜YÙSXZ[[˜[˜ÙTİ[[X\HHİÜ˜YÙSXZ[[˜[˜ÙTİ[[X\K[\Ü˜\PØXÚPÛX\™Y
+ˆœ™YY]\Îˆ[\Ü˜\P™Y›Ü™HHİÜ˜YÙU\ØYÙK[\Ü˜\Bˆ
+BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆœŞ\İ[KˆY\ÜØYÙNˆ¹.-9¥í¹ï$ùkf9.#¹ëo¹d#yméy/g9c.¹mì¹®!yä!ˆ‚ˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-            try? await logStore?.append(
-                category: .signing,
-                level: .error,
-                message: "\(failure.title)ï¼š\(failure.reason)",
-                code: failure.code
-            )
-            let latestApp = await latestStoredApp(for: app)
-            await recordSigningHistory(
-                app: latestApp,
-                account: account,
-                action: isRenewal ? .renew : .sign,
-                result: .failed,
-                attemptedBundleIdentifier: attemptedBundleIdentifier,
-                lifecycleStatus: isRenewal ? .active : .unknown,
-                failure: failure
-            )
-            await load(force: true)
-        } catch {
-            let failure = Self.signingFailure(
-                for: error,
-                operation: isRenewal ? .renew : .sign
-            )
-            signingSession?.status = .failed(failure)
-            await appendSingleOperationRound(
-                operation: isRenewal ? .singleRenewal : .singleSigning,
-                app: app,
-                startedAt: operationStartedAt,
-                outcome: .failed,
-                failure: failure
-            )
-            if failure.code == "SEAL-SIGN-500" {
-                try? await logStore?.append(
-                    category: .signing,
-                    level: .error,
-                    message: "SEAL-SIGN-500 åº•å±‚è¯Šæ–­ï¼š\(ErrorDiagnosticFormatter.diagnostic(for: error))",
-                    code: failure.code
-                )
-            } else {
-                try? await logStore?.append(
-                    category: .signing,
-                    level: .error,
-                    message: failure.reason,
-                    code: failure.code
-                )
-            }
-            let latestApp = await latestStoredApp(for: app)
-            await recordSigningHistory(
-                app: latestApp,
-                account: account,
-                action: isRenewal ? .renew : .sign,
-                result: .failed,
-                attemptedBundleIdentifier: attemptedBundleIdentifier,
-                lifecycleStatus: isRenewal ? .active : .unknown,
-                failure: failure
-            )
-            await load(force: true)
-        }
-    }
+BˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åy®!yä!¹ï$ùkf‹ˆ™X\ÛÛˆ¹.-9¥í¹¥¡ù.í¹.ãyg*9/oùå*;ï#9¥è9¬åy®!yä!¸à ˆ‹ˆ™XÛİ™\Nˆ¹ê#yd#ºaãy¥¬9®!yä!ˆ‹ˆÛÙNˆ”ÑPSTÕÔQÑKLXH‚ˆ
+BˆBˆB‚ˆ[˜ÈÛX\•[\ÙYİÜ˜YÙQš[\Ê
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9®!yä!¹§*¹/oùå*9¥¡ù.íˆŠBˆİX\™]š[TİÜ™K]\İÜ™H[ÙHÈ™]\›ˆBˆİX\™]Ü\˜][Û“X\ÙHH]ØZ]XÜ]Z\™SÜ\˜][ÛŠ›XZ[Z[š[™ÔİÜ˜YÙJH[ÙHÂˆ[\˜Z[\™HHÜ\˜][ÛÛÛ™›Xİ˜Z[\™J™\]Y\İYˆ›XZ[Z[š[™ÔİÜ˜YÙJBˆ™]\›‚ˆBˆY™\ˆÈ™[X\ÙSÜ\˜][ÛŠÜ\˜][Û“X\ÙJHBˆÈÂˆ]ØZ]™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+Bˆ]™XÛZ[XX›P™Y›Ü™HHİÜ˜YÙU\ØYÙK[\Ü˜\H
+ÈİÜ˜YÙU\ØYÙK›Üœ[™Yˆ]\ÈHH]ØZ]\İÜ™K™™]Ú[
 
-    /// å•åº”ç”¨ç­¾å / ç»­ç­¾çš„**è®¾å¤‡é€šé“ç¬æ—¶å¤±è´¥**é‡è¯•ï¼ˆ2026-09-27 çœŸæœºï¼‰ã€‚
-    ///
-    /// èƒŒæ™¯ï¼šSeal è‡ªæ›¿æ¢å 3 ç§’è‡ªåŠ¨ç»­ç­¾è‡ªå·±ï¼Œ`SEAL-PROFILE-363`ï¼ˆè®¾å¤‡ç«¯æè¿°æ–‡ä»¶æšä¸¾
-    /// ä¸å¯ç”¨ï¼‰å¼€åœºï¼Œçº¦ 24 ç§’åä»¥ `Minimuxer.MinimuxerError 1`ï¼ˆ`NoConnection`ï¼‰
-    /// ç¡¬å¤±è´¥æˆ `SEAL-SIGN-500`ã€‚æ‰¹é‡ / åå°ç»­ç­¾æ—©å°±æœ‰äº†è¿™æ¡é‡è¯•
-    /// ï¼ˆ`RenewalCoordinator` + `DeviceChannelTransientPolicy`ï¼‰ï¼Œ**å•åº”ç”¨è·¯å¾„æ²¡æœ‰**
-    /// â‡’ åŒä¸€ä¸ªé€šé“æŠ–åŠ¨ï¼Œæ‰¹é‡èƒ½è‡ªæ„ˆã€å•ç­¾æ•´è½®ç™½åšã€‚
-    ///
-    /// è¿™é‡ŒæŠŠæ‰¹é‡é‚£æ¡ç­–ç•¥**åŸæ ·**æ¥åˆ°å•ç­¾è·¯å¾„ï¼šåŒä¸€ä»½è¯è¡¨ï¼ˆ`isTransientChannelFailure`ï¼‰ã€
-    /// åŒä¸€ä¸ªé€€é¿åŸºæ•°ï¼ˆ8 ç§’ Ã— å°è¯•åºå·ï¼‰ã€åŒæ ·çš„å°è¯•æ¬¡æ•°ã€‚åˆ¤æ®å…¨è½åœ¨
-    /// `DeviceChannelTransientPolicy`ï¼ˆçº¯å‡½æ•°ï¼Œå¯å•æµ‹ï¼‰â€”â€” ä¸è¦åœ¨æœ¬åœ°å¦æŠ„ä¸€å¥—ã€‚
-    private func signWithChannelRetry(
-        app: AppRecord,
-        account: AppleAccountRecord,
-        requestedBundleIdentifier: String?,
-        selectedCertificateSerialNumber: String?,
-        bypassFreeAccountDeviceLimit: Bool,
-        forceResign: Bool
-    ) async throws -> AppRecord {
-        guard let signingCoordinator else {
-            try? await logStore?.append(category: .signing, level: .error,
-                message: "SEAL-SIGN-500 åº•å±‚è¯Šæ–­ï¼š[Seal.AppsViewModel 1] signingCoordinator ä¸ºç©º",
-                code: "SEAL-SIGN-500")
-            throw Self.unexpectedSigningFailure(
-                NSError(domain: "Seal.AppsViewModel", code: 1)
-            )
-        }
-        let maxAttempts = DeviceChannelTransientPolicy.singleAppMaxAttempts
-        for attempt in 1...maxAttempts {
-            try Task.checkCancellation()
-            do {
-                return try await signingCoordinator.signAndInstall(
-                    appID: app.id,
-                    accountID: account.id,
-                    requestedBundleIdentifier: requestedBundleIdentifier,
-                    selectedCertificateSerialNumber: selectedCertificateSerialNumber,
-                    forceResign: forceResign,
-                    bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
-                    progress: { [weak self] update in
-                        await self?.updateSigningStage(update.stage, subject: update.subject)
-                    },
-                    onCertificateResolved: { [weak self] serialNumber in
-                        await self?.updateResolvedCertificateSerialNumber(serialNumber)
-                    },
-                    onRenewalExecutionPath: { [weak self] path in
-                        await self?.updateRenewalExecutionPath(path)
-                    },
-                    onInstallProgress: { [weak self] progress in
-                        await self?.updateInstallProgress(progress)
-                    },
-                    onWorkUnits: { [weak self] units in
-                        await self?.updateWorkUnits(units)
-                    }
-                )
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                guard DeviceChannelTransientPolicy.shouldRetry(
-                    afterAttempt: attempt,
-                    maxAttempts: maxAttempts,
-                    error: error
-                ) else { throw error }
-                // é‡è¯•å‰æ‹†æ‰å¯èƒ½å·²è¢«éš§é“æŠ–åŠ¨é¡¶æ‰çš„æ­»ä¼šè¯ï¼š`reset()` è¿ Swift ä¾§ä¼šè¯ç¼“å­˜
-                // ä¸å¤±è´¥ç†”æ–­ä¸€èµ·æ¸…ï¼ˆå¦åˆ™ä¸‹ä¸€æ¬¡ `start()` ä¼šåœ¨ 900 ç§’çª—å£å†…æŠŠåŒä¸€ä¸ªæ­»ä¼šè¯
-                // åŸæ ·è¿˜å›æ¥ï¼‰ã€‚æè¿°æ–‡ä»¶**è¶…æ—¶**ç±»äº¤ç»™ `renewProfilesOnly` çš„æ±¡æŸ“é—¸é—¨
-                // è‡ªå·± reset + startï¼Œè¿™é‡Œåªæ¸…ç†”æ–­ï¼Œé¿å…é‡å¤æ‹†å¤šä»˜ä¸€è½®è¯Šæ–­ã€‚
-                // âš ï¸ æ¢å¤åŠ¨ä½œä¸æ‰¹é‡ï¼ˆ`RenewalCoordinator.process`ï¼‰**åŒæº**ï¼Œéƒ½èµ°
-                // `SigningCoordinator.prepareInstallChannelForRetry(after:)` â€”â€”
-                // ä¸¤æ¡é“¾è·¯å„å†™ä¸€ä»½å¿…ç„¶æ¼‚ç§»ï¼ˆæœ¬ä»“åå¤è¸©è¿‡çš„ã€Œä¸¤å¼ è¡¨åŒæºã€å‘ï¼‰ã€‚
-                await signingCoordinator.prepareInstallChannelForRetry(after: error)
-                // ä¸æ‰¹é‡ç»­ç­¾ä¿æŒåŒä¸€ç­–ç•¥ï¼šåˆ©ç”¨æ—¢æœ‰é€€é¿å¹¶è¡Œé‡å»º RSD ä¼šè¯ï¼Œé¿å…é‡è¯•
-                // å¼€å§‹åæ‰å†·å¯åŠ¨è¿æ¥ï¼ŒæŠŠ 8 ç§’å…¨è€—åœ¨ç©ºç­‰ä¸Šã€‚
-                let channelPrewarmTask = Task { [signingCoordinator] in
-                    await signingCoordinator.prewarmInstallChannelForRetry()
-                }
-                let delay = DeviceChannelTransientPolicy.retryDelayNanoseconds(forAttempt: attempt)
-                // ç•™ç—•ï¼šæ²¡æœ‰è¿™ä¸€æ¡æ—¶ï¼Œé‡è¯•åœ¨æ—¥å¿—ä¸Šå®Œå…¨çœ‹ä¸å‡ºæ¥ï¼ˆè¿™æ­£æ˜¯æœ¬æ¬¡éš¾å®šä½çš„åŸå› ï¼‰ã€‚
-                try? await logStore?.append(
-                    category: app.belongsInInstalledList ? .renewal : .signing,
-                    level: .warning,
-                    message: "è®¾å¤‡é€šé“ç¬æ—¶å¤±è´¥ï¼ˆç¬¬ \(attempt)/\(maxAttempts) æ¬¡å°è¯•ï¼‰ï¼Œ"
-                        + "\(Int(delay / 1_000_000_000)) ç§’åé‡è¯•ï¼š"
-                        + DeviceChannelTransientPolicy.diagnostic(error),
-                    code: "SEAL-SIGN-503"
-                )
-                try? await Task.sleep(nanoseconds: delay)
-                if Task.isCancelled {
-                    channelPrewarmTask.cancel()
-                    throw CancellationError()
-                }
-                // ä¸åœ¨è¿™é‡Œç­‰å¾…é¢„çƒ­å®Œæˆï¼šä¸‹ä¸€æ¬¡ç­¾åä¼šå•é£åŠ å…¥åŒä¸€æ¡ `start()`ï¼›è‹¥é€šé“
-                // ä»åï¼Œæ²¿ç”¨åŸæœ‰å¤±è´¥åˆ†ç±»ï¼Œä¸èƒ½æŠŠ 8 ç§’é€€é¿æ‰©å¤§æˆè¯Šæ–­ç¡¬è¶…æ—¶ã€‚
-            }
-        }
-        // `maxAttempts >= 1` â‡’ å¾ªç¯è¦ä¹ˆ returnã€è¦ä¹ˆåœ¨æœ€åä¸€æ¬¡ `shouldRetry` ä¸ºå‡æ—¶æŠ›å‡ºã€‚
-        // è¿™è¡Œåªæ˜¯è®©ç¼–è¯‘å™¨æ»¡æ„ï¼Œå®é™…ä¸å¯è¾¾ã€‚
-        try? await logStore?.append(category: .signing, level: .error,
-            message: "SEAL-SIGN-500 åº•å±‚è¯Šæ–­ï¼š[Seal.AppsViewModel 2] é‡è¯•å¾ªç¯æ„å¤–è½ç©º",
-            code: "SEAL-SIGN-500")
-        throw Self.unexpectedSigningFailure(
-            NSError(domain: "Seal.AppsViewModel", code: 2)
-        )
-    }
+BˆH]ØZ]š[TİÜ™K˜ÛX\•[\Ü˜\Qš[\Ê
+BˆËÈ:/æzaã9¦+ùå*9¢-ù..ùbª9®!yä!»ï#9.%9¥m9.*¹®!yä!¹§'úeí9£ y§"H›XZ[Z[š[™ÔİÜ˜YÙH9éçùî©‚ˆËÈ;ï"Ü\˜][ÛÛÛÜ™[˜]Üˆ9cey©ïH8¡äˆ9.#y/&¹§"ynm¹cäykï9aiy¥¬9nî¹æë¹oe{ï"{ï#ˆËÈ9fè9«i9.#zg :) xà#9¥¬9nî¹/çy¢©9§'øà#x %8 %9å*9¢-ùl,y¦+ú) yêâùb.ù¢¢¹ênºeí:aâ¹¥/¹aî¹§ixà ‚ˆH]ØZ]š[TİÜ™K˜ÛX\“Üœ[™Y\š[\Êˆ˜[Y\QÎˆÙ]
+\Ë›X\
+šY
+JKˆZ[š[][PYÙNˆˆ
+Bˆ]ØZ]™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+BˆİÜ˜YÙSXZ[[˜[˜ÙTİ[[X\HHİÜ˜YÙSXZ[[˜[˜ÙTİ[[X\K[\ÙYš[\ĞÛX\™Y
+ˆœ™YY]\Îˆ™XÛZ[XX›P™Y›Ü™HHİÜ˜YÙU\ØYÙK[\Ü˜\HHİÜ˜YÙU\ØYÙK›Üœ[™Yˆ
+BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆœŞ\İ[KˆY\ÜØYÙNˆ¹.-9¥í¹ï$ùkf9d£9§*¹/oùå*9¥¡ù.í¹mì¹®!yä!»ï&ùëo¹d#yï$ùkf8à P\HQ9aëy£k¹d£:+¯¹i!úacykîy/èy kùmì¹/çyåfH‚ˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    private func latestStoredApp(for fallback: AppRecord) async -> AppRecord {
-        guard let appStore,
-              let stored = try? await appStore.fetchAll().first(where: {
-                  $0.id == fallback.id
-              }) else {
-            return fallback
-        }
-        return stored
-    }
+BˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åy®!yä!¹§*¹/oùå*9¥¡ù.íˆ‹ˆ™X\ÛÛˆº`ê9b!¹¥¡ù.í¹.ãyg*9/oùå*9¢%¹§+9g,:+¬9oey¥è9¬åz+îùcå¸à ˆ‹ˆ™XÛİ™\Nˆ¹ê#yd#ºaãy¥¬9®!yä!ˆ‹ˆÛÙNˆ”ÑPSTÕÔQÑKLˆ‚ˆ
+BˆBˆB‚ˆËËÈ9®!yä!¹cëùa£yå'ù¢$9æ¡9mì¹ëo¹d#HTxà ¹c§ùiâÈTxà yk¢z(áz+¬9oeyd£9å*9¢-ù`cùioy. 9o¢ù/çyåfxà ‚ˆ[˜ÈÛX\”İÜ™YÚYÛ™YXÚØYÙ\Ê
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9®!yä!¹mì¹ëo¹d#HTHŠBˆİX\™]š[TİÜ™K]\İÜ™H[ÙHÈ™]\›ˆBˆİX\™]Ü\˜][Û“X\ÙHH]ØZ]XÜ]Z\™SÜ\˜][ÛŠ›XZ[Z[š[™ÔİÜ˜YÙJH[ÙHÂˆ[\˜Z[\™HHÜ\˜][ÛÛÛ™›Xİ˜Z[\™J™\]Y\İYˆ›XZ[Z[š[™ÔİÜ˜YÙJBˆ™]\›‚ˆBˆY™\ˆÈ™[X\ÙSÜ\˜][ÛŠÜ\˜][Û“X\ÙJHB‚ˆÈÂˆ]ØZ]™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+Bˆ]ÚYÛ™Y™Y›Ü™HHİÜ˜YÙU\ØYÙKœÚYÛ™YT\Âˆ]™XÛÜ™ÈHH]ØZ]\İÜ™K™™]Ú[
 
-    /// æ¨è¿›æŠ½å±‰é˜¶æ®µã€‚
-    ///
-    /// - Parameter subject: **è¿™ä¸ªé˜¶æ®µå±äºè°**ï¼ˆè§ `SigningStageUpdate`ï¼‰ã€‚çœç•¥æ—¶æŒ‰
-    ///   ã€Œä¼šè¯ä¸»ä½“ã€å¤„ç† â€”â€” é‚£æ­£æ˜¯æœ¬ App è‡ªå·±çš„é˜¶æ®µã€‚è¯ä¹¦è½®æ¢å­æµç¨‹æ¨è¿›çš„æ˜¯**å¦ä¸€ä¸ª**
-    ///   Appï¼ˆå« Seal è‡ªå·±ï¼‰çš„é˜¶æ®µï¼Œå¿…é¡»ç”±ä¿¡å·è‡ªå¸¦ä¸»ä½“ï¼›æ‹¿ä¼šè¯ä¸»ä½“å»åˆ¤æ–­ä¼šå¾—å‡ºé”™è¯¯ç»“è®º
-    ///   ï¼ˆæ„å»º 31 çœŸæœºï¼šSeal è‡ªæ›¿æ¢çš„ã€Œå›ä¸»å±ã€æ°¸ä¸è§¦å‘ï¼ŒæŠ½å±‰åœåœ¨ã€Œæ­£åœ¨éªŒè¯å®‰è£…ã€ï¼‰ã€‚
-    private func updateSigningStage(_ stage: SigningStage, subject: SigningStageSubject? = nil) {
-        let currentStage: SigningStage?
-        if case .running(let running) = signingSession?.status {
-            currentStage = running
-        } else {
-            currentStage = nil
-        }
-        // èµ·ç‚¹è§„åˆ™ä¸æ‰¹é‡ç»­ç­¾å…±ç”¨ InstallStageTimelineï¼šåŒä¸€é˜¶æ®µè¢«é‡å¤æ¨é€æ—¶ä¸é‡ç½®ï¼Œ
-        // æ¯æ¬¡éƒ½é‡ç½®ä¼šè®©ã€Œå·²ç­‰å¾… m:ssã€æ°¸è¿œåœåœ¨ 0:0xï¼Œåè€Œæ›´åƒå¡æ­»ã€‚
-        let tick = InstallStageTimeline.tick(entering: stage, currentStage: currentStage)
-        // âš ï¸ **æ¯ä¸ªé˜¶æ®µçœŸæ­£è¿›å…¥æ—¶è®°ä¸€è¡Œ**ï¼ˆ2026-09-18ï¼‰â€”â€” è¿™æ˜¯ã€Œ**åˆ†æ®µè€—æ—¶**ã€çš„å”¯ä¸€æ¥æºã€‚
-        //
-        // èƒŒæ™¯ï¼š`SigningProgressBudget` çš„ Ï„ï¼ˆæ¯é˜¶æ®µæ—¶é•¿ï¼‰ç°åœ¨æ˜¯**ä¼°çš„**ï¼Œè¦é çœŸæœºæ—¥å¿—é‡Œ
-        // å„é˜¶æ®µçš„æ—¶é—´æˆ³å·®æ¥æ ¡å‡†ã€‚è€Œåœ¨æ­¤ä¹‹å‰ `updateSigningStage` **åªæ”¹çŠ¶æ€ã€ä¸€è¡Œéƒ½ä¸è½**
-        // â‡’ é˜¶æ®µåˆ‡æ¢åœ¨æ—¥å¿—é‡Œæ²¡æœ‰ä»»ä½•æ—¶é—´æˆ³ â‡’ é‚£ä»½æ•°æ®**æ ¹æœ¬æ‹¿ä¸åˆ°**ï¼Œ
-        // ä¸‰æ¡çº¿ï¼ˆè¿›åº¦ Ï„ æ ¡å‡† / å¤§åŒ…è€—æ—¶å½’å›  / è¯·æ±‚é‡åˆ¤æ®ï¼‰éƒ½åœ¨ç­‰å®ƒã€‚
-        //
-        // âš ï¸ **å¿…é¡»æ’åœ¨ä¸‹é¢é‚£ä¸ª `guard signingSession != nil` ä¹‹å‰**ï¼ˆ2026-09-18 çœŸæœºï¼Œæ„å»º 133ï¼‰ï¼š
-        // **æ‰¹é‡ç»­ç­¾èµ°çš„æ˜¯ `BatchRefreshSession`ï¼Œ`signingSession` å¯èƒ½ä¸ºç©º** â‡’ åŸæ¥é‚£ä¸ª guard
-        // ä¼šè®©æ•´æ®µç›´æ¥ returnã€æ—¥å¿—ä¸è½ â‡’ å®æµ‹æ•´ä»½æ—¥å¿—åªæœ‰ **2 æ¡** `SEAL-STAGE-001`
-        //ï¼ˆè€Œä¸”éƒ½æ˜¯ `installing`ï¼‰âœ—ã€‚è€Œã€Œæ¯é˜¶æ®µè€—æ—¶ã€çš„æ ·æœ¬**æ°æ°ä¸»è¦æ¥è‡ªæ‰¹é‡ç»­ç­¾**
-        //ï¼ˆç”¨æˆ·æœ€å¸¸ç”¨çš„å…¥å£ï¼‰â‡’ æ—¥å¿—å¿…é¡»ä¸ session çŠ¶æ€**è§£è€¦**ã€‚
-        //
-        // âš ï¸ **é—¸é—¨å¿…é¡»æ˜¯ã€Œé˜¶æ®µçœŸçš„å˜äº†ã€ï¼ˆ`stage != currentStage`ï¼‰ï¼Œä¸èƒ½ç”¨ `tick`**
-        //ï¼ˆ2026-09-19 çœŸæœºè¸©åˆ° âœ—ï¼‰ï¼š`InstallStageTimeline.tick` åªå¯¹ **`.installing`** è¿”å›
-        // `.restart`ï¼Œ**å…¶ä½™é˜¶æ®µä¸€å¾‹è¿”å› `.clear`** â€”â€” å®ƒæ˜¯ã€Œå®‰è£…è®¡æ—¶èµ·ç‚¹ã€çš„ç°¿è®°ï¼Œ
-        // **ä¸æ˜¯**ã€Œé˜¶æ®µæ˜¯å¦åˆ‡æ¢ã€âœ—ã€‚æ‹¿å®ƒå½“é—¸é—¨ â‡’ **åªæœ‰ `installing` ä¼šè½æ—¥å¿—** âœ—âœ—
-        //ï¼ˆçœŸæœºå®æµ‹ï¼šæ•´ä»½æ—¥å¿—åªæœ‰ 1 æ¡ `SEAL-STAGE-001`ï¼Œæ­£æ˜¯ `installing` âœ“ å®Œå…¨å°è¯ï¼‰ã€‚
-        // åŒä¸€é˜¶æ®µä¼šè¢«**é‡å¤æ¨é€**ï¼ˆå®‰è£…é€šé“çš„ >1.0 å“¨å…µ + ç­¾åä¾§è¡¥å‘ï¼‰ï¼Œæ‰€ä»¥é—¸é—¨ä»ç„¶éœ€è¦ âœ“ã€‚
-        // âš ï¸ ç”¨ `Task` æ˜¯å› ä¸ºæœ¬å‡½æ•°æ˜¯**åŒæ­¥**çš„ï¼ˆæ”¹å®Œ `status` è¦ç«‹åˆ»è¿”å›ï¼Œä¸èƒ½ä¸ºäº†è®°æ—¥å¿—
-        // æ”¹æˆ async å»æ³¢åŠæ‰€æœ‰è°ƒç”¨ç‚¹ï¼‰ï¼›æ—¥å¿—æ™šå‡ æ¯«ç§’ä¸å½±å“ã€Œç®—æ—¶é—´æˆ³å·®ã€ã€‚
-        if stage != currentStage {
-            let entered = stage
-            // ä¸»ä½“è·Ÿç€ä¿¡å·èµ°ï¼šå­æµç¨‹æ¨è¿›çš„æ˜¯**å¦ä¸€ä¸ª** App çš„é˜¶æ®µï¼Œåªæœ‰ä¿¡å·è‡ªå¸¦çš„
-            // é‚£ä¸ªä¸»ä½“æ‰æ˜¯å¯¹çš„ï¼ˆè§ `SigningStageUpdate`ï¼‰ï¼›ç¼ºçœæ—¶æ‰æ˜¯ä¼šè¯ä¸»ä½“ã€‚
-            // ç•™åœ¨æ—¥å¿—é‡Œçš„ä»·å€¼ï¼šçœŸæœºä¸Šã€Œè°åœ¨èµ°è¿™ä¸ªé˜¶æ®µã€åŸæ¥åªèƒ½é ä¸Šä¸‹æ–‡çŒœï¼Œ
-            // è€Œæ„å»º 31 é‚£æ¬¡å¡ä½çš„æ ¹å› æ°æ°æ˜¯ã€Œé˜¶æ®µå±äºè°ã€è¢«æé”™äº†ã€‚
-            let enteredBy = subject?.appName ?? signingSession?.app.displayName ?? "æœªçŸ¥åº”ç”¨"
-            Task { [logStore] in
-                try? await logStore?.append(
-                    category: .signing,
-                    level: .info,
-                    message: "é˜¶æ®µè¿›å…¥ï¼š\(entered)ï¼ˆ\(enteredBy)ï¼‰",
-                    code: "SEAL-STAGE-001"
-                )
-            }
-        }
+B‚ˆ›Üˆ™XÛÜ™[ˆ™XÛÜ™ÈÚ\™HÚYÛ™YTPØXÚPÛX[\ÛXŞK™XÚ\Ú[ÛŠ›Üˆ™XÛÜ™
+HOHœ™XÛZ[XX›HÂˆ˜\ˆÛX\™Y™XÛÜ™H™XÛÜ™ˆÛX\™Y™XÛÜ™˜ÛX\”ÚYÛ™YTPØXÚSY]Y]J
+B‚ˆËÈ9a`ù¥l9£k¹cê¹¨!ú+¬9ï$ùkf9ï.¹i,{ï#9îçy.#y¥.ya¦ymì¹k¢z(áz.ªù.ïKùîëyëoº-a9¨/8à ‚ˆH]ØZ]\İÜ™KœØ]™JÛX\™Y™XÛÜ™
+BˆÈÂˆH]ØZ]š[TİÜ™Kœ™[[İ™TÚYÛ™YTPØXÚJ\Qˆ™XÛÜ™šY
+BˆHØ]ÚÂˆËÈ9b(:fi9§*¹k£9¢$9¥í¹ h¹i#yc§ú+¬9oe{ï#9èk¹/çyå*9¢-ù.ãycëù«hùn.9i#yå*9ã¬9§"yëo¹d#yc!xà ‚ˆOÈ]ØZ]\İÜ™KœØ]™J™XÛÜ™
+Bˆ›İÈ\œ›Ü‚ˆBˆB‚ˆ]ØZ]™Yœ™\ÚİÜ˜YÙU\ØYÙJ
+BˆİÜ˜YÙSXZ[[˜[˜ÙTİ[[X\HHİÜ˜YÙSXZ[[˜[˜ÙTİ[[X\KœÚYÛ™YXÚØYÙ\ĞÛX\™Y
+ˆœ™YY]\ÎˆÚYÛ™Y™Y›Ü™HHİÜ˜YÙU\ØYÙKœÚYÛ™YT\Âˆ
+BˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆœŞ\İ[KˆY\ÜØYÙNˆ¹mìºaâ¹¥/¹cëúaãynî¹k¢z(áyï$ùkf;ï&ùc§ùiâÈTxà ymì¹k¢z(áz.ªù.ïxà y£ãú/ì9¥¡ù.í¸à z-)¹cíùd£:+¯¹i!úacykîy/èy kùgaùmì¹/çyåfH‚ˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-        guard let sessionAppID = signingSession?.app.id else { return }
-        // ğŸ”´ é˜¶æ®µå±äºè° â€”â€” åªæœ‰ã€Œå±äº**ä¼šè¯ä¸»ä½“**ã€æ‰å†™çˆ¶ä¼šè¯çš„æ˜¾ç¤ºçŠ¶æ€ã€‚
-        //
-        // è¯ä¹¦è½®æ¢å­æµç¨‹æ¨è¿›çš„æ˜¯**å¦ä¸€ä¸ª** Appï¼ˆé€šå¸¸æ˜¯ Seal è‡ªå·±ï¼‰ï¼Œå®ƒå†™è¿›å»ä¼šè®©æŠ½å±‰åœ¨
-        // çˆ¶ä¼šè¯å·²ç»è£…å®Œã€æ­£åœ¨éªŒè¯ä¹‹ååˆè·³å›ç­¾åé˜¶æ®µï¼ˆ2026-09-26 æ„å»º 48 çœŸæœºï¼š
-        // 10:07:44 çˆ¶ä¼šè¯ `verifyingï¼ˆGuoguoï¼‰`ï¼Œç´§æ¥ç€ 10:07:44-10:07:47 è¢«å­æµç¨‹çš„
-        // `waitingForChannel` / `preparingAccount` / `preparingBundle` / `preparingCertificateï¼ˆSealï¼‰`
-        // è¦†ç›– â‡’ ç”¨æˆ·çœ‹åˆ°çš„å°±æ˜¯ã€Œ**ç­¾ååˆ°å®‰è£…æ­¥éª¤ååˆé‡ç­¾ä¸€æ¬¡**ã€ï¼‰ã€‚åˆ¤æ®è§ `SigningStageAttribution`ã€‚
-        switch SigningStageAttribution.target(for: subject, sessionAppID: sessionAppID) {
-        case .session:
-            signingSession?.installStartedAt = InstallStageTimeline.applied(
-                tick,
-                startedAt: signingSession?.installStartedAt
-            )
-            // å½“å‰é˜¶æ®µçš„èµ·ç‚¹ï¼šè¿›åº¦ä¸å†åªéšé˜¶æ®µè·³å˜ï¼Œé˜¶æ®µå†…éƒ¨è¦æŒ‰ã€Œå·²è¿‡æ—¶é—´ã€ä¼°ç®—
-            // ï¼ˆè§ `SigningProgressBudget`ï¼‰ï¼Œæ‰€ä»¥æ¯ä¸ªé˜¶æ®µéƒ½è¦æœ‰ä¸€ä¸ªèµ·ç‚¹ã€‚
-            // è§„åˆ™åŒæ ·æŠ½åœ¨ `InstallStageTimeline` é‡Œï¼Œç†ç”±ä¸ä¸Šé¢é‚£æ¡ä¸€æ ·ï¼š
-            // ã€Œèµ·ç‚¹è¯¥ä¸è¯¥é‡ç½®ã€åªè®¸æœ‰ä¸€å¤„ç­”æ¡ˆã€‚
-            signingSession?.stageStartedAt = InstallStageTimeline.stageStart(
-                entering: stage,
-                currentStage: currentStage,
-                previous: signingSession?.stageStartedAt
-            )
-            signingSession?.status = .running(stage)
-            // Seal è‡ªç»­ç­¾ = è¦†ç›–å®‰è£…è¿è¡Œä¸­çš„è‡ªå·±ï¼šiOS åªæœ‰åœ¨æ—§è¿›ç¨‹è®©å‡ºå‰å°åæ‰å®Œæˆæ›¿æ¢ï¼Œ
-            // æ‰€ä»¥å¿…é¡»ç”± Seal ä¸»åŠ¨ã€Œå›ä¸»é¡µã€ã€‚
-            //
-            // è§¦å‘ç‚¹åˆ»æ„æ”¾åœ¨**çŠ¶æ€å±‚**ï¼Œè€Œä¸æ˜¯ SigningProgressView çš„ `.onChange`ï¼š
-            // æŠ½å±‰ç°åœ¨æœ‰ã€Œå–æ¶ˆã€æŒ‰é’®ï¼ˆè½¯å–æ¶ˆï¼šç«‹å³å…³ç•Œé¢ï¼Œå·²ä¸‹å‘çš„å®‰è£…ç”± installd è·‘å®Œï¼‰ï¼Œ
-            // ç”¨æˆ·ä¸€æ—¦åœ¨ Seal å®‰è£…æœŸé—´ç‚¹å–æ¶ˆï¼Œç•Œé¢å°±æ²¡äº† â€”â€” æŒ‚åœ¨ç•Œé¢ä¸Šçš„è§¦å‘ç‚¹æ”¶ä¸åˆ°
-            // åç»­é˜¶æ®µæ¨è¿›ï¼Œã€Œå›ä¸»é¡µã€æ°¸è¿œä¸ä¼šå‘ç”Ÿï¼ŒSeal çš„æ›¿æ¢ä¼š**é™é»˜å¤±è´¥**
-            //ï¼ˆæ—§ç‰ˆæœ¬ç»§ç»­è·‘ï¼Œç”¨æˆ·ä»¥ä¸ºæ›´æ–°æ²¡ç”Ÿæ•ˆï¼‰ã€‚æ‰¹é‡ç»­ç­¾é‚£æ¡é“¾è·¯æœ¬æ¥å°±æ˜¯åœ¨çŠ¶æ€å±‚è§¦å‘çš„
-            //ï¼ˆè§ consumeBatchEventï¼‰ï¼Œè¿™é‡Œä¸å®ƒå¯¹é½ã€‚
-            //
-            // `.restart` ä¿è¯åªåœ¨**é¦–æ¬¡**è¿›å…¥å®‰è£…é˜¶æ®µè§¦å‘ä¸€æ¬¡ï¼šåŒä¸€é˜¶æ®µä¼šè¢«é‡å¤æ¨é€
-            //ï¼ˆå®‰è£…é€šé“çš„ >1.0 å“¨å…µ + ç­¾åä¾§è¡¥å‘ï¼‰ï¼Œä¸è®¾é—¸é—¨ä¼šæ’å‡ºå¤šä¸ªã€Œå›ä¸»é¡µã€ä»»åŠ¡ã€‚
-            // ä¸»ä½“åˆ¤æ®å¿…é¡»ç”¨**ä¿¡å·è‡ªå¸¦çš„ä¸»ä½“**ï¼Œä¸èƒ½ç”¨ä¼šè¯ä¸»ä½“ï¼šè¯ä¹¦è½®æ¢å­æµç¨‹é‡Œé‡æ–°
-            // ç­¾åå®‰è£…çš„æ˜¯ Seal è‡ªå·±ï¼Œè€Œä¼šè¯ä¸»ä½“æ˜¯ç”¨æˆ·é‚£ä¸ª App â‡’ åˆ¤æ®æ’å‡ â‡’
-            // è‡ªæ›¿æ¢æ‹¿ä¸åˆ°ã€Œè¯¥å›ä¸»å±äº†ã€ï¼Œinstalld ä¸€ç›´ç­‰æ—§è¿›ç¨‹è®©ä½ï¼ˆæ„å»º 31 çœŸæœºï¼‰ã€‚
-            // çœç•¥ subject æ—¶ç­‰ä»·äºä¼šè¯ä¸»ä½“ï¼Œä¸æ—§è¡Œä¸ºä¸€è‡´ã€‚
-            if stage == .installing,
-               tick == .restart,
-               (subject?.isSeal ?? signingSession?.app.isSeal) == true {
-                SelfInstallAutoBackground.returnToHomeAfterSealUpload(logStore: logStore)
-            }
-        case .otherApp(let other):
-            // å­æµç¨‹é˜¶æ®µï¼š**åªç•™ç—•**ï¼ˆä¸Šé¢çš„ `SEAL-STAGE-001` å·²ç»å†™è¿‡ï¼‰ï¼‹ è¯„ä¼° Seal
-            // è‡ªæ›¿æ¢çš„ã€Œå›ä¸»å±ã€ï¼Œ**ä¸ç¢°çˆ¶ä¼šè¯çš„ä»»ä½•æ˜¾ç¤ºçŠ¶æ€**ï¼ˆé˜¶æ®µæ–‡æ¡ˆ / è¿›åº¦ç¯ / è®¡æ—¶èµ·ç‚¹ï¼‰ã€‚
-            //
-            // âš ï¸ å›ä¸»å±ä¸èƒ½è·Ÿç€çˆ¶ä¼šè¯èµ°ï¼šå®ƒçš„åˆ¤æ®æ˜¯ã€Œ**Seal** è¢«è¦†ç›–å®‰è£…ã€ï¼Œä¸çˆ¶ä¼šè¯æ˜¯è°
-            // æ— å…³ â€”â€” æ„å»º 31 çœŸæœºå°±æ˜¯å› ä¸ºæ‹¿ä¼šè¯ä¸»ä½“å»åˆ¤ï¼Œå­æµç¨‹é‡Œæ’å‡ â‡’ installd ä¸€ç›´ç­‰
-            // æ—§è¿›ç¨‹è®©ä½ï¼Œç›´åˆ° `waitForSelfReplacement` çš„ 894 ç§’ä¸Šé™ï¼ˆR66ï¼‰ã€‚
-            //
-            // âš ï¸ é—¸é—¨å¿…é¡»æ”¹ç”¨**å­æµç¨‹è‡ªå·±çš„**ç°¿è®°ï¼šçˆ¶ä¼šè¯çš„ `InstallStageTimeline` æ”¶ä¸åˆ°
-            // å­æµç¨‹çš„é˜¶æ®µï¼ˆè¿™æ­£æ˜¯æœ¬æ¬¡çš„ä¿®å¤ï¼‰ï¼Œæ‹¿å®ƒå½“é—¸é—¨ç­‰äºæ²¡æœ‰é—¸é—¨ â€”â€”
-            // `.installing` ä¼šè¢«é‡å¤æ¨é€ï¼Œä¼šæ’å‡ºå¤šä¸ªã€Œå›ä¸»é¡µã€ä»»åŠ¡ã€‚
-            let previous = rotationSubflowStage?.appID == other.appID
-                ? rotationSubflowStage?.stage
-                : nil
-            if SigningStageAttribution.isFirstInstallEntry(entering: stage, previous: previous),
-               other.isSeal {
-                SelfInstallAutoBackground.returnToHomeAfterSealUpload(logStore: logStore)
-            }
-            rotationSubflowStage = (other.appID, stage)
-        }
-    }
+BˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åy®!yä!¹ëo¹d#yc!H‹ˆ™X\ÛÛˆº`ê9b!¹mì¹ëo¹d#HTH9«hùg*9/oùå*9¢%¹§+9g,:+¬9oey¥è9¬åy¦í9¥¬8à ˆ‹ˆ™XÛİ™\Nˆ¹ê#yd#ºaãy¥¬9®!yä!ˆ‹ˆÛÙNˆ”ÑPSTÕÔQÑKLÈ‚ˆ
+BˆBˆB‚ˆ[˜ÈÛX\’TP[™ÚYÛš[™ĞØXÚJ
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9®!yä!ˆTH9d£9ëo¹d#yï$ùkfŠBˆ]ØZ]ÛX\•[\ÙYİÜ˜YÙQš[\Ê
+BˆB‚ˆËËÈYØXŞHTH™]Z[™Y›ÜˆØ[\Ú]HÛÛ\]Xš[]K‚ˆËËÈ]È˜[YH›İÈX]Ú\ÈH™X[Ü\˜][Ûˆ™XÛZ[H™YÙ[™\˜X›HÚYÛ™YTHXÚØYÙ\Ë‚ˆ[˜ÈÛX\”ÚYÛ™YTPØXÚJ
+H\Ş[˜ÈÂˆ]ØZ]ÛX\”İÜ™YÚYÛ™YXÚØYÙ\Ê
+BˆB‚ˆ[˜ÈÛX\“ÙÜÊ
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH9®!zfi9¥éyoåÈŠBˆİX\™]ÙÔİÜ™H[ÙHÈ™]\›ˆBˆÈÂˆH]ØZ]ÙÔİÜ™K˜ÛX\Š
+BˆÙÜÈH×Bˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    // å®‰è£…é€šé“ AFC ä¸Šä¼ é˜¶æ®µçš„çœŸå®è¿›åº¦ï¼ˆ0-1ï¼‰â†’ åˆ·æ–°è¿›åº¦ UIã€‚
-    // Rust ä¸Šä¼ ç»“æŸã€installd å®‰è£…å‘½ä»¤å³å°†ä¸‹å‘æ—¶çš„å“¨å…µï¼ˆ>1.0ï¼Œ101â†’1.01ï¼‰ä¼šè®©è¿›åº¦æ¡
-    // åœåœ¨ 100% å¹²ç­‰ installd è§£å‹/å¤åˆ¶ï¼Œæ•…åœ¨è¿™é‡ŒæŠŠé˜¶æ®µåˆ‡åˆ° .installingï¼ˆæ–‡æ¡ˆã€Œæ­£åœ¨å®‰è£…ã€ï¼‰ï¼Œ
-    // è¿›åº¦å½’ 1.0 æ”¶å°¾ï¼Œé¿å… UI ä¸€ç›´æ˜¾ç¤ºã€Œæ­£åœ¨ä¼ è¾“ 100%ã€ã€‚
-    private func updateInstallProgress(_ progress: Double) {
-        guard signingSession != nil else { return }
-        if progress > 1.0 {
-            signingSession?.installProgress = 1.0
-            if case .running(.pushing) = signingSession?.status {
-                // èµ°åŒä¸€æ¡é˜¶æ®µæ¨è¿›è·¯å¾„ï¼šçŠ¶æ€ä¸è®¡æ—¶èµ·ç‚¹ä¸€èµ·è½ï¼Œé¿å…ã€Œåˆ‡é˜¶æ®µã€å’Œã€Œè®°èµ·ç‚¹ã€
-                // åˆ†æˆä¸¤å¤„å„å†™ä¸€éï¼ˆä¸¤å¤„æ¼‚ç§»ä¸ä¼šç¼–è¯‘å¤±è´¥ï¼Œåªä¼šè®©è®¡æ—¶å˜æˆå‡è±¡ï¼‰ã€‚
-                updateSigningStage(.installing)
-            }
-            return
-        }
-        // âš ï¸ **æŒ‰ 1% æ­¥è¿›é‡‡ä¿¡**ï¼ˆ2026-09-19 æ€§èƒ½æ”¶æ•›ï¼‰ï¼š`SigningSession` æ˜¯ structï¼Œ
-        // æŒ‚åœ¨ `@Published var signingSession` ä¸Š â‡’ æ¯ä¸€æ¬¡èµ‹å€¼éƒ½ä¼šè®©æ•´å¼ æŠ½å±‰é‡ç®—ã€‚
-        // AFC å›è°ƒå¯ä»¥æ¯å‡ æ¯«ç§’æ¥ä¸€æ¬¡ï¼Œå…¨é‡è½¬å‘çš„è¯ã€Œæ›´æµç•…ã€åè€Œåˆ¶é€ æ‰å¸§ï¼›
-        // ç¯æœ¬æ¥å°±åªæ˜¾ç¤ºæ•´æ•°ç™¾åˆ†æ¯”ï¼Œ1% å°±æ˜¯å®ƒèƒ½è¡¨è¾¾çš„æœ€å°ç²’åº¦ã€‚
-        let previous = signingSession?.installProgress ?? 0
-        guard progress - previous >= 0.01 else { return }
-        signingSession?.installProgress = progress
-    }
+BˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åy®!yä!¹¥éyoåÈ‹ˆ™X\ÛÛˆ¹¥éyoåù¥¡ù.í¹.ãyg*9/oùå*;ï#9¥è9¬åy®!yä!¸à ˆ‹ˆ™XÛİ™\Nˆ¹ê#yd#ºaãy¥¬9®!yä!ˆ‹ˆÛÙNˆ”ÑPSSÑËLH‚ˆ
+BˆBˆB‚ˆËËÈ9¥éyoåúhmyëbyo¡HXİÜˆ9k£9¢$9a¦yaiyd#¹¢cy¢dùo 9b!¹.ªúgh¹§oûï#:`oùaczi¥¹«(ykï9aîº+îùb,9.#ykf9g*9æ¡9¥éù¥¡ù.í¸à ‚ˆ[˜ÈX]\šX[^™SÙÑ^Ü
 
-    /// é˜¶æ®µå†…éƒ¨çš„çœŸå®è®¡æ•°ï¼ˆç¬¬ i / N ä¸ª Bundle IDã€ç¬¬ i / N ä»½æè¿°æ–‡ä»¶ï¼‰â†’ åˆ·æ–°è¿›åº¦ UIã€‚
-    ///
-    /// âš ï¸ **åŒä¸€é˜¶æ®µçš„å€’é€€è®¡æ•°ç›´æ¥ä¸¢å¼ƒ**ï¼šPhase 1 æœ‰ã€Œæ‰©å±•å¤±è´¥å°±é™çº§/è·³è¿‡ã€çš„åˆ†æ”¯ï¼Œ
-    /// è·³è¿‡åå†å›æŠ¥ä¼šè®© `done` å˜å° â‡’ ç¯ä¸Šçš„æ•°å­—å¾€å›è·³ä¸€æ ¼ï¼Œæ­£æ˜¯ã€Œè·³ç€èµ°ã€çš„è§‚æ„Ÿæ¥æºã€‚
-    /// è·¨é˜¶æ®µçš„è®¡æ•°ä¸åœ¨è¿™é‡Œåˆ¤ï¼ˆåˆ¤æ®åªæœ‰ä¸€å¤„ï¼š`SigningProgressBudget` ä¼šæ ¡éªŒ
-    /// `workUnits.stage` ä¸å½“å‰é˜¶æ®µä¸€è‡´ï¼Œæ®‹ç•™æ—§é˜¶æ®µçš„å€¼ä¸ä¼šè¢«é‡‡ä¿¡ï¼‰ã€‚
-    private func updateWorkUnits(_ units: SigningWorkUnits) {
-        guard signingSession != nil else { return }
-        // é‡‡ä¿¡è§„åˆ™ä¸æ‰¹é‡å…±ç”¨ä¸€ä»½ï¼ˆ`SigningWorkUnits.shouldAccept`ï¼‰ï¼š
-        // ä¸¤å¤„å„å†™ä¸€éçš„è¯ï¼Œæ”¹äº†ä¸€å¤„å¦ä¸€å¤„ä¼šé™é»˜æ¼‚ç§»ã€‚
-        guard SigningWorkUnits.shouldAccept(units, over: signingSession?.workUnits) else { return }
-        signingSession?.workUnits = units
-    }
+H\Ş[˜È›İÜÈOˆT“ÂˆİX\™]ÙÔİÜ™H[ÙHÂˆ›İÈ[\Ü˜Z[\™Jˆ]Nˆ¹¥è9¬åykï9aî¹¥éyoåÈ‹ˆ™X\ÛÛˆ¹¥éyoåù§#yb¨yl&¹§*¹l,yîê¸à ˆ‹ˆ™XÛİ™\Nˆº/å9fç¹d#¹ê#y`&ya£z+åH‹ˆÛÙNˆ”ÑPSSÑËLˆ‹ˆÛÛ™][Ûˆ›ÙÔÙ\šXÙU[˜]˜Z[X›KˆXİ[Ûˆœ™]Kˆ™]Q\ÜÜÚ][Ûˆ›X[X[ˆÜ\˜][Ûˆ™^ÜÙËˆÜšYÚ[ˆ›ÙÔİÜ™Bˆ
+BˆBˆÈÂˆ™]\›ˆH]ØZ]ÙÔİÜ™K›X]\šX[^™Q^Ü
 
-    // SigningCoordinator åœ¨è¯ä¹¦åºåˆ—å·ç¡®å®šåå›ä¼ ï¼ˆactor ä¸Šä¸‹æ–‡ â†’ hop å› MainActor æ›´æ–°å¿«ç…§ï¼‰
-    private func updateResolvedCertificateSerialNumber(_ serialNumber: String) {
-        signingSession?.selectedCertificateSerialNumber = serialNumber
-    }
+BˆHØ]ÚÂˆ›İÈ[\Ü˜Z[\™Jˆ]Nˆ¹¥è9¬åykï9aî¹¥éyoåÈ‹ˆ™X\ÛÛˆ¹¥éyoåù¥¡ù.í¹a¦yaiyi,z-){ï&—
+\œ›Ü‹›ØØ[^™Y\ØÜš\[ÛŠH‹ˆ™XÛİ™\Nˆ¹¨à9§éycëùå*9kf9`ª9ênºeí9d#ºaãz+åH‹ˆÛÙNˆ”ÑPSSÑËLˆ‹ˆÛÛ™][Ûˆ›ÙÑ^Üš[R[˜[YˆXİ[Ûˆœ™]Kˆ™]Q\ÜÜÚ][Ûˆ›X[X[ˆÜ\˜][Ûˆ™^ÜÙËˆÜšYÚ[ˆ›ÙÔİÜ™Bˆ
+BˆBˆB‚ˆËËÈ9¥éyoåúhmy.#¹kï9aî¹aly.ªùd#9. 9.ïHXİÜˆ9ï$ùa¬»ï#: #9.#y¦+ú) y¬`ˆØİ[Y[È:eg9`ãùmì¹ab9. 9«iz$/yææ8à ‚ˆËËÂˆËËÈÙX[[ÙË9¦+ùîæx '9¥¡ù.í¸ 'P\9d£9b!¹.ªúgh¹§oùaá¹i!ùæ¡:eg9`ãûï&ùk ú(ªú" ¹­`y¢%¹b&¹®!yä!¹¥í¹.#yn¥9a¬ùk¦‚ˆËËÈ\9a¡z ïyd)¹ç"ùb,9mì¹§"y¥éyoåøà º/æzaã9iâùîâ9/&9ab:+îùcå¹¥éyoåùkf9`ª;ï#:+îùcå¹i,z-)y¢cyfçº` 9odùbcya¡ykf9oêùáiøà ‚ˆ[˜ÈÙÕ^›Ü•šY]Ú[™Ê
+H\Ş[˜ÈOˆİš[™ÈÂˆ]^ˆİš[™ÂˆYˆ]ÙÔİÜ™K]^ÜYHOÈ]ØZ]ÙÔİÜ™K™^Ü^
 
-    private func updateRenewalExecutionPath(_ path: RenewalExecutionPath) async {
-        guard signingSession?.app.belongsInInstalledList == true else { return }
-        signingSession?.renewalExecutionPath = path
-        try? await logStore?.append(category: .renewal, message: path.confirmedLogMessage)
-    }
+HÂˆ^H^ÜYˆH[ÙHÂˆ^HÙX[ÙÕ^›Ü›X]\‹™^Ü^
+ÙÜÊBˆBˆÙÑ^Ü^H^ˆ™]\›ˆ^ˆB‚ˆ[˜È™\Ù]Ù\YšXØ]J›ÜˆXØÛİ[ˆ\PXØÛİ[™XÛÜ™
+H\Ş[˜ÈÂˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+Ø]YÛÜNˆœŞ\İ[K]™[ˆš[™›ËY\ÜØYÙNˆ–ÔÑPSSÔH:aãyïkº+ày.iˆ:-)¹cíÈ
+XØÛİ[šY]ZYİš[™Ëœ™Yš^
+
+JHŠBˆİX\™]XØÛİ[™\ÜÚ]ÜH[ÙHÈ™]\›ˆBˆİX\™]Ü\˜][Û“X\ÙHH]ØZ]XÜ]Z\™SÜ\˜][ÛŠ›X[˜YÚ[™ĞÙ\YšXØ]JH[ÙHÂˆ[\˜Z[\™HHÜ\˜][ÛÛÛ™›Xİ˜Z[\™J™\]Y\İYˆ›X[˜YÚ[™ĞÙ\YšXØ]JBˆ™]\›‚ˆBˆY™\ˆÈ™[X\ÙSÜ\˜][ÛŠÜ\˜][Û“X\ÙJHBˆ˜\ˆ\]YHXØÛİ[ˆ\]Y˜Ù\YšXØ]TÙ\šX[[X™\ˆHš[ˆ\]YœÙ[XİYÙ\YšXØ]TÙ\šX[[X™\ˆHš[ˆÈÂˆH]ØZ]XØÛİ[™\ÜÚ]ÜKœØ]™J\]Y
+BˆH]ØZ]Ù^XÚZ[Ë˜ÛX\”ÚYÛš[™ÓX]\šX[
+XØÛİ[QˆXØÛİ[šY
+Bˆ[˜[Y]PÙ\YšXØ]R[™[ÜT™Yœ™\Ú
+›ÜˆXØÛİ[šY
+BˆÙ\YšXØ]R[™[ÜšY\ÖØXØÛİ[šYHHš[ˆ]ØZ]ØY
+›Ü˜ÙNˆYJBˆOÈ]ØZ]ÙÔİÜ™OË˜\[™
+ˆØ]YÛÜNˆ˜XØÛİ[ˆY\ÜØYÙNˆ¹§+9g,9ëo¹d#z+ày.i¹ï$ùkf9mì¹®!zfi;ï#9."ù«(yëo¹d#y/&ºaãy¥¬9å,ú+íú+ày.iˆ‚ˆ
+BˆÙÜÈH
+OÈ]ØZ]ÙÔİÜ™OË™[šY\Ê
+JHÏÈÙÜÂˆ]ØZ]™Yœ™\ÚÙÑ^Ü^
 
-    private func recordSigningHistory(
-        app: AppRecord,
-        account explicitAccount: AppleAccountRecord? = nil,
-        action: SigningHistoryRecord.Action,
-        result: SigningHistoryRecord.Result,
-        attemptedBundleIdentifier: String? = nil,
-        finalSignedBundleIdentifier: String? = nil,
-        lifecycleStatus: SigningHistoryRecord.LifecycleStatus? = nil,
-        failure: ImportFailure? = nil
-    ) async {
-        guard let signingHistoryStore else { return }
-        let account = await resolvedHistoryAccount(for: app, explicitAccount: explicitAccount)
-        guard let account else { return }
-        let record = SigningHistoryRecord(
-            app: app,
-            account: account,
-            action: action,
-            result: result,
-            attemptedBundleIdentifier: attemptedBundleIdentifier,
-            finalSignedBundleIdentifier: finalSignedBundleIdentifier,
-            lifecycleStatus: lifecycleStatus,
-            errorCode: failure?.code,
-            errorReason: failure?.reason
-        )
-        do {
-            try await signingHistoryStore.append(record)
-        } catch {
-            surfaceHistoryWarning(
-                title: "ç­¾åå†å²æœªä¿å­˜",
-                reason: "ç­¾åç»“æœå·²ç»å®Œæˆï¼Œä½†å†å²è®°å½•æ— æ³•å†™å…¥ã€‚",
-                code: "SEAL-HISTORY-005"
-            )
-        }
-    }
+BˆHØ]ÚÂˆ[\˜Z[\™HHÙ[‹™˜Z[\™Jˆ]Nˆ¹¥è9¬åy¦í9¥¬:+ày.iˆ‹ˆ™X\ÛÛˆ¹®!zfi9¥í¹æ¡:+ày.iº+¬9oey¢%¹§+9§.¹ï$ùkf9/çykf9i,z-)xà ˆ‹ˆ™XÛİ™\Nˆºaãy¥¬9®!zfi;ï&ù.ãyi,z-)z+íúaãy¥¬:j£:+àH\HQ‹ˆÛÙNˆ”ÑPSPÑT•LLH‚ˆ
+BˆBˆB‚ˆš]˜]H[˜ÈÜ\˜][ÛÛÛ™›Xİ˜Z[\™J™\]Y\İYˆÜ\˜][ÛÛÛÜ™[˜]Ü‹’Ú[™
+HOˆ[\Ü˜Z[\™HÂˆÜ\˜][ÛÛÛÜ™[˜]ÜË˜ÛÛ™›Xİ˜Z[\™J™\]Y\İYˆ™\]Y\İY
+BˆÏÈÙ[‹™˜Z[\™Jˆ]Nˆ¹¦ ¹¥í¹¥è9¬åy¢iú(c‹ˆ™X\ÛÛˆ¹cé¹. :hny¤ãy/g9.ãyg*9k£9¢$;ï#9..º`oùacyëo¹d#xà z+ày.i¹¢%¹¥¡ù.í¹â­¹  y.¤¹æî:)¡¹æå»ï#9odùbcy¤ãy/g9mìºf.ù«h¸à ˆ‹ˆ™XÛİ™\Nˆ¹ëbyo¡yodùbcy¤ãy/g9k£9¢$9d#ºaãz+åH‹ˆÛÙNˆ”ÑPSSÔLH‚ˆ
+BˆB‚ˆš]˜]H[˜ÈXÜ]Z\™SÜ\˜][ÛŠˆÈÚ[™ˆÜ\˜][ÛÛÛÜ™[˜]Ü‹’Ú[™ˆ\QˆURQÈHš[ˆ
+H\Ş[˜ÈOˆÜ\˜][ÛÛÛÜ™[˜]Ü‹“X\ÙOÈÂˆİX\™]Ü\˜][ÛÛÛÜ™[˜]Üˆ[ÙHÂˆ™]\›ˆ[˜ÛÛÜ™[˜]Y
+Ú[™\Qˆ\Q
+BˆBˆËÈ:!ê¹bª9ëbyo¡yodùbcy¤ãy/g9k£9¢$;ï#9.#yo.H¹¦ ¹¥í¹¥è9¬åy¢iú(c¹o.yê¥Âˆ™]\›ˆ]ØZ]Ü\˜][ÛÛÛÜ™[˜]Ü‹˜™YÚ[•ØZ][™ÊÚ[™\Qˆ\Q
+BˆB‚ˆš]˜]H[˜È™[X\ÙSÜ\˜][ÛŠÈX\ÙNˆÜ\˜][ÛÛÛÜ™[˜]Ü‹“X\ÙJHÂˆÜ\˜][ÛÛÛÜ™[˜]ÜË™[™
+X\ÙJBˆB‚ˆš]˜]H[˜È™Yœ™\ÚÙÑ^Ü^
 
-    private func resolvedHistoryAccount(
-        for app: AppRecord,
-        explicitAccount: AppleAccountRecord?
-    ) async -> AppleAccountRecord? {
-        if let explicitAccount { return explicitAccount }
-        guard let accountID = app.accountID else { return nil }
-        if let account = accounts.first(where: { $0.id == accountID }) {
-            return account
-        }
-        guard let accountRepository else { return nil }
-        do {
-            let fetchedAccounts = try await accountRepository.fetchAll()
-            return fetchedAccounts.first { $0.id == accountID }
-        } catch {
-            surfaceHistoryWarning(
-                title: "ç­¾åå†å²è´¦å·è¯»å–å¤±è´¥",
-                reason: "æ— æ³•è¯»å–å†å²è®°å½•å…³è”çš„ Apple IDã€‚",
-                code: "SEAL-HISTORY-006"
-            )
-            return nil
-        }
-    }
+H\Ş[˜ÈÂˆÈH]ØZ]ÙÕ^›Ü•šY]Ú[™Ê
+BˆB‚ˆİ]XÈ[˜È™]šY]Ê
+HOˆÙ][™ÜÕšY]Ó[Ù[Âˆ][Ù[HÙ][™ÜÕšY]Ó[Ù[
 
-    private func surfaceHistoryWarning(
-        title: String,
-        reason: String,
-        code: String
-    ) {
-        guard alertFailure == nil else { return }
-        alertFailure = ImportFailure(
-            title: title,
-            reason: reason,
-            recovery: "çŸ¥é“äº†",
-            code: code
-        )
-    }
-
-    private func cleanTemporaryFilesIfNeeded(appID: UUID? = nil) async {
-        guard UserDefaults.standard.bool(forKey: "behavior.deleteIPAAfterInstall"),
-              let fileStore else { return }
-        do {
-            try await fileStore.clearTemporaryFiles()
-            try? await logStore?.append(
-                category: .system,
-                message: appID == nil ? "å®‰è£…å®Œæˆåå·²æ¸…ç†ä¸´æ—¶ç­¾åå·¥ä½œåŒº" : "å®‰è£…å®Œæˆåå·²æ¸…ç†å½“å‰åº”ç”¨ä¸´æ—¶ç­¾åå·¥ä½œåŒº"
-            )
-        } catch {
-            try? await logStore?.append(
-                category: .system,
-                level: .warning,
-                message: "å®‰è£…å®Œæˆåæ¸…ç†ç­¾åç¼“å­˜å¤±è´¥",
-                code: "SEAL-STORAGE-001"
-            )
-        }
-    }
-
-    private func repairLegacyAccountStatuses(
-        _ records: [AppleAccountRecord]
-    ) async throws -> [AppleAccountRecord] {
-        guard let accountRepository, let keychain else { return records }
-        var repaired = records
-        for index in repaired.indices where repaired[index].status == .needsVerification {
-            let hasLocalSecret = try await keychain.load(accountID: repaired[index].id) != nil
-            let status = AccountAvailabilityPolicy.repairedStatus(
-                for: repaired[index],
-                hasLocalSecret: hasLocalSecret
-            )
-            guard status != repaired[index].status else { continue }
-            repaired[index].status = status
-            try await accountRepository.save(repaired[index])
-        }
-        return repaired
-    }
-
-    private func operationConflictFailure(requested: OperationCoordinator.Kind) -> ImportFailure {
-        operationCoordinator?.conflictFailure(requested: requested)
-            ?? Self.operationInProgressFailure(blockedBy: activeOperationDescription)
-    }
-
-    private func acquireOperation(
-        _ kind: OperationCoordinator.Kind,
-        appID: UUID? = nil
-    ) async -> OperationCoordinator.Lease? {
-        guard let operationCoordinator else {
-            return .uncoordinated(kind, appID: appID)
-        }
-        // è‡ªåŠ¨ç­‰å¾…å½“å‰æ“ä½œå®Œæˆï¼Œä¸å¼¹"æš‚æ—¶æ— æ³•æ‰§è¡Œ"å¼¹çª—
-        return await operationCoordinator.beginWaiting(kind, appID: appID)
-    }
-
-
-
-
-    private func releaseOperation(_ lease: OperationCoordinator.Lease) {
-        operationCoordinator?.end(lease)
-        // å›å‰å°æ—¶è‹¥åˆšå¥½åœ¨ç­¾å/å®‰è£…ï¼Œè®¾å¤‡æ ¸éªŒä¼šä¸ºäº†ä¸æŠ¢ RSD ä¼šè¯è€Œè·³è¿‡ã€‚
-        // æ“ä½œç»“æŸåè¡¥ä¸€æ¬¡åˆå¹¶åˆ·æ–°ï¼Œè®©ç”¨æˆ·å¤–éƒ¨å¸è½½çš„ App ä¸å¿…ç­‰ä¸‹ä¸€æ¬¡å‰åå°åˆ‡æ¢æ‰æ¶ˆå¤±ã€‚
-        guard [.signing, .installing, .renewing].contains(lease.kind) else { return }
-        Task { [weak self] in
-            await Task.yield()
-            await self?.refreshInstalledApps(userInitiated: false)
-        }
-    }
-
-    /// å¤±è´¥ â†’ è®¾ç½®é¡µçš„è·¯ç”±ã€‚åˆ¤æ®åœ¨ `InstallFailureSettingsRoute`ï¼ˆæ˜¾å¼ç é›†åˆ + å¯å•æµ‹ï¼‰ã€‚
-    ///
-    /// âš ï¸ è¿™é‡ŒåŸå…ˆæŒ‰ã€Œ`SEAL-INSTALL-` å‰ç¼€ã€ä¸€å¾‹åˆ¤å®šä¸º `.localDevVPN`ï¼ŒæŠŠå…¨éƒ¨å®‰è£…æ—é”™è¯¯
-    /// ï¼ˆå­˜å‚¨ä¸è¶³ / å…è´¹è´¦å·ä¸Šé™ / DRM æ®‹ç•™ / è¶…æ—¶ / ç­¾ååŒ…æŸå / éœ€é‡å¯ Sealï¼‰éƒ½é€å»
-    /// VPN é¡µã€‚**ä¸è¦å†æŠŠå‰ç¼€åˆ¤æ–­å†™å›è¿™é‡Œã€‚**
-    private func settingsRoute(for failure: ImportFailure) -> SettingsRoute? {
-        InstallFailureSettingsRoute.route(for: failure)
-    }
-
-    /// âš ï¸ è¿™é‡Œ**ä¸å†**å¸¦ `[åŸŸ ç ]`ï¼šç”¨æˆ·æ–‡æ¡ˆä¿æŒå¹²å‡€æ— æœ¯è¯­ï¼ˆ2026-10-04 MJ è¦æ±‚ï¼‰ã€‚
-    /// è¯Šæ–­ä¿¡æ¯æ”¹èµ°æ—¥å¿—ï¼ˆè§å„è°ƒç”¨ç‚¹çš„ logStore.appendï¼‰ï¼ŒR92â‘§ å·²åŒæ­¥æ›´æ–°ä¸ºæ£€æŸ¥"æ—¥å¿—æœ‰è¯Šæ–­"ã€‚
-    /// æ—§æ–‡æ¡ˆã€ŒæŠ€æœ¯ä¿¡æ¯å·²å†™å…¥è„±æ•æ—¥å¿—ã€æ˜¯ç©ºè¯çš„æ•™è®­ä»åœ¨ï¼šå¿…é¡»çœŸå†™æ—¥å¿—ï¼Œä¸èƒ½åªå†™æ–‡æ¡ˆã€‚
-    private nonisolated static func unexpectedSigningFailure(_ error: Error) -> ImportFailure {
-        return ImportFailure(
-            title: "ç­¾åå¤±è´¥",
-            reason: "ç­¾åå¤±è´¥äº†ï¼Œé‡åˆ°äº†æœªçŸ¥é”™è¯¯ã€‚\(ImportFailure.sendLogToAuthor)ã€‚",
-            recovery: "çŸ¥é“äº†",
-            code: "SEAL-SIGN-500"
-        )
-    }
-
-    /// æŠŠ NSError å±•å¼€æˆå¯ä¾›æ’æŸ¥çš„è¯Šæ–­ä¸²ï¼šåŸŸ+ç +ç³»ç»Ÿæè¿°+å…³é”® userInfoã€‚
-    /// ç”¨äº SEAL-SIGN-500 ç­‰"æœªé¢„æœŸé”™è¯¯"çš„æ—¥å¿—ï¼ˆ2026-10-04ï¼šMJ è¦æ±‚èƒ½æŸ¥åˆ°æ ¹å› ï¼‰ã€‚
-    /// ç» LogPrivacyRedactor è„±æ•åå†™å…¥æ—¥å¿—ã€‚
-    /// å•åº”ç”¨ç­¾å / ç»­ç­¾çš„**å¤±è´¥å½’ç±»**ï¼šé€šé“ç±»ç»™å¸¦ç ã€å¯å¼•å¯¼çš„ `SEAL-SIGN-504`ï¼Œ
-    /// å…¶ä½™æ‰é€€å› `SEAL-SIGN-500`ã€‚
-    ///
-    /// ğŸ”´ ä¸ºä»€ä¹ˆä¸èƒ½ä¸€å¾‹ `SEAL-SIGN-500`ï¼ˆ2026-09-27 çœŸæœºï¼‰ï¼šè‡ªæ›¿æ¢åè‡ªåŠ¨ç»­ç­¾ Seal
-    /// æ’ä¸Šé€šé“æŠ–åŠ¨ï¼ˆ`Minimuxer.MinimuxerError 1`ï¼‰æ—¶ï¼Œç”¨æˆ·æ‹¿åˆ°çš„æ˜¯ä¸€å¥ã€Œç­¾åæµç¨‹é‡åˆ°
-    /// æœªé¢„æœŸé”™è¯¯ã€â€”â€”**æ—¢æ²¡æœ‰ä¸‹ä¸€æ­¥åŠ¨ä½œï¼Œä¹Ÿçœ‹ä¸å‡ºè¿™æ˜¯é€šé“é—®é¢˜**ã€‚é‡æ–°ç­¾åå·²ç»æŠŠæŠ–åŠ¨å…œä½äº†ï¼›
-    /// å…œä¸ä½æ—¶ä¹Ÿå¿…é¡»è¯´æ¸…ã€Œè¿™æ˜¯è®¾å¤‡é€šé“é—®é¢˜ã€å»å“ªå„¿ä¿®ã€ã€‚
-    /// `SEAL-SIGN-504` çš„ recovery æ˜ç¡®å¼•å¯¼å»æ£€æŸ¥ LocalDevVPN â‡’ å·²ç™»è®°è¿›
-    /// `InstallFailureSettingsRoute.localDevVPNCodes`ï¼ˆå¤±è´¥å¼¹çª—çš„ã€Œæ¢å¤ã€æŒ‰é’®æ®æ­¤è·³è®¾ç½®é¡µï¼‰ã€‚
-    ///
-    /// âš ï¸ `nonisolated`ï¼šåˆ¤æ®æ˜¯**çº¯å‡½æ•°**ï¼Œå¿…é¡»èƒ½ä»æµ‹è¯• target ç›´æ¥è°ƒ
-    ///ï¼ˆ`@MainActor` ç±»çš„ static func é»˜è®¤æ˜¯ MainActor éš”ç¦»çš„ï¼Œæµ‹è¯•é‡Œè°ƒä¸åˆ°ï¼‰ã€‚
-    nonisolated static func signingFailure(
-        for error: Error,
-        operation: FailureOperation = .sign
-    ) -> ImportFailure {
-        if let failure = error as? ImportFailure { return failure }
-        guard DeviceChannelTransientPolicy.isTransientChannelFailure(error) else {
-            return FailureClassifier.classify(
-                error,
-                operation: operation,
-                origin: .signing
-            )
-        }
-        return ImportFailure(
-            title: "æ— æ³•è¿æ¥è®¾å¤‡",
-            reason: "ç»­ç­¾æ—¶è®¾å¤‡é€šé“ä¸å¯ç”¨ï¼Œå·²è‡ªåŠ¨é‡è¯•ä»æœªæ¢å¤ã€‚",
-            recovery: "ç¡®è®¤æ‰‹æœºå·²è§£é”ã€ä¸ Seal åœ¨åŒä¸€ Wi-Fiï¼Œå¹¶å·²æ‰“å¼€ LocalDevVPN åé‡è¯•",
-            code: "SEAL-SIGN-504",
-            condition: .tunnelUnavailable,
-            action: .openLocalDevVPN,
-            route: .localDevVPN,
-            retryDisposition: .manual,
-            operation: operation,
-            origin: .deviceChannel
-        )
-    }
-
-    private func consumeWorkflowState() async {
-        guard let workflow else { return }
-        let workflowState = await workflow.state
-        switch workflowState {
-        case .idle:
-            phase = .idle
-        case .preparing:
-            phase = .preparing
-        case .awaitingConfirmation(let draft):
-            sheetDraft = draft
-            sheetFailure = nil
-            // å·²å®‰è£…çš„åŒ…å†å¯¼å…¥ï¼šä¸èµ°æŠ½å±‰ï¼Œç›´æ¥ç³»ç»Ÿå¼¹çª—ã€‚
-            if case .alreadyLatest = draft.versionCheck {
-                alreadyInstalledDraft = draft
-                isImportSheetPresented = false
-                phase = .idle
-                return
-            }
-            // å…¨æ–°å¯¼å…¥ï¼šä¸å¼¹æŠ½å±‰ï¼Œç›´æ¥å¯¼è¿›æ¥ã€‚
-            if case .newApp = draft.versionCheck {
-                importReplacementCandidate = nil
-                isImportSheetPresented = false
-                phase = .committing
-                await workflow.confirm(preferredDraft: draft)
-                await consumeWorkflowState()
-                return
-            }
-            // Seal è‡ªæ›´æ–°ï¼šinstalledReplacementCandidate æŠŠ Seal æ’é™¤äº†ï¼Œè¿™é‡Œå•ç‹¬å¤„ç†ã€‚
-            // æœ‰çœŸå®ç‰ˆæœ¬å˜åŒ–ï¼ˆé alreadyLatestï¼‰æ—¶å¼¹æŠ½å±‰ç¡®è®¤ã€‚
-            if let sealCandidate = await sealReplacementCandidate(for: draft) {
-                importReplacementCandidate = sealCandidate
-                isImportSheetPresented = true
-                phase = .idle
-                return
-            }
-            if let candidate = await replacementCandidate(for: draft) {
-                // è¦†ç›–æ›´æ–°ä¼š**æ›¿æ¢**ä¸€æ¡å·²å®‰è£…è®°å½•ï¼ˆè¿å¸¦å®ƒçš„ IPA ä¸ç­¾åèº«ä»½ï¼‰â€”â€”
-                // è¿™æ˜¯ç ´åæ€§æ“ä½œï¼Œå¿…é¡»è®©ç”¨æˆ·çœ‹è§å¹¶æ˜¾å¼ç¡®è®¤ï¼Œä¸èƒ½åƒæ–°å»ºè®°å½•é‚£æ ·ç›´æ¥å…¥åº“ã€‚
-                importReplacementCandidate = candidate
-                isImportSheetPresented = true
-                phase = .idle
-            } else {
-                importReplacementCandidate = nil
-                isImportSheetPresented = false
-                phase = .committing
-                await workflow.confirm(preferredDraft: draft)
-                await consumeWorkflowState()
-            }
-        case .committing(let draft):
-            phase = .committing
-            sheetDraft = draft
-            isImportSheetPresented = true
-        case .completed(let record):
-            phase = .idle
-            sheetDraft = nil
-            sheetFailure = nil
-            // ç”¨æˆ·ç‚¹çš„æ˜¯ã€Œè¦†ç›–æ›´æ–°ã€è¿˜æ˜¯ã€Œæ–°å»ºå‰¯æœ¬ã€å†³å®šè¿™æ¬¡è¦ä¸è¦ç•™ç—•ï¼ˆè§ä¸‹æ–¹æ—¥å¿—ï¼‰ã€‚
-            let requestedOverwrite = importReplacementCandidate
-            importReplacementCandidate = nil
-            isImportSheetPresented = false
-            // å¯¼å…¥æ—¶é€‰çš„è‡ªå®šä¹‰å›¾æ ‡ï¼šå…ˆä¿å­˜åˆ°æ–‡ä»¶ï¼Œload åå†è®¾ç½®å†…å­˜ç¼“å­˜ï¼ˆload ä¼šé‡å»ºæ•´ä¸ª iconDataï¼‰
-            let pendingIconData = pendingImportIconData
-            pendingImportIconData = nil
-            if let iconData = pendingIconData {
-                _ = await updatePreferredIcon(for: record, data: iconData)
-            }
-            // å¯¼å…¥æ—¶æ”¹çš„è‡ªå®šä¹‰åç§°ï¼šåº”ç”¨åˆ°æ–°è®°å½•ä¸Šã€‚
-            // é—®é¢˜2ä¿®å¤ï¼šupdatePreferredIcon å·²åˆ·æ–° appsï¼Œè¿™é‡Œç”¨æœ€æ–°è®°å½•ï¼Œ
-            // é¿å…æ—§ record çš„ preferredIconRelativePath è¦†ç›–åˆšä¿å­˜çš„æ–°å›¾æ ‡ã€‚
-            if let displayName = pendingImportDisplayName {
-                pendingImportDisplayName = nil
-                let latest = apps.first(where: { $0.id == record.id }) ?? record
-                _ = await updatePreferredDisplayName(for: latest, name: displayName)
-            }
-            await load(force: true)
-            // load ä¼šé‡å»ºæ•´ä¸ª iconDataï¼Œåœ¨è¿™é‡Œè®¾ç½®ç¡®ä¿ä¸è¢«è¦†ç›–
-            if let iconData = pendingIconData {
-                await MainActor.run {
-                    self.iconData[record.id] = iconData
-                    self.invalidateDecodedIcon(for: record.id)
-                }
-                try? await logStore?.append(
-                    category: .system,
-                    level: .info,
-                    message: "å¯¼å…¥å›¾æ ‡å·²åº”ç”¨åˆ°è®°å½• \(record.displayName) (\(record.id.uuidString.prefix(8)))ï¼Œ\(iconData.count) å­—èŠ‚",
-                    code: "SEAL-ICON-001"
-                )
-            } else {
-                try? await logStore?.append(
-                    category: .system,
-                    level: .info,
-                    message: "å¯¼å…¥å®Œæˆä½† pendingIconData ä¸ºç©ºï¼Œæœªåº”ç”¨è‡ªå®šä¹‰å›¾æ ‡",
-                    code: "SEAL-ICON-002"
-                )
-            }
-            await logImportReplacementOutcome(requested: requestedOverwrite, record: record)
-            // 2026-10-09: è¯¦ç»†è®°å½•å¯¼å…¥ç»“æœï¼Œç”¨äºè¯Šæ–­è¦†ç›–æ›´æ–°åŒ…ä¸æ˜¾ç¤ºé—®é¢˜
-            try? await logStore?.append(
-                category: .system,
-                level: .info,
-                message: "[SEAL-IMPORT-DBG] å¯¼å…¥å®Œæˆï¼šid=\(record.id.uuidString.prefix(8)), isSeal=\(record.isSeal), state=\(record.state), replacesInstalledAppID=\(record.replacesInstalledAppID?.uuidString.prefix(8) ?? "nil"), belongsInInstalled=\(record.belongsInInstalledList), belongsInUnsigned=\(record.belongsInUnsignedList)"
-            )
-            if autoOpenSigningAfterImport {
-                autoOpenSigningAfterImport = false
-                if let refreshed = apps.first(where: { $0.id == record.id }) {
-                    selectedOperationApp = refreshed
-                }
-            }
-            // 2026-10-09 é‡è®¾è®¡ï¼šè¦†ç›–æ›´æ–°ï¼ˆSeal æˆ–å…¶å®ƒ Appï¼‰éƒ½è¿›å¾…ç­¾åé¡µï¼Œä¸å†è·³å·²å®‰è£…ã€‚
-            // å¾…ç­¾åçš„æ›´æ–°åŒ…ï¼ˆreplacesInstalledAppID éç©ºï¼‰å¿…é¡»å»å¾…ç­¾åï¼Œç”¨æˆ·åœ¨é‚£ç­¾åã€‚
-            let isPendingUpdate = record.replacesInstalledAppID != nil
-            let shouldJumpInstalled = (record.belongsInInstalledList && !isPendingUpdate)
-            try? await logStore?.append(
-                category: .system,
-                level: .info,
-                message: "[SEAL-IMPORT-DBG] å¯¼å…¥å®Œæˆè·³è½¬ï¼šisSeal=\(record.isSeal), belongsInInstalled=\(record.belongsInInstalledList), isPendingUpdate=\(isPendingUpdate), è·³è½¬å·²å®‰è£…=\(shouldJumpInstalled)"
-            )
-            lastImportCompletedInstalledApp = shouldJumpInstalled
-            importCompletionCount += 1
-            if let cleanupFailure = await workflow.takeCleanupFailure() {
-                alertFailure = cleanupFailure
-            }
-        case .failed(let failure):
-            phase = .idle
-            if sheetDraft == nil {
-                alertFailure = failure
-            } else {
-                sheetFailure = failure
-                isImportSheetPresented = true
-            }
-        }
-    }
-
-    private static func exportFileName(for app: AppRecord) -> String {
-        let raw = "\(app.displayName)-\(app.version)-Seal.ipa"
-        let invalid = CharacterSet(charactersIn: "/:\\?%*|\"<>")
-        return raw.components(separatedBy: invalid).joined(separator: "-")
-    }
-
-    static func uiTestModel(arguments: [String]) -> AppsViewModel? {
-        if arguments.contains("--ui-testing-empty") {
-            return AppsViewModel(apps: [], draft: nil)
-        }
-
-        let appID = UUID(uuidString: "00000000-0000-0000-0000-000000000101")!
-        let record = AppRecord(
-            id: appID,
-            originalBundleIdentifier: "com.example.demo",
-            name: "Demo",
-            version: "1.0",
-            buildNumber: "1",
-            size: 1_234_567,
-            state: .preflightPassed,
-            ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
-            importedAt: Date(timeIntervalSince1970: 1_750_000_000)
-        )
-        if arguments.contains("--ui-testing-imported") {
-            return AppsViewModel(apps: [record], draft: nil)
-        }
-        if arguments.contains("--ui-testing-confirmation") {
-            let draft = ImportDraft(
-                appID: appID,
-                parsedIPA: ParsedIPA(
-                    name: "Demo",
-                    bundleIdentifier: "com.example.demo",
-                    version: "1.0",
-                    buildNumber: "1",
-                    fileSize: 1_234_567,
-                    iconData: nil,
-                    extensions: [
-                        AppExtensionRecord(
-                            name: "Share",
-                            originalBundleIdentifier: "com.example.demo.share",
-                            kind: .share
-                        )
-                    ],
-                    entitlementKeys: [],
-                    importWarnings: []
-                ),
-                stagedIPA: StagedIPA(
-                    id: appID,
-                    url: FileManager.default.temporaryDirectory.appending(path: "Demo.ipa")
-                ),
-                versionCheck: .newApp
-            )
-            return AppsViewModel(apps: [], draft: draft)
-        }
-        return nil
-    }
-
-    private static let connectionRecoveryReason = "è¯·ç¡®è®¤å·²è¿æ¥ Wi-Fi å¹¶å¼€å¯ LocalDevVPNã€‚è‹¥é•¿æ—¶é—´æ— å“åº”ï¼Œè¯·åˆ°æ‰‹æœºã€Œè®¾ç½®ã€ä¸­ç¡®è®¤ LocalDevVPN å·²è¿æ¥åå†é‡è¯•ã€‚"
-}
+Bˆ[Ù[˜XØÛİ[ÈHÂˆ\PXØÛİ[™XÛÜ™
+ˆX\ÚÙY[XZ[ˆ™
+ŠŠXÛİY˜ÛÛH‹ˆXØÛİ[Y[YšY\ˆœ™]šY]ËXXØÛİ[‹ˆX[RQˆ”‘U’QUÕPSH‹ˆX[S˜[YNˆ¹.*¹.®¹fèºf'È‹ˆ\Ñœ™YUX[NˆYKˆİ]\Îˆ™\šYšYYˆÙ\YšXØ]TÙ\šX[[X™\ˆ”‘U’QUËPÑT•Q’PĞUH‹ˆÙ[XİYÙ\YšXØ]TÙ\šX[[X™\ˆ”‘U’QUËPÑT•Q’PĞUH‹ˆ\İ™\šYšYY]ˆ]J
+Bˆ
+BˆBˆ[Ù[˜Xİ]™PXØÛİ[QH[Ù[˜XØÛİ[Ë™š\œİËšYˆ[Ù[™[XØÛİ[[XZ[ÖÛ[Ù[˜XØÛİ[ÖÌKšYHH™[[ĞXÛİY˜ÛÛH‚ˆ[Ù[œZ\š[™Ô™XÛÜ™HZ\š[™Ô™XÛÜ™
+ˆ]šXÙRY[YšY\ˆ”‘U’QUËQU’PÑH‹ˆ\Ô™[[İTZ\š[™ÎˆYBˆ
+Bˆ™]\›ˆ[Ù[ˆB‚ˆš]˜]Hİ]XÈ]ØØ[]•”•[˜]˜Z[X›Q˜Z[\™HH[\Ü˜Z[\™Jˆ]Nˆ“ØØ[]•”ˆ9§*¹l,yîêˆ‹ˆ™X\ÛÛˆ“ØØ[]•”ˆ9§*¹l,yîê¸à º+íùab:/ç¹£©HÚKQšH9nm¹èkº+©ØØ[]•”ˆ9mìº/ç¹£©xà ˆ‹ˆ™XÛİ™\Nˆ¹çéz`dù.¡ˆ‹ˆÛÙNˆ”ÑPSRS”ÕSMÌ˜H‚ˆ
+B‚‚ˆš]˜]Hİ]XÈ[˜È˜Z[\™Jˆ]Nˆİš[™Ëˆ™X\ÛÛˆİš[™Ëˆ™XÛİ™\Nˆİš[™ËˆÛÙNˆİš[™Âˆ
+HOˆ[\Ü˜Z[\™HÂˆ[\Ü˜Z[\™Jˆ]Nˆ]Kˆ™X\ÛÛˆ™X\ÛÛ‹ˆ™XÛİ™\Nˆ™XÛİ™\KˆÛÙNˆÛÙBˆ
+BˆBŸB

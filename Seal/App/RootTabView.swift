@@ -17,6 +17,7 @@ struct RootTabView: View {
     @State private var lastLaunchCheckAt: Date?
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
+    @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
     @State private var updateNotice: UpdateNotice?
     @State private var lastUpdateCheckAt: Date?
 
@@ -48,7 +49,7 @@ struct RootTabView: View {
         }
         .tint(.sealAccent)
         .preferredColorScheme(SealAppearance(rawValue: appearanceRawValue)?.colorScheme)
-        .id(accentRawValue)
+        .id("\(accentRawValue)-\(customAccentHex)")
         .sealScreenBackground()
         .task {
             await LocalNetworkPermissionPrimer.requestIfNeeded()

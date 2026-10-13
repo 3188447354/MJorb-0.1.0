@@ -17,7 +17,7 @@ enum AgreementOnboardingLayout {
     static let compactContentSpacing: CGFloat = 18
     static let brandNamePointSize: CGFloat = 46
     static let brandTaglinePointSize: CGFloat = 20
-    static let brandTagline = "让应用始终可用"
+    static let brandTagline = "为你的应用保持可用"
     static let consentTitle = "欢迎使用"
 }
 
@@ -45,7 +45,7 @@ struct AgreementOnboardingView: View {
 
                 // 品牌区相对较短的抽屉下移，避免顶部与底部各自独立而显得割裂。
                 VStack(spacing: 0) {
-                    Spacer().frame(height: max(geo.safeAreaInsets.top + 140, 190))
+                    Spacer().frame(height: max(geo.safeAreaInsets.top + 190, 240))
                     brandSection
                     Spacer()
                 }
@@ -204,16 +204,12 @@ private struct AgreementConsentSheet: View {
                 .padding(.top, 20)
                 .padding(.horizontal, drawerHorizontalInset)
 
-            Divider()
-                .overlay(Color.sealHairline.opacity(0.65))
-                .padding(.top, AgreementOnboardingLayout.compactContentSpacing)
-
             Button(action: {
                 UserDefaults.standard.set(AgreementVersion.current, forKey: AgreementVersion.storageKey)
                 onAgreed()
             }) {
                 Text("同意并继续")
-                    .font(.headline)
+                    .font(.system(size: 17, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 54)
                     .foregroundStyle(.white)
@@ -231,7 +227,7 @@ private struct AgreementConsentSheet: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, drawerHorizontalInset)
-            .padding(.top, AgreementOnboardingLayout.compactContentSpacing)
+            .padding(.top, 28)
 
             Button("暂不使用") {
                 onDeclined()
@@ -246,33 +242,18 @@ private struct AgreementConsentSheet: View {
     }
 
     private var agreementDescription: some View {
-        VStack(alignment: .center, spacing: 8) {
-            // 协议链接单独成行，避免断行
-            HStack(spacing: 16) {
-                Button {
-                    onOpenPolicy(.privacy)
-                } label: {
-                    Text("《隐私政策》")
-                        .foregroundStyle(Color(red: 0.00, green: 0.48, blue: 1.0))
+        Text("继续即表示你已阅读并同意[《隐私政策》](seal-policy://privacy)与[《用户协议》](seal-policy://terms)。")
+            .multilineTextAlignment(.center)
+            .foregroundStyle(.secondary)
+            .font(.subheadline)
+            .environment(\.openURL, OpenURLAction { url in
+                switch url.host {
+                case "privacy": onOpenPolicy(.privacy)
+                case "terms": onOpenPolicy(.terms)
+                default: return .systemAction
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("agreement-privacy-link")
-
-                Button {
-                    onOpenPolicy(.terms)
-                } label: {
-                    Text("《用户协议》")
-                        .foregroundStyle(Color(red: 0.00, green: 0.48, blue: 1.0))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("agreement-terms-link")
-            }
-
-            Text("点击“同意并继续”，即表示你已阅读并同意上述协议。")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-        }
-        .font(.subheadline)
+                return .handled
+            })
     }
 }
 

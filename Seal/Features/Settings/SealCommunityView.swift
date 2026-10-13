@@ -439,7 +439,7 @@ struct SealCommunityView: View {
     }
 }
 
-private final class AlbumSaveCoordinator: NSObject, @unchecked Sendable {
+final class AlbumSaveCoordinator: NSObject, @unchecked Sendable {
     private let completion: @Sendable (Error?) -> Void
 
     init(completion: @escaping @Sendable (Error?) -> Void) {

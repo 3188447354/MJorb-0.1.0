@@ -1,4 +1,4 @@
-﻿import SwiftUI
+import SwiftUI
 import UIKit
 
 struct SettingsRootView: View {
@@ -10,9 +10,11 @@ struct SettingsRootView: View {
     @State private var navigationPath = NavigationPath()
     @State private var isAddingAccount = false
     @State private var isAppearanceThemePresented = false
+    @State private var hasLoadedStorageSummary = false
 
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
+    @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -94,7 +96,9 @@ struct SettingsRootView: View {
                         settingsLink(value: SettingsRoute.storage) {
                             settingsRow(
                                 title: "存储与清理",
-                                value: viewModel.storageUsage.total.formattedByteCount,
+                                value: hasLoadedStorageSummary
+                                    ? viewModel.storageUsage.total.formattedByteCount
+                                    : "计算中",
                                 icon: "internaldrive",
                                 showsChevron: true,
                                 iconColor: Color.sealAccent
@@ -102,21 +106,7 @@ struct SettingsRootView: View {
                         }
                     }
 
-                    settingsSection("社群") {
-                        NavigationLink { SealCommunityView() } label: {
-                            settingsRow(
-                                title: "加入社群",
-                                value: nil,
-                                icon: "person.3",
-                                showsChevron: true,
-                                iconColor: Color.sealAccent,
-                                iconImage: "SealCommunityIcon"
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    settingsSection("支持与关于") {
+                    settingsSection("帮助与支持") {
                         NavigationLink { SigningAndRenewalGuideView() } label: {
                             settingsRow(
                                 title: "使用指南",
@@ -128,39 +118,44 @@ struct SettingsRootView: View {
                         .buttonStyle(.plain)
                         sectionDivider
 
-                        NavigationLink { PrivacyNoticeView() } label: {
+                        NavigationLink { SealCommunityView() } label: {
                             settingsRow(
-                                title: "隐私政策",
+                                title: "加入社群",
                                 value: nil,
-                                icon: "lock.shield",
-                                showsChevron: true
+                                icon: "person.3",
+                                showsChevron: true,
+                                iconColor: Color.sealAccent,
+                                iconImage: "SealCommunityIcon"
                             )
                         }
                         .buttonStyle(.plain)
                         sectionDivider
 
-                        NavigationLink { UserAgreementView() } label: {
+                        NavigationLink { SupportSealView() } label: {
                             settingsRow(
-                                title: "用户协议",
+                                title: "支持 Seal",
                                 value: nil,
-                                icon: "doc.text",
-                                showsChevron: true
+                                icon: "heart",
+                                showsChevron: true,
+                                iconColor: .pink
                             )
                         }
                         .buttonStyle(.plain)
-                        sectionDivider
+                    }
 
+                    settingsSection("诊断") {
                         NavigationLink { LogViewerView(viewModel: viewModel) } label: {
                             settingsRow(
-                                title: "日志",
+                                title: "诊断日志",
                                 value: nil,
                                 icon: "terminal",
                                 showsChevron: true
                             )
                         }
                         .buttonStyle(.plain)
-                        sectionDivider
+                    }
 
+                    settingsSection("关于") {
                         NavigationLink { AboutView(onInstall: onSelfUpdateInstall) } label: {
                             settingsRow(
                                 title: "关于 Seal",
@@ -195,8 +190,8 @@ struct SettingsRootView: View {
                     }
                 case .pairing:
                     PairingSettingsView(viewModel: viewModel)
-                case .localDevVPN:
-                    LocalDevVPNSettingsView(viewModel: viewModel)
+                case .pairingDiagnostic:
+                    PairingSettingsView(viewModel: viewModel, runsConnectionDiagnosticOnAppear: true)
                 case .storage:
                     StorageMaintenanceView(viewModel: viewModel)
                 }
@@ -208,7 +203,10 @@ struct SettingsRootView: View {
                     dismissButton: .default(Text(failure.recovery))
                 )
             }
-            .task { await viewModel.load() }
+            .task {
+                await viewModel.load()
+                hasLoadedStorageSummary = true
+            }
             .onAppear {
                 // 每次进页面都刷新通知状态（load 有 hasLoaded 守卫，二次进入不刷新）
                 Task { await viewModel.refreshNotificationStatus() }
@@ -216,6 +214,7 @@ struct SettingsRootView: View {
             .refreshable {
                 await viewModel.load(force: true)
                 await viewModel.refreshStorageUsage()
+                hasLoadedStorageSummary = true
             }
             .onChange(of: viewModel.requestedRoute) { route in
                 guard let route else { return }
@@ -233,9 +232,10 @@ struct SettingsRootView: View {
         .sheet(isPresented: $isAppearanceThemePresented) {
             AppearanceThemeSheet(
                 appearanceRawValue: $appearanceRawValue,
-                accentRawValue: $accentRawValue
+                accentRawValue: $accentRawValue,
+                customAccentHex: $customAccentHex
             )
-            .presentationDetents([.height(390), .medium])
+            .presentationDetents([.height(454), .medium])
             .presentationDragIndicator(.hidden)
         }        .sealScreenBackground()
     }
@@ -425,15 +425,33 @@ private func sectionTitle(_ title: String) -> some View {
 private struct AppearanceThemeSheet: View {
     @Binding var appearanceRawValue: String
     @Binding var accentRawValue: String
+    @Binding var customAccentHex: String
+    @State private var isCustomColorEditorPresented = false
 
     var body: some View {
-        SealDrawer(title: "\u{5916}\u{89C2}\u{4E0E}\u{4E3B}\u{9898}") {
-            VStack(spacing: 14) {
-                appearanceCard
-                accentCard
+        ZStack {
+            SealDrawer(title: "\u{5916}\u{89C2}\u{4E0E}\u{4E3B}\u{9898}") {
+                VStack(spacing: 14) {
+                    appearanceCard
+                    accentCard
+                }
+                .padding(.bottom, 12)
             }
-            .padding(.bottom, 12)
+
+            if isCustomColorEditorPresented {
+                Color.black.opacity(0.22)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                CustomAccentColorEditor(
+                    customHex: $customAccentHex,
+                    accentRawValue: $accentRawValue,
+                    isPresented: $isCustomColorEditorPresented
+                )
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
+                .zIndex(1)
+            }
         }
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isCustomColorEditorPresented)
     }
 
     private var appearanceCard: some View {
@@ -454,6 +472,7 @@ private struct AppearanceThemeSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             drawerSectionTitle("\u{4E3B}\u{9898}\u{8272}")
             accentThemeGrid
+            customAccentButton
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
@@ -514,7 +533,7 @@ private struct AppearanceThemeSheet: View {
             ),
             spacing: 10
         ) {
-            ForEach(SealAccentTheme.allCases) { item in
+            ForEach(SealAccentTheme.presetThemes) { item in
                 Button {
                     accentRawValue = item.rawValue
                 } label: {
@@ -532,7 +551,7 @@ private struct AppearanceThemeSheet: View {
 
                         if accentRawValue == item.rawValue {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
                         }
                     }
                     .padding(.horizontal, 10)
@@ -565,6 +584,36 @@ private struct AppearanceThemeSheet: View {
         }
     }
 
+    private var customAccentButton: some View {
+        Button {
+            isCustomColorEditorPresented = true
+        } label: {
+            HStack(spacing: 10) {
+                SpectrumRing()
+                    .frame(width: 18, height: 18)
+                Text("自定义颜色")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                if accentRawValue == SealAccentTheme.custom.rawValue {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(SealAccentTheme.custom.color)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(Color.sealSurfaceElevated, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.sealHairline.opacity(0.45), lineWidth: 0.8)
+            }
+        }
+        .buttonStyle(.plain)
+    }
     private func appearanceDisplayTitle(_ appearance: SealAppearance) -> String {
         switch appearance {
         case .system: return "\u{81EA}\u{52A8}"

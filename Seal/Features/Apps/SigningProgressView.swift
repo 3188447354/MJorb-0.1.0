@@ -614,7 +614,7 @@ struct SigningProgressView: View {
         return switch failure.action {
         case .fullResign: "重新签名"
         case .repairPairing: "重新配对设备"
-        case .openLocalDevVPN: "打开 LocalDevVPN"
+        case .openLocalDevVPN: "检查设备连接"
         case .reinstallFromSignedArtifact: "重新安装"
         case .retry: "重新签名"
         case .addAccount: "添加 Apple ID"

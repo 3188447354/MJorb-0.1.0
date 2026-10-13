@@ -191,11 +191,11 @@ struct DeviceChannelTransientPolicyTests {
 
     @Test("单应用失败归类：通道类给带码可引导的 SEAL-SIGN-504，其余才是 SEAL-SIGN-500")
     func singleAppFailureClassificationRoutesChannelFailures() {
-        // 裸 Minimuxer NoConnection（真机里自替换后自动续签 Seal 撞到的那个）⇒ 504 + 跳 VPN 页
+        // 裸 Minimuxer NoConnection（真机里自替换后自动续签 Seal 撞到的那个）⇒ 504 + 跳设备连接诊断
         let channelFailure = AppsViewModel.signingFailure(for:
             NSError(domain: DeviceChannelTransientPolicy.minimuxerErrorDomain, code: 1))
         #expect(channelFailure.code == "SEAL-SIGN-504")
-        #expect(InstallFailureSettingsRoute.route(forCode: channelFailure.code) == .localDevVPN)
+        #expect(InstallFailureSettingsRoute.route(forCode: channelFailure.code) == .pairingDiagnostic)
         // 非通道的未预期错误 ⇒ 保持 500，且不误导用户去 VPN 页
         let otherFailure = AppsViewModel.signingFailure(for:
             NSError(domain: "Seal.SomeUnexpected", code: 7))

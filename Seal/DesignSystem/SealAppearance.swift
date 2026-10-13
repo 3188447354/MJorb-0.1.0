@@ -32,17 +32,22 @@ enum SealAccentTheme: String, CaseIterable, Identifiable {
     case purple
     case amber
     case pink
+    case custom
+
+    static let customHexStorageKey = "appearance.customAccentHex"
+    static let defaultCustomHex = "#1677FF"
 
     var id: Self { self }
 
     var title: String {
         switch self {
-        case .system: "默认"
-        case .green: "绿色"
-        case .blue: "青色"
-        case .purple: "紫色"
-        case .amber: "琥珀色"
-        case .pink: "玫红色"
+        case .system: "经典蓝"
+        case .green: "翡翠绿"
+        case .blue: "晴空青"
+        case .purple: "紫罗兰"
+        case .amber: "琥珀橙"
+        case .pink: "玫瑰粉"
+        case .custom: "自定义"
         }
     }
 
@@ -54,6 +59,7 @@ enum SealAccentTheme: String, CaseIterable, Identifiable {
         case .purple: .systemPurple
         case .amber: .systemOrange
         case .pink: .systemPink
+        case .custom: UIColor(sealHex: Self.customHex) ?? .systemBlue
         }
     }
 
@@ -61,5 +67,35 @@ enum SealAccentTheme: String, CaseIterable, Identifiable {
 
     static var current: SealAccentTheme {
         SealAccentTheme(rawValue: UserDefaults.standard.string(forKey: "appearance.accent") ?? "") ?? .system
+    }
+
+    static var presetThemes: [SealAccentTheme] {
+        allCases.filter { $0 != .custom }
+    }
+
+    static var customHex: String {
+        normalizedHex(UserDefaults.standard.string(forKey: customHexStorageKey)) ?? defaultCustomHex
+    }
+
+    static func normalizedHex(_ value: String?) -> String? {
+        guard var value else { return nil }
+        value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("#") { value.removeFirst() }
+        guard value.count == 6, value.allSatisfy({ $0.isHexDigit }) else { return nil }
+        return "#\(value.uppercased())"
+    }
+}
+
+extension UIColor {
+    convenience init?(sealHex: String) {
+        guard let normalized = SealAccentTheme.normalizedHex(sealHex) else { return nil }
+        let value = String(normalized.dropFirst())
+        guard let number = UInt32(value, radix: 16) else { return nil }
+        self.init(
+            red: CGFloat((number >> 16) & 0xFF) / 255,
+            green: CGFloat((number >> 8) & 0xFF) / 255,
+            blue: CGFloat(number & 0xFF) / 255,
+            alpha: 1
+        )
     }
 }

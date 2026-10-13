@@ -10,7 +10,8 @@ import Foundation
 /// 用户点「恢复」之后被送到一个**解决不了他问题**的页面，只能自己再退回来 ——
 /// 这正是「把所有问题都算到 VPN 头上」。
 ///
-/// ⇒ 判据只收「**recovery 文案本身就在引导用户去检查 LocalDevVPN / 通道**」的码
+/// ⇒ 判据只收「**recovery 文案本身就在引导用户去检查 LocalDevVPN / 通道**」的码，
+/// 统一进入「设备」页内的连接诊断，而不再维护独立 VPN 页。
 /// （AGENTS.md §3：错误码 → 按钮动作必须用**显式码集合**，禁止前缀与数字区间）。
 ///
 /// 配对族的码集合**不在这里重复定义** —— 单一真源是
@@ -38,7 +39,7 @@ enum InstallFailureSettingsRoute {
         case .account: .account
         case .certificates: .certificates
         case .pairing: .pairing
-        case .localDevVPN: .localDevVPN
+        case .localDevVPN: .pairingDiagnostic
         case nil: nil
         }
     }
@@ -54,7 +55,7 @@ enum InstallFailureSettingsRoute {
             || InstallFailureActionPolicy.pairingCodes.contains(code) {
             return .pairing
         }
-        if localDevVPNCodes.contains(code) { return .localDevVPN }
+        if localDevVPNCodes.contains(code) { return .pairingDiagnostic }
         return nil
     }
 }

@@ -11,7 +11,7 @@ final class AgreementOnboardingLayoutTests: XCTestCase {
         XCTAssertEqual(AgreementOnboardingLayout.compactContentSpacing, 18)
         XCTAssertEqual(AgreementOnboardingLayout.brandNamePointSize, 46)
         XCTAssertEqual(AgreementOnboardingLayout.brandTaglinePointSize, 20)
-        XCTAssertEqual(AgreementOnboardingLayout.brandTagline, "让应用始终可用")
+        XCTAssertEqual(AgreementOnboardingLayout.brandTagline, "为你的应用保持可用")
         XCTAssertEqual(AgreementOnboardingLayout.consentTitle, "欢迎使用")
     }
 

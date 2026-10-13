@@ -4,10 +4,20 @@ import UniformTypeIdentifiers
 
 struct PairingSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
+    /// 仅由安装/续签通道失败的恢复入口启用；正常进入设备页不额外打扰用户。
+    let runsConnectionDiagnosticOnAppear: Bool
     @State private var isFileImporterPresented = false
     @State private var isPairingExportWarningPresented = false
     @State private var isPairingFileExporterPresented = false
     @State private var pairingExportDocument: PairingExportDocument?
+
+    init(
+        viewModel: SettingsViewModel,
+        runsConnectionDiagnosticOnAppear: Bool = false
+    ) {
+        self.viewModel = viewModel
+        self.runsConnectionDiagnosticOnAppear = runsConnectionDiagnosticOnAppear
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -16,6 +26,9 @@ struct PairingSettingsView: View {
             } else {
                 VStack(spacing: 20) {
                     hero
+                    if runsConnectionDiagnosticOnAppear {
+                        connectionDiagnostic
+                    }
                     if let pairing = viewModel.pairingRecord {
                         details(pairing)
                         if pairing.validationStatus == .fileUnreadable || pairing.validationStatus == .deviceMismatch {
@@ -84,7 +97,59 @@ struct PairingSettingsView: View {
             } else if presentationPolicy.showsDesktopAssistant {
                 _ = await viewModel.importPairingAssistantInboxIfPresent()
             }
+            if runsConnectionDiagnosticOnAppear {
+                // 失败恢复进入时刷新真实通道状态；普通进入设备页不自动探测。
+                await viewModel.testLocalDevVPN()
+            }
         }
+    }
+
+    private var connectionDiagnostic: some View {
+        let presentation = connectionDiagnosticPresentation
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: presentation.icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(presentation.color)
+                    .frame(width: 28, height: 28)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("设备连接诊断")
+                        .font(.headline)
+                    Text(presentation.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.sealTextSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Button(connectionDiagnosticIsRunning ? "正在检测…" : "重新检测") {
+                Task { await viewModel.testLocalDevVPN() }
+            }
+            .sealOutlineAction(cornerRadius: 12)
+            .disabled(connectionDiagnosticIsRunning)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .glassSurface(cornerRadius: 18)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var connectionDiagnosticPresentation: (detail: String, icon: String, color: Color) {
+        switch viewModel.diagnosticState {
+        case .idle:
+            return ("准备检查 LocalDevVPN、设备响应和安装通道。", "network", .sealAccent)
+        case .running:
+            return ("正在检查 LocalDevVPN、设备响应和安装通道。", "arrow.triangle.2.circlepath", .sealAccent)
+        case .ready:
+            return ("LocalDevVPN 与设备安装通道已连接。", "checkmark.circle.fill", .sealSuccess)
+        case .failed(let failure):
+            return (failure.userReason, "exclamationmark.triangle.fill", .sealDanger)
+        }
+    }
+
+    private var connectionDiagnosticIsRunning: Bool {
+        if case .running = viewModel.diagnosticState { return true }
+        return false
     }
 
     private var presentationPolicy: PhonePairingPresentationPolicy {
@@ -98,6 +163,9 @@ struct PairingSettingsView: View {
             phonePairingHero
             phonePairingProgress
             phonePairingDetails
+            if runsConnectionDiagnosticOnAppear {
+                connectionDiagnostic
+            }
             if case let .showingCode(code) = viewModel.phonePairingState {
                 pairingCode(code)
             }
