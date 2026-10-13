@@ -60,7 +60,7 @@ struct InstallFailureSettingsRouteTests {
         "SEAL-INSTALL-708",
         "SEAL-INSTALL-710"
     ])
-    func channelFailuresRouteToDeviceConnectionDiagnostic(code: String) {
+    func channelFailuresRouteToLocalDevVPN(code: String) {
         #expect(InstallFailureSettingsRoute.route(forCode: code) == .pairingDiagnostic)
     }
 

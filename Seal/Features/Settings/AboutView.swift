@@ -31,6 +31,7 @@ struct AboutView: View {
             VStack(spacing: 20) {
                 identity
                 updateSection
+                compatibilitySection
                 legalSection
             }
             .padding(20)
@@ -122,6 +123,12 @@ struct AboutView: View {
         }
     }
 
+    private var compatibilitySection: some View {
+        aboutSection("兼容性") {
+            infoRow("最低支持", "iOS 17.4")
+        }
+    }
+
     @ViewBuilder
     private func aboutSection<Content: View>(
         _ title: String,
@@ -150,6 +157,18 @@ struct AboutView: View {
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.tertiary)
+        }
+        .font(.system(size: 16, weight: .medium))
+        .frame(minHeight: 54)
+    }
+
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        HStack(spacing: 16) {
+            Text(title)
+                .foregroundStyle(.primary)
+            Spacer(minLength: 12)
+            Text(value)
+                .foregroundStyle(Color.sealTextSecondary)
         }
         .font(.system(size: 16, weight: .medium))
         .frame(minHeight: 54)
