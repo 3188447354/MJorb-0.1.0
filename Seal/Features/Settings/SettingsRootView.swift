@@ -630,6 +630,7 @@ private struct AppearanceThemeSheet: View {
         case .purple: return "\u{7D2B}\u{7F57}\u{5170}"
         case .amber: return "\u{7425}\u{73C0}\u{6A59}"
         case .pink: return "\u{73AB}\u{7470}\u{7C89}"
+        case .custom: return "\u{81EA}\u{5B9A}\u{4E49}"
         }
     }
     private func drawerSectionTitle(_ title: String) -> some View {
