@@ -10,6 +10,7 @@
 - 应用详情中的证书序列号和描述文件 UUID 完整换行显示，可直接与证书页和设备端信息核对。
 - 自续签 App Group 幂等修复：续签时不再重复追加 `.seal.<teamID>` 后缀，避免 Apple 返回 -1 导致 `SEAL-APPID-303`。
 - 导入 Seal 自身 IPA 即使版本号相同也能覆盖更新：导入时记录源包指纹，续签时识别到新包会完整重签安装；安装成功后自动恢复 profile-only 续签。
+- 从历史 `1.3.x` 测试构建导入 `1.0.0` 正式版时，Seal 会以更高的 CI 构建号识别为正式版迁移，不再误报“降级”；普通应用和后续真实降级仍会要求确认。
 - “组件与许可”据实更新：补上随包分发的 CodeSignKit、GSACryptoKit、libdeflate、Unicorn Engine、OpenSSL、swift-asn1，修正 libimobiledevice 的链接。
 
 ---

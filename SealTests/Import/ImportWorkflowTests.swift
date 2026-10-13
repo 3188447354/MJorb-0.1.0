@@ -654,6 +654,46 @@ extension ImportWorkflowTests {
         #expect(records.contains(where: { $0.id == installedID }))
     }
 
+    /// 正式版从 1.0.0 起算，历史 1.3.x 仅为测试构建；这不是普通 IPA 降级。
+    @Test
+    func importsFormalOneZeroZeroOverLegacySealTestBuildWhenCIBuildIsNewer() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let sealID = UUID()
+        try await environment.appStore.save(AppRecord(
+            id: sealID,
+            originalBundleIdentifier: "com.mjorb.seal",
+            name: "Seal",
+            version: "1.3.45",
+            buildNumber: "88",
+            size: 10,
+            state: .installed,
+            ipaRelativePath: "Apps/\(sealID.uuidString)/Original.ipa",
+            isSeal: true,
+            isPinned: true,
+            importedAt: Date(timeIntervalSince1970: 100)
+        ))
+        let source = try IPAArchiveFixture.make(apps: [
+            .init(
+                directoryName: "Seal.app",
+                bundleIdentifier: "com.mjorb.seal",
+                name: "Seal",
+                version: "1.0.0",
+                buildNumber: "359"
+            )
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let workflow = makeWorkflow(
+            environment: environment,
+            runningSealBundleIdentifier: "com.mjorb.seal"
+        )
+
+        await workflow.prepare(sourceURL: source)
+
+        let draft = try requireDraft(await workflow.state)
+        #expect(draft.versionCheck == .upgrade(oldVersion: "1.3.45", newVersion: "1.0.0"))
+    }
+
     /// 真机现象「连 Seal 自己也装不了」：记录里的身份（original/mapped/preferred）与
     /// 导入包**都对不上**时，`preferredExistingSealRecordForImportedIPA` 返回 nil ⇒
     /// 旧实现会新建一条 `isSeal == false` 的记录落到待签名页，签名时又被

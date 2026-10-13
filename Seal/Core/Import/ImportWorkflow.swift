@@ -113,6 +113,17 @@ actor ImportWorkflow {
         let newVersion = parsed.version ?? ""
         let comparison = Self.compareVersions(newVersion, oldVersion)
 
+        // 正式版从 1.0.0 起算；历史 1.3.x 是正式版之前的测试构建。
+        // 仅对正在运行的 Seal 本身，且新 IPA 的 CI build 确实更高时，允许
+        // 1.3.x 测试构建迁移到 1.0.0 正式版。普通应用及之后的真实降级仍保留确认。
+        if Self.isFormalSealBaselineMigration(
+            parsed: parsed,
+            existing: existing,
+            runningSealBundleIdentifier: runningSealBundleIdentifier
+        ) {
+            return .upgrade(oldVersion: oldVersion, newVersion: newVersion)
+        }
+
         if comparison > 0 {
             return .upgrade(oldVersion: oldVersion, newVersion: newVersion)
         } else if comparison < 0 {
@@ -141,6 +152,27 @@ actor ImportWorkflow {
             // 指纹不同或无法比较 → 视为内容不同（可能被修改过）
             return .sameVersionDifferentContent(version: newVersion)
         }
+    }
+
+    /// 允许从历史 1.3.x 测试序列迁移到 1.0.0 正式版。
+    ///
+    /// 版本数字本身会把 1.0.0 判为低于 1.3.x；这里以更高的 CI build 号为迁移凭据，
+    /// 且只接受当前运行中的 Seal，避免把普通 IPA 的降级保护变成例外。
+    private static func isFormalSealBaselineMigration(
+        parsed: ParsedIPA,
+        existing: AppRecord,
+        runningSealBundleIdentifier: String?
+    ) -> Bool {
+        guard existing.isSeal,
+              let runningSealBundleIdentifier,
+              ImportReplacementPolicy.normalizedBundleIdentifier(parsed.bundleIdentifier)
+                == ImportReplacementPolicy.normalizedBundleIdentifier(runningSealBundleIdentifier),
+              Version.compare(parsed.version ?? "", "1.0.0") == .orderedSame,
+              Version.compare(existing.version, "1.3.0") != .orderedAscending,
+              Version.compare(existing.version, "1.4.0") == .orderedAscending
+        else { return false }
+
+        return compareBuildNumbers(parsed.buildNumber ?? "", existing.buildNumber ?? "") > 0
     }
 
     /// 构建号比较：纯数字按数值比，否则按字符串比。返回 >0 表示 b1 > b2。
