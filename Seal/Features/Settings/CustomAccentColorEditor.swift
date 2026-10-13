@@ -101,7 +101,7 @@ struct CustomAccentColorEditor: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [.red, .magenta, .blue, .cyan, .green, .yellow, .red],
+                        colors: [.red, Color(red: 1, green: 0, blue: 0.5), .blue, .cyan, .green, .yellow, .red],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
@@ -158,7 +158,7 @@ struct SpectrumRing: View {
         Circle()
             .stroke(
                 AngularGradient(
-                    colors: [.red, .magenta, .blue, .cyan, .green, .yellow, .red],
+                    colors: [.red, Color(red: 1, green: 0, blue: 0.5), .blue, .cyan, .green, .yellow, .red],
                     center: .center
                 ),
                 lineWidth: 4
