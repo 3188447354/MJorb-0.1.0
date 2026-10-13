@@ -74,6 +74,22 @@ struct AppleServiceFailurePolicyTests {
     }
 
     @Test
+    func authenticationFallbackKeepsTemporaryAppleRejectionSemantics() {
+        let error = NSError(
+            domain: "Apple.APIError",
+            code: -80045,
+            userInfo: [NSLocalizedDescriptionKey: "This action cannot be completed at this time."]
+        )
+
+        // SettingsViewModel's final catch must keep the same classification as
+        // the account client, rather than telling the user to check a valid password.
+        let failure = AppleAuthenticationFailure.make(stage: .signIn, error: error)
+        #expect(failure.code == "SEAL-AUTH-80045")
+        #expect(failure.action == .waitThenRetry)
+        #expect(failure.recovery.contains("核对 Apple ID 与密码") == false)
+    }
+
+    @Test
     func unrelatedAppleAPIErrorIsNotTemporaryAuthenticationRejection() {
         #expect(
             AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(
