@@ -8,8 +8,8 @@
 ## 2026-10-13 自定义色相滑条无法在当前 SDK 编译
 
 - **现象**：Swift 回归编译 `CustomAccentColorEditor` 时，色相滑条和色环的 `.magenta` 报 `Color has no member 'magenta'`，导致 IPA 无法产出。
-- **根因**：项目当前的 SwiftUI SDK 不提供该简写颜色常量；同时主题名称映射漏掉新增的 `.custom` 枚举分支。
-- **修复**：将两处洋红色节点改为等价的显式 RGB 值 `Color(red: 1, green: 0, blue: 0.5)`，并补全自定义主题名称分支，保持渐变视觉不变。
+- **根因**：项目当前的 SwiftUI SDK 不提供该简写颜色常量；同时主题名称映射漏掉新增的 `.custom` 枚举分支，主题测试又与既有设计系统测试重名而被 Xcode 同时编入目标。
+- **修复**：将两处洋红色节点改为等价的显式 RGB 值 `Color(red: 1, green: 0, blue: 0.5)`，补全自定义主题名称分支，并将新增主题色断言并入既有 `SealTests/DesignSystem/SealAppearanceTests.swift`，保持渐变视觉不变且无重复文件名。
 - **验证状态**：已由 CI 精确定位；修复后重新触发完整 Swift 回归与 IPA 打包。
 
 ---
