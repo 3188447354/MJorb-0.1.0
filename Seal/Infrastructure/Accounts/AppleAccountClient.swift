@@ -173,7 +173,7 @@ final class AppleAccountClient {
         do {
             try Task.checkCancellation()
             let anisetteData = try await anisetteProvider.fetchForAuthentication()
-            let auth: (account: ALTAccount, session: ALTAppleAPISession)
+            let auth: AuthObjects
             do {
                 auth = try await self.authenticate(email: email, password: password, anisetteData: anisetteData, verificationCode: verificationCode).value
             } catch {
