@@ -175,15 +175,11 @@ final class AppleAccountClient {
             let anisetteData = try await anisetteProvider.fetchForAuthentication()
             let auth: (account: ALTAccount, session: ALTAppleAPISession)
             do {
-                auth = try await Self.directAppleRequest {
-                    try await self.authenticate(email: email, password: password, anisetteData: anisetteData, verificationCode: verificationCode).value
-                }
+                auth = try await self.authenticate(email: email, password: password, anisetteData: anisetteData, verificationCode: verificationCode).value
             } catch {
                 guard let sim = Self.resyncSIM(from: error) else { throw error }
                 let resyncedAnisetteData = try await anisetteProvider.resync(sim: sim)
-                auth = try await Self.directAppleRequest {
-                    try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
-                }
+                auth = try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
             }
             try Task.checkCancellation()
             stage = .teamLookup
