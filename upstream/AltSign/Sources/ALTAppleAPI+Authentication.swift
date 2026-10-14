@@ -540,7 +540,10 @@ private extension ALTAppleAPI {
                         guard let errorDescription = status["em"] as? String else { throw ALTAppleAPIError.unknown }
 
                         let localizedDescription = errorDescription + " (\(errorCode))"
-                        throw NSError(domain: ALTUnderlyingAppleAPIErrorDomain, code: errorCode, userInfo: [NSLocalizedDescriptionKey: localizedDescription])
+                        var userInfo: [String: Any] = [NSLocalizedDescriptionKey: localizedDescription]
+                        if let hsc = status["hsc"] { userInfo["ALTAppleAPIStatusHSC"] = hsc }
+                        if let sim = status["X-Apple-I-MD-DATA"] { userInfo["ALTAppleAPIResyncSIM"] = sim }
+                        throw NSError(domain: ALTUnderlyingAppleAPIErrorDomain, code: errorCode, userInfo: userInfo)
                     }
                 } catch {
                     verboseLog("[AltSign] sendAuthenticationRequest failed during response processing with error: \(error)")

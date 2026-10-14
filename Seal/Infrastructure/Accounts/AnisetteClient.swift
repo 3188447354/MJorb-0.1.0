@@ -287,6 +287,19 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         try? await store.remove()
     }
 
+    func resync(sim: String) async throws -> ALTAnisetteData {
+        let identity = try await loadIdentity()
+        guard let state = try await store.load() else { throw AnisetteV3Error.staleProvisioning }
+        var lastError: Error?
+        for server in await prioritizedServers() where server.url.scheme == "https" {
+            do {
+                let clientInfo = try await fetchClientInfo(from: server.url)
+                return try await fetchHeaders(from: server.url, state: state, clientInfo: clientInfo, identity: identity, sim: sim)
+            } catch { lastError = error }
+        }
+        throw lastError ?? AnisetteV3Error.unavailable
+    }
+
     func availableServers() async -> [AnisetteServer] {
         servers
     }
@@ -554,7 +567,8 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         from server: URL,
         state: AnisetteProvisioningState,
         clientInfo: AnisetteV3ClientInfo,
-        identity: AnisetteV3Identity
+        identity: AnisetteV3Identity,
+        sim: String? = nil
     ) async throws -> ALTAnisetteData {
         let url = server.appendingPathComponent("v3").appendingPathComponent("get_headers")
         var request = URLRequest(url: url)
@@ -562,10 +576,16 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         request.timeoutInterval = 15
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: [
+        var payload: [String: String] = [
             "identifier": state.identifier,
             "adi_pb": state.adiPB
-        ])
+        ]
+        if let sim {
+            payload["sim"] = sim
+            payload["device_id"] = identity.deviceIdentifier
+            payload["md_lu"] = identity.localUserID
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse,

@@ -100,6 +100,16 @@ final class AppleAccountClient {
         return false
     }
 
+    private nonisolated static func resyncSIM(from error: Error) -> String? {
+        let ns = error as NSError
+        guard ns.domain == ALTUnderlyingAppleAPIErrorDomain,
+              let hsc = ns.userInfo["ALTAppleAPIStatusHSC"] as? NSNumber,
+              hsc.intValue == 434 else { return nil }
+        if let sim = ns.userInfo["ALTAppleAPIResyncSIM"] as? String { return sim }
+        if let sim = ns.userInfo["ALTAppleAPIResyncSIM"] as? Data { return sim.base64EncodedString() }
+        return nil
+    }
+
     /// Apple 认证/团队请求直接发出，不做 503 自动重试：503 是线路出口不对，重试也通不了，
     /// 交给上游 `AppleAuthenticationFailure.make` 归成「切换到非国内梯子」。
     private static func directAppleRequest<T>(
@@ -163,13 +173,17 @@ final class AppleAccountClient {
         do {
             try Task.checkCancellation()
             let anisetteData = try await anisetteProvider.fetchForAuthentication()
-            let auth = try await Self.directAppleRequest {
-                try await self.authenticate(
-                    email: email,
-                    password: password,
-                    anisetteData: anisetteData,
-                    verificationCode: verificationCode
-                ).value
+            let auth: (account: ALTAccount, session: ALTAppleAPISession)
+            do {
+                auth = try await Self.directAppleRequest {
+                    try await self.authenticate(email: email, password: password, anisetteData: anisetteData, verificationCode: verificationCode).value
+                }
+            } catch {
+                guard let sim = Self.resyncSIM(from: error) else { throw error }
+                let resyncedAnisetteData = try await anisetteProvider.resync(sim: sim)
+                auth = try await Self.directAppleRequest {
+                    try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
+                }
             }
             try Task.checkCancellation()
             stage = .teamLookup
