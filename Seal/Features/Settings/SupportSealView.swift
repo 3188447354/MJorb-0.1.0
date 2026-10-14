@@ -13,7 +13,6 @@ struct SupportSealView: View {
 
     private let qqGroupNumber = "1051135067"
     private let qqJoinURL = URL(string: "https://qm.qq.com/q/8HfHpTmOzu")
-    private let websiteURL = URL(string: "https://ios.sealsign.eu.cc")!
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -72,17 +71,6 @@ struct SupportSealView: View {
             .buttonStyle(.plain)
             Divider().padding(.leading, 50)
 
-            Button(action: openWebsite) {
-                supportRow(
-                    title: "官方资源网站",
-                    detail: "获取最新版本与官方信息",
-                    icon: "globe",
-                    iconColor: Color.sealAccent,
-                    trailingIcon: "arrow.up.right"
-                )
-            }
-            .buttonStyle(.plain)
-            Divider().padding(.leading, 50)
 
             Button(action: joinQQGroup) {
                 supportRow(
@@ -200,10 +188,6 @@ struct SupportSealView: View {
         }
     }
 
-    private func openWebsite() {
-        guard let url = URL(string: "https://ios.sealsign.eu.cc") else { return }
-        openURL(url)
-    }
 
     private func openAlipay() {
         guard let url = URL(string: "https://qr.alipay.com/fkx11863lft7h3izxgreqbe") else { return }
