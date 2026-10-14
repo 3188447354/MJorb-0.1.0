@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 支持入口只承载用户主动支持、反馈和分享；社群动态仍归「加入社群」。
+/// 支持入口只承载用户主动支持与分享；社群交流统一归「加入社群」。
 struct SupportSealView: View {
     @Environment(\.openURL) private var openURL
 
@@ -11,19 +11,11 @@ struct SupportSealView: View {
     @State private var alertMessage = ""
     @State private var isAlertPresented = false
 
-    private let qqGroupNumber = "1051135067"
-    private let qqJoinURL = URL(string: "https://qm.qq.com/q/8HfHpTmOzu")
-
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 20) {
                 header
                 actionsCard
-                Text("你的支持和反馈会帮助 Seal 持续改进。")
-                    .font(.footnote)
-                    .foregroundStyle(Color.sealTextSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 4)
             }
             .padding(20)
         }
@@ -50,7 +42,7 @@ struct SupportSealView: View {
                 .background(Color.sealAccent.opacity(0.12), in: Circle())
             Text("支持 Seal")
                 .font(.title2.weight(.semibold))
-            Text("让自签与续签工具持续稳定地更新")
+            Text("你的支持让 Seal 持续更新")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
         }
@@ -66,18 +58,6 @@ struct SupportSealView: View {
                     detail: "每一份支持，都是持续更新的动力",
                     icon: "heart.fill",
                     iconColor: .pink
-                )
-            }
-            .buttonStyle(.plain)
-            Divider().padding(.leading, 50)
-
-
-            Button(action: joinQQGroup) {
-                supportRow(
-                    title: "加入 QQ 群",
-                    detail: "反馈问题、交流心得与获取更新",
-                    icon: "person.3.fill",
-                    iconColor: Color.sealAccent
                 )
             }
             .buttonStyle(.plain)
@@ -207,15 +187,6 @@ struct SupportSealView: View {
 
     private var alipayBlue: Color { Color(red: 22 / 255.0, green: 119 / 255.0, blue: 1.0) }
     private var wechatGreen: Color { Color(red: 7 / 255.0, green: 193 / 255.0, blue: 96 / 255.0) }
-    private func joinQQGroup() {
-        guard let scheme = URL(string: "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=\(qqGroupNumber)&card_type=group&source=external") else { return }
-        UIApplication.shared.open(scheme) { opened in
-            if opened == false, let fallbackURL = qqJoinURL {
-                openURL(fallbackURL)
-            }
-        }
-    }
-
     private func saveRewardCode() {
         guard let image = UIImage(named: "SealCommunityReward") else {
             presentAlert("保存失败", "赞赏码未加载，请稍后重试。")

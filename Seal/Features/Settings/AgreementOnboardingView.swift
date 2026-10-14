@@ -13,8 +13,9 @@ enum AgreementOnboardingLayout {
     static let iconCornerRadius: CGFloat = 22
     static let drawerCornerRadius: CGFloat = 29
     static let horizontalInset: CGFloat = 22
-    static let initialDrawerFraction: CGFloat = 0.38
-    static let compactContentSpacing: CGFloat = 18
+    /// 保持协议页完整而不过度占据品牌区；实际内容约 250pt，余量用于系统 sheet 的圆角过渡。
+    static let initialDrawerFraction: CGFloat = 0.35
+    static let compactContentSpacing: CGFloat = 16
     static let brandNamePointSize: CGFloat = 46
     static let brandTaglinePointSize: CGFloat = 20
     static let brandTagline = "为你的应用保持可用"
@@ -197,11 +198,11 @@ private struct AgreementConsentSheet: View {
             Text(AgreementOnboardingLayout.consentTitle)
                 .font(.title.weight(.bold))
                 .foregroundStyle(Color(red: 0.02, green: 0.07, blue: 0.17))
-                .padding(.top, 24)
+                .padding(.top, 28)
                 .minimumScaleFactor(0.8)
 
             agreementDescription
-                .padding(.top, 20)
+                .padding(.top, 24)
                 .padding(.horizontal, drawerHorizontalInset)
 
             Button(action: {
@@ -211,7 +212,7 @@ private struct AgreementConsentSheet: View {
                 Text("同意并继续")
                     .font(.system(size: 17, weight: .semibold))
                     .frame(maxWidth: .infinity)
-                    .frame(height: 54)
+                    .frame(height: 52)
                     .foregroundStyle(.white)
                     .background(
                         LinearGradient(
@@ -227,7 +228,7 @@ private struct AgreementConsentSheet: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, drawerHorizontalInset)
-            .padding(.top, 28)
+            .padding(.top, 24)
 
             Button("暂不使用") {
                 onDeclined()
@@ -235,7 +236,9 @@ private struct AgreementConsentSheet: View {
             .font(.body)
             .foregroundStyle(.secondary)
             .buttonStyle(.plain)
-            .padding(.top, 14)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+            .padding(.top, 10)
             .padding(.bottom, AgreementOnboardingLayout.compactContentSpacing)
         }
         .frame(maxWidth: .infinity)
