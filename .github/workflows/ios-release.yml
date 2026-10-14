@@ -163,14 +163,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v6.0.2
-      - name: Fetch pinned local AltSign dependencies
-        run: |
-          git clone --depth 1 https://github.com/SideStore/ldid.git upstream/AltSign/Dependencies/ldid
-          git -C upstream/AltSign/Dependencies/ldid fetch --depth 1 origin 48b878ae8c1257af7b22f874d7707a2d00f21d53
-          git -C upstream/AltSign/Dependencies/ldid checkout --detach 48b878ae8c1257af7b22f874d7707a2d00f21d53
-          git clone --depth 1 https://github.com/zlib-ng/minizip-ng.git upstream/AltSign/Dependencies/minizip-ng
-          git -C upstream/AltSign/Dependencies/minizip-ng fetch --depth 1 origin 7d2917b47f6a3eae9d2f6d38d94b759158ed931c
-          git -C upstream/AltSign/Dependencies/minizip-ng checkout --detach 7d2917b47f6a3eae9d2f6d38d94b759158ed931c
 
       - name: Download unsigned IPA artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
