@@ -245,11 +245,12 @@ private struct AgreementConsentSheet: View {
         HStack(spacing: 0) {
             Text("继续即表示你已阅读并同意")
             Button("《隐私政策》") { onOpenPolicy(.privacy) }
+                .foregroundStyle(Color(red: 0, green: 122 / 255.0, blue: 1))
                 .accessibilityIdentifier("agreement-privacy-link")
             Text("与")
             Button("《用户协议》") { onOpenPolicy(.terms) }
+                .foregroundStyle(Color(red: 0, green: 122 / 255.0, blue: 1))
                 .accessibilityIdentifier("agreement-terms-link")
-            Text("。")
         }
         .lineLimit(1)
         .minimumScaleFactor(0.76)
@@ -294,4 +295,5 @@ func needsAgreementOnboarding(
     }
     return UserDefaults.standard.integer(forKey: AgreementVersion.storageKey) < AgreementVersion.current
 }
+
 
