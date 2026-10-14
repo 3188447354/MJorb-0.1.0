@@ -72,18 +72,30 @@ struct SupportSealView: View {
             .buttonStyle(.plain)
             Divider().padding(.leading, 50)
 
+            Button(action: openWebsite) {
+                supportRow(
+                    title: "官方资源网站",
+                    detail: "获取最新版本与官方信息",
+                    icon: "globe",
+                    iconColor: Color.sealAccent,
+                    trailingIcon: "arrow.up.right"
+                )
+            }
+            .buttonStyle(.plain)
+            Divider().padding(.leading, 50)
+
             Button(action: joinQQGroup) {
                 supportRow(
-                    title: "提交反馈",
-                    detail: "加入 QQ 群，反馈问题或提出建议",
-                    icon: "bubble.left.and.bubble.right.fill",
+                    title: "加入 QQ 群",
+                    detail: "反馈问题、交流心得与获取更新",
+                    icon: "person.3.fill",
                     iconColor: Color.sealAccent
                 )
             }
             .buttonStyle(.plain)
             Divider().padding(.leading, 50)
 
-            ShareLink(item: websiteURL) {
+            ShareLink(item: "Seal｜个人 IPA 自签与续签工具") {
                 supportRow(
                     title: "分享 Seal",
                     detail: "将 Seal 分享给需要的人",
@@ -162,6 +174,22 @@ struct SupportSealView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
 
+            HStack(spacing: 12) {
+                Button("支付宝支付") { openAlipay() }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(alipayBlue)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(alipayBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button("打开微信") { openWechat() }
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(wechatGreen)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(wechatGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+
             Button("保存到相册") { saveRewardCode() }
                 .sealPrimaryAction(cornerRadius: 14)
                 .padding(.horizontal, 24)
@@ -172,6 +200,29 @@ struct SupportSealView: View {
         }
     }
 
+    private func openWebsite() {
+        guard let url = URL(string: "https://ios.sealsign.eu.cc") else { return }
+        openURL(url)
+    }
+
+    private func openAlipay() {
+        guard let url = URL(string: "https://qr.alipay.com/fkx11863lft7h3izxgreqbe") else { return }
+        openURL(url)
+    }
+
+    private func openWechat() {
+        guard let url = URL(string: "weixin://") else { return }
+        UIApplication.shared.open(url) { opened in
+            if !opened {
+                Task { @MainActor in
+                    presentAlert("无法打开微信", "请先安装微信，或在微信内点右上角「+」→「扫一扫」手动赞赏")
+                }
+            }
+        }
+    }
+
+    private var alipayBlue: Color { Color(red: 22 / 255.0, green: 119 / 255.0, blue: 1.0) }
+    private var wechatGreen: Color { Color(red: 7 / 255.0, green: 193 / 255.0, blue: 96 / 255.0) }
     private func joinQQGroup() {
         guard let scheme = URL(string: "mqqapi://card/show_pslcard?src_type=internal&version=1&uin=\(qqGroupNumber)&card_type=group&source=external") else { return }
         UIApplication.shared.open(scheme) { opened in
@@ -209,3 +260,4 @@ struct SupportSealView: View {
         isAlertPresented = true
     }
 }
+
