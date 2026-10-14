@@ -26,7 +26,7 @@ struct CustomAccentColorEditor: View {
     var body: some View {
         VStack(spacing: 18) {
             HStack {
-                Text("自定义主题色")
+                Text("自定义颜色")
                     .font(.system(size: 20, weight: .bold))
                 Spacer()
                 Circle()
