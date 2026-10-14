@@ -9,6 +9,12 @@
 import Foundation
 import SwiftBridge
 
+// GrandSlam is an AuthKit flow, distinct from the later Developer Portal
+// session. Keep its fingerprint aligned with the Android ADI data generated
+// locally and with the 2FA requests below.
+private let grandSlamAuthenticationXcodeVersion = "14.2 (14C18)"
+private let grandSlamAuthenticationAppInfo = "com.apple.gs.xcode.auth"
+
 public extension ALTAppleAPI
 {
     @objc func authenticate(appleID unsanitizedAppleID: String,
@@ -497,11 +503,18 @@ private extension ALTAppleAPI {
             let httpHeaders = [
                 "Content-Type": "text/x-xml-plist",
                 "X-MMe-Client-Info": anisetteData.deviceDescription,
-                "Accept": "*/*",
+                // Apple's GSA endpoint expects the same AuthKit request
+                // contract for the initial SRP exchange as it does for the
+                // verification exchange. A generic Accept header and missing
+                // AuthKit app identity can be rejected before 2FA reaches its
+                // input callback (-22411).
+                "Accept": "text/x-xml-plist",
                 // Must match the Android AuthKit identity used to produce the
                 // localODA anisette data. GSA rejects the old Xcode/macOS
                 // fingerprint before password verification with -80045.
-                "User-Agent": "akd/1.0 CFNetwork/808.1.4"
+                "User-Agent": "akd/1.0 CFNetwork/808.1.4",
+                "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
+                "X-Apple-App-Info": grandSlamAuthenticationAppInfo
             ]
 
             let bodyData = try PropertyListSerialization.data(fromPropertyList: parameters, format: .xml, options: 0)
@@ -603,10 +616,10 @@ private extension ALTAppleAPI {
             "Accept-Language": "en-us",
             "Content-Type": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
             "User-Agent": "akd/1.0 CFNetwork/808.1.4",
-            "X-Apple-App-Info": "com.apple.gs.xcode.auth",
+            "X-Apple-App-Info": grandSlamAuthenticationAppInfo,
             // The 2FA endpoints bind their Mac AuthKit identity to this Xcode
             // build. Keep it separate from the Developer Portal's Xcode value.
-            "X-Xcode-Version": "14.2 (14C18)",
+            "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
             "X-Apple-Identity-Token": encodedIdentityToken,
             "X-Apple-I-MD-M": anisetteData.machineID,
             "X-Apple-I-MD": anisetteData.oneTimePassword,

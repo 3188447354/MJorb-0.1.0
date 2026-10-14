@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-14 Apple ID -22411 与 App ID 注册额度的真机复核
+
+- **现象**：构建 6 已对齐双重认证路径后，真机仍有部分 Apple ID 在添加后约 4–5 秒返回 `Apple.APIError -22411`；同份导出日志也记录了一次成功添加，说明不是 Seal 的全局本地拦截。签名 LiveContainer（需新建 2 个 App ID）及 StikDebug（需新建 1 个 App ID）均被 `SEAL-APPID-304` 拒绝，而门户当前只显示 8 个存活 App ID。
+- **根因**：与已验证的 SideInstaller GrandSlam 实现逐项复核后，Seal 的初始 SRP 请求仍少 `X-Xcode-Version: 14.2 (14C18)` 与 `X-Apple-App-Info: com.apple.gs.xcode.auth`，且 `Accept` 为泛化的 `*/*`。这些字段与 Android ADI 的 AuthKit 请求属于同一个协议指纹，缺失时 Apple 可在验证码输入回调前以 `-22411` 拒绝。App ID 一项则是 Apple 开发者接口实际返回结果 `9120`：该限制按最近 7 天内的注册动作计数，存活列表中的 8 个不能反推出还剩 2 个名额；已删除或替换的近期注册仍可占用窗口。
+- **修复**：GrandSlam 初始请求统一带上 SideInstaller 的 AuthKit Xcode/App 信息、精确 plist `Accept`，并与双重认证请求共用常量，避免后续身份漂移。`SEAL-APPID-304` 的提示改为“Apple 暂时拒绝新建 App ID”，明确区分当前列表和滚动注册额度，移除“App ID 自动过期”的错误说法。
+- **涉及文件**：`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`。
+- **验证状态**：认证头已与 SideInstaller `auth_grandslam.rs` 的基础请求逐项对齐；App ID 结论来自真机日志中的“已有 8 / 需新注册 2 或 1”及上游 `9120` 映射。Windows 无 Xcode，完整 iOS CI 负责 Swift 编译与打包；真机仍需用出现 `-22411` 的账号确认是否出现验证码输入并完成添加。
+
+---
+
 ## 2026-10-14 双重认证验证码请求在输入前被拒绝
 
 - **现象**：另一 Apple ID 已走到双重认证，但 Seal 未展示验证码输入界面即返回 `Apple.APIError -22411`；同一日志中此前的账号可成功添加，因此不是通用的初始登录失败。

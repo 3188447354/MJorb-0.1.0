@@ -188,9 +188,9 @@ enum ApplePortalSigningFailure {
         //（过去漏匹配 3013，落进下方通用「App ID 创建失败」分支，被误报成网络问题）。
         if Self.isAppIDRegistrationLimit(error, normalized: normalized) {
             return ImportFailure(
-                title: "7 天内最多注册 10 个 App ID",
-                reason: "已达到 App ID 数量上限。App ID 无法手动删除，7 天后自动过期。请到「已签名 App」查看过期时间，或换其他 Apple ID 签名。",
-                recovery: "App ID 无法手动删除，7 天后自动过期；或换其他 Apple ID 签名",
+                title: "Apple 暂时拒绝新建 App ID",
+                reason: "Apple 的 7 天注册额度暂不可用。列表中的 App ID 数量只代表当前仍存在的项目；近 7 天内已删除或替换的注册也可能计入额度。",
+                recovery: "请等待最近一次新建满 7 天后再试，或使用已注册的 Bundle ID / 其他 Apple ID",
                 code: "SEAL-APPID-304",
                 condition: .appIDRegistrationLimit,
                 action: .waitThenRetry,
@@ -1306,9 +1306,9 @@ actor ApplePortalSigningService {
             throw ALTAppleAPIError(.invalidAnisetteData)
         } catch ALTAppleAPIError.maximumAppIDLimitReached {
             throw Self.failure(
-                title: "App ID 名额已满",
-                reason: "Apple 返回 App ID 数量已达到账号上限。",
-                recovery: "使用其他 Bundle ID 或开发者账号。",
+                title: "Apple 暂时拒绝新建 App ID",
+                reason: "Apple 的 7 天注册额度暂不可用；当前 App ID 列表数量不能代表剩余额度。",
+                recovery: "请等待最近一次新建满 7 天后再试，或使用已注册的 Bundle ID / 其他 Apple ID",
                 code: "SEAL-APPID-301"
             )
         } catch ALTAppleAPIError.incorrectCredentials {
