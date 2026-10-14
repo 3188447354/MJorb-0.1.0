@@ -66,6 +66,7 @@ Seal 的是**自己的 wrapper**（`struct AnisetteV3Client: AnisetteEnvironment
 > 结论分两种：**「跟」（上游更对 ✓）** 与 **「不跟」（Seal 已更好 / 上游没有 ✓）**。
 
 | 日期 | 对照对象 | Seal 侧 | 上游做法 | 结论 |
+| **2026-10-15** | **AltSign 原生子模块锁定** | Seal 已把 AltSign 切为本地 SwiftPM path，但嵌入源码树不含 `ldid`、`minizip-ng` 两个 Git 子模块，公开 CI 因缺 `ldid.cpp` 无法打包 | AltSign 的 `NativeBridge` 直接包含其 `.gitmodules` 中锁定的 ldid/minizip-ng 代码 | **跟精确锁定版本**：所有 iOS 构建工作流先拉取 AltSign 记录的两个精确提交，再解析本地 SwiftPM 包；不拉取浮动最新版。 |
 |---|---|---|---|---|
 | **2026-10-14** | **SideInstaller / isideload App ID 名额预检** | Seal 只读取 `appIds`，丢弃 Apple 同一回复的 `availableQuantity`。因此日志可见“当前存活 8 个”，却不知道 Apple 当前只允许新建 0 个；多扩展应用会按目标逐个创建，额度不足时可能留下部分新建的 App ID | SideInstaller 的 `list_app_ids` 解析 `maxQuantity` / `availableQuantity`；只有 Apple 返回非负可用数且不足时，才在任何 `add_app_id` 前停止；字段缺失或负数时仍让 Apple 最终裁决 | **跟**：AltSign 返回 App ID 清单及 Apple 配额，Seal 在创建前比较本次真实新增数量和 `availableQuantity`，不足时零写入结束；保留原有 Apple 错误兜底。 |
 | **2026-10-14** | **AltSign 构建来源一致性** | `upstream/AltSign/**` 触发 CI，但 Seal 的 SwiftPM 包仍锁定远程 revision，仓库内认证修复不会参与编译 | SwiftPM 本地 path 依赖会把受版本控制的当前源码直接交给 Xcode 构建 | **跟本地源码构建原则**：AltSign 改为 `path: upstream/AltSign`，CI 的触发路径和实际编译输入一致。 |

@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-15 本地 AltSign 构建缺少锁定的原生依赖
+
+- **现象**：切换到仓库内的 AltSign 源码后，公开 CI 在编译 `native_bridge_ldid.cpp` 时失败：`../../Dependencies/ldid/ldid.cpp` 不存在，因而没有 IPA 可供真机验证。
+- **根因**：`upstream/AltSign` 作为嵌入源码树保存时未包含其 Git 子模块 `Dependencies/ldid` 和 `Dependencies/minizip-ng`。本地路径依赖让 Xcode 正确开始编译认证修复，也随之暴露了这个不完整的构建输入。
+- **修复**：所有会编译 Seal 的 iOS 工作流在 checkout 后拉取 AltSign 上游记录的精确 ldid 与 minizip-ng 提交，再开始 SwiftPM/Xcode 构建；不使用浮动分支或最新版依赖。
+- **涉及文件**：`.github/workflows/ios.yml`、`.github/workflows/ios-fast.yml`、`.github/workflows/ios-release.yml`。
+- **验证状态**：等待新的完整公开 iOS CI；该次需通过 Swift 回归、IPA 打包和签名器测试后，才可作为本地 AltSign 修复进入 IPA 的证据。
+
+---
+
 ## 2026-10-14 AltSign 认证修复未被 Seal 构建使用
 
 - **现象**：认证修复均落在仓库的 `upstream/AltSign`，但 `project.yml` 仍把 Seal 的 SwiftPM 依赖锁定到远程 `sunuannian1/AltSign` 的旧 revision。此前 CI 虽然因 `upstream/AltSign/**` 变化而触发并全绿，实际解析的却是远程包，不能证明这些认证修改进入 IPA。
