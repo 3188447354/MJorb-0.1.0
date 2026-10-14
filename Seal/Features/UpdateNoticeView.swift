@@ -218,7 +218,7 @@ struct UpdateNoticeView: View {
 
     private func failureContent(_ reason: String) -> some View {
         let verificationFailure = reason.contains("安全校验") || reason.contains("文件与版本")
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             Image(systemName: verificationFailure ? "exclamationmark.shield" : "wifi.exclamationmark")
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(Color.sealAccent)
