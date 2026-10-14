@@ -5,13 +5,13 @@
 
 ---
 
-## 2026-10-15 本地 AltSign 的 ldid 头文件未传给 C++ 编译器
+## 2026-10-15 本地 AltSign 的 ldid 嵌套子模块未初始化
 
 - **现象**：依赖拉取完成后，Swift 回归在编译 `native_bridge_ldid.cpp` 时失败：`plist/plist.h` 找不到；同次打包门还发现错误码清单的受管位置未随 Apple ID 修复同步更新。
-- **根因**：`Package.swift` 只把 ldid/libplist 的头文件目录写进 C 编译设置，`ldid.cpp` 走 C++ 编译设置，因而看不到同一目录。`error-code-inventory.json` 是受管产物，新增 `SEAL-APPID-304` 出现位置和已有行号变化必须重新生成。
-- **修复**：将 ldid 与 libplist 的完整头文件搜索路径同时加到 NativeBridge 的 C++ 设置；按当前 Swift 源码重新生成错误码清单。
-- **涉及文件**：`upstream/AltSign/Package.swift`、`docs/qa/generated/error-code-inventory.json`。
-- **验证状态**：`git diff --check` 通过；等待下一次完整 iOS CI 验证 C++ 编译、Swift 回归和 IPA 打包。
+- **根因**：CI 中的 C++ 编译命令已包含 ldid/libplist 头文件路径，说明路径设置不是问题。ldid 自身将 `libplist` 定义为 Git 子模块；CI 只拉取了 ldid 顶层代码，未初始化其锁定的 `libplist` 提交，因此目录实际不存在。`error-code-inventory.json` 是受管产物，新增 `SEAL-APPID-304` 出现位置和已有行号变化必须重新生成。
+- **修复**：在 ldid 定位到上游锁定提交后初始化其递归子模块，保证 `libplist` 代码与 ldid 的锁定版本一致；按当前 Swift 源码重新生成错误码清单。不保留无效的 C++ 头文件路径改动。
+- **涉及文件**：`.github/workflows/ios.yml`、`.github/workflows/ios-fast.yml`、`.github/workflows/ios-release.yml`、`docs/qa/generated/error-code-inventory.json`。
+- **验证状态**：已从 CI 实际 clang 命令确认所有头文件搜索路径存在，并从 ldid 的锁定 Git tree 确认 `libplist` 是提交 `bdf928a…` 的子模块；等待下一次完整 iOS CI 验证 C++ 编译、Swift 回归和 IPA 打包。
 
 ---
 
