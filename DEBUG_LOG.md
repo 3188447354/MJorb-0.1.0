@@ -9,7 +9,7 @@
 
 - **现象**：构建 2 已修正 SIM 同步和 GrandSlam 连接复用，但真机四次添加 Apple ID 仍在 1–3 秒内返回 `Apple.APIError -80045`，尚未进入密码验证、双重认证或团队查询。
 - **根因**：本地 `localODA` 生成的是 Android ADI 数据，Seal 却以 macOS `MacBookPro18,3` 作为 `X-MMe-Client-Info`，并以 Xcode/macOS User-Agent 发起 GrandSlam 请求。SideInstaller 所用 isideload 已说明 Apple 会拒绝 ADI 数据与声明系统不一致的初始登录，返回同一 `-80045`。
-- **修复**：将本地 Anisette client info 改为与 Android ADI 对应的 Pixel 7 / Android 14 AuthKit 身份；将 GrandSlam User-Agent 改为匹配的 `akd/1.0 CFNetwork/808.1.4`。双重认证的 `/auth` 页面则按 SideInstaller 改用 Mac AuthKit client info（该端点会拒绝 Android 身份），同样使用 `akd` User-Agent。保留现有 `adi.pb` 与设备标识；只有 Apple 明确返回“Device not provisioned”时才沿既有分支自动重新 provision。
+- **修复**：将本地 Anisette client info 改为与 Android ADI 对应的 Pixel 7 / Android 14 AuthKit 身份；将 GrandSlam User-Agent 改为匹配的 `akd/1.0 CFNetwork/808.1.4`。双重认证的 `/auth` 页面则按 SideInstaller 改用 Mac AuthKit client info（该端点会拒绝 Android 身份），验证提交仍用 Android 身份，同样使用 `akd` User-Agent。所有认证与验证码请求均改为短生命周期连接。保留现有 `adi.pb` 与设备标识；只有 Apple 明确返回“Device not provisioned”时才沿既有分支自动重新 provision。
 - **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`。
 - **验证状态**：真机构建 2 日志已证明连接隔离生效但不足以解决问题；字段组合已逐行与 SideInstaller 使用的 isideload 源码对照。Windows 无 Xcode，Swift 回归、IPA 打包和真机添加账号由下一次 CI 验证。
 

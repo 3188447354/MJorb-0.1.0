@@ -263,7 +263,7 @@ private extension ALTAppleAPI {
 
         let request = makeTwoFactorCodeRequest(url: requestURL, dsid: dsid, idmsToken: idmsToken, anisetteData: anisetteData, xcodeVersion: xcodeVersion)
 
-        let requestCodeTask = session.dataTask(with: request) { data, response, error in
+        let requestCodeTask = freshAuthenticationDataTask(with: request) { data, response, error in
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
             let responseStr = data != nil ? self.formatPayloadJSON(data!) : "nil"
@@ -284,7 +284,7 @@ private extension ALTAppleAPI {
                         request.allHTTPHeaderFields?["security-code"] = verificationCode
 
                         verboseLog("[AltSign] requestTrustedDeviceTwoFactorCode verifying code...")
-                        let verifyCodeTask = self.session.dataTask(with: request) { (data, response, error) in
+                        let verifyCodeTask = self.freshAuthenticationDataTask(with: request) { (data, response, error) in
                             do
                             {
                                 if let error {
@@ -361,7 +361,7 @@ private extension ALTAppleAPI {
             return
         }
 
-        let requestCodeTask = session.dataTask(with: request) { data, response, error in
+        let requestCodeTask = freshAuthenticationDataTask(with: request) { data, response, error in
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
             let responseStr = data != nil ? self.formatPayloadJSON(data!) : "nil"
@@ -393,7 +393,7 @@ private extension ALTAppleAPI {
                         request.httpBody = bodyData
 
                         verboseLog("[AltSign] requestSMSTwoFactorCode verifying code...")
-                        let verifyCodeTask = self.session.dataTask(with: request) { _, response, error in
+                        let verifyCodeTask = self.freshAuthenticationDataTask(with: request) { _, response, error in
                             do {
                                 if let error {
                                     verboseLog("[AltSign] requestSMSTwoFactorCode verification failed: \(error)")
@@ -479,6 +479,17 @@ private extension ALTAppleAPI {
 }
 
 private extension ALTAppleAPI {
+    func freshAuthenticationDataTask(
+        with request: URLRequest,
+        completionHandler: @escaping (Data?, URLResponse?, Error?) -> Void
+    ) -> URLSessionDataTask {
+        let authenticationSession = URLSession(configuration: .ephemeral)
+        return authenticationSession.dataTask(with: request) { data, response, error in
+            authenticationSession.finishTasksAndInvalidate()
+            completionHandler(data, response, error)
+        }
+    }
+
     func sendAuthenticationRequest(parameters requestParameters: [String: Any], anisetteData: ALTAnisetteData, completionHandler: @escaping (Result<[String: Any], Error>) -> Void) {
         do {
             let requestURL = URL(string: "https://gsa.apple.com/grandslam/GsService2")!
@@ -583,11 +594,16 @@ private extension ALTAppleAPI {
         let identityTokenData = identityToken.data(using: .utf8)!
         let encodedIdentityToken = identityTokenData.base64EncodedString()
 
-        // The GrandSlam login uses the Android identity that matches localODA.
-        // Apple's /auth two-factor endpoints are a separate flow and require a
-        // Mac AuthKit client identity; presenting the Android identity there
+        // The GrandSlam login and validation endpoint use the Android identity
+        // that matches localODA. Apple's /auth pages are a separate flow and
+        // require a Mac AuthKit client identity; presenting Android there
         // returns 403 before the verification code is processed.
-        let twoFactorClientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        let clientInfo: String
+        if url.path.hasPrefix("/auth/") {
+            clientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        } else {
+            clientInfo = anisetteData.deviceDescription
+        }
         let httpHeaders = [
             "Accept": "application/x-buddyml",
             "Accept-Language": "en-us",
@@ -601,7 +617,7 @@ private extension ALTAppleAPI {
             "X-Apple-I-MD-LU": anisetteData.localUserID,
             "X-Apple-I-MD-RINFO": "\(anisetteData.routingInfo)",
             "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier,
-            "X-MMe-Client-Info": twoFactorClientInfo,
+            "X-MMe-Client-Info": clientInfo,
             "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
             "X-Apple-Locale": anisetteData.locale.sanitizedIdentifier,
             "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST"
