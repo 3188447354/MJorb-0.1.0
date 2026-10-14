@@ -583,11 +583,16 @@ private extension ALTAppleAPI {
         let identityTokenData = identityToken.data(using: .utf8)!
         let encodedIdentityToken = identityTokenData.base64EncodedString()
 
+        // The GrandSlam login uses the Android identity that matches localODA.
+        // Apple's /auth two-factor endpoints are a separate flow and require a
+        // Mac AuthKit client identity; presenting the Android identity there
+        // returns 403 before the verification code is processed.
+        let twoFactorClientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
         let httpHeaders = [
             "Accept": "application/x-buddyml",
             "Accept-Language": "en-us",
             "Content-Type": "application/x-plist",
-            "User-Agent": "Xcode",
+            "User-Agent": "akd/1.0 CFNetwork/808.1.4",
             "X-Apple-App-Info": "com.apple.gs.xcode.auth",
             "X-Xcode-Version": xcodeVersion,
             "X-Apple-Identity-Token": encodedIdentityToken,
@@ -596,7 +601,7 @@ private extension ALTAppleAPI {
             "X-Apple-I-MD-LU": anisetteData.localUserID,
             "X-Apple-I-MD-RINFO": "\(anisetteData.routingInfo)",
             "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier,
-            "X-MMe-Client-Info": anisetteData.deviceDescription,
+            "X-MMe-Client-Info": twoFactorClientInfo,
             "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
             "X-Apple-Locale": anisetteData.locale.sanitizedIdentifier,
             "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST"
