@@ -21,8 +21,10 @@ packages:
     url: https://github.com/weichsel/ZIPFoundation
     exactVersion: 0.9.20
   AltSign:
-    url: https://github.com/sunuannian1/AltSign
-    revision: 87f61ceb1161d90f3c6b2e35bad7ebab15367a90
+    # Seal carries targeted AltSign protocol fixes under `upstream/AltSign`.
+    # Building the remote pinned revision silently excludes those fixes even
+    # though their paths trigger CI, so this must be a local package source.
+    path: upstream/AltSign
   AnisetteKit:
     # ⚠️ **改成 vendor 路径**（2026-09-19）—— 原因见 `Vendor/SideSign/Package.swift` 的注释：
     # `SideSign` 声明的是 `branch: "main"`，与这里原来的固定 revision 冲突 ⇒ SwiftPM 解析失败 ✗。

@@ -42,6 +42,18 @@ enum ApplePortalAppIDResolver {
     }
 }
 
+/// App ID 注册名额的预检策略。
+///
+/// Apple 的可见 App ID 数量和可注册额度不是同一个值。只有 Apple 在本次
+/// `listAppIds` 回复中明确给出非负的 `availableQuantity`，才可以安全地在
+/// 写入前拒绝；缺失或负数都必须交给 Apple 的 addAppID 请求最终裁决。
+enum ApplePortalAppIDQuotaPolicy {
+    static func shouldStopBeforeRegistration(required: Int, available: Int?) -> Bool {
+        guard let available, available >= 0 else { return false }
+        return required > available
+    }
+}
+
 /// 已存在 App ID 的能力写入判据。
 ///
 /// Apple 门户返回的 `features` 已经包含每个目标开关时，重复调用 `updateAppId` 没有任何
@@ -384,7 +396,7 @@ actor ApplePortalSigningService {
     // 状态全是 actor 私有、可变访问全被 actor 串行化 ⇒ 不需要 Sendable 标注。
     private static let portalReadCacheTTL: TimeInterval = 5 * 60
     private var cachedTeamsByAccountIdentifier: [String: (teams: [ALTTeam], fetchedAt: Date)] = [:]
-    private var cachedAppIDsByTeamIdentifier: [String: (appIDs: [ALTAppID], fetchedAt: Date)] = [:]
+    private var cachedAppIDsByTeamIdentifier: [String: (inventory: ALTAppIDInventory, fetchedAt: Date)] = [:]
     private var cachedDevicesByTeamAndDeviceIdentifier: [String: (device: ALTDevice, fetchedAt: Date)] = [:]
     // 性能：证书列表也加批量缓存（2026-10-04）。profile-only 准入和完整重签每 App
     // 各拉一次，同一 Team 一轮批量里不变。写成功（addCertificate）即失效。
@@ -2258,7 +2270,8 @@ actor ApplePortalSigningService {
         // ⚠️ 「读取 App ID 列表」的退避重试已下沉到 `fetchAppIDs` 内部（withSessionRecovery + 超时重试）。
         // 它是 Phase 1 的第一个请求，撞上短时限流（1100）若直接失败，失败点会排在名额诊断之前
         // ⇒ 日志里连「它走到哪一步」都看不出来。
-        var existing = try await fetchAppIDs(team: team, session: session)
+        let appIDInventory = try await fetchAppIDInventory(team: team, session: session)
+        var existing = appIDInventory.appIDs
 
         // 无条件写一条「App ID 名额」诊断（2026-09-17）。用户报「只有抖音签不上、重新加 ID 也不行」时，
         // 这条日志用来**排除假设**：`需新注册 K` 为 0 ⇒ 本次一个 App ID 都不用新建
@@ -2273,11 +2286,24 @@ actor ApplePortalSigningService {
                 )
             }
         }.count
+        let newRegistrationCount = portalMappings.count - reusableAppIDCount
+        let appleAvailableQuantity = appIDInventory.availableQuantity
         await diagnostic(
             "App ID 名额：本次需 \(portalMappings.count) 个（主 App 1 + 扩展 \(extensionAppIDCount)），"
                 + "账号上已有 \(existing.count) 个、其中可复用 \(reusableAppIDCount) 个，"
-                + "需新注册 \(portalMappings.count - reusableAppIDCount) 个"
+                + "需新注册 \(newRegistrationCount) 个；Apple 返回可新注册 \(appleAvailableQuantity.map { String($0) } ?? "未提供") 个"
         )
+        if ApplePortalAppIDQuotaPolicy.shouldStopBeforeRegistration(
+            required: newRegistrationCount,
+            available: appleAvailableQuantity
+        ) {
+            throw Self.failure(
+                title: "Apple 暂时拒绝新建 App ID",
+                reason: "Apple 当前仅允许新建 \(appleAvailableQuantity ?? 0) 个 App ID，但本次签名还需要 \(newRegistrationCount) 个。",
+                recovery: "等待 Apple 恢复可用名额后再试，或签名已注册的应用。",
+                code: "SEAL-APPID-304"
+            )
+        }
         // ⚠️ **取证：`fetchAppIDs` 到底会不会回填 `features`**（2026-09-18）。
         //
         // 为什么值得单独埋一条：一次抖音签名要发 32–41 次 Apple 请求，其中**一半**是 Phase 1 的
@@ -2736,19 +2762,27 @@ actor ApplePortalSigningService {
         session: ALTAppleAPISession,
         bypassCache: Bool = false
     ) async throws -> [ALTAppID] {
+        try await fetchAppIDInventory(team: team, session: session, bypassCache: bypassCache).appIDs
+    }
+
+    private func fetchAppIDInventory(
+        team: ALTTeam,
+        session: ALTAppleAPISession,
+        bypassCache: Bool = false
+    ) async throws -> ALTAppIDInventory {
         if bypassCache == false,
            let cached = cachedAppIDsByTeamIdentifier[team.identifier],
            Self.isPortalReadCacheFresh(fetchedAt: cached.fetchedAt) {
-            return cached.appIDs
+            return cached.inventory
         }
         // ⚠️ 读操作（R33）：限流时 Apple 响应会变慢，超时重试最坏只多花时间（幂等），故开超时重试。
-        let box: LegacyBox<[ALTAppID]> = try await withSessionRecovery("读取 App ID 列表", retriesOnTimeout: true) {
+        let box: LegacyBox<ALTAppIDInventory> = try await withSessionRecovery("读取 App ID 列表", retriesOnTimeout: true) {
             try await withAppleTimeout {
                 try await withCheckedThrowingContinuation {
                     continuation in
                     let callback = ContinuationBox(continuation)
-                    ALTAppleAPI.shared.fetchAppIDs(for: team, session: session) { appIDs, error in
-                        Self.resume(callback, value: appIDs, error: error)
+                    ALTAppleAPI.shared.fetchAppIDInventory(for: team, session: session) { inventory, error in
+                        Self.resume(callback, value: inventory, error: error)
                     }
                 }
             }

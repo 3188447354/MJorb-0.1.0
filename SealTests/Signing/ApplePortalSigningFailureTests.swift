@@ -32,6 +32,26 @@ struct ApplePortalSigningFailureTests {
     }
 
     @Test
+    func stopsBeforeCreatingAnyAppIDWhenAppleReportsTooFewSlots() {
+        #expect(
+            ApplePortalAppIDQuotaPolicy.shouldStopBeforeRegistration(required: 2, available: 1)
+        )
+        #expect(
+            ApplePortalAppIDQuotaPolicy.shouldStopBeforeRegistration(required: 1, available: 1) == false
+        )
+    }
+
+    @Test
+    func defersToAppleWhenTheQuotaFieldIsMissingOrNegative() {
+        #expect(
+            ApplePortalAppIDQuotaPolicy.shouldStopBeforeRegistration(required: 1, available: nil) == false
+        )
+        #expect(
+            ApplePortalAppIDQuotaPolicy.shouldStopBeforeRegistration(required: 1, available: -1) == false
+        )
+    }
+
+    @Test
     func skipsPortalFeatureUpdateWhenExistingAppIDAlreadySatisfiesRequestedFeatures() {
         #expect(
             ApplePortalAppIDFeatureUpdatePolicy.needsPortalUpdate(

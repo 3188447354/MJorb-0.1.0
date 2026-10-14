@@ -260,7 +260,7 @@ public extension ALTAppleAPI {
     }
     
     /* App IDs */
-    func fetchAppIDs(for team: ALTTeam, session: ALTAppleAPISession, completionHandler: @escaping ([ALTAppID]?, Error?) -> Void) {
+    func fetchAppIDInventory(for team: ALTTeam, session: ALTAppleAPISession, completionHandler: @escaping (ALTAppIDInventory?, Error?) -> Void) {
         verboseLog("[AltSign] fetchAppIDs starting for team: \(team.name)")
         let url = URL(string: "ios/listAppIds.action", relativeTo: self.baseURL)!
         
@@ -274,18 +274,28 @@ public extension ALTAppleAPI {
             }
             
             var error: Error? = nil
-            let appIDs = self.processResponse(responseDictionary, parseHandler: {
+            let inventory = self.processResponse(responseDictionary, parseHandler: {
                 guard let array = responseDictionary["appIds"] as? [[String: Any]] else { return nil }
                 var list = [ALTAppID]()
                 for dict in array {
                     guard let appID = ALTAppID(responseDictionary: dict) else { return nil }
                     list.append(appID)
                 }
-                return list
-            }, resultCodeHandler: nil, error: &error) as? [ALTAppID]
+                return ALTAppIDInventory(
+                    appIDs: list,
+                    maxQuantity: (responseDictionary["maxQuantity"] as? NSNumber)?.intValue,
+                    availableQuantity: (responseDictionary["availableQuantity"] as? NSNumber)?.intValue
+                )
+            }, resultCodeHandler: nil, error: &error) as? ALTAppIDInventory
             
-            verboseLog("[AltSign] fetchAppIDs completed: \(appIDs?.map { $0.bundleIdentifier } ?? [])")
-            completionHandler(appIDs, error)
+            verboseLog("[AltSign] fetchAppIDs completed: \(inventory?.appIDs.map { $0.bundleIdentifier } ?? []), availableQuantity: \(inventory?.availableQuantity.map { String($0) } ?? "nil")")
+            completionHandler(inventory, error)
+        }
+    }
+
+    func fetchAppIDs(for team: ALTTeam, session: ALTAppleAPISession, completionHandler: @escaping ([ALTAppID]?, Error?) -> Void) {
+        self.fetchAppIDInventory(for: team, session: session) { inventory, error in
+            completionHandler(inventory?.appIDs, error)
         }
     }
     

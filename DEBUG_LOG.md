@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-14 AltSign 认证修复未被 Seal 构建使用
+
+- **现象**：认证修复均落在仓库的 `upstream/AltSign`，但 `project.yml` 仍把 Seal 的 SwiftPM 依赖锁定到远程 `sunuannian1/AltSign` 的旧 revision。此前 CI 虽然因 `upstream/AltSign/**` 变化而触发并全绿，实际解析的却是远程包，不能证明这些认证修改进入 IPA。
+- **根因**：CI 触发路径与构建依赖来源不一致。把“本地源码路径改动”当作“远程 SwiftPM revision 已更新”会造成认证修复看似编译通过、实际没有随 Seal 构建的假象。
+- **修复**：将 AltSign SwiftPM 依赖改为仓库内受版本控制的 `upstream/AltSign` 路径；保留同一个包名和 `AltSign-Static` 产品。后续 XcodeGen/SwiftPM 会直接编译当前仓库中的认证及 App ID 清单代码。
+- **涉及文件**：`project.yml`、`upstream/AltSign/**`。
+- **验证状态**：`git diff --check` 通过；下一次完整 iOS CI 必须重新解析本地包，并以该次 Swift 编译、测试和 IPA 为唯一有效验证。此前构建 7 的 IPA 仍可交付，但不作为本地 AltSign 修改已生效的证据。
+
+---
+
 ## 2026-10-14 Apple ID -22411 与 App ID 注册额度的真机复核
 
 - **现象**：构建 6 已对齐双重认证路径后，真机仍有部分 Apple ID 在添加后约 4–5 秒返回 `Apple.APIError -22411`；同份导出日志也记录了一次成功添加，说明不是 Seal 的全局本地拦截。签名 LiveContainer（需新建 2 个 App ID）及 StikDebug（需新建 1 个 App ID）均被 `SEAL-APPID-304` 拒绝，而门户当前只显示 8 个存活 App ID。
