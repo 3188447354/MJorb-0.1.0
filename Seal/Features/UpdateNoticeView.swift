@@ -18,26 +18,7 @@ struct UpdateNoticeView: View {
         case downloading(Int64, Int64?)
         case verifying
         case ready
-        case failed(Failure)
-    }
-
-    private enum Failure: Equatable {
-        case download
-        case verification
-
-        var title: String {
-            switch self {
-            case .download: return "下载失败"
-            case .verification: return "安全校验未通过"
-            }
-        }
-
-        var message: String {
-            switch self {
-            case .download: return "网络连接中断 请检查网络后重新下载"
-            case .verification: return "已停止安装以保护你的设备"
-            }
-        }
+        case failed(String)
     }
 
     private var currentVersion: String {
@@ -101,8 +82,8 @@ struct UpdateNoticeView: View {
                 progressContent(title: "正在验证更新包", detail: "检查版本与文件完整性")
             case .ready:
                 readyContent
-            case .failed(let failure):
-                failureContent(failure)
+            case .failed(let reason):
+                failureContent(reason)
             }
         }
         .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
@@ -235,16 +216,17 @@ struct UpdateNoticeView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func failureContent(_ failure: Failure) -> some View {
+    private func failureContent(_ reason: String) -> some View {
+        let verificationFailure = reason.contains("安全校验") || reason.contains("文件与版本")
         VStack(spacing: 0) {
-            Image(systemName: failure == .download ? "wifi.exclamationmark" : "exclamationmark.shield")
+            Image(systemName: verificationFailure ? "exclamationmark.shield" : "wifi.exclamationmark")
                 .font(.system(size: 30, weight: .semibold))
                 .foregroundStyle(Color.sealAccent)
                 .padding(.top, 28)
-            Text(failure.title)
+            Text(verificationFailure ? "安全校验未通过" : "下载失败")
                 .font(.title3.weight(.bold))
                 .padding(.top, 15)
-            Text(failure.message)
+            Text(verificationFailure ? "已停止安装以保护你的设备" : "网络连接中断 请检查网络后重新下载")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
@@ -309,7 +291,7 @@ struct UpdateNoticeView: View {
                 downloadTask = nil
                 return
             } catch {
-                phase = .failed(.download)
+                phase = .failed("下载失败，请检查网络后重试")
                 downloadTask = nil
                 return
             }
@@ -320,7 +302,7 @@ struct UpdateNoticeView: View {
                 guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version),
                       let checksumURL = notice.sha256DownloadURL else {
                     try? FileManager.default.removeItem(at: localURL)
-                    phase = .failed(.verification)
+                    phase = .failed("下载的文件缺少安全校验信息，已中止安装")
                     downloadTask = nil
                     return
                 }
@@ -330,7 +312,7 @@ struct UpdateNoticeView: View {
                       let expected = UpdateChecker.expectedSHA256(from: checksumText),
                       UpdateChecker.hashMatches(expected: expected, actual: actual) else {
                     try? FileManager.default.removeItem(at: localURL)
-                    phase = .failed(.verification)
+                    phase = .failed("下载的文件安全校验未通过，已中止安装")
                     downloadTask = nil
                     return
                 }
@@ -344,7 +326,7 @@ struct UpdateNoticeView: View {
                 phase = .available
             } catch {
                 try? FileManager.default.removeItem(at: localURL)
-                phase = .failed(.verification)
+                phase = .failed("下载的文件安全校验未通过，已中止安装")
             }
             downloadTask = nil
         }
