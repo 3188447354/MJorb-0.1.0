@@ -54,7 +54,7 @@ struct RootTabView: View {
         .task {
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
-            // 先让首屏和本地检查稳定呈现，再展示更新抽屉；避免启动瞬间叠两层流程。
+            // 更新抽屉只在首屏与本地检查稳定后呈现，避免启动瞬间叠两层流程。
             try? await Task.sleep(nanoseconds: 700_000_000)
             await performUpdateCheck()
         }
