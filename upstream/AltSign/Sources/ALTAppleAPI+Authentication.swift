@@ -504,7 +504,12 @@ private extension ALTAppleAPI {
             request.httpBody = bodyData
             httpHeaders.forEach { request.addValue($0.value, forHTTPHeaderField: $0.key) }
 
-            let dataTask = self.session.dataTask(with: request) { (data, response, error) in
+            // GSA can reject a GrandSlam exchange after a prior request on the
+            // same idle connection. Use a short-lived session so each init or
+            // complete request starts with a fresh connection.
+            let authenticationSession = URLSession(configuration: .ephemeral)
+            let dataTask = authenticationSession.dataTask(with: request) { (data, response, error) in
+                authenticationSession.finishTasksAndInvalidate()
                 do
                 {
                     if let error {
