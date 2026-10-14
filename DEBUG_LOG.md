@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-14 双重认证验证码请求在输入前被拒绝
+
+- **现象**：另一 Apple ID 已走到双重认证，但 Seal 未展示验证码输入界面即返回 `Apple.APIError -22411`；同一日志中此前的账号可成功添加，因此不是通用的初始登录失败。
+- **根因**：Seal 只将 `/auth` 的 client info 改成 Mac AuthKit，仍沿用 Developer Portal 的 `X-Xcode-Version: 26.0` 与旧的 BuddyML/XML 手机验证码请求。SideInstaller 的 isideload 对 `/auth` 验证码端点使用配套的 `14.2 (14C18)` 身份；可信设备端点用 XML plist，短信端点用 JSON + `PUT /auth/verify/phone`。身份字段和请求契约混用会被 Apple 在调用输入回调前拒绝。
+- **修复**：所有双重认证请求固定使用与 Mac AuthKit 配套的 Xcode 14.2 标识；可信设备验证码请求和 GrandSlam 校验使用 XML plist；短信验证码发送/校验改为当前 `/auth/verify/phone` 的 JSON `PUT`/`POST` 协议。保持 Android ADI 仅用于 GrandSlam 校验身份，所有请求仍使用短生命周期连接。
+- **涉及文件**：`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`。
+- **验证状态**：请求字段、路径、HTTP 方法和消息体逐项与 SideInstaller 的 isideload 对照；Windows 无 Xcode，云 CI 编译后需由该失败账号实机复测“出现验证码输入 → 输入验证码 → 添加完成”。
+
+---
+
 ## 2026-10-14 Apple ID -80045 的 Anisette 认证身份不一致
 
 - **现象**：构建 2 已修正 SIM 同步和 GrandSlam 连接复用，但真机四次添加 Apple ID 仍在 1–3 秒内返回 `Apple.APIError -80045`，尚未进入密码验证、双重认证或团队查询。
