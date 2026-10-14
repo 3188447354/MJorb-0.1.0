@@ -7,7 +7,7 @@ struct SealCommunityView: View {
     @Environment(\.openURL) private var openURL
 
     private enum ActiveSheet: Identifiable {
-        case reward, gzh
+        case gzh
         var id: Self { self }
     }
     @State private var activeSheet: ActiveSheet?
@@ -26,21 +26,16 @@ struct SealCommunityView: View {
     //   要抓落地页里的 `群号: <digits>` 或 `"groupcode":"<digits>"` 才知道 ✓。
     private let qqGroupNumber = "1051135067"
     private let qqJoinURL = URL(string: "https://qm.qq.com/q/8HfHpTmOzu")
-    private let rewardTitle = "赞赏支持"
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 24) {
                 header
                 VStack(spacing: 12) {
-                    sectionTitle("支持作者")
-                    rewardCard
                     sectionTitle("交流与动态")
                     gzhCard
                     qqCard
                     douyinCard
-                    sectionTitle("官方资源")
-                    websiteCard
                 }
                 footerNote
             }
@@ -51,7 +46,6 @@ struct SealCommunityView: View {
         .sealScreenBackground()
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
-            case .reward: rewardCodeSheet
             case .gzh: gzhCodeSheet
             }
         }
@@ -94,29 +88,6 @@ struct SealCommunityView: View {
             .padding(.top, 8)
     }
 
-    private var rewardCard: some View {
-        Button { activeSheet = .reward } label: {
-            HStack(spacing: 14) {
-                iconBadge("heart.fill", tint: .white, background: Color.white.opacity(0.20))
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(rewardTitle)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text("每一份支持，都是作者更新的动力")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.82))
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-            .padding(16)
-            .background(Color.sealAccent, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
     private var gzhCard: some View {
         brandCard(
             brandImage: "BrandWechat",
@@ -148,16 +119,6 @@ struct SealCommunityView: View {
         )
     }
 
-    private var websiteCard: some View {
-        brandCard(
-            brandImage: "SealBrandIcon",
-            title: "Seal 官网",
-            subtitle: "ios.sealsign.eu.cc",
-            value: nil,
-            action: openWebsite
-        )
-    }
-
     private var footerNote: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "info.circle")
@@ -171,100 +132,6 @@ struct SealCommunityView: View {
         .padding(14)
         .background(Color.sealSurfaceElevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
-
-    private var rewardCodeSheet: some View {
-        VStack(spacing: 0) {
-            // ⚠️ **图片要「贴合圆弧」**（2026-09-20 用户要求）✗ ——
-            // 原来把 150×150 的方图塞进 170×170 的圆角框 ⇒ 四周留 **10pt 白边**，
-            // 方图的四个角**不跟圆弧走** ✗。
-            // ⇒ 去掉内边距、让图片**填满**外框，再用 `clipShape` 把四角**裁成圆弧** ✓。
-            // ⚠️ 用 `scaledToFill` 而不是 `scaledToFit`：将来换成**非正方形**图也不会留边 ✓
-            //（`scaledToFit` 会在短边留白 ✗ —— 那正是这次要修的现象 ✓）。
-            Group {
-                if let image = UIImage(named: "SealCommunityReward") {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 170, height: 170)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                } else {
-                    Text("赞赏码未加载")
-                        .font(.footnote)
-                        .foregroundStyle(Color.sealTextSecondary)
-                }
-            }
-            .frame(width: 170, height: 170)
-            .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)
-            }
-            .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
-            .padding(.top, 8)
-
-            Text("保存图片后，到微信「扫一扫」选择该图片即可")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(Color.sealTextSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 14)
-                .padding(.horizontal, 24)
-
-            HStack(spacing: 12) {
-                Button("支付宝支付") { openAlipay() }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(alipayBlue)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(alipayBlue.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                Button("打开微信") { openWechat() }
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(wechatGreen)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(wechatGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 24)
-            .padding(.top, 18)
-
-            Button {
-                saveCodeToAlbum(imageName: "SealCommunityReward")
-            } label: {
-                Text("保存到相册")
-            }
-            .sealPrimaryAction(cornerRadius: 14)
-            .padding(.horizontal, 24)
-            .padding(.top, 12)
-
-            Button("关闭") { activeSheet = nil }
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Color.sealTextSecondary)
-                .padding(.top, 6)
-                .padding(.bottom, 12)
-        }
-        .padding(.top, 16)
-        .presentationDetents([.medium, .large])
-    }
-
-    private func openAlipay() {
-        guard let url = URL(string: "https://qr.alipay.com/fkx11863lft7h3izxgreqbe") else { return }
-        openURL(url)
-    }
-
-    private func openWechat() {
-        guard let url = URL(string: "weixin://") else { return }
-        UIApplication.shared.open(url) { opened in
-            if !opened {
-                Task { @MainActor in
-                    presentAlert("无法打开微信", "请先安装微信，或在微信内点右上角「+」→「扫一扫」手动赞赏")
-                }
-            }
-        }
-    }
-
-    private var alipayBlue: Color { Color(red: 22 / 255.0, green: 119 / 255.0, blue: 1.0) }
-    private var wechatGreen: Color { Color(red: 7 / 255.0, green: 193 / 255.0, blue: 96 / 255.0) }
-
-    
 
     private var gzhCodeSheet: some View {
         VStack(spacing: 20) {
@@ -395,12 +262,6 @@ struct SealCommunityView: View {
 
     private func openDouyin() {
         if let url = URL(string: "https://v.douyin.com/r5NTxx_Ztyk/") {
-            openURL(url)
-        }
-    }
-
-    private func openWebsite() {
-        if let url = URL(string: "https://ios.sealsign.eu.cc") {
             openURL(url)
         }
     }
