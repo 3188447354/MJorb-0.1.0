@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 支持入口只承载用户主动支持与分享；社群交流统一归「加入社群」。
+/// 支持入口只承载用户主动支持；社群交流统一归「加入社群」。
 struct SupportSealView: View {
     @Environment(\.openURL) private var openURL
 
@@ -58,18 +58,6 @@ struct SupportSealView: View {
                     detail: "每一份支持，都是持续更新的动力",
                     icon: "heart.fill",
                     iconColor: .pink
-                )
-            }
-            .buttonStyle(.plain)
-            Divider().padding(.leading, 50)
-
-            ShareLink(item: "Seal｜个人 IPA 自签与续签工具") {
-                supportRow(
-                    title: "分享 Seal",
-                    detail: "将 Seal 分享给需要的人",
-                    icon: "square.and.arrow.up",
-                    iconColor: .orange,
-                    trailingIcon: "square.and.arrow.up"
                 )
             }
             .buttonStyle(.plain)
