@@ -10,6 +10,7 @@
 - **现象**：已正确读取 Apple 返回的 Anisette 同步指令后，真机添加 Apple ID 仍可能在密码交换前收到 `Apple.APIError -80045`。
 - **根因**：Seal 复用 `ALTAppleAPI` 的长期 `URLSession` 发送全部 GrandSlam `init`/`complete` 请求。作为对照的 SideInstaller 上游实现明确禁用 GrandSlam 空闲连接复用；Apple GSA 可能拒绝同一空闲连接上的后续认证交换。
 - **修复**：仅在 `sendAuthenticationRequest` 中为每个 GrandSlam 请求创建短生命周期的 ephemeral `URLSession`，请求完成即结束该会话，使每次 `init` 或 `complete` 从新连接开始。没有改变 Anisette 的设备身份、`client_info`、本地取用策略，也没有清除 `adi.pb` 或 Anisette 标识。
+- **CI 守卫**：补上 `upstream/AltSign/**` 的 push 触发路径；该目录参与 Seal 编译，缺失该路径会让认证层修改不经 Swift 回归和 IPA 打包验证。
 - **涉及文件**：`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`。
 - **验证状态**：已逐行对照 SideInstaller 所使用 isideload 的 `pool_max_idle_per_host(0)` 实现；`git diff --check` 与公开 iOS CI 将验证 Swift 编译和 IPA 打包，真机将复测原先失败的账号添加路径。
 

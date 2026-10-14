@@ -20,6 +20,10 @@ on:
       - "Seal/**"
       - "SealTests/**"
       - "SealUITests/**"
+      # AltSign is compiled into Seal. Changes here must run the same full
+      # iOS gate as changes under Seal/, otherwise authentication fixes can
+      # be pushed without a Swift build.
+      - "upstream/AltSign/**"
       # ⚠️ **必须是 `Vendor/**`**（2026-09-19 修正）✗ —— 原来只列了 `Vendor/Minimuxer/**`，
       # 于是「改了 `Vendor/CodeSignKit/Package.swift`」**根本不触发 CI** ✗✗。
       # 而现在 `Vendor/` 里已经有**签名器**（`SideSign` / `CodeSignKit` ✓）和它的一串依赖
