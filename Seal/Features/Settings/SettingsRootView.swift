@@ -148,7 +148,7 @@ struct SettingsRootView: View {
                             settingsRow(
                                 title: "诊断日志",
                                 value: nil,
-                                icon: "terminal",
+                                icon: "doc.text",
                                 showsChevron: true
                             )
                         }
