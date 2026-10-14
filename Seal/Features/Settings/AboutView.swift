@@ -60,10 +60,10 @@ struct AboutView: View {
             appIcon
             Text("Seal")
                 .font(.title.weight(.semibold))
-            Text("版本 \(version)")
+            Text("个人 IPA 自签与续签工具")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
-            Text("自签与续签工具")
+            Text("版本 \(version)")
                 .font(.footnote)
                 .foregroundStyle(Color.sealTextSecondary)
         }
@@ -241,3 +241,4 @@ struct AboutView: View {
         return UIImage(named: iconName)
     }
 }
+
