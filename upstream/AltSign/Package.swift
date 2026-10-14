@@ -111,6 +111,10 @@ let package = Package(
 
             cxxSettings: [
                 .headerSearchPath("NativeBridge/include"),
+                .headerSearchPath("Dependencies/ldid"),
+                .headerSearchPath("Dependencies/ldid/libplist/include"),
+                .headerSearchPath("Dependencies/ldid/libplist/src"),
+                .headerSearchPath("Dependencies/ldid/libplist/libcnary/include"),
                 .headerSearchPath("Dependencies/corecrypto/include"),
                 .unsafeFlags(["-w", "-fvisibility=hidden"])
             ],

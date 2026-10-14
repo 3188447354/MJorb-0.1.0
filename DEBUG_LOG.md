@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-15 本地 AltSign 的 ldid 头文件未传给 C++ 编译器
+
+- **现象**：依赖拉取完成后，Swift 回归在编译 `native_bridge_ldid.cpp` 时失败：`plist/plist.h` 找不到；同次打包门还发现错误码清单的受管位置未随 Apple ID 修复同步更新。
+- **根因**：`Package.swift` 只把 ldid/libplist 的头文件目录写进 C 编译设置，`ldid.cpp` 走 C++ 编译设置，因而看不到同一目录。`error-code-inventory.json` 是受管产物，新增 `SEAL-APPID-304` 出现位置和已有行号变化必须重新生成。
+- **修复**：将 ldid 与 libplist 的完整头文件搜索路径同时加到 NativeBridge 的 C++ 设置；按当前 Swift 源码重新生成错误码清单。
+- **涉及文件**：`upstream/AltSign/Package.swift`、`docs/qa/generated/error-code-inventory.json`。
+- **验证状态**：`git diff --check` 通过；等待下一次完整 iOS CI 验证 C++ 编译、Swift 回归和 IPA 打包。
+
+---
+
 ## 2026-10-15 本地 AltSign 构建缺少锁定的原生依赖
 
 - **现象**：切换到仓库内的 AltSign 源码后，公开 CI 在编译 `native_bridge_ldid.cpp` 时失败：`../../Dependencies/ldid/ldid.cpp` 不存在，因而没有 IPA 可供真机验证。
