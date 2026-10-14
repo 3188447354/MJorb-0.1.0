@@ -57,7 +57,7 @@ enum AppleAuthenticationFailure {
 final class AppleAccountClient {
     private let anisetteProvider: any AnisetteProvider
 
-    /// 与 AltSign User-Agent 中 com.apple.dt.Xcode/26.0 保持一致
+    /// Apple Developer Portal 请求所使用的 X-Xcode-Version。
     nonisolated static let xcodeVersion = "26.0"
 
     nonisolated init(anisetteProvider: any AnisetteProvider = AnisetteV3Client()) {

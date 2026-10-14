@@ -494,7 +494,10 @@ private extension ALTAppleAPI {
                 "Content-Type": "text/x-xml-plist",
                 "X-MMe-Client-Info": anisetteData.deviceDescription,
                 "Accept": "*/*",
-                "User-Agent": "AuthKit/1 (Macintosh; OS X 26.5.2) (com.apple.dt.Xcode/26.0)"
+                // Must match the Android AuthKit identity used to produce the
+                // localODA anisette data. GSA rejects the old Xcode/macOS
+                // fingerprint before password verification with -80045.
+                "User-Agent": "akd/1.0 CFNetwork/808.1.4"
             ]
 
             let bodyData = try PropertyListSerialization.data(fromPropertyList: parameters, format: .xml, options: 0)

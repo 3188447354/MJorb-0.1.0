@@ -134,7 +134,10 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private func fetchLocal(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
         try ensureBundledLibrariesCopied()
         let uuid = try self.uuid(from: identity)
-        let clientInfo = "<MacBookPro18,3> <macOS;26.6;25F84> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        // localODA produces Android ADI data. Apple rejects GrandSlam sign-in
+        // when that data is presented as a macOS machine, returning -80045.
+        // Keep this in sync with the AuthKit user agent in AltSign.
+        let clientInfo = "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 
         // 第一次尝试：用 keychain 中已有的 adi.pb
         let existingState = try? await store.load()
