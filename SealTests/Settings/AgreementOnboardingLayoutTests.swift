@@ -7,8 +7,8 @@ final class AgreementOnboardingLayoutTests: XCTestCase {
         XCTAssertEqual(AgreementOnboardingLayout.iconCornerRadius, 22)
         XCTAssertEqual(AgreementOnboardingLayout.drawerCornerRadius, 29)
         XCTAssertEqual(AgreementOnboardingLayout.horizontalInset, 22)
-        XCTAssertEqual(AgreementOnboardingLayout.initialDrawerFraction, 0.38)
-        XCTAssertEqual(AgreementOnboardingLayout.compactContentSpacing, 18)
+        XCTAssertEqual(AgreementOnboardingLayout.initialDrawerFraction, 0.35)
+        XCTAssertEqual(AgreementOnboardingLayout.compactContentSpacing, 16)
         XCTAssertEqual(AgreementOnboardingLayout.brandNamePointSize, 46)
         XCTAssertEqual(AgreementOnboardingLayout.brandTaglinePointSize, 20)
         XCTAssertEqual(AgreementOnboardingLayout.brandTagline, "为你的应用保持可用")
@@ -17,11 +17,9 @@ final class AgreementOnboardingLayoutTests: XCTestCase {
 
     func testAcknowledgingDeclineRestoresTheConsentDrawerAfterTheAlertDismisses() {
         var state = AgreementOnboardingPresentationState()
-
         state.decline()
         XCTAssertFalse(state.isConsentSheetPresented)
         XCTAssertTrue(state.isAwaitingDeclineAcknowledgement)
-
         state.acknowledgeDecline()
         XCTAssertTrue(state.isConsentSheetPresented)
         XCTAssertFalse(state.isAwaitingDeclineAcknowledgement)
@@ -29,14 +27,10 @@ final class AgreementOnboardingLayoutTests: XCTestCase {
 
     func testReadingPolicyKeepsTheWelcomeDrawerPresented() {
         var state = AgreementOnboardingPresentationState()
-
         state.openPolicy(.privacy)
-
         XCTAssertTrue(state.isConsentSheetPresented)
         XCTAssertEqual(state.presentedPolicy, .privacy)
-
         state.closePolicy()
-
         XCTAssertTrue(state.isConsentSheetPresented)
         XCTAssertNil(state.presentedPolicy)
     }
