@@ -659,9 +659,9 @@ final class AppleAccountClient {
 
     private nonisolated static func resyncSIM(from error: Error) -> String? {
         let ns = error as NSError
-        guard ns.domain == ALTUnderlyingAppleAPIErrorDomain,
-              let hsc = ns.userInfo["ALTAppleAPIStatusHSC"] as? NSNumber,
-              hsc.intValue == 434 else { return nil }
+        guard ns.domain == ALTUnderlyingAppleAPIErrorDomain else { return nil }
+        // The SIM itself is Apple's resync instruction. Some current replies
+        // omit `hsc`, so requiring the legacy 434 marker drops a valid resync.
         if let sim = ns.userInfo["ALTAppleAPIResyncSIM"] as? String { return sim }
         if let sim = ns.userInfo["ALTAppleAPIResyncSIM"] as? Data { return sim.base64EncodedString() }
         return nil

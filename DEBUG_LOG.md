@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-14 Apple ID -80045 的 Anisette 自动同步未触发
+
+- **现象**：构建 418 已加入 Apple 返回同步指令后的自动重试，但真机添加 Apple ID 仍收到 `SEAL-AUTH-80045`。
+- **根因**：GrandSlam 协议将 `X-Apple-I-MD-DATA`（SIM）放在 `Response` 的同级响应字段；Seal 上一版错误地只从内层 `Status` 读取，导致 SIM 没有传给 Anisette 同步流程。同步是否需要应以 SIM 是否存在为准，不能只依赖部分响应才带的 `hsc=434`。
+- **修复**：从 `Response` 读取 SIM，保留旧 `Status` 位置的兼容回退；收到 SIM 后即刷新 Anisette 并自动重试一次。不改客户端身份、不清除 `adi.pb` 或设备标识。
+- **涉及文件**：`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`、`Seal/Infrastructure/Accounts/AppleAccountClient.swift`。
+- **验证状态**：协议字段位置已与 Blackwood 4NT GrandSlam 参考实现对照；`git diff --check` 通过。Windows 无 Xcode，完整 Swift 编译和 IPA 验证需由 iOS CI 执行，真机需复测此前失败的账号添加路径。
+
+---
+
 ## 2026-10-13 自定义色相滑条无法在当前 SDK 编译
 
 - **现象**：Swift 回归编译 `CustomAccentColorEditor` 时，色相滑条和色环的 `.magenta` 报 `Color has no member 'magenta'`，导致 IPA 无法产出。

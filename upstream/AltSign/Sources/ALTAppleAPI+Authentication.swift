@@ -541,8 +541,15 @@ private extension ALTAppleAPI {
 
                         let localizedDescription = errorDescription + " (\(errorCode))"
                         var userInfo: [String: Any] = [NSLocalizedDescriptionKey: localizedDescription]
-                        if let hsc = status["hsc"] { userInfo["ALTAppleAPIStatusHSC"] = hsc }
-                        if let sim = status["X-Apple-I-MD-DATA"] { userInfo["ALTAppleAPIResyncSIM"] = sim }
+                        // `Status` only carries the outcome. When Apple requests an
+                        // Anisette resync, SIM is a sibling in `Response`, not a
+                        // status field. Keep the status fallback for older replies.
+                        if let hsc = dictionary["hsc"] ?? status["hsc"] {
+                            userInfo["ALTAppleAPIStatusHSC"] = hsc
+                        }
+                        if let sim = dictionary["X-Apple-I-MD-DATA"] ?? status["X-Apple-I-MD-DATA"] {
+                            userInfo["ALTAppleAPIResyncSIM"] = sim
+                        }
                         throw NSError(domain: ALTUnderlyingAppleAPIErrorDomain, code: errorCode, userInfo: userInfo)
                     }
                 } catch {
