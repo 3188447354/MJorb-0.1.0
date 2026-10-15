@@ -7,6 +7,26 @@ import AnisetteKit
 struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private static let logger = Logger(subsystem: "com.mjorb.seal", category: "anisette")
 
+    /// Apple 登录边缘只接受「桌面系统、且不是 Xcode」的客户端身份。
+    ///
+    /// 实测证据（真实 ADI、同一 Anisette 服务器、同一请求体，只改 `X-Mme-Client-Info`）：
+    /// - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → HTTP 503
+    /// - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`        → HTTP 200
+    /// - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`     → HTTP 503
+    ///
+    /// 前两行是同一硬件/系统、同一 ADI 的对照，只有应用标识不同。因此
+    /// `ani.stikstore.app` 的 `/v3/client_info` 返回的 Xcode 身份不能原样透传：
+    /// 它会让 Apple 在密码校验前直接回 HTML 503（真机日志里的 `SEAL-NET-503`）。
+    /// 不可用的身份统一替换为 SideInstaller 参考实现固定使用的 macOS/akd 身份。
+    static let acceptedFallbackClientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+
+    static func acceptedClientInfo(_ raw: String) -> String {
+        let lowered = raw.lowercased()
+        let isDesktop = lowered.contains("macos") || lowered.contains("windows")
+        let isXcode = lowered.contains("com.apple.dt.xcode")
+        return (isDesktop && isXcode == false) ? raw : acceptedFallbackClientInfo
+    }
+
     /// Anisette 时间格式（ISO8601 UTC），两处复用，避免每次新建 DateFormatter。
     private static let iso8601UTCFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -346,7 +366,10 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
               userAgent.isEmpty == false else {
             throw AnisetteV3Error.invalidServerResponse
         }
-        return AnisetteV3ClientInfo(clientInfo: clientInfo, userAgent: userAgent)
+        return AnisetteV3ClientInfo(
+            clientInfo: Self.acceptedClientInfo(clientInfo),
+            userAgent: userAgent
+        )
     }
 
     private func provision(

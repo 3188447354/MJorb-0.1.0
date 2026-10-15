@@ -18,11 +18,12 @@ enum AnisetteServerCatalog {
         // SideInstaller 1.5.1 的 RemoteV3 默认服务。REA 静态字符串证据：
         // `DEFAULT_ANISETTE_V3_URL = "https://ani.stikstore.app"`（该字符串
         // 紧邻 `vendor/isideload/src/anisette/remote_v3/mod.rs:175` 的 panic 位置）。
-        // 它返回 macOS/Xcode 身份
+        // ⚠️ 它的 `/v3/client_info` 返回的是 Xcode 身份
         // `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>`，
-        // 与 GrandSlam 固定发送的 `X-Apple-App-Info: com.apple.gs.xcode.auth`
-        // 属于同一个 Xcode 应用，指纹自洽。ani.jkcoxson.com 返回的是
-        // iTunes/Windows 身份，与同一指纹冲突，因此降级到列表末尾兜底。
+        // 而 Apple 登录边缘会直接拒掉声明自己是 Xcode 的客户端（实测同 ADI 同请求下
+        // Xcode 身份 → 503、akd 身份 → 200）。该身份由 `AnisetteV3Client.acceptedClientInfo`
+        // 在身份层替换成可用的 macOS/akd 身份，因此这个服务器可以保留为默认。
+        // `ani.jkcoxson.com` 返回 iTunes/Windows 身份，作为兜底放在列表末尾。
         AnisetteServer(
             id: "sideinstaller-default",
             url: makeURL("https://ani.stikstore.app"),

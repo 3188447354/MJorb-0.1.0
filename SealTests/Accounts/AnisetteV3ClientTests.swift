@@ -22,12 +22,12 @@ struct AnisetteV3ClientTests {
     }
 
     /// SideInstaller 1.5.1 二进制里的 DEFAULT_ANISETTE_V3_URL 是
-    /// `https://ani.stikstore.app`，它返回 macOS/Xcode 身份，与 GrandSlam 固定发送的
-    /// `X-Apple-App-Info: com.apple.gs.xcode.auth` 属于同一个应用。`ani.jkcoxson.com`
-    /// 返回的是 Windows/iTunes 身份，与同一指纹冲突。默认服务器一旦回退成 jkcoxson，
-    /// 添加 Apple ID 又会在 SRP 之前被 Apple 回 503。
+    /// `https://ani.stikstore.app`，Seal 沿用同一个默认服务器。该服务器返回的
+    /// client_info 是 Xcode 身份，会被 Apple 登录边缘拒绝——这一点由
+    /// `serverIdentitiesRejectedByAppleAreReplaced` 在身份层兜住，默认服务器本身
+    /// 不再承担“指纹自洽”的职责。`ani.jkcoxson.com` 作为兜底保留在列表末尾。
     @Test
-    func defaultServerKeepsSideInstallerXcodeIdentity() throws {
+    func defaultServerKeepsSideInstallerDefaultServer() throws {
         let servers = AnisetteServerCatalog.official
         let first = try #require(servers.first)
 
@@ -65,18 +65,54 @@ struct AnisetteV3ClientTests {
 
     @Test
     func clientInfoParsingRequiresBothServerValues() throws {
+        let accepted = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
         let data = try JSONSerialization.data(withJSONObject: [
-            "client_info": "<MacBookPro>",
-            "user_agent": "com.apple.dt.Xcode/1"
+            "client_info": accepted,
+            "user_agent": "akd/1.0 CFNetwork/808.1.4"
         ])
 
         #expect(
             try AnisetteV3Client.parseClientInfo(data: data) ==
                 AnisetteV3ClientInfo(
-                    clientInfo: "<MacBookPro>",
-                    userAgent: "com.apple.dt.Xcode/1"
+                    clientInfo: accepted,
+                    userAgent: "akd/1.0 CFNetwork/808.1.4"
                 )
         )
+    }
+
+    /// 实测（真实 ADI、同一服务器、同一请求体，只改 `X-Mme-Client-Info`）：
+    /// Xcode 身份与 Android 身份都会被 Apple 登录边缘直接回 503，桌面非 Xcode 身份正常。
+    /// 因此 `/v3/client_info` 返回的不可用身份必须替换成参考实现的 macOS/akd 身份。
+    @Test
+    func serverIdentitiesRejectedByAppleAreReplaced() throws {
+        func parsedClientInfo(_ clientInfo: String) throws -> String {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "client_info": clientInfo,
+                "user_agent": "akd/1.0 CFNetwork/808.1.4"
+            ])
+            return try AnisetteV3Client.parseClientInfo(data: data).clientInfo
+        }
+
+        let fallback = AnisetteV3Client.acceptedFallbackClientInfo
+
+        #expect(
+            try parsedClientInfo("<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>")
+                == fallback
+        )
+        #expect(
+            try parsedClientInfo("<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>")
+                == fallback
+        )
+        #expect(
+            try parsedClientInfo("<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>")
+                == fallback
+        )
+
+        let macOSIdentity = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        #expect(try parsedClientInfo(macOSIdentity) == macOSIdentity)
+
+        let windowsIdentity = "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
+        #expect(try parsedClientInfo(windowsIdentity) == windowsIdentity)
     }
 
     @Test

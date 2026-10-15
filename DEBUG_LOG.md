@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-10-15 Apple ID `SEAL-NET-503` 的真实根因：客户端身份声明为 Xcode（构建 19）
+
+- **现象**：构建 19 的真机日志在添加账号后约 2 秒返回 `SEAL-NET-503`，连续四次，未进入密码校验之后的任何阶段。此前补上的 GrandSlam 头部、默认服务器切换都没有消除它。
+- **根因**：**不是**头部缺失，也不是服务器地址。Apple 的登录边缘会直接拒掉「声明自己是 Xcode」的客户端：`X-Mme-Client-Info` 的应用标识为 `com.apple.dt.Xcode` 时，`gsa.apple.com` 在密码校验前返回 HTML 503。
+  - 对照实验（真实 ADI、同一 Anisette 服务器、同一请求体，只改 `X-Mme-Client-Info`）：
+    - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → **HTTP 503**
+    - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **HTTP 200**
+    - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **HTTP 503**
+    - 前两行硬件与系统完全相同，只有应用标识不同；同一结论在 `ani.stikstore.app` 与 `ani.sidestore.io` 两台上各自复现两次。
+  - Seal 的默认服务器 `ani.stikstore.app` 的 `/v3/client_info` 返回的正是这个被拒的 Xcode 身份，而 `AnisetteV3Client` 把它原样透传成 `X-Mme-Client-Info`（`fetchHeaders` 的 `deviceDescription` 与 `appleRequest` 都取它）。这与「服务器身份必须与 Xcode 指纹一致」的旧判断正好相反——那条判断本身就是 503 的来源。
+  - 参考实现（`isideload`）的做法印证了这点：`GrandSlam::fetch_url_bag` 在注释里写明「sending the android client info gets us the wrong url bag, so we lie for this request」，并把该请求的 `X-Mme-Client-Info` 固定为 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`。
+- **修复**：在身份层收口，而不是逐处打补丁。`AnisetteV3Client.parseClientInfo` 解析 `/v3/client_info` 后统一过一遍 `acceptedClientInfo`：只放行「桌面系统且非 Xcode」的身份（macOS / Windows，且不含 `com.apple.dt.Xcode`），其余（Xcode、Android）一律替换为参考实现的 macOS/akd 身份 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`。因为 `fetchHeaders`、`appleRequest` 以及全部门户/续签路径都从同一个 `AnisetteV3ClientInfo` 取值，这一处改动覆盖账号添加、续签、签名三条链路。没有改动 `X-Xcode-Version`、`X-Apple-App-Info`，也没有清除 `adi.pb`、设备标识或已保存账号。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Core/Accounts/AnisetteServer.swift`（更正注释）、`SealTests/Accounts/AnisetteV3ClientTests.swift`。
+- **验证状态**：对照实验在 Windows 本机用真实 ADI 复现，`X-Mme-Client-Info` 的改动是唯一变量；Swift 回归新增 `serverIdentitiesRejectedByAppleAreReplaced` 锁定该替换规则。Windows 无 Xcode，等待云 iOS CI 编译与真机复测「添加 Apple ID 走到验证码输入并完成」。
+
+---
+
+
 ## 2026-10-15 Apple ID 503 的参考实现复核（构建 15）
 
 - **现象**：构建 15 的实机日志连续记录 `SEAL-NET-503`，每次均在添加账号后的约一秒返回，尚未进入双重认证。因此此前加入的 `hsc = 409` 输入框分支没有机会执行。
