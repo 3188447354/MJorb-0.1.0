@@ -54,6 +54,21 @@ struct AppleServiceFailurePolicyTests {
     }
 
     @Test
+    func grandSlamHTML503IsClassifiedAsAppleServiceUnavailable() {
+        // GSA can return a plain-text HTML 503. AltSign exposes that response
+        // as an invalid server-format error, not as an HTTPError.
+        let error = NSError(
+            domain: "AltSign.ALTServerError",
+            code: 1,
+            userInfo: [
+                NSLocalizedDescriptionKey: "Invalid server response: 503 Service Temporarily Unavailable"
+            ]
+        )
+
+        #expect(AppleServiceFailurePolicy.isRateLimited(error))
+    }
+
+    @Test
     func temporaryAppleAuthenticationRejectionDoesNotImplyAccountRestriction() {
         let error = NSError(
             domain: "Apple.APIError",
