@@ -12,7 +12,10 @@ import SwiftBridge
 // GrandSlam is an AuthKit flow, distinct from the later Developer Portal
 // session. Keep its fingerprint aligned with the Android ADI data generated
 // locally and with the 2FA requests below.
-private let grandSlamAuthenticationXcodeVersion = "14.2 (14C18)"
+// SideInstaller 1.5.1（isideload `grandslam.rs` 的 `base_headers`）用的就是
+// 27.0 (27A5218g)，与 `X-Mme-Client-Info` 里的 macOS 27.0 同源。此前的
+// 14.2 (14C18) 是 AltSign 上游的 2022 年旧值，与身份串里的系统版本不一致。
+private let grandSlamAuthenticationXcodeVersion = "27.0 (27A5218g)"
 private let grandSlamAuthenticationAppInfo = "com.apple.gs.xcode.auth"
 
 /// Per-login state. Apple's new `hsc = 409` response means it has already

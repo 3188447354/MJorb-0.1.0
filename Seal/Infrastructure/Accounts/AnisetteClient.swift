@@ -6,6 +6,12 @@ import os
 struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private static let logger = Logger(subsystem: "com.mjorb.seal", category: "anisette")
 
+    /// 与 isideload `grandslam.rs` 的 `base_headers` 逐字一致的两个指纹头，
+    /// 也与 `upstream/AltSign` 的同名常量保持一致（那边作用于 SRP，这边作用于
+    /// provisioning）。
+    private static let grandSlamAuthenticationXcodeVersion = "27.0 (27A5218g)"
+    private static let grandSlamAuthenticationAppInfo = "com.apple.gs.xcode.auth"
+
     /// Apple 登录边缘只放行「桌面系统、且不是 Xcode」的客户端身份。
     ///
     /// 实测证据（`GsService2` 的 `o=init` SRP 请求，合成 anisette 占位、只改
@@ -434,8 +440,9 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         ]
         if let sim {
             payload["sim"] = sim
-            payload["device_id"] = identity.deviceIdentifier
-            payload["md_lu"] = identity.localUserID
+            // isideload 对应字段用 `Uuid::to_string` 与 `hex::encode`，均为小写。
+            payload["device_id"] = identity.deviceIdentifier.lowercased()
+            payload["md_lu"] = identity.localUserID.lowercased()
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
@@ -465,8 +472,9 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         var formatted: [String: String] = [
             "deviceSerialNumber": "0",
             "deviceDescription": clientInfo.clientInfo,
-            "localUserID": identity.localUserID,
-            "deviceUniqueIdentifier": identity.deviceIdentifier,
+            // 与 header 值保持同一小写形态，Apple 看到的设备标识在两处一致。
+            "localUserID": identity.localUserID.lowercased(),
+            "deviceUniqueIdentifier": identity.deviceIdentifier.lowercased(),
             "date": Self.currentDateString(),
             "locale": Locale.current.identifier,
             "timeZone": TimeZone.current.abbreviation() ?? "PST"
@@ -491,21 +499,36 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         identity: AnisetteV3Identity
     ) -> URLRequest {
         var request = URLRequest(url: url)
+        // 与 isideload `GrandSlam::base_headers` + `provisioning_headers` 逐项对齐：
+        // provisioning 请求同样带 `X-Xcode-Version` / `X-Apple-App-Info`（此前漏发），
+        // `Accept` 用 plist 而不是 `*/*`，并且**不发** `X-Apple-I-Client-Time` /
+        // `X-Apple-Locale` / `X-Apple-I-TimeZone` —— isideload 把这三个显式注释掉了，
+        // 说明刻意不发，Seal 不该多发。
         request.setValue(clientInfo.clientInfo, forHTTPHeaderField: "X-Mme-Client-Info")
         request.setValue(clientInfo.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/x-xml-plist", forHTTPHeaderField: "Content-Type")
-        request.setValue("*/*", forHTTPHeaderField: "Accept")
+        request.setValue("text/x-xml-plist", forHTTPHeaderField: "Accept")
+        request.setValue(
+            Self.grandSlamAuthenticationXcodeVersion,
+            forHTTPHeaderField: "X-Xcode-Version"
+        )
+        request.setValue(
+            Self.grandSlamAuthenticationAppInfo,
+            forHTTPHeaderField: "X-Apple-App-Info"
+        )
         // 对齐 AltSign 与 iloader(2.3.3)：gsa.apple.com 对复用上次失败留下的 idle
         // 连接敏感（代理/TUN 切换后残留连接再复用会被 Apple 回 503），关键 provisioning
         // 请求每次走新连接。
         request.setValue("close", forHTTPHeaderField: "Connection")
-        request.setValue(identity.localUserID, forHTTPHeaderField: "X-Apple-I-MD-LU")
-        request.setValue(identity.deviceIdentifier, forHTTPHeaderField: "X-Mme-Device-Id")
-        request.setValue(Self.currentDateString(), forHTTPHeaderField: "X-Apple-I-Client-Time")
-        request.setValue(Locale.current.identifier, forHTTPHeaderField: "X-Apple-Locale")
+        // isideload 用 `hex::encode` 与 `Uuid::to_string`，两者都是小写；此前用大写
+        // 导致与参考实现的 header 值逐字节不一致。
         request.setValue(
-            TimeZone.current.abbreviation() ?? "PST",
-            forHTTPHeaderField: "X-Apple-I-TimeZone"
+            identity.localUserID.lowercased(),
+            forHTTPHeaderField: "X-Apple-I-MD-LU"
+        )
+        request.setValue(
+            identity.deviceIdentifier.lowercased(),
+            forHTTPHeaderField: "X-Mme-Device-Id"
         )
         return request
     }
