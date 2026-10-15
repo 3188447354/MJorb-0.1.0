@@ -276,3 +276,14 @@ on 4.5.2」✗。
 > ⇒ 强烈指向「**启动早期安装通道还没就绪**」✓ —— fail closed **正确** ✓（**保护，不是回归** ✓）。
 > ⚠️ 根因未最终确认（`unavailable` 把**超时**与**抛错**折叠成一个值 ✗）
 > ⇒ 已补诊断（守卫 **R58**：探测带**耗时** ＋ **再问同一个 ID 一次**）⇒ 下份日志即可定性 ✓。
+
+### 2026-10-15 — GrandSlam 503 与 2FA 已推送状态（跟 SideSign #5）
+
+| 对照项 | 上游结论 | Seal 处置 |
+|---|---|---|
+| Android Anisette 指纹 | SideSign `752d1ef`（PR #5）将旧 AuthKit Android 指纹换为 Pixel 8 / Android 14 / Apple Music Android；旧组合会在 Apple GrandSlam 登录入口被拒绝 | **跟**：`AnisetteClient.fetchLocal` 使用同一身份，和本机 CoreADI 数据同源 |
+| `Status.hsc = 409` | Apple 已发送可信设备验证码时可能省略 `au`；上游把它视为 `pushedCode` 并直接显示验证码输入 | **跟**：AltSign 识别顶层/Status `au` 和 `hsc=409`，复用 Seal 现有验证码 broker |
+| 认证会话与重复提示 | 上游每次 GrandSlam 请求关闭连接；已处理 pushed code 后阻止循环再次提示 | **跟**：短生命周期会话 + `Connection: close`；单次登录上下文记录已处理状态 |
+| 503 分类 | 503 是 Apple 登录服务/边缘响应，不是账号状态或 Anisette 服务器事实 | **跟**：`SEAL-NET-503`，只提示稍后重试，不清除现有账号/ADI 标识 |
+
+对照来源：SideStore/SideSign `752d1ef fix: 2FA failing (#5)`（2026-10-13），本地检出 `C:\Users\Administrator\AppData\Local\Temp\SideSign-upstream-20261015`；对照 IPA 使用 REA 完整性证据 `ev_f165b8f040e17eae45e6bc955f29b119bc591d84d41114bf3ef3ce31139da671`。

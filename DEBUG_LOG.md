@@ -5,6 +5,15 @@
 
 ---
 
+## 2026-10-15 Apple ID 登录 503 与已推送验证码不出现
+
+- **现象**：真机添加 Apple ID 时，GrandSlam 初始认证返回纯文本 `503 Service Temporarily Unavailable`；另一部分账号已收到 Apple 双重认证验证码却不显示输入框，随后报 `-22411`。切换 Wi-Fi、流量或代理均无效。
+- **根因**：本地 AltSign 仍使用 Apple 已淘汰的 Android AuthKit 指纹；Apple 在 2026-10 的认证边缘对此组合拒绝。Apple 同时新增了 `Status.hsc = 409`、不再携带 `au` 的“验证码已推送”状态，旧分支把它当成无需 2FA，或再次请求验证码。原错误处理还把 GrandSlam 的 HTML 503 错归到 Anisette，遮蔽了真实认证阶段。
+- **修复**：语义对齐 SideSign 已合入的认证流程：更新 Android Music 身份；每个 GrandSlam 请求使用新会话并关闭连接复用；识别 `hsc=409` 和直接 `au` 状态；验证码已推送时直接唤起 Seal 现有输入框，验证后带同一登录上下文继续认证并防止重复弹窗；可信设备与短信验证使用同一套当前协议头和请求体。503 只归类为 Apple 服务暂不可用，不再伪装成 Anisette 或网络出口故障。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Infrastructure/Accounts/AppleAccountClient.swift`、`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`、`docs/upstream-alignment.md`。
+- **验证状态**：本机通过源代码差异、错误合同和静态安全检查；Windows 无 Xcode，等待完整 iOS CI 编译与真机添加 Apple ID 回归。REA 已验证对照 IPA 的包完整性；此 Windows 环境没有可用 Mach-O 深度反编译提供器，因此二进制行为仍以公开上游已合入源码为准。
+
+---
 ## 2026-10-15 本地 AltSign 的 ldid 嵌套子模块未初始化
 
 - **现象**：依赖拉取完成后，Swift 回归在编译 `native_bridge_ldid.cpp` 时失败：`plist/plist.h` 找不到；同次打包门还发现错误码清单的受管位置未随 Apple ID 修复同步更新。

@@ -15,6 +15,13 @@ import SwiftBridge
 private let grandSlamAuthenticationXcodeVersion = "14.2 (14C18)"
 private let grandSlamAuthenticationAppInfo = "com.apple.gs.xcode.auth"
 
+/// Per-login state. Apple's new `hsc = 409` response means it has already
+/// delivered a trusted-device code. Retrying that branch after a successful
+/// validation would otherwise display the same prompt forever.
+private final class ALTAuthenticationAttemptContext {
+    var handledPushedCode = false
+}
+
 public extension ALTAppleAPI
 {
     @objc func authenticate(appleID unsanitizedAppleID: String,
@@ -23,6 +30,22 @@ public extension ALTAppleAPI
                             xcodeVersion: String,
                             verificationHandler: ((@escaping (String?) -> Void) -> Void)?,
                             completionHandler: @escaping (ALTAccount?, ALTAppleAPISession?, Error?) -> Void) {
+        authenticate(appleID: unsanitizedAppleID,
+                     password: password,
+                     anisetteData: anisetteData,
+                     xcodeVersion: xcodeVersion,
+                     attemptContext: ALTAuthenticationAttemptContext(),
+                     verificationHandler: verificationHandler,
+                     completionHandler: completionHandler)
+    }
+
+    private func authenticate(appleID unsanitizedAppleID: String,
+                              password: String,
+                              anisetteData: ALTAnisetteData,
+                              xcodeVersion: String,
+                              attemptContext: ALTAuthenticationAttemptContext,
+                              verificationHandler: ((@escaping (String?) -> Void) -> Void)?,
+                              completionHandler: @escaping (ALTAccount?, ALTAppleAPISession?, Error?) -> Void) {
         // Authenticating only works with lowercase email address, even if Apple ID contains capital letters.
         let sanitizedAppleID = unsanitizedAppleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
@@ -154,29 +177,42 @@ public extension ALTAppleAPI
                             verboseLog("[AltSign] Parse complete. dsid: \(dsid), token: \(idmsToken)")
                             context.dsid = dsid
 
-                            let authType = statusDictionary["au"] as? String
+                            // Apple can now omit `au` and return hsc=409 after
+                            // it has already pushed a code to the trusted device.
+                            // Treat that response as 2FA instead of attempting
+                            // apptokens, which leaves the UI with no code field.
+                            let highSecurityCode = (statusDictionary["hsc"] as? NSNumber)?.intValue
+                                ?? (statusDictionary["hsc"] as? String).flatMap(Int.init)
+                            let authType = (statusDictionary["au"] as? String)
+                                ?? (responseDictionary["au"] as? String)
+                                ?? (highSecurityCode == 409 ? "pushedCode" : nil)
                             verboseLog("[AltSign] Authentication status type: \(authType ?? "nil")")
 
                             switch authType {
-                            case "trustedDeviceSecondaryAuth":
+                            case "trustedDeviceSecondaryAuth", "trustedDevice", "pushedCode":
                                 guard let verificationHandler = verificationHandler else { throw ALTAppleAPIError.requiresTwoFactorAuthentication }
+                                let pushedCode = authType == "pushedCode"
+                                guard !pushedCode || !attemptContext.handledPushedCode else {
+                                    throw ALTAppleAPIError.requiresTwoFactorAuthentication
+                                }
 
-                                self.requestTrustedDeviceTwoFactorCode(dsid: dsid, idmsToken: idmsToken, anisetteData: anisetteData, verificationHandler: verificationHandler) { result in
+                                self.requestTrustedDeviceTwoFactorCode(dsid: dsid, idmsToken: idmsToken, anisetteData: anisetteData, isCodeAlreadySent: pushedCode, verificationHandler: verificationHandler) { result in
                                     switch result {
                                     case let .failure(error): completionHandler(nil, nil, error)
                                     case .success:
-                                        self.authenticate(appleID: unsanitizedAppleID, password: password, anisetteData: anisetteData, xcodeVersion: xcodeVersion, verificationHandler: verificationHandler, completionHandler: completionHandler)
+                                        attemptContext.handledPushedCode = attemptContext.handledPushedCode || pushedCode
+                                        self.authenticate(appleID: unsanitizedAppleID, password: password, anisetteData: anisetteData, xcodeVersion: xcodeVersion, attemptContext: attemptContext, verificationHandler: verificationHandler, completionHandler: completionHandler)
                                     }
                                 }
 
-                            case "secondaryAuth":
+                            case "secondaryAuth", "sms", "voice", "phone":
                                 guard let verificationHandler = verificationHandler else { throw ALTAppleAPIError.requiresTwoFactorAuthentication }
 
                                 self.requestSMSTwoFactorCode(dsid: dsid, idmsToken: idmsToken, anisetteData: anisetteData, verificationHandler: verificationHandler) { result in
                                     switch result {
                                     case let .failure(error): completionHandler(nil, nil, error)
                                     case .success:
-                                        self.authenticate(appleID: unsanitizedAppleID, password: password, anisetteData: anisetteData, xcodeVersion: xcodeVersion, verificationHandler: verificationHandler, completionHandler: completionHandler)
+                                        self.authenticate(appleID: unsanitizedAppleID, password: password, anisetteData: anisetteData, xcodeVersion: xcodeVersion, attemptContext: attemptContext, verificationHandler: verificationHandler, completionHandler: completionHandler)
                                     }
                                 }
 
@@ -260,6 +296,7 @@ private extension ALTAppleAPI {
     func requestTrustedDeviceTwoFactorCode(dsid: String,
                                            idmsToken: String,
                                            anisetteData: ALTAnisetteData,
+                                           isCodeAlreadySent: Bool = false,
                                            verificationHandler: @escaping (@escaping (String?) -> Void) -> Void,
                                            completionHandler: @escaping (Result<Void, Error>) -> Void) {
         verboseLog("[AltSign] requestTrustedDeviceTwoFactorCode starting for dsid: \(dsid)")
@@ -268,7 +305,7 @@ private extension ALTAppleAPI {
 
         let request = makeTwoFactorCodeRequest(url: requestURL, dsid: dsid, idmsToken: idmsToken, anisetteData: anisetteData)
 
-        let requestCodeTask = freshAuthenticationDataTask(with: request) { data, response, error in
+        let requestCodeHandler: (Data?, URLResponse?, Error?) -> Void = { data, response, error in
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
             let responseStr = data != nil ? self.formatPayloadJSON(data!) : "nil"
@@ -335,7 +372,15 @@ private extension ALTAppleAPI {
             }
         }
 
-        requestCodeTask.resume()
+        if isCodeAlreadySent {
+            // hsc=409 means Apple has already delivered the trusted-device
+            // code. Requesting another one can be rejected, so prompt for the
+            // code immediately.
+            requestCodeHandler(nil, nil, nil)
+        } else {
+            let requestCodeTask = freshAuthenticationDataTask(with: request, completionHandler: requestCodeHandler)
+            requestCodeTask.resume()
+        }
     }
 
     func requestSMSTwoFactorCode(dsid: String,
@@ -352,11 +397,16 @@ private extension ALTAppleAPI {
 
         do {
             let body = [
-                "phoneNumber": ["id": 1],
-                "mode": "sms"
+                "serverInfo": [
+                    "mode": "sms",
+                    "phoneNumber.id": "1"
+                ]
             ] as [String: Any]
-            let bodyData = try JSONSerialization.data(withJSONObject: body)
-            request.httpBody = bodyData
+            request.httpBody = try PropertyListSerialization.data(
+                fromPropertyList: body,
+                format: .xml,
+                options: 0
+            )
         } catch {
             verboseLog("[AltSign] requestSMSTwoFactorCode serialization failed: \(error)")
             completionHandler(.failure(error))
@@ -384,12 +434,17 @@ private extension ALTAppleAPI {
                         request.httpMethod = "POST"
 
                         let body = [
-                            "securityCode": ["code": verificationCode],
-                            "phoneNumber": ["id": 1],
-                            "mode": "sms"
+                            "securityCode.code": verificationCode,
+                            "serverInfo": [
+                                "mode": "sms",
+                                "phoneNumber.id": "1"
+                            ]
                         ] as [String: Any]
-                        let bodyData = try JSONSerialization.data(withJSONObject: body)
-                        request.httpBody = bodyData
+                        request.httpBody = try PropertyListSerialization.data(
+                            fromPropertyList: body,
+                            format: .xml,
+                            options: 0
+                        )
 
                         verboseLog("[AltSign] requestSMSTwoFactorCode verifying code...")
                         let verifyCodeTask = self.freshAuthenticationDataTask(with: request) { _, response, error in
@@ -503,18 +558,16 @@ private extension ALTAppleAPI {
             let httpHeaders = [
                 "Content-Type": "text/x-xml-plist",
                 "X-MMe-Client-Info": anisetteData.deviceDescription,
-                // Apple's GSA endpoint expects the same AuthKit request
-                // contract for the initial SRP exchange as it does for the
-                // verification exchange. A generic Accept header and missing
-                // AuthKit app identity can be rejected before 2FA reaches its
-                // input callback (-22411).
-                "Accept": "text/x-xml-plist",
-                // Must match the Android AuthKit identity used to produce the
-                // localODA anisette data. GSA rejects the old Xcode/macOS
-                // fingerprint before password verification with -80045.
-                "User-Agent": "akd/1.0 CFNetwork/808.1.4",
-                "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
-                "X-Apple-App-Info": grandSlamAuthenticationAppInfo
+                // Keep the GrandSlam contract aligned with current SideSign.
+                // The client-info remains the Android identity which produced
+                // the CoreADI data; the AuthKit user agent is Apple's current
+                // Xcode-facing GrandSlam contract.
+                "Accept": "*/*",
+                "User-Agent": "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)",
+                // Apple can return an edge 503 for a reused GSA connection.
+                // Authentication sessions are already short-lived; this also
+                // tells the transport not to retain this connection.
+                "Connection": "close"
             ]
 
             let bodyData = try PropertyListSerialization.data(fromPropertyList: parameters, format: .xml, options: 0)
@@ -599,26 +652,15 @@ private extension ALTAppleAPI {
         let identityTokenData = identityToken.data(using: .utf8)!
         let encodedIdentityToken = identityTokenData.base64EncodedString()
 
-        // The GrandSlam login and validation endpoint use the Android identity
-        // that matches localODA. Apple's /auth pages are a separate flow and
-        // require a Mac AuthKit client identity; presenting Android there
-        // returns 403 before the verification code is processed.
-        let isAuthEndpoint = url.path.hasPrefix("/auth/")
-        let isPhoneEndpoint = url.path == "/auth/verify/phone" || url.path == "/auth/verify/phone/securitycode"
-        let clientInfo: String
-        if isAuthEndpoint {
-            clientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
-        } else {
-            clientInfo = anisetteData.deviceDescription
-        }
+        // Apple's current flow requires one coherent identity across the
+        // GrandSlam and /auth/ validation legs. Mixing in a fabricated Mac
+        // AuthKit identity after Android CoreADI provisioning leads to -22411.
         let httpHeaders = [
-            "Accept": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
+            "Accept": "application/x-buddyml",
             "Accept-Language": "en-us",
-            "Content-Type": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
-            "User-Agent": "akd/1.0 CFNetwork/808.1.4",
+            "Content-Type": "application/x-plist",
+            "User-Agent": "Xcode",
             "X-Apple-App-Info": grandSlamAuthenticationAppInfo,
-            // The 2FA endpoints bind their Mac AuthKit identity to this Xcode
-            // build. Keep it separate from the Developer Portal's Xcode value.
             "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
             "X-Apple-Identity-Token": encodedIdentityToken,
             "X-Apple-I-MD-M": anisetteData.machineID,
@@ -626,10 +668,12 @@ private extension ALTAppleAPI {
             "X-Apple-I-MD-LU": anisetteData.localUserID,
             "X-Apple-I-MD-RINFO": "\(anisetteData.routingInfo)",
             "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier,
-            "X-MMe-Client-Info": clientInfo,
+            "X-MMe-Client-Info": anisetteData.deviceDescription,
+            "X-Apple-I-SRL-NO": anisetteData.deviceSerialNumber,
             "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
             "X-Apple-Locale": anisetteData.locale.sanitizedIdentifier,
-            "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST"
+            "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST",
+            "Connection": "close"
         ]
 
         var request = URLRequest(url: url)

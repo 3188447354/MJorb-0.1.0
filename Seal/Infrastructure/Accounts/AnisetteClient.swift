@@ -136,8 +136,11 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         let uuid = try self.uuid(from: identity)
         // localODA produces Android ADI data. Apple rejects GrandSlam sign-in
         // when that data is presented as a macOS machine, returning -80045.
-        // Keep this in sync with the AuthKit user agent in AltSign.
-        let clientInfo = "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        // Apple began rejecting the former Android AuthKit fingerprint at the
+        // GrandSlam edge in October 2026. This is the current Android Music
+        // identity used by SideStore/SideSign's on-device Anisette flow.
+        // It must stay paired with the Android CoreADI libraries bundled here.
+        let clientInfo = "<Pixel 8><Android; 14; UQ1A.240205.004><com.apple.AuthKit/1 (com.apple.android.music/4.9.6)>"
 
         // 第一次尝试：用 keychain 中已有的 adi.pb
         let existingState = try? await store.load()

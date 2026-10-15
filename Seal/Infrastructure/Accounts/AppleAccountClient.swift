@@ -86,22 +86,17 @@ final class AppleAccountClient {
         }
     }
 
-    /// 判断认证错误是否值得"清本地指纹、换远程 Anisette"后自动重试一次。
-    /// 覆盖：Apple 判 anisette 无效、认证端点返回 HTML 导致 plist 解析失败(NSCocoa 3840)、坏服务器响应。
+    /// 只识别 Apple 明确声明为无效 Anisette 的错误。
+    ///
+    /// GrandSlam 的 HTML 503 只是 Apple 登录边缘返回的服务错误，不能借此
+    /// 推断本机 Anisette 损坏，更不能引导用户清理签名环境。
     private nonisolated static func shouldRetryWithRemoteAnisette(_ error: Error) -> Bool {
         if case ALTAppleAPIError.invalidAnisetteData = error { return true }
-        let ns = error as NSError
-        if ns.domain == NSCocoaErrorDomain, ns.code == 3840 { return true }
-        if let urlError = error as? URLError, urlError.code == .badServerResponse { return true }
-        // AltSign invalidResponse（Apple 返回 503/HTML 等非 plist 响应）也换远程 Anisette 重试
-        if ns.domain == "AltSign.ALTServerError", ns.code == 1 { return true }
-        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
-           underlying.domain == NSCocoaErrorDomain, underlying.code == 3840 { return true }
         return false
     }
 
-    /// Apple 认证/团队请求直接发出，不做 503 自动重试：503 是线路出口不对，重试也通不了，
-    /// 交给上游 `AppleAuthenticationFailure.make` 归成「切换到非国内梯子」。
+    /// Apple 认证/团队请求直接发出。服务端暂不可用由统一失败策略如实呈现，
+    /// 不把它猜测成网络出口或账号状态问题。
     private static func directAppleRequest<T>(
         _ operation: @escaping () async throws -> T
     ) async throws -> T {
@@ -249,7 +244,12 @@ final class AppleAccountClient {
         } catch let failure as ImportFailure {
             throw failure
         } catch {
-            // Apple 判 anisette 无效 / 认证端点返回 HTML(3840) / 坏服务器响应：
+            if AppleServiceFailurePolicy.isRateLimited(error) {
+                throw AppleServiceFailurePolicy.rateLimitedFailure(
+                    underlying: error
+                )
+            }
+            // Apple 明确判 Anisette 无效时：
             // 不做任何自动重置（machineID 变化会让已登录账号全部掉线），
             // 以明确的错误呈现，由用户决定是否手动重置签名环境。
             if Self.shouldRetryWithRemoteAnisette(error) {
