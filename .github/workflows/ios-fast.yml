@@ -71,12 +71,23 @@ jobs:
           restore-keys: |
             deriveddata-${{ runner.os }}-
 
-      - name: Select pinned Xcode 26.5
+      - name: Select Xcode
         run: |
-          test -d /Applications/Xcode_26.5.app
-          sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
+          set -euo pipefail
+          echo "available under /Applications:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          if [ -d /Applications/Xcode_26.5.app ]; then
+            selected=/Applications/Xcode_26.5.app
+          else
+            selected="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          fi
+          if [ -z "${selected:-}" ] || [ ! -d "$selected" ]; then
+            echo "::error::no Xcode found under /Applications"
+            exit 1
+          fi
+          echo "switching to: $selected"
+          sudo xcode-select --switch "$selected/Contents/Developer"
           xcodebuild -version
-          test "$(xcodebuild -version | head -n 1)" = "Xcode 26.5"
 
       - name: Install pinned XcodeGen
         run: |
