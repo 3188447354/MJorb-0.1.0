@@ -70,8 +70,8 @@ Seal 的是**自己的 wrapper**（`struct AnisetteV3Client: AnisetteEnvironment
 | **2026-10-15** | **AltSign 原生子模块锁定** | Seal 已把 AltSign 切为本地 SwiftPM path，但嵌入源码树不含 `ldid`、`minizip-ng` 两个 Git 子模块；ldid 还锁定了 `libplist` 子模块，未初始化时 CI 找不到 `plist/plist.h` | AltSign 的 `NativeBridge` 直接包含其 `.gitmodules` 中锁定的 ldid/minizip-ng 代码，ldid 再以 Gitlink 锁定 libplist | **跟完整锁定树**：所有 iOS 构建工作流先拉取 AltSign 记录的两个精确提交，再初始化 ldid 的递归子模块后解析本地 SwiftPM 包；不拉取浮动最新版。 |
 | **2026-10-14** | **SideInstaller / isideload App ID 名额预检** | Seal 只读取 `appIds`，丢弃 Apple 同一回复的 `availableQuantity`。因此日志可见“当前存活 8 个”，却不知道 Apple 当前只允许新建 0 个；多扩展应用会按目标逐个创建，额度不足时可能留下部分新建的 App ID | SideInstaller 的 `list_app_ids` 解析 `maxQuantity` / `availableQuantity`；只有 Apple 返回非负可用数且不足时，才在任何 `add_app_id` 前停止；字段缺失或负数时仍让 Apple 最终裁决 | **跟**：AltSign 返回 App ID 清单及 Apple 配额，Seal 在创建前比较本次真实新增数量和 `availableQuantity`，不足时零写入结束；保留原有 Apple 错误兜底。 |
 | **2026-10-14** | **AltSign 构建来源一致性** | `upstream/AltSign/**` 触发 CI，但 Seal 的 SwiftPM 包仍锁定远程 revision，仓库内认证修复不会参与编译 | SwiftPM 本地 path 依赖会把受版本控制的当前源码直接交给 Xcode 构建 | **跟本地源码构建原则**：AltSign 改为 `path: upstream/AltSign`，CI 的触发路径和实际编译输入一致。 |
-| **2026-10-14** | **SideInstaller / isideload 双重认证端点契约** | Seal 已把 `/auth` 设备名改为 Mac，但继续发送 Developer Portal 的 `X-Xcode-Version: 26.0`、BuddyML/XML 手机验证码请求；另一账号在输入回调前收到 `-22411` | isideload 的 Mac AuthKit 验证码请求固定 `X-Xcode-Version: 14.2 (14C18)`；可信设备请求使用 XML plist，手机验证码使用 JSON，路径为 `PUT /auth/verify/phone` 与 `POST /auth/verify/phone/securitycode` | **跟**：所有双重认证请求使用配套 Xcode 标识；可信设备和 GrandSlam 校验保持 XML plist，手机验证码改为 JSON `PUT`/`POST`。初始 GrandSlam 继续使用 Android ADI 身份。 |
-| **2026-10-14** | **SideInstaller / isideload Android ADI 认证身份** | Seal 的 `localODA` 使用 Android ADI 库，却用 macOS `MacBookPro18,3` client info 生成 Anisette，并用 Xcode/macOS User-Agent 发起 GrandSlam；真机构建 2 在密码验证前持续收到 `-80045`，且双重认证 `/auth` 页仍使用旧 Xcode/Android 组合 | SideInstaller 的 isideload 明确指出：Android ADI 必须声明 Android 客户端，否则 Apple 从 2026-10-12 起在 GrandSlam 初始登录拒绝 `-80045`；其固定组合为 Pixel 7 / Android 14 AuthKit 和 `akd/1.0 CFNetwork/808.1.4`。它对验证码 `/auth` 页面单独使用 Mac AuthKit client info，验证码提交仍使用 Android 身份，且所有认证请求避免复用空闲连接 | **跟**：本地 ADI 与 GrandSlam 改用同一套 Pixel 7 / Android AuthKit 身份；双重认证仅 `/auth` 页使用 Mac AuthKit identity，验证提交使用 Android；所有认证请求均使用短生命周期连接，且所有路径使用 `akd` User-Agent。不主动清除 `adi.pb` 或设备标识，沿现有“Device not provisioned”分支才重新 provision。 |
+| **2026-10-15** | **SideInstaller / isideload 双重认证端点契约** | Seal 曾混入 Xcode/BuddyML 与 plist 手机验证码格式，导致部分账号在输入回调前报 `-22411` | isideload 使用同一 Android `akd` 请求身份；可信设备为 XML plist，手机验证码为 JSON，路径为 `PUT /auth/verify/phone` 与 `POST /auth/verify/phone/securitycode` | **跟**：所有认证请求使用同一 `akd` 身份；可信设备保持 XML plist，手机验证码为 JSON `PUT`/`POST`，并保留 `hsc=409` 时直接显示输入。 |
+| **2026-10-15** | **SideInstaller / isideload Android ADI 认证身份** | Seal 曾把不同项目的 Pixel 8 / Apple Music 与 Xcode 身份混进本地 Android ADI 流程，真机构建 15 在密码验证前连续收到 HTML 503 | SideInstaller/isideload 的可工作组合是 Pixel 7 / Android 14 `com.apple.akd/1.0` 与 `akd/1.0 CFNetwork/808.1.4`；所有认证请求关闭空闲连接复用 | **跟**：本地 ADI、GrandSlam 和验证码端点统一到此组合；每次认证请求走新连接；不主动清除 `adi.pb` 或设备标识，只有 Apple 明确 `Device not provisioned` 时重新 provision。 |
 | **2026-10-14** | **SideInstaller / isideload GrandSlam 连接生命周期** | `ALTAppleAPI` 用一个长期 ephemeral `URLSession` 发送所有 GrandSlam `init` / `complete` 请求，仍会复用该 session 的空闲连接 | SideInstaller 依赖的 isideload 在 `GrandSlam::build_reqwest_client` 中设置 `pool_max_idle_per_host(0)`，注释明确为每个请求使用新连接，以规避 GSA 在复用连接上返回认证失败 | **跟连接隔离原则**：仅认证请求改用每请求一个短生命周期 `URLSession`，完成即 `finishTasksAndInvalidate()`；不改 `client_info`、不更换本地 Anisette 策略。 |
 | **2026-10-14** | **SideInstaller / isideload 429 重试** | Seal 已把 Apple 的临时拒绝归类为可恢复错误并提示用户等待后手动重试 | SideInstaller 对部分 GrandSlam 请求自动等待 2 秒、5 秒后重发 | **不跟**：账号刚被拒绝后自动连续重登会放大 Apple 限流；保留一次操作一次请求的行为。该差异不参与 `-80045` 的身份校验。 |
 | **2026-10-14** | **SideInstaller / isideload URL Bag** | Seal 仅使用已验证的 GrandSlam 和认证固定端点，失败发生在初始 GrandSlam 登录之前 | SideInstaller 先以 Mac 身份读取 URL Bag，再取得部分认证 URL | **不跟**：当前请求端点明确且初始登录早于 URL Bag 所覆盖的步骤；引入动态端点会扩大认证面，不能解决本次 `-80045`。 |
@@ -277,13 +277,14 @@ on 4.5.2」✗。
 > ⚠️ 根因未最终确认（`unavailable` 把**超时**与**抛错**折叠成一个值 ✗）
 > ⇒ 已补诊断（守卫 **R58**：探测带**耗时** ＋ **再问同一个 ID 一次**）⇒ 下份日志即可定性 ✓。
 
-### 2026-10-15 — GrandSlam 503 与 2FA 已推送状态（跟 SideSign #5）
+### 2026-10-15 — GrandSlam 503、2FA 与 SideInstaller 对齐
 
 | 对照项 | 上游结论 | Seal 处置 |
 |---|---|---|
-| Android Anisette 指纹 | SideSign `752d1ef`（PR #5）将旧 AuthKit Android 指纹换为 Pixel 8 / Android 14 / Apple Music Android；旧组合会在 Apple GrandSlam 登录入口被拒绝 | **跟**：`AnisetteClient.fetchLocal` 使用同一身份，和本机 CoreADI 数据同源 |
+| Android Anisette 指纹 | 用户提供且已能登录的 SideInstaller IPA 及其 isideload 源码使用 Pixel 7 / Android 14 / `com.apple.akd/1.0` | **跟**：`AnisetteClient.fetchLocal` 使用相同身份，并和本机 CoreADI 数据同源 |
+| GrandSlam 与 2FA 请求契约 | SideInstaller/isideload 使用 `akd/1.0 CFNetwork/808.1.4`；初始与可信设备请求为 XML plist，短信端点为 JSON PUT/POST | **跟**：不再混入 SideSign 的 Xcode/buddyml 或 Apple Music 身份 |
 | `Status.hsc = 409` | Apple 已发送可信设备验证码时可能省略 `au`；上游把它视为 `pushedCode` 并直接显示验证码输入 | **跟**：AltSign 识别顶层/Status `au` 和 `hsc=409`，复用 Seal 现有验证码 broker |
 | 认证会话与重复提示 | 上游每次 GrandSlam 请求关闭连接；已处理 pushed code 后阻止循环再次提示 | **跟**：短生命周期会话 + `Connection: close`；单次登录上下文记录已处理状态 |
 | 503 分类 | 503 是 Apple 登录服务/边缘响应，不是账号状态或 Anisette 服务器事实 | **跟**：`SEAL-NET-503`，只提示稍后重试，不清除现有账号/ADI 标识 |
 
-对照来源：SideStore/SideSign `752d1ef fix: 2FA failing (#5)`（2026-10-13），本地检出 `C:\Users\Administrator\AppData\Local\Temp\SideSign-upstream-20261015`；对照 IPA 使用 REA 完整性证据 `ev_f165b8f040e17eae45e6bc955f29b119bc591d84d41114bf3ef3ce31139da671`。
+对照来源：用户提供 `sideinstaller-v1.5.1-d85d59dab8cd.ipa` 的 REA 静态字符串，以及 `nab138/isideload` 当前源码（本地检出 `C:\Users\Administrator\AppData\Local\Temp\isideload-reference-20261015`）；对照 IPA 使用 REA 完整性证据 `ev_f165b8f040e17eae45e6bc955f29b119bc591d84d41114bf3ef3ce31139da671`。

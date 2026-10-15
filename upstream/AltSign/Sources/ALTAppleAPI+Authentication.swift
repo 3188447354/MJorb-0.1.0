@@ -397,16 +397,10 @@ private extension ALTAppleAPI {
 
         do {
             let body = [
-                "serverInfo": [
-                    "mode": "sms",
-                    "phoneNumber.id": "1"
-                ]
+                "phoneNumber": ["id": 1],
+                "mode": "sms"
             ] as [String: Any]
-            request.httpBody = try PropertyListSerialization.data(
-                fromPropertyList: body,
-                format: .xml,
-                options: 0
-            )
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
         } catch {
             verboseLog("[AltSign] requestSMSTwoFactorCode serialization failed: \(error)")
             completionHandler(.failure(error))
@@ -434,17 +428,11 @@ private extension ALTAppleAPI {
                         request.httpMethod = "POST"
 
                         let body = [
-                            "securityCode.code": verificationCode,
-                            "serverInfo": [
-                                "mode": "sms",
-                                "phoneNumber.id": "1"
-                            ]
+                            "securityCode": ["code": verificationCode],
+                            "phoneNumber": ["id": 1],
+                            "mode": "sms"
                         ] as [String: Any]
-                        request.httpBody = try PropertyListSerialization.data(
-                            fromPropertyList: body,
-                            format: .xml,
-                            options: 0
-                        )
+                        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
                         verboseLog("[AltSign] requestSMSTwoFactorCode verifying code...")
                         let verifyCodeTask = self.freshAuthenticationDataTask(with: request) { _, response, error in
@@ -558,12 +546,12 @@ private extension ALTAppleAPI {
             let httpHeaders = [
                 "Content-Type": "text/x-xml-plist",
                 "X-MMe-Client-Info": anisetteData.deviceDescription,
-                // Keep the GrandSlam contract aligned with current SideSign.
-                // The client-info remains the Android identity which produced
-                // the CoreADI data; the AuthKit user agent is Apple's current
-                // Xcode-facing GrandSlam contract.
-                "Accept": "*/*",
-                "User-Agent": "AuthKit/1 (Macintosh; OS X 26.6) (com.apple.dt.Xcode/26.0)",
+                // The GrandSlam endpoint must use the Android AuthKit user
+                // agent paired with the local CoreADI data. SideInstaller's
+                // working flow uses this profile; an Xcode/macOS UA here makes
+                // GSA reject the initial request as an HTML 503.
+                "Accept": "text/x-xml-plist",
+                "User-Agent": "akd/1.0 CFNetwork/808.1.4",
                 // Apple can return an edge 503 for a reused GSA connection.
                 // Authentication sessions are already short-lived; this also
                 // tells the transport not to retain this connection.
@@ -652,14 +640,16 @@ private extension ALTAppleAPI {
         let identityTokenData = identityToken.data(using: .utf8)!
         let encodedIdentityToken = identityTokenData.base64EncodedString()
 
-        // Apple's current flow requires one coherent identity across the
-        // GrandSlam and /auth/ validation legs. Mixing in a fabricated Mac
-        // AuthKit identity after Android CoreADI provisioning leads to -22411.
+        // Keep every /auth request on the Android AuthKit identity used for
+        // the GrandSlam SRP exchange. This is SideInstaller's working flow;
+        // its phone endpoints use JSON while the trusted-device endpoints use
+        // XML plist.
+        let isPhoneEndpoint = url.path == "/auth/verify/phone" || url.path == "/auth/verify/phone/securitycode"
         let httpHeaders = [
-            "Accept": "application/x-buddyml",
+            "Accept": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
             "Accept-Language": "en-us",
-            "Content-Type": "application/x-plist",
-            "User-Agent": "Xcode",
+            "Content-Type": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
+            "User-Agent": "akd/1.0 CFNetwork/808.1.4",
             "X-Apple-App-Info": grandSlamAuthenticationAppInfo,
             "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
             "X-Apple-Identity-Token": encodedIdentityToken,
@@ -669,7 +659,6 @@ private extension ALTAppleAPI {
             "X-Apple-I-MD-RINFO": "\(anisetteData.routingInfo)",
             "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier,
             "X-MMe-Client-Info": anisetteData.deviceDescription,
-            "X-Apple-I-SRL-NO": anisetteData.deviceSerialNumber,
             "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
             "X-Apple-Locale": anisetteData.locale.sanitizedIdentifier,
             "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST",

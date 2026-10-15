@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-15 Apple ID 503 的参考实现复核（构建 15）
+
+- **现象**：构建 15 的实机日志连续记录 `SEAL-NET-503`，每次均在添加账号后的约一秒返回，尚未进入双重认证。因此此前加入的 `hsc = 409` 输入框分支没有机会执行。
+- **根因**：构建 15 把当前 SideSign 的 Pixel 8 / Apple Music Android 身份与 Seal 现有的本地 CoreADI 流程混合，又将 GrandSlam 初始请求改成 Xcode/macOS User-Agent。这并不是用户提供的、已能登录的 SideInstaller 的实际协议。对照该 IPA 的可观察字符串以及它使用的 `nab138/isideload` 源码，成功路径使用 Pixel 7 Android `akd` 身份、`akd/1.0 CFNetwork/808.1.4`，可信设备走 XML plist，短信验证码走 JSON。错误组合会被 Apple 在密码验证之前以 HTML 503 拒绝。
+- **修复**：以 SideInstaller/isideload 为唯一认证参考，统一本地 Anisette client info、GrandSlam User-Agent 和 `/auth` 2FA User-Agent；恢复 `/auth/verify/phone` 的 JSON PUT/POST 契约；保留先前已修复的 `hsc = 409` 已推送验证码直接展示、SIM 同步、短连接和错误分类。没有清除 `adi.pb`、设备标识或已保存账号。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`、`docs/upstream-alignment.md`。
+- **验证状态**：源代码字段已逐项对照 SideInstaller 所依赖的 isideload 当前源码以及用户提供 IPA 的静态字符串；待云 iOS CI 编译、打包后以这份失败日志对应的实机账号验证“密码 → 验证码输入 → 添加完成”。
+
+---
+
 ## 2026-10-15 Apple ID 登录 503 与已推送验证码不出现
 
 - **现象**：真机添加 Apple ID 时，GrandSlam 初始认证返回纯文本 `503 Service Temporarily Unavailable`；另一部分账号已收到 Apple 双重认证验证码却不显示输入框，随后报 `-22411`。切换 Wi-Fi、流量或代理均无效。
