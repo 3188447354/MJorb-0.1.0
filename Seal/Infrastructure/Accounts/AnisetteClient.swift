@@ -129,35 +129,8 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
 
     /// 合并进行中的本地生成：超时被遗弃的任务仍在后台运行，重试必须合并等待
     /// 同一任务，而不是并行再起一个 ADI 实例互相污染（表现为 Apple 拒绝 anisette）。
-    /// 合并进行中的本地生成：超时被遗弃的任务仍在后台运行，重试必须合并等待
-    /// 同一任务，而不是并行再起一个 ADI 实例互相污染（表现为 Apple 拒绝 anisette）。
-    // ── 认证身份固定（2026-10-15）────────────────────────────────────────────
-    //
-    // 背景（一手来源：FrizzleM/SideInstaller 内嵌 vendor/isideload/src/auth/grandslam.rs）：
-    // 该实现对 Apple 封锁过程的逐日记录是——
-    //   · 2026-10-13：以**安卓**身份问 gsa.apple.com/auth 的二次验证页，Apple 回**空 403**；
-    //   · 2026-10-13：以 **Mac** 身份问当天仍可用；
-    //   · 2026-10-15：Apple 对 Mac 身份回**伪造的 identity token + 401**——Mac 也被封；
-    //   · 2026-10-15 起：改用 **Windows PC** 身份，且**整个登录流程只用这一个身份**。
-    // 其注释的原话是：
-    //   "one client for a whole sign-in is what Apple's own clients send,
-    //    and a Mac on those pages alone is a mix Apple can close."
-    //
-    // 本机实测（2026-10-15）public anisette 服务器 `/v3/client_info` 返回的身份：
-    //   ani.sidestore.io / ani.sidestore.app
-    //     → <MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>
-    //   ani.stikstore.app / anisette.crystall1ne.dev / ani.npeg.us
-    //     → <MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>
-    //   ⇒ **没有任何一台给 Windows PC 身份**，所以必须本地固定，不能依赖服务器。
-    //
-    // 固定点在 `parseClientInfo`：那里是 client_info 的唯一收口，ADI 身份戳、
-    // get_headers 的 X-Mme-Client-Info、以及 ALTAnisetteData.deviceDescription
-    // 全部由它派生，改一处即三处一致（Apple 判的就是这个一致性）。
-    private static let authenticationClientInfo =
-        "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
-
-    /// 认证路径的固定 locale：与上面声明的身份串保持同一套，不取设备 locale
-    /// （中文机的 zh_CN 会与 en_US 的身份串自相矛盾）。
+    /// 认证路径的固定 locale：与身份串保持同一套声明，不取设备 locale
+    /// （中文机取 `Locale.current` 会得到 zh_CN，与身份串自相矛盾）。
     private static let authenticationLocaleIdentifier = "en_US"
 
     private func fetchLocalCoalesced(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
@@ -473,29 +446,22 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
               userAgent.isEmpty == false else {
             throw AnisetteV3Error.invalidServerResponse
         }
-        // 服务器只回 macOS 身份：本机实测（2026-10-15）13 台公共服务器里，
-        // ani.sidestore.io / ani.sidestore.app 回 <MacBookPro13,2> <macOS;13.1;22C65>
-        // <com.apple.AuthKit/1 (com.apple.akd/1.0)>，其余回 (com.apple.dt.Xcode/3594.4.19)，
-        // **没有一台回 Windows PC 身份**。而 Apple 自 2026-10-15 起已封 Mac 身份
-        // （见 authenticationClientInfo 处的说明），所以这里**不看服务器给什么**，
-        // 一律换成固定的 Windows PC 身份。
+        // 身份原样取服务器返回值（isideload `remote_v3/mod.rs:194` 就是这么做的：
+        // 把 `/v3/client_info` 的返回值直接当 device_description）；但返回的是必被
+        // Apple 拒的身份（Xcode / Android）时判为「该服务器不可用」，抛错让上层换
+        // 下一台，而不是把必失败的身份硬发给 Apple —— 复刻 SideInstaller 的
+        // failover（它内置目录 15 台里 8 台回 Xcode 身份，靠换服务器落到
+        // ani.sidestore.io 才成功）。
         //
-        // 换在这里而不是在请求头组装处的理由：client_info 是本文件的唯一收口，
-        // ADI 身份戳（AnisetteProvisioningState.matches(clientInfo:)）、get_headers 的
-        // X-Mme-Client-Info、以及 ALTAnisetteData.deviceDescription 全部由它派生 ——
-        // 只在这里换一次，Apple 看到的三处天然一致；换在别处就会出现
-        // 「ADI 用 Mac 建的、请求头冒充 Windows」这种混用，正是要避免的形态。
-        //
-        // 副作用：ADI 的身份戳随之变为 Windows，旧 Mac 戳的 ADI 会被判为失效并
-        // 重新 provisioning（这是预期行为 —— SideInstaller 的提交里同样要求
-        // "all old anisette states will need to be reset"）。identifier 不受影响，
-        // 与 authToken 的绑定保持不变。
-        let pinnedClientInfo = Self.authenticationClientInfo
-        guard Self.identityRejectedByApple(pinnedClientInfo) == false else {
+        // 这里**不要**改成固定某个身份：`identityRejectedByApple` 的注释里记了边沿
+        // 探测结果，三种 `akd` 身份（MacBookPro13,2 / Mac15,7 / Windows PC）都是
+        // 200/200，说明真正起作用的是 `akd` 而非 Xcode/Android；固定值带不来额外
+        // 收益，反而会在 Apple 改口径时失效。身份随服务器变化由 ADI 身份戳保证一致。
+        guard Self.identityRejectedByApple(clientInfo) == false else {
             throw AnisetteV3Error.rejectedIdentity
         }
         return AnisetteV3ClientInfo(
-            clientInfo: pinnedClientInfo,
+            clientInfo: clientInfo,
             userAgent: userAgent
         )
     }
