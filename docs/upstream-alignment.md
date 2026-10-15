@@ -293,6 +293,7 @@ on 4.5.2」✗。
 
 | 对照项 | SideInstaller / isideload | Seal 处置 |
 |---|---|---|
-| Anisette 默认来源 | `RemoteV3AnisetteProvider::default()`，默认 `https://ani.jkcoxson.com` | **跟**：认证和门户 `fetch()` 均固定为 RemoteV3，默认服务器置首位 |
+| Anisette 默认来源 | 上游源码 `RemoteV3AnisetteProvider::default()` 默认 `https://ani.jkcoxson.com`；但**用户提供的 sideinstaller-v1.5.1 二进制**中 `DEFAULT_ANISETTE_V3_URL = "https://ani.stikstore.app"` | **跟二进制**：默认服务器置首位改为 `ani.stikstore.app`（返回 macOS/Xcode 身份，与 `X-Apple-App-Info: com.apple.gs.xcode.auth` 自洽）；`ani.jkcoxson.com`（Windows/iTunes 身份）降为末尾兜底 |
+| GrandSlam 请求指纹 | `base_headers` 在**每个** `GsService2` 请求（`init` / `complete` / `apptokens` / 2FA）上发送 `X-Xcode-Version: 14.2 (14C18)` 与 `X-Apple-App-Info: com.apple.gs.xcode.auth` | **补齐**：此前这两项只出现在 2FA 请求上，SRP `init` / `complete` 缺失 ⇒ Apple 在密码校验前即回 HTML 503（1.2.7 (16) 真机日志）；现已在 `sendAuthenticationRequest` 补全 |
 | 会话连续性 | 登录与后续请求由同一 RemoteV3 provider 的持久状态生成 | **跟**：远程 provisioning 独立保存；认证、验证码、团队验证、签名均取同一远程状态 |
 | 本机 ADI | 不参与该参考实现的默认认证路径 | **不删除**：旧本机 ADI 与稳定 identifier 仍保存，避免升级时破坏既有本地数据 |

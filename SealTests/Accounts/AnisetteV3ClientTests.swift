@@ -21,6 +21,21 @@ struct AnisetteV3ClientTests {
         #expect(servers == AnisetteServerCatalog.official)
     }
 
+    /// SideInstaller 1.5.1 二进制里的 DEFAULT_ANISETTE_V3_URL 是
+    /// `https://ani.stikstore.app`，它返回 macOS/Xcode 身份，与 GrandSlam 固定发送的
+    /// `X-Apple-App-Info: com.apple.gs.xcode.auth` 属于同一个应用。`ani.jkcoxson.com`
+    /// 返回的是 Windows/iTunes 身份，与同一指纹冲突。默认服务器一旦回退成 jkcoxson，
+    /// 添加 Apple ID 又会在 SRP 之前被 Apple 回 503。
+    @Test
+    func defaultServerKeepsSideInstallerXcodeIdentity() throws {
+        let servers = AnisetteServerCatalog.official
+        let first = try #require(servers.first)
+
+        #expect(first.url.absoluteString == "https://ani.stikstore.app")
+        #expect(servers.filter { $0.url.absoluteString == "https://ani.jkcoxson.com" }.count == 1)
+        #expect(servers.last?.url.absoluteString == "https://ani.jkcoxson.com")
+    }
+
     @Test
     func provisioningStateRoundTripsAndRejectsEmptyValues() throws {
         let state = AnisetteProvisioningState(identifier: "identifier", adiPB: "adi-pb")

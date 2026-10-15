@@ -15,10 +15,17 @@ enum AnisetteServerCatalog {
     }
 
     static let official: [AnisetteServer] = [
-        // SideInstaller/isideload 的默认 RemoteV3 服务。认证和后续门户请求固定从这里开始。
+        // SideInstaller 1.5.1 的 RemoteV3 默认服务。REA 静态字符串证据：
+        // `DEFAULT_ANISETTE_V3_URL = "https://ani.stikstore.app"`（该字符串
+        // 紧邻 `vendor/isideload/src/anisette/remote_v3/mod.rs:175` 的 panic 位置）。
+        // 它返回 macOS/Xcode 身份
+        // `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>`，
+        // 与 GrandSlam 固定发送的 `X-Apple-App-Info: com.apple.gs.xcode.auth`
+        // 属于同一个 Xcode 应用，指纹自洽。ani.jkcoxson.com 返回的是
+        // iTunes/Windows 身份，与同一指纹冲突，因此降级到列表末尾兜底。
         AnisetteServer(
             id: "sideinstaller-default",
-            url: makeURL("https://ani.jkcoxson.com"),
+            url: makeURL("https://ani.stikstore.app"),
             displayName: "SideInstaller"
         ),
         // SideStore 官方维护的公共 Anisette 服务器列表
@@ -88,6 +95,14 @@ enum AnisetteServerCatalog {
             id: "crystall1nedev",
             url: makeURL("https://anisette.crystall1ne.dev"),
             displayName: "crystall1nedev"
+        ),
+        // isideload 上游源码的默认值，但返回 Windows/iTunes 身份
+        // `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`，
+        // 与 Xcode 认证指纹不匹配，只作最后的兜底。
+        AnisetteServer(
+            id: "jkcoxson",
+            url: makeURL("https://ani.jkcoxson.com"),
+            displayName: "jkcoxson"
         )
     ]
 

@@ -546,12 +546,15 @@ private extension ALTAppleAPI {
             let httpHeaders = [
                 "Content-Type": "text/x-xml-plist",
                 "X-MMe-Client-Info": anisetteData.deviceDescription,
-                // The GrandSlam endpoint must use the Android AuthKit user
-                // agent paired with the local CoreADI data. SideInstaller's
-                // working flow uses this profile; an Xcode/macOS UA here makes
-                // GSA reject the initial request as an HTML 503.
                 "Accept": "text/x-xml-plist",
                 "User-Agent": "akd/1.0 CFNetwork/808.1.4",
+                // SideInstaller's GrandSlam fingerprint carries both of these
+                // on every GsService2 request — `init` and `complete` included.
+                // Omitting them lets GSA reject the SRP exchange with an HTML
+                // 503 before the password is ever checked, which is the
+                // immediate-503 symptom seen in the 1.2.7 (16) device log.
+                "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
+                "X-Apple-App-Info": grandSlamAuthenticationAppInfo,
                 // Apple can return an edge 503 for a reused GSA connection.
                 // Authentication sessions are already short-lived; this also
                 // tells the transport not to retain this connection.

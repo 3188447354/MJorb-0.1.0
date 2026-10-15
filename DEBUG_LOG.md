@@ -6948,3 +6948,11 @@ CMake Error at CMakeLists.txt:394 (message):
 - **根因**：前版只对齐了 GrandSlam 的请求格式，却保留 Seal 的「认证强制本机 AnisetteKit ADI」规则；而用户提供的 SideInstaller 默认使用 RemoteV3。Seal 因而没有执行参考实现最关键的凭证来源，Apple 在 SRP 前拒绝该身份。
 - **修复**：认证、验证码、认证后校验和门户请求统一改为 RemoteV3；优先使用 SideInstaller 默认 `ani.jkcoxson.com`，并把远程 provisioning 状态置于独立钥匙串 service，保留旧本机 ADI 和稳定 identifier。
 - **验收**：CI 必须通过；真机添加 Apple ID 应从即时 503 进入密码/双重认证流程，随后完成团队验证和一次签名。
+
+## 2026-10-15 — Apple ID 登录仍 503：SRP 请求缺 X-Apple-App-Info / X-Xcode-Version
+
+- **现象**：迁移到 RemoteV3 之后，真机添加账号仍在密码与验证码之前立即记录 `SEAL-NET-503`。
+- **REA 证据**：对用户提供的 `sideinstaller-v1.5.1` 二进制做静态字符串分析，`vendor/isideload/src/anisette/remote_v3/mod.rs` 相邻的 `base_headers` 常量块依次为 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` / `X-Mme-Client-Info` / `Content-Type` / `Accept` / `User-Agent` / `14.2 (14C18)` / `X-Xcode-Version` / `com.apple.gs.xcode.auth` / `X-Apple-App-Info`，即 `X-Xcode-Version: 14.2 (14C18)` 与 `X-Apple-App-Info: com.apple.gs.xcode.auth` 出现在**每一个** `GsService2` 请求上（`init`、`complete`、`apptokens`、2FA）。同一二进制的默认服务器字符串为 `DEFAULT_ANISETTE_V3_URL = "https://ani.stikstore.app"`。
+- **根因**：Seal 的 `sendAuthenticationRequest`（SRP `init` / `complete`）只带 `Content-Type` / `X-MMe-Client-Info` / `Accept` / `User-Agent` / `Connection: close`，**缺失** `X-Xcode-Version` 与 `X-Apple-App-Info`；同时默认服务器仍为 `ani.jkcoxson.com`，其 `/v3/client_info` 返回 Windows/iTunes 身份 `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`，与固定的 `X-Apple-App-Info: com.apple.gs.xcode.auth` 不属于同一个应用，指纹自相矛盾 ⇒ Apple 在密码校验前回 HTML 503。
+- **修复**：① `ALTAppleAPI+Authentication.swift` 的 `sendAuthenticationRequest` 补上 `X-Xcode-Version`（`14.2 (14C18)`）与 `X-Apple-App-Info`（`com.apple.gs.xcode.auth`），复用文件中已有常量；② `AnisetteServerCatalog.official` 首位改为 `https://ani.stikstore.app`（返回 macOS/Xcode 身份 `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>`，与 Xcode 指纹自洽），`ani.jkcoxson.com` 降为末尾兜底。
+- **验收**：CI 必须通过；真机添加 Apple ID 应从即时 503 进入密码/双重认证流程，随后完成团队验证和一次签名。
