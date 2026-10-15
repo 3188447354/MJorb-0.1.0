@@ -12,12 +12,9 @@
 - **REA（SideInstaller 1.5.1 主二进制）**：
   - 二进制里**只有一条**非 Android 身份字面量，就是 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`，**没有任何 `com.apple.dt.Xcode` 字面量**；另有 `<Pixel 7> <Android;14;UQ1A.240205.002> … com.apple.akd`（本地 provider 默认值）。
   - 它内置的 anisette 目录首条是 `https://ani.sidestore.io`（Swift 侧带名字的目录，`anisetteServerURL` 紧邻其前）；`https://ani.stikstore.app` 出现在 Rust 常量区（紧邻 `panic while revoking certificate`）⇒ 此前「默认服务器 = stikstore」是**误判**。它还内置 `https://servers.sidestore.io/servers.json` 作为运行时目录来源。
-  - **逐台实测该目录 15 台服务器**：8 台（sidestore.zip、846969.xyz、npeg.us、wedotstud.io、xu30.top、ani3server.fly.dev、crystall1ne.dev、stikstore.app）返回的正是会被边缘拒掉的 Xcode 身份，3 台返回 akd/macOS 或 Windows/iTunes，其余不可达 ⇒ **SideInstaller 并不拿服务器返回的身份去登录，而是固定声明上面那一个 macOS/akd**；服务器只提供 `user_agent`（15 台实测 `user_agent` 完全相同）。
-- **修复**：把身份收口从「过滤器」升级成「单一事实来源 + 身份戳」。
-  - `AnisetteV3Client.declaredClientInfo`：固定声明 macOS/akd，**不取服务器返回值**（服务器身份只当协议字段校验）。身份与「用哪台服务器」解耦后，兜底切换不再带来身份漂移，stikstore 这类 Xcode 身份服务器也可安全保留为默认。
-  - `AnisetteProvisioningState.clientInfo` + `matches(clientInfo:)`：给 ADI 记上「建它时声明的身份」，不匹配（含旧版本写入的无戳条目，解码为 `nil`）即视为失效，`fetch()` / `resync()` 直接作废并重新 provisioning ⇒ 本轮的 `-80045` 由此自动治好，以后任何身份漂移也自愈。只动 `remoteStore`，不动 `identityStore` 的本地标识（它与 authToken 绑定，清了会让全部已登录账号失效）。
-- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Core/Accounts/AnisetteProvider.swift`、`Seal/Core/Accounts/AnisetteServer.swift`（更正误判注释）、`SealTests/Accounts/AnisetteV3ClientTests.swift`。
-- **验证状态**：15 台服务器身份与 6 组边缘对照均有实测记录；Swift 回归新增 `declaredIdentityIsIndependentOfTheServerReturnedIdentity` 与 `provisioningStateMatchesOnlyTheIdentityItWasBuiltWith`。⚠️ Windows 无 Xcode，仍需云 iOS CI 编译 + 真机复测；真机请**只做单次**添加尝试（此前连点触发过 `429`），不成功也隔一会儿再试一次。
+  - **逐台实测该目录 15 台服务器**：8 台（sidestore.zip、846969.xyz、npeg.us、wedotstud.io、xu30.top、ani3server.fly.dev、crystall1ne.dev、stikstore.app）返回的正是会被边缘拒掉的 Xcode 身份，3 台返回 akd/macOS 或 Windows/iTunes，其余不可达。
+- **⚠️ 结论修正（同日，isideload 源码反证）**：上一条「SideInstaller 固定声明 macOS/akd、不拿服务器身份」是**误判**，已推翻。源码 `remote_v3/mod.rs:121` 注释写明「本可以硬编码，但 Apple 变化太快，不如直接从服务器取」，`:194` 把 `/v3/client_info` 返回值**原样**当 `device_description`，`grandslam.rs:220` 的 SRP 头用的就是它；`<Mac15,7> …` 那条硬编码只出现在 URL bag 一个请求（`grandslam.rs:59`，"we lie for this request"）。⇒ 真实形态是「**用服务器返回的身份 + 多服务器 failover**」：8 台 Xcode 身份服务器必 503 就换下一台，落到 `ani.sidestore.io` 的 `MacBookPro13,2 / macOS 13.1 / 22C65 / akd` 上成功。build 21/23 都固定声明 `<Mac15,7> <macOS;27.0;26A5378j>`（SideInstaller 从没用过这个身份）仍 `-80045`，与此一致。
+- **修复（最终形态）**：身份**原样取服务器返回值**；返回 Xcode / Android 这类必拒身份时判为该服务器不可用、抛 `rejectedIdentity` 换下一台（复刻 SideInstaller 的 failover），绝不硬发必失败身份；默认服务器改为 `ani.sidestore.io`（SideInstaller 目录第一条 + 实测唯一可用身份），一次命中。保留身份戳 `AnisetteProvisioningState.clientInfo` + `matches()`：身份随服务器变化时自动作废重签，旧版本无戳条目（`nil`）同样自动迁移。只动 `remoteStore`，不动 `identityStore` 的本地标识（与 authToken 绑定，清了会让全部已登录账号失效）。
 
 ---
 

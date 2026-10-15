@@ -1,17 +1,15 @@
 import CryptoKit
 import Foundation
 import os
-import AnisetteKit
 @preconcurrency import AltSign
 
 struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private static let logger = Logger(subsystem: "com.mjorb.seal", category: "anisette")
 
-    /// Seal 声明给 Apple 的客户端身份：**单一事实来源**，不取服务器返回值。
+    /// Apple 登录边缘只放行「桌面系统、且不是 Xcode」的客户端身份。
     ///
-    /// Apple 登录边缘只放行「桌面系统、且不是 Xcode」的身份。实测证据（`GsService2` 的
-    /// `o=init` SRP 请求，合成 anisette 占位、只改 `X-Mme-Client-Info`、每次重复 2 遍，
-    /// 只看边缘 HTTP 状态）：
+    /// 实测证据（`GsService2` 的 `o=init` SRP 请求，合成 anisette 占位、只改
+    /// `X-Mme-Client-Info`、每次重复 2 遍，只看边缘 HTTP 状态）：
     /// - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → 503 / 503
     /// - `<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>`     → 503 / 503
     /// - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`          → 503 / 503
@@ -22,13 +20,24 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     /// `X-Xcode-Version` / `X-Apple-App-Info` 的有无不改变结果；`GsService2/lookup` 对所有
     /// 身份都回 200 ⇒ `SEAL-NET-503` 只可能来自 SRP 阶段，不是 provisioning。
     ///
-    /// REA（SideInstaller 1.5.1 主二进制）证据：该二进制里**只有**一条非 Android 身份
-    /// 字面量，就是下面这个 macOS/akd；而它内置的 15 台服务器实测有 8 台
-    /// `/v3/client_info` 返回的是会被边缘直接拒掉的 Xcode 身份，它却照样能登录 ⇒
-    /// **SideInstaller 不拿服务器返回的身份去登录**。Seal 采用同一形态：身份固定声明，
-    /// 服务器只提供 `user_agent`。于是身份与「用哪台服务器」解耦，兜底切换不再带来身份
-    /// 漂移，也让 provisioning 与 SRP 天然声明同一个身份（ADI 必须与它自洽）。
-    static let declaredClientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+    /// REA（SideInstaller 1.5.1 的 isideload 源码）确定真实形态是
+    /// **「用服务器返回的身份 + 多服务器兜底」**，不是固定声明某个身份：
+    /// `remote_v3/mod.rs:121` 注释写明「本可以硬编码，但 Apple 变化太快，不如直接从
+    /// 服务器取」，`:194` 把 `/v3/client_info` 返回值原样当 `device_description`，
+    /// `grandslam.rs:220` 的 SRP 头就用它；那条 `<Mac15,7> …` 硬编码只出现在
+    /// URL bag 一个请求（`grandslam.rs:59`，注释 "we lie for this request"）。
+    /// 实测它内置目录 15 台服务器中 8 台返回 Xcode 身份（边缘必 503）——它靠换服务器
+    /// 绕开这些，落到 `ani.sidestore.io` 的
+    /// `<MacBookPro13,2> <macOS;13.1;22C65> … com.apple.akd` 上就成功。
+    ///
+    /// Seal 采用同一形态：身份**原样取服务器返回值**；返回的是必被拒的身份
+    ///（Xcode / Android）时判定该服务器不可用、换下一台（复刻 SideInstaller 的
+    /// failover），绝不把「必失败的身份」硬发给 Apple。因身份随服务器变化，
+    /// ADI 由身份戳保证「建它的身份」与「声明的身份」一致。
+    static func identityRejectedByApple(_ clientInfo: String) -> Bool {
+        let lowered = clientInfo.lowercased()
+        return lowered.contains("com.apple.dt.xcode") || lowered.contains("android")
+    }
 
     /// Anisette 时间格式（ISO8601 UTC），两处复用，避免每次新建 DateFormatter。
     private static let iso8601UTCFormatter: DateFormatter = {
@@ -47,45 +56,16 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     /// 只保存稳定的设备 identifier；保留旧值以维持设备身份连续性。
     private let identityStore: any AnisetteProvisioningStore
     private let serverStore: any AnisetteServerStore
-    private let anisetteProvider: AnisetteDataProvider
 
-    /// 本地 ADI 模拟（Unicorn TCI）冷启动可能超过 45 秒，超时后遗弃但**不取消**任务：
-    /// 杀在 provisioning 中途会弄脏 adi.pb，导致之后每次生成都失败。
-    /// 遗弃的任务继续在后台完成，后续调用经 inFlight 合并等待其结果。
-    private static let localGenerationTimeoutSeconds: TimeInterval = 90
     /// 远程降级的总时长预算：避免服务器逐个重试把添加账号拖到数分钟
     private static let remoteFallbackBudgetSeconds: TimeInterval = 120
-
-    /// 进行中的本地生成任务（引用类型保证 struct 拷贝间共享同一状态）。
-    /// ADI/Unicorn 生成有状态（adi.pb、provisioning 会话），**不可并发运行**。
-    private final class InFlightGeneration: @unchecked Sendable {
-        private let lock = NSLock()
-        private var task: Task<ALTAnisetteData, Error>?
-
-        /// 返回进行中的生成；没有则启动新的（原子性避免并发双开 ADI 实例）。
-        func currentOrStart(_ make: () -> Task<ALTAnisetteData, Error>) -> Task<ALTAnisetteData, Error> {
-            lock.lock(); defer { lock.unlock() }
-            if let task { return task }
-            let newTask = make()
-            task = newTask
-            return newTask
-        }
-
-        func clear() {
-            lock.lock(); defer { lock.unlock() }
-            task = nil
-        }
-    }
-
-    private let inFlight = InFlightGeneration()
 
     init(
         servers: [AnisetteServer] = AnisetteServerCatalog.official,
         session: URLSession = .shared,
         store: (any AnisetteProvisioningStore)? = nil,
         identityStore: (any AnisetteProvisioningStore)? = nil,
-        serverStore: any AnisetteServerStore = UserDefaultsAnisetteServerStore(),
-        anisetteProvider: AnisetteDataProvider = .shared
+        serverStore: any AnisetteServerStore = UserDefaultsAnisetteServerStore()
     ) {
         self.servers = servers
         self.session = session
@@ -98,133 +78,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         self.remoteStore = remoteStore
         self.identityStore = identityStore
         self.serverStore = serverStore
-        self.anisetteProvider = anisetteProvider
     }
-
-    func preferRemoteOnNextFetch() async {
-        // 兼容协议调用：远程 v3 已是唯一请求路径，无需切换状态。
-    }
-
-    /// 把 App Bundle 中内置的 .so 复制到 AnisetteDataProvider 的可写 libsDir。
-    /// Unicorn 引擎 mmap 加载 .so 需要 PROT_WRITE，App Bundle 只读不能直接用。
-    private func ensureBundledLibrariesCopied() throws {
-        let fm = FileManager.default
-        let libDir = anisetteProvider.libsDir
-        if LocalAnisetteProvider.validateLibrariesExist(at: libDir) { return }
-        try fm.createDirectory(at: libDir, withIntermediateDirectories: true)
-        let bundledDir = Bundle.main.bundleURL.appendingPathComponent("Anisette", isDirectory: true)
-        for name in LocalAnisetteProvider.requiredLibraryNames {
-            let src = bundledDir.appendingPathComponent(name)
-            let dst = libDir.appendingPathComponent(name)
-            if fm.fileExists(atPath: dst.path) { try? fm.removeItem(at: dst) }
-            try fm.copyItem(at: src, to: dst)
-        }
-    }
-
-    /// 把 AnisetteV3Identity.encodedIdentifier（base64 16字节）解码为 UUID
-    private func uuid(from identity: AnisetteV3Identity) throws -> UUID {
-        guard let data = Data(base64Encoded: identity.encodedIdentifier), data.count == 16 else {
-            throw AnisetteV3Error.invalidIdentifier
-        }
-        return data.withUnsafeBytes { UUID(uuid: $0.load(as: uuid_t.self)) }
-    }
-
-    /// 合并进行中的本地生成：超时被遗弃的任务仍在后台运行，重试必须合并等待
-    /// 同一任务，而不是并行再起一个 ADI 实例互相污染（表现为 Apple 拒绝 anisette）。
-    private func fetchLocalCoalesced(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
-        let inFlight = self.inFlight
-        let generation = inFlight.currentOrStart {
-            Task { () -> ALTAnisetteData in
-                // 完成后（成功或失败）清空合并位；等待者被取消时不影响任务本身
-                defer { Task { inFlight.clear() } }
-                return try await self.fetchLocal(identity: identity)
-            }
-        }
-        return try await generation.value
-    }
-
-    /// 官方 AnisetteData -> AltSign ALTAnisetteData
-    private func convert(_ data: AnisetteData) -> ALTAnisetteData? {
-        let formatter = Self.iso8601UTCFormatter
-        let json: [String: String] = [
-            "machineID": data.machineID,
-            "oneTimePassword": data.oneTimePassword,
-            "localUserID": data.localUserID,
-            "deviceUniqueIdentifier": data.deviceUniqueIdentifier,
-            "deviceSerialNumber": data.deviceSerialNumber,
-            "deviceDescription": data.deviceDescription,
-            "routingInfo": String(data.routingInfo),
-            "date": formatter.string(from: data.date),
-            "locale": data.locale.identifier,
-            "timeZone": data.timeZone.abbreviation() ?? "UTC"
-        ]
-        return ALTAnisetteData(json: json)
-    }
-
-    /// 用官方 AnisetteDataProvider localODA 模式生成本地 anisette
-    private func fetchLocal(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
-        try ensureBundledLibrariesCopied()
-        let uuid = try self.uuid(from: identity)
-        // localODA produces Android ADI data. Apple rejects GrandSlam sign-in
-        // when that data is presented as a macOS machine, returning -80045.
-        // This is the Android AuthKit (akd) profile used end-to-end by the
-        // working SideInstaller reference. It must match the CoreADI data,
-        // the GrandSlam User-Agent, and the later 2FA requests. Mixing it
-        // with the Apple Music/Xcode identities makes Apple reject the SRP
-        // exchange before the verification-code UI can appear.
-        let clientInfo = "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
-
-        // 第一次尝试：用 keychain 中已有的 adi.pb
-        let existingState = try? await identityStore.load()
-        var existingBlob = existingState.flatMap { Data(base64Encoded: $0.adiPB) }
-
-        do {
-            let (data, newBlob) = try await anisetteProvider.fetchAnisetteData(
-                mode: .localODA(libsDir: anisetteProvider.libsDir),
-                identifier: uuid,
-                existingAdiBlob: existingBlob,
-                clientInfo: clientInfo,
-                customLocalUserID: identity.localUserID,
-                customDeviceID: identity.deviceIdentifier
-            )
-            // 保存新的 adi.pb 到 keychain
-            if let newBlob, !newBlob.isEmpty,
-               let state = AnisetteProvisioningState(identifier: identity.encodedIdentifier, adiPB: newBlob.base64EncodedString()) {
-                try? await identityStore.save(state)
-            }
-            guard let alt = convert(data) else {
-                throw AnisetteV3Error.localGenerationFailed("Failed to convert AnisetteData to ALTAnisetteData")
-            }
-            return alt
-        } catch {
-            // 如果错误是 "Device not provisioned" (-45061)，说明 keychain 中的 adi.pb 无效或过期
-            // 清除旧数据，强制重新 provisioning（需要访问 gsa.apple.com）
-            let msg = error.localizedDescription
-            if msg.contains("Device not provisioned") || msg.contains("-45061") {
-                Self.logger.warning("检测到 Device not provisioned，清除旧 adi.pb 重新 provisioning")
-                try? await identityStore.remove()
-                existingBlob = nil
-                let (data, newBlob) = try await anisetteProvider.fetchAnisetteData(
-                    mode: .localODA(libsDir: anisetteProvider.libsDir),
-                    identifier: uuid,
-                    existingAdiBlob: nil,
-                    clientInfo: clientInfo,
-                    customLocalUserID: identity.localUserID,
-                    customDeviceID: identity.deviceIdentifier
-                )
-                if let newBlob, !newBlob.isEmpty,
-                   let state = AnisetteProvisioningState(identifier: identity.encodedIdentifier, adiPB: newBlob.base64EncodedString()) {
-                    try? await identityStore.save(state)
-                }
-                guard let alt = convert(data) else {
-                    throw AnisetteV3Error.localGenerationFailed("Failed to convert AnisetteData to ALTAnisetteData")
-                }
-                return alt
-            }
-            throw AnisetteV3Error.localGenerationFailed(error.localizedDescription)
-        }
-    }
-
 
     /// SideInstaller 的默认策略：认证、验证码、认证后验证和门户请求始终用同一个
     /// 远程 v3 Anisette 会话。不能先用远程取得 authToken、随后切回本机 ADI。
@@ -381,11 +235,15 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
               userAgent.isEmpty == false else {
             throw AnisetteV3Error.invalidServerResponse
         }
-        // 服务器返回的 `client_info` 只当协议字段校验（缺字段说明服务器不合规），
-        // 身份本身固定用 Seal 自己声明的那一个：逐台服务器实测里有 8 台返回的是会被
-        // Apple 边缘直接拒掉的 Xcode 身份，跟着服务器走就会把这些服务器变成必失败。
+        // 身份原样取服务器返回值（isideload 同样如此）；但返回的是必被 Apple 拒的
+        // 身份（Xcode / Android）时判为「该服务器不可用」，抛错让上层换下一台，
+        // 而不是把必失败的身份硬发给 Apple（SideInstaller 靠同款 failover 绕开
+        // 15 台目录里那 8 台 Xcode 身份服务器）。
+        guard Self.identityRejectedByApple(clientInfo) == false else {
+            throw AnisetteV3Error.rejectedIdentity
+        }
         return AnisetteV3ClientInfo(
-            clientInfo: Self.declaredClientInfo,
+            clientInfo: clientInfo,
             userAgent: userAgent
         )
     }
@@ -731,26 +589,6 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
 struct AnisetteV3ClientInfo: Equatable, Sendable {
     let clientInfo: String
     let userAgent: String
-}
-
-/// 一次性"跳过本地 Anisette"标志：本地指纹被 Apple 拒绝后，下一次 fetch 直接走远程。
-/// 用引用类型 + 锁，保证 struct 跨并发上下文共享同一状态且线程安全。
-final class AnisetteBypassFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var value = false
-
-    func set() {
-        lock.lock(); defer { lock.unlock() }
-        value = true
-    }
-
-    /// 读取并复位（只生效一次）
-    func consume() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        let current = value
-        value = false
-        return current
-    }
 }
 
 typealias AnisetteClient = AnisetteV3Client

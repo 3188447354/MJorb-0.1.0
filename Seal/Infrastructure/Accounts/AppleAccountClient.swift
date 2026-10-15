@@ -603,13 +603,13 @@ final class AppleAccountClient {
                     operation: .authenticateAccount,
                     origin: .authentication
                 )
-            case .localGenerationFailed(let d):
+            case .rejectedIdentity:
                 return ImportFailure(
                     title: "无法获取设备环境",
-                    reason: "本机生成设备环境数据（Anisette）失败。\n\(d)",
+                    reason: "Anisette 服务器返回的客户端身份不可用，已跳过该服务器重试。",
                     recovery: "重试",
-                    code: "SEAL-ANI-114",
-                    condition: .authenticationEnvironmentUnavailable,
+                    code: "SEAL-ANI-110",
+                    condition: .authenticationEnvironmentRejected,
                     action: .retry,
                     retryDisposition: .manual,
                     operation: .authenticateAccount,

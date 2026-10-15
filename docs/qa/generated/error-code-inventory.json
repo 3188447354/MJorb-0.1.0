@@ -3,7 +3,7 @@
     "SEAL-ANI-110": {
       "auditStatus": "contracted",
       "identifierKinds": {
-        "standard_error_code": 1
+        "standard_error_code": 2
       },
       "locations": [
         {
@@ -26,11 +26,32 @@
             "retryDisposition": ".manual"
           },
           "source": "code: \"SEAL-ANI-110\","
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 611,
+          "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
+          "role": "structured_failure_emission",
+          "semanticFields": [
+            "condition",
+            "action",
+            "retryDisposition",
+            "operation",
+            "origin"
+          ],
+          "semanticValues": {
+            "action": ".retry",
+            "condition": ".authenticationEnvironmentRejected",
+            "operation": ".authenticateAccount",
+            "origin": ".authentication",
+            "retryDisposition": ".manual"
+          },
+          "source": "code: \"SEAL-ANI-110\","
         }
       ],
-      "occurrenceCount": 1,
+      "occurrenceCount": 2,
       "roles": {
-        "structured_failure_emission": 1
+        "structured_failure_emission": 2
       }
     },
     "SEAL-ANI-111": {
@@ -125,39 +146,6 @@
             "retryDisposition": ".manual"
           },
           "source": "code: \"SEAL-ANI-113\","
-        }
-      ],
-      "occurrenceCount": 1,
-      "roles": {
-        "structured_failure_emission": 1
-      }
-    },
-    "SEAL-ANI-114": {
-      "auditStatus": "contracted",
-      "identifierKinds": {
-        "standard_error_code": 1
-      },
-      "locations": [
-        {
-          "identifierKind": "standard_error_code",
-          "line": 611,
-          "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [
-            "condition",
-            "action",
-            "retryDisposition",
-            "operation",
-            "origin"
-          ],
-          "semanticValues": {
-            "action": ".retry",
-            "condition": ".authenticationEnvironmentUnavailable",
-            "operation": ".authenticateAccount",
-            "origin": ".authentication",
-            "retryDisposition": ".manual"
-          },
-          "source": "code: \"SEAL-ANI-114\","
         }
       ],
       "occurrenceCount": 1,
@@ -8167,7 +8155,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 23,
+          "line": 21,
           "path": "Seal/Infrastructure/Accounts/AnisetteClient.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13285,7 +13273,7 @@
   "scope": "Seal/**/*.swift",
   "summary": {
     "auditStatuses": {
-      "contracted": 63,
+      "contracted": 62,
       "diagnostic_only": 5,
       "mixed": 3,
       "reference_only": 281,
@@ -13309,6 +13297,6 @@
       "withExplicitSemantics": 69,
       "withoutExplicitSemantics": 79
     },
-    "uniqueIdentifiers": 425
+    "uniqueIdentifiers": 424
   }
 }

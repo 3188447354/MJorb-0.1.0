@@ -15,30 +15,22 @@ enum AnisetteServerCatalog {
     }
 
     static let official: [AnisetteServer] = [
-        // SideInstaller 1.5.1 内置 anisette 目录里的一台。REA 静态字符串证据：
-        // Rust 常量区可见 `https://ani.stikstore.app`（紧邻 `panic while revoking
-        // certificate`）；而它 Swift 侧带名字的服务器目录第一条是
-        // `https://ani.sidestore.io`。这里沿用 SideInstaller 的默认选择。
-        // ⚠️ 实测它的 `/v3/client_info` 返回 Xcode 身份
-        // `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>`，
-        // 会被 Apple 登录边缘直接拒（同 ADI 同请求：Xcode 身份 → 503、akd 身份 → 200）。
-        // ⚠️ 但身份**不能**跟着服务器走：逐台实测 SideInstaller 目录里 15 台服务器，
-        // 有 8 台返回的都是这个会被拒的 Xcode 身份，而它照样能登录 ⇒ 身份必须由 Seal
-        // 自己声明（`AnisetteV3Client.declaredClientInfo`），服务器只提供 `user_agent`。
-        // 所以这台可以安全保留为默认：身份不受它影响，provisioning 也照常成功。
-        AnisetteServer(
-            id: "sideinstaller-default",
-            url: makeURL("https://ani.stikstore.app"),
-            displayName: "SideInstaller"
-        ),
-        // SideStore 官方维护的公共 Anisette 服务器列表
-        // 来源: https://servers.sidestore.io/servers.json
-        // Seal 会按顺序自动尝试，一个挂了自动切下一个，避免单点故障
+        // SideInstaller 内置 anisette 目录的第一条（`anisetteServerURL` 紧邻其前），
+        // 也是实测里返回**可用身份**的那台：
+        // `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`
+        // ⇒ 身份原样取服务器返回值时（`AnisetteV3Client.parseClientInfo`），
+        // 这台就是 SideInstaller 实际登录成功的落点，排在第一位即可命中。
+        // 目录里另外 8 台（stikstore、sidestore.zip、846969.xyz、npeg.us、
+        // wedotstud.io、xu30.top、ani3server.fly.dev、crystall1ne.dev）返回 Xcode
+        // 身份，被身份层判为不可用后自动换下一台——这正是 SideInstaller 的 failover。
         AnisetteServer(
             id: "sidestore-io",
             url: makeURL("https://ani.sidestore.io"),
             displayName: "SideStore"
         ),
+        // SideStore 官方维护的公共 Anisette 服务器列表
+        // 来源: https://servers.sidestore.io/servers.json
+        // Seal 会按顺序自动尝试，一个挂了自动切下一个，避免单点故障
         AnisetteServer(
             id: "sidestore-app",
             url: makeURL("https://ani.sidestore.app"),

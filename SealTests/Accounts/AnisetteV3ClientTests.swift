@@ -21,17 +21,17 @@ struct AnisetteV3ClientTests {
         #expect(servers == AnisetteServerCatalog.official)
     }
 
-    /// SideInstaller 1.5.1 二进制里的 DEFAULT_ANISETTE_V3_URL 是
-    /// `https://ani.stikstore.app`，Seal 沿用同一个默认服务器。该服务器返回的
-    /// client_info 是 Xcode 身份，会被 Apple 登录边缘拒绝——这一点由
-    /// `serverIdentitiesRejectedByAppleAreReplaced` 在身份层兜住，默认服务器本身
-    /// 不再承担“指纹自洽”的职责。`ani.jkcoxson.com` 作为兜底保留在列表末尾。
+    /// SideInstaller 1.5.1 内置 anisette 目录第一条是 `https://ani.sidestore.io`，
+    /// 且它实测返回的是唯一可用身份（`MacBookPro13,2` / macOS 13.1 / akd），
+    /// 因此 Seal 把它排在默认第一位：身份原样取服务器值时，直接命中 SideInstaller
+    /// 的成功落点，不必先撞那 8 台 Xcode 身份服务器再靠 failover 绕开。
     @Test
     func defaultServerKeepsSideInstallerDefaultServer() throws {
         let servers = AnisetteServerCatalog.official
         let first = try #require(servers.first)
 
-        #expect(first.url.absoluteString == "https://ani.stikstore.app")
+        #expect(first.url.absoluteString == "https://ani.sidestore.io")
+        #expect(Set(servers.map(\.id)).count == servers.count)
         #expect(servers.filter { $0.url.absoluteString == "https://ani.jkcoxson.com" }.count == 1)
         #expect(servers.last?.url.absoluteString == "https://ani.jkcoxson.com")
     }
@@ -41,7 +41,7 @@ struct AnisetteV3ClientTests {
         let state = AnisetteProvisioningState(
             identifier: "identifier",
             adiPB: "adi-pb",
-            clientInfo: AnisetteV3Client.declaredClientInfo
+            clientInfo: "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
         )
         let data = try JSONEncoder().encode(state)
 
@@ -55,22 +55,26 @@ struct AnisetteV3ClientTests {
     }
 
     /// ADI 只对「建它时声明的那个身份」有效：Apple 对「ADI 与声明系统不一致」的初始登录
-    /// 回 `-80045`。所以身份戳不匹配（含旧版本写入的无戳条目）必须判为无效，进而作废重签。
+    /// 回 `-80045`。身份现在随服务器变化（原样取 `/v3/client_info`），所以身份戳不匹配
+    /// （含旧版本写入的无戳条目）必须判为无效，进而作废重签。
     @Test
     func provisioningStateMatchesOnlyTheIdentityItWasBuiltWith() throws {
+        let macIdentity = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        let windowsIdentity = "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
+
         let stamped = try #require(
             AnisetteProvisioningState(
                 identifier: "identifier",
                 adiPB: "adi-pb",
-                clientInfo: AnisetteV3Client.declaredClientInfo
+                clientInfo: macIdentity
             )
         )
-        #expect(stamped.matches(clientInfo: AnisetteV3Client.declaredClientInfo))
-        #expect(stamped.matches(clientInfo: "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>") == false)
+        #expect(stamped.matches(clientInfo: macIdentity))
+        #expect(stamped.matches(clientInfo: windowsIdentity) == false)
 
         let legacy = try #require(AnisetteProvisioningState(identifier: "identifier", adiPB: "adi-pb"))
         #expect(legacy.clientInfo == nil)
-        #expect(legacy.matches(clientInfo: AnisetteV3Client.declaredClientInfo) == false)
+        #expect(legacy.matches(clientInfo: macIdentity) == false)
 
         let staleXcode = try #require(
             AnisetteProvisioningState(
@@ -79,7 +83,7 @@ struct AnisetteV3ClientTests {
                 clientInfo: "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>"
             )
         )
-        #expect(staleXcode.matches(clientInfo: AnisetteV3Client.declaredClientInfo) == false)
+        #expect(staleXcode.matches(clientInfo: macIdentity) == false)
     }
 
     @Test
@@ -100,29 +104,31 @@ struct AnisetteV3ClientTests {
     }
 
     @Test
-    func clientInfoParsingUsesDeclaredIdentityAndServerUserAgent() throws {
+    func clientInfoParsingUsesServerIdentityVerbatim() throws {
         let serverValue = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
         let data = try JSONSerialization.data(withJSONObject: [
             "client_info": serverValue,
             "user_agent": "akd/1.0 CFNetwork/808.1.4"
         ])
 
+        // isideload 同款：身份原样取服务器返回值（`remote_v3/mod.rs:194`），
+        // 只用服务器的 user_agent 拼请求头。
         #expect(
             try AnisetteV3Client.parseClientInfo(data: data) ==
                 AnisetteV3ClientInfo(
-                    clientInfo: AnisetteV3Client.declaredClientInfo,
+                    clientInfo: serverValue,
                     userAgent: "akd/1.0 CFNetwork/808.1.4"
                 )
         )
     }
 
-    /// REA（SideInstaller 1.5.1 主二进制）：它内置的 anisette 目录里 15 台服务器中，实测有
-    /// 8 台的 `/v3/client_info` 返回会被 Apple 登录边缘直接拒掉的 Xcode 身份，而它照样能
-    /// 登录 ⇒ 身份不取服务器返回值。Seal 同样只声明自己那一个身份，所以无论服务器返回
-    /// Xcode / Android / macOS / Windows，声明出来的都必须是同一个。
+    /// REA（SideInstaller 1.5.1 的 isideload 源码）：身份取服务器返回值；而它内置目录
+    /// 15 台里有 8 台返回会被 Apple 边缘直接拒掉的 Xcode 身份——它靠**换服务器**绕开，
+    /// 不是改写身份。所以 Seal 对必拒身份（Xcode / Android）抛 `rejectedIdentity`
+    /// 让上层换下一台；可用身份（macOS / Windows）原样放行。
     @Test
-    func declaredIdentityIsIndependentOfTheServerReturnedIdentity() throws {
-        func parsedClientInfo(_ clientInfo: String) throws -> String {
+    func identitiesRejectedByAppleFailOverInsteadOfBeingSent() throws {
+        func parsed(_ clientInfo: String) throws -> String {
             let data = try JSONSerialization.data(withJSONObject: [
                 "client_info": clientInfo,
                 "user_agent": "akd/1.0 CFNetwork/808.1.4"
@@ -130,17 +136,23 @@ struct AnisetteV3ClientTests {
             return try AnisetteV3Client.parseClientInfo(data: data).clientInfo
         }
 
-        let declared = AnisetteV3Client.declaredClientInfo
-        let serverValues = [
+        let rejected = [
             "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>",
             "<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>",
-            "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+            "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        ]
+        for value in rejected {
+            #expect(throws: AnisetteV3Error.rejectedIdentity) {
+                _ = try parsed(value)
+            }
+        }
+
+        let accepted = [
             "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
             "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
         ]
-
-        for value in serverValues {
-            #expect(try parsedClientInfo(value) == declared)
+        for value in accepted {
+            #expect(try parsed(value) == value)
         }
     }
 
