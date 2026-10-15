@@ -428,7 +428,7 @@ actor ApplePortalSigningService {
     ) {
         self.anisetteProvider = anisetteProvider
         self.signingWorkspace = signingWorkspace
-        self.accountClient = AppleAccountClient(anisetteProvider: anisetteProvider)
+        self.accountClient = AppleAccountClient(anisetteProvider: anisetteProvider, logStore: logStore)
         self.logStore = logStore
     }
 

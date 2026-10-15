@@ -56,12 +56,26 @@ enum AppleAuthenticationFailure {
 @MainActor
 final class AppleAccountClient {
     private let anisetteProvider: any AnisetteProvider
+    /// 全量操作日志：登录每个阶段（取 anisette、SRP、SIM resync、team 查询）都留痕。
+    private let logStore: SealLogStore?
 
     /// Apple Developer Portal 请求所使用的 X-Xcode-Version。
     nonisolated static let xcodeVersion = "26.0"
 
-    nonisolated init(anisetteProvider: any AnisetteProvider = AnisetteV3Client()) {
+    nonisolated init(
+        anisetteProvider: any AnisetteProvider = AnisetteV3Client(),
+        logStore: SealLogStore? = nil
+    ) {
         self.anisetteProvider = anisetteProvider
+        self.logStore = logStore
+    }
+
+    /// 写一条登录操作日志（脱敏由 SealLogStore 保证）。
+    private nonisolated func trace(
+        _ message: String,
+        level: SealLogEntry.Level = .info
+    ) async {
+        try? await logStore?.append(category: .account, level: level, message: "[auth] \(message)")
     }
 
     func authenticate(
@@ -88,6 +102,15 @@ final class AppleAccountClient {
     private nonisolated static func shouldRetryWithRemoteAnisette(_ error: Error) -> Bool {
         if case ALTAppleAPIError.invalidAnisetteData = error { return true }
         return false
+    }
+
+    /// 把错误压缩成一行，便于日志归因（脱敏由 SealLogStore 兜底）。
+    private nonisolated static func describeError(_ error: Error) -> String {
+        if let importFailure = error as? ImportFailure {
+            return "ImportFailure(\(importFailure.code))"
+        }
+        let nsError = error as NSError
+        return "\(nsError.domain)#\(nsError.code)"
     }
 
     /// Apple 认证/团队请求直接发出。服务端暂不可用由统一失败策略如实呈现，
@@ -152,14 +175,25 @@ final class AppleAccountClient {
         var stage: AppleAuthenticationStage = .signIn
         do {
             try Task.checkCancellation()
+            await trace("阶段 signIn：取 anisette 环境数据")
             let anisetteData = try await anisetteProvider.fetchForAuthentication()
+            await trace("anisette 就绪，声明身份=\(anisetteData.deviceDescription)")
             let auth: AuthObjects
             do {
+                await trace("发起 GrandSlam SRP 登录")
                 auth = try await self.authenticate(email: email, password: password, anisetteData: anisetteData, verificationCode: verificationCode).value
+                await trace("SRP 登录成功，进入 team 查询")
             } catch {
-                guard let sim = Self.resyncSIM(from: error) else { throw error }
+                let detail = Self.describeError(error)
+                guard let sim = Self.resyncSIM(from: error) else {
+                    await trace("SRP 登录失败（无 SIM 同步指令）：\(detail)", level: .error)
+                    throw error
+                }
+                await trace("SRP 登录要求 SIM 同步（sim 长度=\(sim.count)），resync 后重试一次", level: .warning)
                 let resyncedAnisetteData = try await anisetteProvider.resync(sim: sim)
+                await trace("resync 完成，重发 SRP")
                 auth = try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
+                await trace("resync 后 SRP 登录成功")
             }
             try Task.checkCancellation()
             stage = .teamLookup

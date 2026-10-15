@@ -84,12 +84,13 @@ struct AppContainer {
             let pairingStore = PairingStore(
                 fileURL: sealDirectory.appending(path: AppConfiguration.Paths.pairingFile)
             )
-            let anisetteProvider = AnisetteV3Client()
-            // logStore 必须先于 installChannel 构造：安装链路（尤其自替换）现在会写日志。
+            // logStore 必须先于 anisetteProvider / installChannel 构造：
+            // anisette 链路与安装链路（尤其自替换）现在都会写全量操作日志。
             // 在这之前它一行日志都没有 —— 真机卡住时只剩「签名产物核验通过」然后一片空白。
             let logStore = SealLogStore(
                 fileURL: sealDirectory.appending(path: AppConfiguration.Paths.sealLogFile)
             )
+            let anisetteProvider = AnisetteV3Client(logStore: logStore)
             let installChannel = MinimuxerInstallChannel(
                 pairingStore: pairingStore,
                 logDirectory: sealDirectory.appending(
@@ -238,7 +239,8 @@ struct AppContainer {
                     accountRepository: accountRepository,
                     keychain: keychain,
                     accountClient: AppleAccountClient(
-                        anisetteProvider: anisetteProvider
+                        anisetteProvider: anisetteProvider,
+                        logStore: logStore
                     ),
                     pairingStore: pairingStore,
                     installChannel: installChannel,
