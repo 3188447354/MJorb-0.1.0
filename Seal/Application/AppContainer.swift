@@ -103,8 +103,8 @@ struct AppContainer {
             // 在真机上完全不可见 —— 之前拿到的 6 份设备日志里一条 `[AltSign]` 都没有。
             //
             // 打开 verbose 并把内容转进 logStore，这类问题以后一次就能定位。
-            // 只保留 DEBUG_LOG 里能用的那部分：AltSign 在认证失败路径上的 verboseLog
-            // 是低频的（每请求几条），不会淹没有效信息。
+            // `AltSignLogging` 能在这里直接用，靠的是 AltSign 里的
+            // `@_exported import SwiftBridge`（日志实现位于独立的 SwiftBridge target）。
             AltSignLogging.setLogging(true)
             AltSignLogging.relay = { message in
                 Task { try? await logStore.append(category: .account, level: .info, message: message) }
