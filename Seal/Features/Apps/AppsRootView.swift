@@ -13,8 +13,9 @@ struct AppsRootView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .largeTitle) private var sealTitleSize = 38
-    @Namespace private var tabIndicatorNamespace
     @State private var mode: ListMode = .installed
+    /// 内容页的连续位置（0 = 待签名，1 = 已安装），由分页器测量写入、驱动毛毛虫下划线。
+    @State private var pagerProgress: CGFloat = 1
     @State private var detailApp: AppRecord?
     @State private var pendingDeleteApp: AppRecord?
     @State private var installedActionApp: AppRecord?
@@ -257,51 +258,78 @@ struct AppsRootView: View {
     }
 
     private var modeTabs: some View {
-        HStack(spacing: 28) {
-            modeButton(.unsigned, count: viewModel.unsignedApps.count)
-            modeButton(.installed, count: viewModel.installedApps.count)
-            Spacer(minLength: 0)
-        }
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: mode)
+        CaterpillarSegmentedTabs(
+            items: ListMode.allCases,
+            title: { $0.rawValue },
+            count: { mode in
+                switch mode {
+                case .unsigned: return viewModel.unsignedApps.count
+                case .installed: return viewModel.installedApps.count
+                }
+            },
+            selection: selectionBinding,
+            progress: $pagerProgress
+        )
+        .accessibilityIdentifier("apps-stage-tabs")
     }
 
-    private func modeButton(_ item: ListMode, count: Int) -> some View {
-        Button {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { mode = item }
-        } label: {
-            VStack(alignment: .center, spacing: 8) {
-                HStack(spacing: 6) {
-                    Text(item.rawValue)
-                        .font(.system(size: 17, weight: .semibold))
-                    Text("\(count)")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Color.sealTextSecondary)
-                }
-                ZStack {
-                    Capsule().fill(Color.clear).frame(height: 3)
-                    if mode == item {
-                        Capsule()
-                            .fill(Color.sealAccent)
-                            .frame(height: 3)
-                            .matchedGeometryEffect(id: "apps-tab-indicator", in: tabIndicatorNamespace)
+    /// 点标签时同时写 `mode`（驱动分页器）和 `pagerProgress`（驱动下划线）。
+    private var selectionBinding: Binding<ListMode> {
+        Binding(
+            get: { mode },
+            set: { newValue in
+                mode = newValue
+                // 点击时做补间，让下划线和内容页同步滑过去，而不是瞬移。
+                if let index = ListMode.allCases.firstIndex(of: newValue) {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
+                        pagerProgress = CGFloat(index)
                     }
                 }
             }
-            .foregroundStyle(mode == item ? Color.sealAccent : Color.sealTextSecondary)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(item.rawValue)，\(count) 个")
-        .accessibilityAddTraits(mode == item ? .isSelected : [])
+        )
     }
 
     private var appPager: some View {
         TabView(selection: $mode) {
-            appPage(.unsigned, apps: viewModel.unsignedApps).tag(ListMode.unsigned)
-            appPage(.installed, apps: viewModel.installedApps).tag(ListMode.installed)
+            appPage(.unsigned, apps: viewModel.unsignedApps)
+                .background(pageProgressProbe(index: 0))
+                .tag(ListMode.unsigned)
+            appPage(.installed, apps: viewModel.installedApps)
+                .background(pageProgressProbe(index: 1))
+                .tag(ListMode.installed)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        .coordinateSpace(name: Self.pagerSpace)
         .accessibilityIdentifier("apps-stage-pager")
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: mode)
+    }
+
+    private static var pagerSpace: String { "apps-stage-pager-space" }
+
+    /// 把「当前看到第几页」量成一个连续的小数，供毛毛虫下划线使用。
+    ///
+    /// 用测量而不是读滚动偏移：`TabView` 的分页滚动偏移没有公开可读的 API，而
+    /// 每页相对于分页器的 `midX` 是稳定可测的 —— 已滑出视口的那一页会给出负值
+    /// （在左侧）或 `> width`（在右侧），据此即可反推进度。
+    private func pageProgressProbe(index: Int) -> some View {
+        GeometryReader { proxy in
+            let frame = proxy.frame(in: .named(Self.pagerSpace))
+            Color.clear
+                .onChange(of: frame.minX) { _ in
+                    updatePagerProgress(index: index, frame: frame, width: proxy.size.width)
+                }
+        }
+    }
+
+    private func updatePagerProgress(index: Int, frame: CGRect, width: CGFloat) {
+        guard width > 0 else { return }
+        // 本页在视口中的位置：0 = 正对、-1 = 完全滑到左侧、+1 = 完全滑到右侧。
+        let offsetFromViewport = min(max(frame.minX / width, -1), 1)
+        let candidate = CGFloat(index) - offsetFromViewport
+        let clamped = min(max(candidate, 0), CGFloat(ListMode.allCases.count - 1))
+        if abs(pagerProgress - clamped) > 0.0005 {
+            pagerProgress = clamped
+        }
     }
 
     private func appPage(_ pageMode: ListMode, apps: [AppRecord]) -> some View {

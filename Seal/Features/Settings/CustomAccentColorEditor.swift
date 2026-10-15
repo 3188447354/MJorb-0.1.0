@@ -1,7 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// 浮在“外观与主题”抽屉之上的取色器：编辑过程只修改草稿，完成后才写入 AppStorage。
+/// 浮在“外观与主题”抽屉之上的取色器：拖动时**实时**把主题色应用到全局，
+/// 点「完成」保留、点「取消」还原进入前的颜色。
 struct CustomAccentColorEditor: View {
     @Binding var customHex: String
     @Binding var accentRawValue: String
@@ -9,6 +10,9 @@ struct CustomAccentColorEditor: View {
 
     @State private var color: HSBAColor
     @State private var hexInput: String
+    /// 进入编辑器时的主题快照 —— 取消时用它还原。
+    @State private var originalHex: String
+    @State private var originalAccentRawValue: String
 
     init(
         customHex: Binding<String>,
@@ -21,6 +25,8 @@ struct CustomAccentColorEditor: View {
         let initial = HSBAColor(hex: customHex.wrappedValue) ?? HSBAColor(hex: SealAccentTheme.defaultCustomHex)!
         _color = State(initialValue: initial)
         _hexInput = State(initialValue: initial.hex)
+        _originalHex = State(initialValue: customHex.wrappedValue)
+        _originalAccentRawValue = State(initialValue: accentRawValue.wrappedValue)
     }
 
     var body: some View {
@@ -41,7 +47,7 @@ struct CustomAccentColorEditor: View {
             hexField
 
             HStack(spacing: 12) {
-                Button("取消") { isPresented = false }
+                Button("取消") { cancel() }
                     .buttonStyle(AccentEditorSecondaryButtonStyle())
                 Button("完成") {
                     guard let normalized = SealAccentTheme.normalizedHex(hexInput) else { return }
@@ -148,8 +154,36 @@ struct CustomAccentColorEditor: View {
         }
     }
 
+    /// 取色过程中的统一出口：更新 HEX 文本，并把颜色**实时下发到全局主题**。
+    ///
+    /// 为什么在这里下发而不只在「完成」时下发：`accentRawValue` / `customHex` 是
+    /// `@AppStorage` 绑定，直通 `RootTabView` 的 `.id("\(accentRawValue)-\(customAccentHex)")`
+    /// —— 写进去整棵视图树就会用新颜色重建。所以拖动滑块时主题色跟着变，不需要额外的
+    /// 预览通道。写入前先比较，避免无变化时触发无谓的整树重建。
     private func synchronizeHex() {
-        hexInput = color.hex
+        applyLive(color.hex)
+    }
+
+    /// 把某个 HEX 实时应用到全局主题。`HSBAColor.hex` 每次生成的都是规范化大写
+    /// 六位形式，因此比较是稳定的。
+    private func applyLive(_ hex: String) {
+        hexInput = hex
+        if customHex != hex {
+            customHex = hex
+        }
+        if accentRawValue != SealAccentTheme.custom.rawValue {
+            accentRawValue = SealAccentTheme.custom.rawValue
+        }
+    }
+
+    /// 取消：还原进入编辑器前的颜色与主题选择。
+    ///
+    /// 必须还原两件事：拖动期间已经写进 AppStorage 的 `customHex`，以及可能被切到
+    /// `.custom` 的 `accentRawValue`。只还原前者会让用户「取消」后仍停在自定义主题上。
+    private func cancel() {
+        customHex = originalHex
+        accentRawValue = originalAccentRawValue
+        isPresented = false
     }
 }
 
