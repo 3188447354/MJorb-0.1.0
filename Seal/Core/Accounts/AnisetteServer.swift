@@ -15,17 +15,17 @@ enum AnisetteServerCatalog {
     }
 
     static let official: [AnisetteServer] = [
-        // SideInstaller 1.5.1 的 RemoteV3 默认服务。REA 静态字符串证据：
-        // `DEFAULT_ANISETTE_V3_URL = "https://ani.stikstore.app"`（该字符串
-        // 紧邻 `vendor/isideload/src/anisette/remote_v3/mod.rs:175` 的 panic 位置）。
-        // ⚠️ 它的 `/v3/client_info` 返回的是 Xcode 身份
+        // SideInstaller 1.5.1 内置 anisette 目录里的一台。REA 静态字符串证据：
+        // Rust 常量区可见 `https://ani.stikstore.app`（紧邻 `panic while revoking
+        // certificate`）；而它 Swift 侧带名字的服务器目录第一条是
+        // `https://ani.sidestore.io`。这里沿用 SideInstaller 的默认选择。
+        // ⚠️ 实测它的 `/v3/client_info` 返回 Xcode 身份
         // `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>`，
-        // 而 Apple 登录边缘会直接拒掉声明自己是 Xcode 的客户端（实测同 ADI 同请求下
-        // Xcode 身份 → 503、akd 身份 → 200）。该身份由 `AnisetteV3Client.acceptedClientInfo`
-        // 在身份层替换成可用的 macOS/akd 身份，因此这个服务器可以保留为默认。
-        // ⚠️ 身份**不能**依赖服务器：三台公共服务器实测返回三种不同身份
-        //（stikstore → Xcode、sidestore.io → macOS/akd、jkcoxson → Windows/iTunes），
-        // 所以收口必须在客户端（`AnisetteV3Client.acceptedClientInfo`）。
+        // 会被 Apple 登录边缘直接拒（同 ADI 同请求：Xcode 身份 → 503、akd 身份 → 200）。
+        // ⚠️ 但身份**不能**跟着服务器走：逐台实测 SideInstaller 目录里 15 台服务器，
+        // 有 8 台返回的都是这个会被拒的 Xcode 身份，而它照样能登录 ⇒ 身份必须由 Seal
+        // 自己声明（`AnisetteV3Client.declaredClientInfo`），服务器只提供 `user_agent`。
+        // 所以这台可以安全保留为默认：身份不受它影响，provisioning 也照常成功。
         AnisetteServer(
             id: "sideinstaller-default",
             url: makeURL("https://ani.stikstore.app"),

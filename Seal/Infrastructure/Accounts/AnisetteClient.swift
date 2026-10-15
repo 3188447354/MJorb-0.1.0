@@ -7,10 +7,11 @@ import AnisetteKit
 struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private static let logger = Logger(subsystem: "com.mjorb.seal", category: "anisette")
 
-    /// Apple 登录边缘只接受「桌面系统、且不是 Xcode」的客户端身份。
+    /// Seal 声明给 Apple 的客户端身份：**单一事实来源**，不取服务器返回值。
     ///
-    /// 实测证据（`GsService2` 的 `o=init` SRP 请求，合成 anisette 占位、只改
-    /// `X-Mme-Client-Info`、每次重复 2 遍，只看边缘 HTTP 状态）：
+    /// Apple 登录边缘只放行「桌面系统、且不是 Xcode」的身份。实测证据（`GsService2` 的
+    /// `o=init` SRP 请求，合成 anisette 占位、只改 `X-Mme-Client-Info`、每次重复 2 遍，
+    /// 只看边缘 HTTP 状态）：
     /// - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → 503 / 503
     /// - `<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>`     → 503 / 503
     /// - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`          → 503 / 503
@@ -18,20 +19,16 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     /// - `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`                → 200 / 200
     /// - `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`          → 200 / 200
     ///
-    /// `X-Xcode-Version` / `X-Apple-App-Info` 的有无不改变结果（同一身份下 200 与 503
-    /// 只由客户端身份决定）。同一组对照还确认 provisioning 用的
-    /// `GsService2/lookup` 对所有身份都回 200 ⇒ 真机日志里的 `SEAL-NET-503` 只可能
-    /// 来自 SRP 阶段，而不是 provisioning。因此 `ani.stikstore.app` 的
-    /// `/v3/client_info` 返回的 Xcode 身份不能原样透传，不可用的身份统一替换为
-    /// SideInstaller 参考实现固定使用的 macOS/akd 身份。
-    static let acceptedFallbackClientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
-
-    static func acceptedClientInfo(_ raw: String) -> String {
-        let lowered = raw.lowercased()
-        let isDesktop = lowered.contains("macos") || lowered.contains("windows")
-        let isXcode = lowered.contains("com.apple.dt.xcode")
-        return (isDesktop && isXcode == false) ? raw : acceptedFallbackClientInfo
-    }
+    /// `X-Xcode-Version` / `X-Apple-App-Info` 的有无不改变结果；`GsService2/lookup` 对所有
+    /// 身份都回 200 ⇒ `SEAL-NET-503` 只可能来自 SRP 阶段，不是 provisioning。
+    ///
+    /// REA（SideInstaller 1.5.1 主二进制）证据：该二进制里**只有**一条非 Android 身份
+    /// 字面量，就是下面这个 macOS/akd；而它内置的 15 台服务器实测有 8 台
+    /// `/v3/client_info` 返回的是会被边缘直接拒掉的 Xcode 身份，它却照样能登录 ⇒
+    /// **SideInstaller 不拿服务器返回的身份去登录**。Seal 采用同一形态：身份固定声明，
+    /// 服务器只提供 `user_agent`。于是身份与「用哪台服务器」解耦，兜底切换不再带来身份
+    /// 漂移，也让 provisioning 与 SRP 天然声明同一个身份（ADI 必须与它自洽）。
+    static let declaredClientInfo = "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 
     /// Anisette 时间格式（ISO8601 UTC），两处复用，避免每次新建 DateFormatter。
     private static let iso8601UTCFormatter: DateFormatter = {
@@ -252,6 +249,11 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         for server in await prioritizedServers() where server.url.scheme == "https" {
             do {
                 let clientInfo = try await fetchClientInfo(from: server.url)
+                // 同一条不变量：ADI 只对建它时声明的身份有效。身份戳不匹配就当作
+                // provisioning 已失效，交给调用方走完整的 fetch()（会作废重签）。
+                guard state.matches(clientInfo: clientInfo.clientInfo) else {
+                    throw AnisetteV3Error.staleProvisioning
+                }
                 return try await fetchHeaders(from: server.url, state: state, clientInfo: clientInfo, identity: identity, sim: sim)
             } catch { lastError = error }
         }
@@ -295,17 +297,24 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         let clientInfo = try await fetchClientInfo(from: server)
 
         if let state = try await remoteStore.load() {
-            do {
-                return try await fetchHeaders(
-                    from: server,
-                    state: state,
-                    clientInfo: clientInfo,
-                    identity: identity
-                )
-            } catch AnisetteV3Error.staleProvisioning,
-                    AnisetteV3Error.invalidServerResponse,
-                    AnisetteV3Error.provisioningFailed {
-                // 本地 provisioning 失效或服务器响应异常，重置后重新 provision
+            if state.matches(clientInfo: clientInfo.clientInfo) {
+                do {
+                    return try await fetchHeaders(
+                        from: server,
+                        state: state,
+                        clientInfo: clientInfo,
+                        identity: identity
+                    )
+                } catch AnisetteV3Error.staleProvisioning,
+                        AnisetteV3Error.invalidServerResponse,
+                        AnisetteV3Error.provisioningFailed {
+                    // 本地 provisioning 失效或服务器响应异常，重置后重新 provision
+                    try await remoteStore.remove()
+                }
+            } else {
+                // ADI 只对「建它时声明的那个身份」有效：Apple 对「ADI 与声明系统不一致」
+                // 的初始登录直接回 -80045。所以声明身份一变就必须作废重签，而不是继续
+                // 复用旧 ADI。旧版本写入的条目没有身份戳（nil），会走这条路径自动迁移。
                 try await remoteStore.remove()
             }
         }
@@ -372,8 +381,11 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
               userAgent.isEmpty == false else {
             throw AnisetteV3Error.invalidServerResponse
         }
+        // 服务器返回的 `client_info` 只当协议字段校验（缺字段说明服务器不合规），
+        // 身份本身固定用 Seal 自己声明的那一个：逐台服务器实测里有 8 台返回的是会被
+        // Apple 边缘直接拒掉的 Xcode 身份，跟着服务器走就会把这些服务器变成必失败。
         return AnisetteV3ClientInfo(
-            clientInfo: Self.acceptedClientInfo(clientInfo),
+            clientInfo: Self.declaredClientInfo,
             userAgent: userAgent
         )
     }
@@ -424,7 +436,8 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
                 guard let adiPB = json["adi_pb"] as? String,
                       let state = AnisetteProvisioningState(
                         identifier: identity.encodedIdentifier,
-                        adiPB: adiPB
+                        adiPB: adiPB,
+                        clientInfo: clientInfo.clientInfo
                       ) else {
                     throw AnisetteV3Error.provisioningFailed
                 }

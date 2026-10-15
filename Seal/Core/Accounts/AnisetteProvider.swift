@@ -61,10 +61,23 @@ struct AnisetteProvisioningState: Codable, Equatable, Sendable {
     let identifier: String
     let adiPB: String
 
-    init?(identifier: String, adiPB: String) {
+    /// 建这份 ADI 时声明给 Apple 的客户端身份（身份戳）。
+    ///
+    /// Apple 拒绝「ADI 与声明系统不一致」的初始登录，返回 `-80045`，所以 ADI 只对
+    /// 建它时用的那个身份有效。旧版本写入的条目没有这个字段，解码为 `nil`，一律
+    /// 视为不匹配，迫使下一次重新 provisioning。
+    let clientInfo: String?
+
+    init?(identifier: String, adiPB: String, clientInfo: String? = nil) {
         guard identifier.isEmpty == false, adiPB.isEmpty == false else { return nil }
         self.identifier = identifier
         self.adiPB = adiPB
+        self.clientInfo = clientInfo
+    }
+
+    /// 这份 ADI 是否对本次要声明的身份仍然有效。判定抽成纯函数，便于单测覆盖。
+    func matches(clientInfo: String) -> Bool {
+        self.clientInfo == clientInfo
     }
 }
 

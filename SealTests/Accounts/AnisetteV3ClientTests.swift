@@ -38,12 +38,48 @@ struct AnisetteV3ClientTests {
 
     @Test
     func provisioningStateRoundTripsAndRejectsEmptyValues() throws {
-        let state = AnisetteProvisioningState(identifier: "identifier", adiPB: "adi-pb")
+        let state = AnisetteProvisioningState(
+            identifier: "identifier",
+            adiPB: "adi-pb",
+            clientInfo: AnisetteV3Client.declaredClientInfo
+        )
         let data = try JSONEncoder().encode(state)
 
         #expect(try JSONDecoder().decode(AnisetteProvisioningState.self, from: data) == state)
         #expect(AnisetteProvisioningState(identifier: "", adiPB: "adi-pb") == nil)
         #expect(AnisetteProvisioningState(identifier: "identifier", adiPB: "") == nil)
+
+        // 旧版本写入的条目没有身份戳，必须仍能解码（解码为 nil），否则升级后读旧 ADI 会直接抛错。
+        let legacy = Data(#"{"identifier":"identifier","adiPB":"adi-pb"}"#.utf8)
+        #expect(try JSONDecoder().decode(AnisetteProvisioningState.self, from: legacy).clientInfo == nil)
+    }
+
+    /// ADI 只对「建它时声明的那个身份」有效：Apple 对「ADI 与声明系统不一致」的初始登录
+    /// 回 `-80045`。所以身份戳不匹配（含旧版本写入的无戳条目）必须判为无效，进而作废重签。
+    @Test
+    func provisioningStateMatchesOnlyTheIdentityItWasBuiltWith() throws {
+        let stamped = try #require(
+            AnisetteProvisioningState(
+                identifier: "identifier",
+                adiPB: "adi-pb",
+                clientInfo: AnisetteV3Client.declaredClientInfo
+            )
+        )
+        #expect(stamped.matches(clientInfo: AnisetteV3Client.declaredClientInfo))
+        #expect(stamped.matches(clientInfo: "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>") == false)
+
+        let legacy = try #require(AnisetteProvisioningState(identifier: "identifier", adiPB: "adi-pb"))
+        #expect(legacy.clientInfo == nil)
+        #expect(legacy.matches(clientInfo: AnisetteV3Client.declaredClientInfo) == false)
+
+        let staleXcode = try #require(
+            AnisetteProvisioningState(
+                identifier: "identifier",
+                adiPB: "adi-pb",
+                clientInfo: "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>"
+            )
+        )
+        #expect(staleXcode.matches(clientInfo: AnisetteV3Client.declaredClientInfo) == false)
     }
 
     @Test
@@ -64,28 +100,28 @@ struct AnisetteV3ClientTests {
     }
 
     @Test
-    func clientInfoParsingRequiresBothServerValues() throws {
-        let accepted = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+    func clientInfoParsingUsesDeclaredIdentityAndServerUserAgent() throws {
+        let serverValue = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
         let data = try JSONSerialization.data(withJSONObject: [
-            "client_info": accepted,
+            "client_info": serverValue,
             "user_agent": "akd/1.0 CFNetwork/808.1.4"
         ])
 
         #expect(
             try AnisetteV3Client.parseClientInfo(data: data) ==
                 AnisetteV3ClientInfo(
-                    clientInfo: accepted,
+                    clientInfo: AnisetteV3Client.declaredClientInfo,
                     userAgent: "akd/1.0 CFNetwork/808.1.4"
                 )
         )
     }
 
-    /// 实测（`GsService2` 的 `o=init` SRP 请求、合成 anisette 占位、只改
-    /// `X-Mme-Client-Info`）：Xcode 身份与 Android 身份都会被 Apple 登录边缘直接回 503，
-    /// 桌面非 Xcode 身份正常。因此 `/v3/client_info` 返回的不可用身份必须替换成
-    /// 参考实现的 macOS/akd 身份。
+    /// REA（SideInstaller 1.5.1 主二进制）：它内置的 anisette 目录里 15 台服务器中，实测有
+    /// 8 台的 `/v3/client_info` 返回会被 Apple 登录边缘直接拒掉的 Xcode 身份，而它照样能
+    /// 登录 ⇒ 身份不取服务器返回值。Seal 同样只声明自己那一个身份，所以无论服务器返回
+    /// Xcode / Android / macOS / Windows，声明出来的都必须是同一个。
     @Test
-    func serverIdentitiesRejectedByAppleAreReplaced() throws {
+    func declaredIdentityIsIndependentOfTheServerReturnedIdentity() throws {
         func parsedClientInfo(_ clientInfo: String) throws -> String {
             let data = try JSONSerialization.data(withJSONObject: [
                 "client_info": clientInfo,
@@ -94,26 +130,18 @@ struct AnisetteV3ClientTests {
             return try AnisetteV3Client.parseClientInfo(data: data).clientInfo
         }
 
-        let fallback = AnisetteV3Client.acceptedFallbackClientInfo
+        let declared = AnisetteV3Client.declaredClientInfo
+        let serverValues = [
+            "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>",
+            "<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>",
+            "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+            "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+            "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
+        ]
 
-        #expect(
-            try parsedClientInfo("<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>")
-                == fallback
-        )
-        #expect(
-            try parsedClientInfo("<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>")
-                == fallback
-        )
-        #expect(
-            try parsedClientInfo("<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>")
-                == fallback
-        )
-
-        let macOSIdentity = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
-        #expect(try parsedClientInfo(macOSIdentity) == macOSIdentity)
-
-        let windowsIdentity = "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
-        #expect(try parsedClientInfo(windowsIdentity) == windowsIdentity)
+        for value in serverValues {
+            #expect(try parsedClientInfo(value) == declared)
+        }
     }
 
     @Test

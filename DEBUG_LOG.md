@@ -5,6 +5,22 @@
 
 ---
 
+## 2026-10-15 Apple ID `-80045` 的真实根因：ADI 与「声明身份」不一致（构建 21）
+
+- **现象**：构建 21 的 `SEAL-NET-503` 消失，但真机添加 Apple ID 立刻变成 `Apple.APIError -80045`（首试即现，不是重试风暴独有）。**同一台手机、同一网络下用 SideInstaller 加同一个 Apple ID 能够成功** ⇒ 排除环境 / IP 限流（日志里 2 分钟内约 10 次重试中出现过一次 Apple `429`）。
+- **根因**：ADI（`adi_pb`）只对「建它时声明给 Apple 的那个客户端身份」有效，而 `remoteStore` 用的是固定钥匙串服务名、**不按服务器隔离**。构建 21 把声明身份改成了 macOS/akd，设备上却仍在复用构建 19 用 **Xcode 身份**建的那份 ADI ⇒ Apple 按「ADI 数据与声明系统不一致」回 `-80045`。项目自身的 `DEBUG_LOG`（2026-10-14）与 `isideload` 注释都记载过同一类别。
+- **REA（SideInstaller 1.5.1 主二进制）**：
+  - 二进制里**只有一条**非 Android 身份字面量，就是 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`，**没有任何 `com.apple.dt.Xcode` 字面量**；另有 `<Pixel 7> <Android;14;UQ1A.240205.002> … com.apple.akd`（本地 provider 默认值）。
+  - 它内置的 anisette 目录首条是 `https://ani.sidestore.io`（Swift 侧带名字的目录，`anisetteServerURL` 紧邻其前）；`https://ani.stikstore.app` 出现在 Rust 常量区（紧邻 `panic while revoking certificate`）⇒ 此前「默认服务器 = stikstore」是**误判**。它还内置 `https://servers.sidestore.io/servers.json` 作为运行时目录来源。
+  - **逐台实测该目录 15 台服务器**：8 台（sidestore.zip、846969.xyz、npeg.us、wedotstud.io、xu30.top、ani3server.fly.dev、crystall1ne.dev、stikstore.app）返回的正是会被边缘拒掉的 Xcode 身份，3 台返回 akd/macOS 或 Windows/iTunes，其余不可达 ⇒ **SideInstaller 并不拿服务器返回的身份去登录，而是固定声明上面那一个 macOS/akd**；服务器只提供 `user_agent`（15 台实测 `user_agent` 完全相同）。
+- **修复**：把身份收口从「过滤器」升级成「单一事实来源 + 身份戳」。
+  - `AnisetteV3Client.declaredClientInfo`：固定声明 macOS/akd，**不取服务器返回值**（服务器身份只当协议字段校验）。身份与「用哪台服务器」解耦后，兜底切换不再带来身份漂移，stikstore 这类 Xcode 身份服务器也可安全保留为默认。
+  - `AnisetteProvisioningState.clientInfo` + `matches(clientInfo:)`：给 ADI 记上「建它时声明的身份」，不匹配（含旧版本写入的无戳条目，解码为 `nil`）即视为失效，`fetch()` / `resync()` 直接作废并重新 provisioning ⇒ 本轮的 `-80045` 由此自动治好，以后任何身份漂移也自愈。只动 `remoteStore`，不动 `identityStore` 的本地标识（它与 authToken 绑定，清了会让全部已登录账号失效）。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Core/Accounts/AnisetteProvider.swift`、`Seal/Core/Accounts/AnisetteServer.swift`（更正误判注释）、`SealTests/Accounts/AnisetteV3ClientTests.swift`。
+- **验证状态**：15 台服务器身份与 6 组边缘对照均有实测记录；Swift 回归新增 `declaredIdentityIsIndependentOfTheServerReturnedIdentity` 与 `provisioningStateMatchesOnlyTheIdentityItWasBuiltWith`。⚠️ Windows 无 Xcode，仍需云 iOS CI 编译 + 真机复测；真机请**只做单次**添加尝试（此前连点触发过 `429`），不成功也隔一会儿再试一次。
+
+---
+
 ## 2026-10-15 Apple ID `SEAL-NET-503` 的真实根因：客户端身份声明为 Xcode（构建 19）
 
 - **现象**：构建 19 的真机日志在添加账号后约 2 秒返回 `SEAL-NET-503`，连续四次，未进入密码校验之后的任何阶段。此前补上的 GrandSlam 头部、默认服务器切换都没有消除它。
