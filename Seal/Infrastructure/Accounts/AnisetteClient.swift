@@ -191,8 +191,9 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     }
 
     private func fetch(from server: URL, identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
+        let serverName = server.host ?? server.absoluteString
         let clientInfo = try await fetchClientInfo(from: server)
-        await trace("服务器=\(server.displayName) 返回身份=\(clientInfo.clientInfo)")
+        await trace("服务器=\(serverName) 返回身份=\(clientInfo.clientInfo)")
 
         if let state = try await remoteStore.load() {
             if state.matches(clientInfo: clientInfo.clientInfo) {
@@ -204,13 +205,11 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
                         clientInfo: clientInfo,
                         identity: identity
                     )
-                    await trace("复用 ADI 取 headers 成功，服务器=\(server.displayName)")
+                    await trace("复用 ADI 取 headers 成功，服务器=\(serverName)")
                     return data
-                } catch AnisetteV3Error.staleProvisioning,
-                        AnisetteV3Error.invalidServerResponse,
-                        AnisetteV3Error.provisioningFailed {
+                } catch let caughtError where Self.isProvisioningRecoverable(caughtError) {
                     // 本地 provisioning 失效或服务器响应异常，重置后重新 provision
-                    await trace("复用 ADI 取 headers 失败（\(Self.describe(error))），作废 ADI 后重新 provisioning", level: .warning)
+                    await trace("复用 ADI 取 headers 失败（\(Self.describe(caughtError))），作废 ADI 后重新 provisioning", level: .warning)
                     try await remoteStore.remove()
                 }
             } else {
@@ -227,7 +226,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         // provision 失败时只报错，不重置 identity
         // identity 是设备标识（deviceUniqueIdentifier/localUserID），与 authToken 绑定
         // 重置会导致所有已登录 Apple ID 全部失效（1100 会话过期）
-        await trace("开始 provisioning，服务器=\(server.displayName)，声明身份=\(clientInfo.clientInfo)")
+        await trace("开始 provisioning，服务器=\(serverName)，声明身份=\(clientInfo.clientInfo)")
         let state = try await provision(
             on: server,
             clientInfo: clientInfo,
@@ -241,8 +240,19 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             clientInfo: clientInfo,
             identity: identity
         )
-        await trace("新 ADI 取 headers 成功，服务器=\(server.displayName)")
+        await trace("新 ADI 取 headers 成功，服务器=\(serverName)")
         return data
+    }
+
+    /// 复用 ADI 取 headers 时「作废重签即可恢复」的失败；其余错误原样上抛。
+    private static func isProvisioningRecoverable(_ error: Error) -> Bool {
+        guard let e = error as? AnisetteV3Error else { return false }
+        switch e {
+        case .staleProvisioning, .invalidServerResponse, .provisioningFailed:
+            return true
+        case .invalidIdentifier, .unavailable, .rejectedIdentity:
+            return false
+        }
     }
 
     /// 把错误压缩成一行，便于日志归因（不要 dump 全量 userInfo，脱敏由 SealLogStore 兜底）。
