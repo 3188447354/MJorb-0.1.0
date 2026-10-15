@@ -80,9 +80,10 @@ struct AnisetteV3ClientTests {
         )
     }
 
-    /// 实测（真实 ADI、同一服务器、同一请求体，只改 `X-Mme-Client-Info`）：
-    /// Xcode 身份与 Android 身份都会被 Apple 登录边缘直接回 503，桌面非 Xcode 身份正常。
-    /// 因此 `/v3/client_info` 返回的不可用身份必须替换成参考实现的 macOS/akd 身份。
+    /// 实测（`GsService2` 的 `o=init` SRP 请求、合成 anisette 占位、只改
+    /// `X-Mme-Client-Info`）：Xcode 身份与 Android 身份都会被 Apple 登录边缘直接回 503，
+    /// 桌面非 Xcode 身份正常。因此 `/v3/client_info` 返回的不可用身份必须替换成
+    /// 参考实现的 macOS/akd 身份。
     @Test
     func serverIdentitiesRejectedByAppleAreReplaced() throws {
         func parsedClientInfo(_ clientInfo: String) throws -> String {

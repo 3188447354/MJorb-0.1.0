@@ -9,16 +9,22 @@
 
 - **现象**：构建 19 的真机日志在添加账号后约 2 秒返回 `SEAL-NET-503`，连续四次，未进入密码校验之后的任何阶段。此前补上的 GrandSlam 头部、默认服务器切换都没有消除它。
 - **根因**：**不是**头部缺失，也不是服务器地址。Apple 的登录边缘会直接拒掉「声明自己是 Xcode」的客户端：`X-Mme-Client-Info` 的应用标识为 `com.apple.dt.Xcode` 时，`gsa.apple.com` 在密码校验前返回 HTML 503。
-  - 对照实验（真实 ADI、同一 Anisette 服务器、同一请求体，只改 `X-Mme-Client-Info`）：
-    - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → **HTTP 503**
-    - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **HTTP 200**
-    - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **HTTP 503**
-    - 前两行硬件与系统完全相同，只有应用标识不同；同一结论在 `ani.stikstore.app` 与 `ani.sidestore.io` 两台上各自复现两次。
+  - 对照实验（直接 POST `GsService2` 的 `o=init`，合成 anisette 占位、其余字段固定，只改 `X-Mme-Client-Info`，每个身份重复 2 遍，只看边缘 HTTP 状态）：
+    - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → **503 / 503**
+    - `<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>` → **503 / 503**
+    - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **503 / 503**
+    - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **200 / 200**
+    - `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>` → **200 / 200**
+    - `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>` → **200 / 200**
+  - `X-Xcode-Version` / `X-Apple-App-Info` 的有无不改变结果：同一身份加上这两个头仍是同样的 200 / 503 ⇒ 判据是客户端身份本身，不是这两个头。
+  - 同一轮还测了 provisioning 用的 `GsService2/lookup`（GET）：**五种身份全部 200 且都返回 `midStartProvisioning`/`midFinishProvisioning`** ⇒ provisioning 从来不是 503 的来源，真机日志里的 `SEAL-NET-503` 只可能出在 SRP 阶段。这也解释了为什么设备上已经有可用的远程 ADI 状态：provisioning 一直成功，只有 SRP 被拒。
   - Seal 的默认服务器 `ani.stikstore.app` 的 `/v3/client_info` 返回的正是这个被拒的 Xcode 身份，而 `AnisetteV3Client` 把它原样透传成 `X-Mme-Client-Info`（`fetchHeaders` 的 `deviceDescription` 与 `appleRequest` 都取它）。这与「服务器身份必须与 Xcode 指纹一致」的旧判断正好相反——那条判断本身就是 503 的来源。
   - 参考实现（`isideload`）的做法印证了这点：`GrandSlam::fetch_url_bag` 在注释里写明「sending the android client info gets us the wrong url bag, so we lie for this request」，并把该请求的 `X-Mme-Client-Info` 固定为 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`。
+  - 三台公共服务器实测返回：`ani.stikstore.app` → Xcode 身份、`ani.sidestore.io` → macOS/akd 身份、`ani.jkcoxson.com` → Windows/iTunes 身份。三者硬件/系统与应用标识各不相同，因此身份**不能**依赖服务器，必须在客户端收口。
+- **全项目排查**（避免「只看一处」）：所有会把身份送到 Apple 的出口都过了一遍。活路径只有一条 —— `AnisetteV3Client.fetchClientInfo` → `parseClientInfo`，`fetchHeaders` / `appleRequest` / `resync` 全部从它取值。另外三处身份字面量都在**死路径**上：`AnisetteClient.fetchLocal` 的 `<Pixel 7>`（`fetchLocalCoalesced` 无任何调用方）、`Vendor/AnisetteKit` 的 `defaultClientInfo`（`<MacBookPro18,3> … com.apple.dt.Xcode/26.0>`，只被同样无人调用的 `AnisetteDataProvider.fetchAnisetteData` 系列使用）、以及 `AnisetteDataProvider` 自己的 `X-Mme-Client-Info` 发送点。这三处都是 503 级身份，本次不动它们（改 vendor 与死代码只增加编译风险），但已记录为隐患。
 - **修复**：在身份层收口，而不是逐处打补丁。`AnisetteV3Client.parseClientInfo` 解析 `/v3/client_info` 后统一过一遍 `acceptedClientInfo`：只放行「桌面系统且非 Xcode」的身份（macOS / Windows，且不含 `com.apple.dt.Xcode`），其余（Xcode、Android）一律替换为参考实现的 macOS/akd 身份 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`。因为 `fetchHeaders`、`appleRequest` 以及全部门户/续签路径都从同一个 `AnisetteV3ClientInfo` 取值，这一处改动覆盖账号添加、续签、签名三条链路。没有改动 `X-Xcode-Version`、`X-Apple-App-Info`，也没有清除 `adi.pb`、设备标识或已保存账号。
 - **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Core/Accounts/AnisetteServer.swift`（更正注释）、`SealTests/Accounts/AnisetteV3ClientTests.swift`。
-- **验证状态**：对照实验在 Windows 本机用真实 ADI 复现，`X-Mme-Client-Info` 的改动是唯一变量；Swift 回归新增 `serverIdentitiesRejectedByAppleAreReplaced` 锁定该替换规则。Windows 无 Xcode，等待云 iOS CI 编译与真机复测「添加 Apple ID 走到验证码输入并完成」。
+- **验证状态**：对照实验在 Windows 本机对 `gsa.apple.com` 实打实发过请求，`X-Mme-Client-Info` 是唯一变量，每个身份重复两次、结论稳定；Swift 回归新增 `serverIdentitiesRejectedByAppleAreReplaced` 锁定该替换规则。⚠️ 探针用的是**合成 anisette**，只证明「边缘是否放行」，不证明真实 ADI 与替换后身份的兼容性；Windows 无 Xcode，仍需云 iOS CI 编译与真机复测「添加 Apple ID 走到验证码输入并完成」。
 
 ---
 
