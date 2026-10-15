@@ -42,7 +42,10 @@ struct SupportSealView: View {
                 .background(Color.sealAccent.opacity(0.12), in: Circle())
             Text("支持 Seal")
                 .font(.title2.weight(.semibold))
-            Text("你的支持让 Seal 持续更新")
+            Text("感谢你的喜欢")
+                .font(.subheadline)
+                .foregroundStyle(Color.sealTextSecondary)
+            Text("你的鼓励让 Seal 走的更远")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
         }
@@ -54,8 +57,8 @@ struct SupportSealView: View {
         VStack(spacing: 0) {
             Button { isRewardPresented = true } label: {
                 supportRow(
-                    title: "赞赏支持",
-                    detail: "每一份支持，都是持续更新的动力",
+                    title: "赞赏开发者",
+                    detail: "一份心意，助力项目维护与更新",
                     icon: "heart.fill",
                     iconColor: .pink
                 )

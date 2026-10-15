@@ -107,6 +107,24 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     /// （中文机取 `Locale.current` 会得到 zh_CN，与身份串自相矛盾）。
     private static let authenticationLocaleIdentifier = "en_US"
 
+    /// **实验开关**：把登录请求的 `X-Mme-Client-Info` 钉成 SideInstaller 二进制里
+    /// 那条 Mac 身份，而不是 anisette 服务器返回的 `MacBookPro13,2 / macOS 13.1`。
+    ///
+    /// 为什么要试：`-80045` 出现在 `o=init` 这第一个请求上（日志里从未走到 `o=complete`），
+    /// init 的载荷不含任何密码材料，而 Apple 返回的是 **`hsc = 500`（服务端内部错误）**。
+    /// 走到这一步，客户端载荷已逐项核对无误（cpd 九字段、SRP 头七项、A2k 256 字节、
+    /// PBKDF2/群组/哈希/username 入 x 全部与 isideload 等价），**唯一从未换过的变量就是
+    /// 这条身份串** —— 它一直是那台 2023 年的 `MacBookPro13,2`。
+    ///
+    /// 判别力：成功即定位根因；失败则**干净地排除"身份差异"**，不再留悬案。
+    ///
+    /// 与"把配置整体换成 isideload"不同：isideload 走的就是服务器身份，所以那件事
+    /// 解决不了本问题；这里做的是换成**另一个已知可用实现里真实存在的字面量**。
+    ///
+    /// 置回 `nil` 即恢复原行为（用服务器返回的身份），其余逻辑一概不动。
+    private static let experimentalSignInClientInfo: String? =
+        "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+
     func fetch() async throws -> ALTAnisetteData {
         let identity = try await loadIdentity()
         await trace("fetch 开始，设备标识=\(identity.deviceIdentifier.lowercased())，声明身份将取自服务器")
@@ -585,9 +603,15 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         }
         await trace("get_headers 成功：拿到 X-Apple-I-MD-M/\(json["X-Apple-I-MD"] != nil ? "MD✓" : "MD✗")/\(json["X-Apple-I-MD-RINFO"] != nil ? "RINFO✓" : "RINFO✗")")
 
+        // 实验中：登录请求声明哪条身份由 experimentalSignInClientInfo 决定；
+        // 为 nil 时退回服务器返回的那条（原行为）。
+        // 这里同时作用于 `ALTAnisetteData.deviceDescription` —— 它正是 SRP 请求头
+        // `X-Mme-Client-Info` 的取值来源，所以两处天然一致。
+        let declaredClientInfo = Self.experimentalSignInClientInfo ?? clientInfo.clientInfo
+
         var formatted: [String: String] = [
             "deviceSerialNumber": "0",
-            "deviceDescription": clientInfo.clientInfo,
+            "deviceDescription": declaredClientInfo,
             // 与 header 值保持同一小写形态，Apple 看到的设备标识在两处一致。
             "localUserID": identity.localUserID.lowercased(),
             "deviceUniqueIdentifier": identity.deviceIdentifier.lowercased(),
@@ -623,7 +647,8 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         // `Accept` 用 plist 而不是 `*/*`，并且**不发** `X-Apple-I-Client-Time` /
         // `X-Apple-Locale` / `X-Apple-I-TimeZone` —— isideload 把这三个显式注释掉了，
         // 说明刻意不发，Seal 不该多发。
-        request.setValue(clientInfo.clientInfo, forHTTPHeaderField: "X-Mme-Client-Info")
+        request.setValue(Self.experimentalSignInClientInfo ?? clientInfo.clientInfo,
+                         forHTTPHeaderField: "X-Mme-Client-Info")
         request.setValue(clientInfo.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("text/x-xml-plist", forHTTPHeaderField: "Content-Type")
         request.setValue("text/x-xml-plist", forHTTPHeaderField: "Accept")
