@@ -185,15 +185,55 @@ final class AppleAccountClient {
                 await trace("SRP 登录成功，进入 team 查询")
             } catch {
                 let detail = Self.describeError(error)
-                guard let sim = Self.resyncSIM(from: error) else {
+
+                if let sim = Self.resyncSIM(from: error) {
+                    // Apple 要求 anisette 重新同步（Status.hsc == 434，附 SIM）。
+                    await trace("SRP 登录要求 SIM 同步（sim 长度=\(sim.count)），resync 后重试一次", level: .warning)
+                    let resyncedAnisetteData = try await anisetteProvider.resync(sim: sim)
+                    await trace("resync 完成，重发 SRP")
+                    auth = try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
+                    await trace("resync 后 SRP 登录成功")
+                } else if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
+                    // ── -80045：自动作废 ADI、重新 provisioning，再重试一次 ──────────
+                    //
+                    // -80045 是「Apple 暂时拒绝了登录请求」，而请求形态已逐条对齐
+                    // isideload：cpd 六字段一致（bootstrap / icscrec / loc / pbe /
+                    // prkgen / svct，加三个 anisette 头）、请求头一致（Content-Type /
+                    // Accept / X-Mme-Client-Info / User-Agent / X-Xcode-Version /
+                    // X-Apple-App-Info / Connection: close）、声明身份一致（实测 10 台
+                    // 公共 anisette 服务器都返回 <MacBookPro13,2> <macOS;13.1;22C65>
+                    // … com.apple.akd，Seal 原样使用）。
+                    //
+                    // 剩下的变量只有本地那份缓存的 ADI：日志一直显示
+                    // 「ADI 命中：已有 ADI 的身份戳与本次声明身份一致，复用」，
+                    // 也就是从不重新 provisioning；而 isideload 在 -45061 时会重签。
+                    // 若那份 ADI 坏了、或它对应的标识曾被 Apple 标记过，-80045 就能解释
+                    // 得通，也能解释为什么与账号无关（爱思用同一账号能过，因为它完全不
+                    // 用这份 ADI）。
+                    //
+                    // **只清 remoteStore（ADI），绝不动 identityStore（identifier）**：
+                    // identifier 与 authToken 绑定，清它会让所有已登录 ID 掉线并触发
+                    // 2FA —— 源码注释明确记载过该路径"曾造成严重回归"。
+                    // resetProvisioning 恰好只删 remoteStore，所以直接复用。
+                    //
+                    // 只重试一次：这既不是限流（不该连打），也不保证可恢复；
+                    // 重试仍失败就把错误抛出，交由上层按 SEAL-AUTH-80045 呈现。
+                    await trace("SRP 登录失败（无 SIM 同步指令）：\(detail)", level: .error)
+                    await trace("检测到 -80045：作废远程 ADI 并重新 provisioning，随后重试一次", level: .warning)
+                    await anisetteProvider.resetProvisioning()
+                    let reprovisioned = try await anisetteProvider.fetchForAuthentication()
+                    await trace("ADI 已重签，声明身份=\(reprovisioned.deviceDescription)，重发 SRP")
+                    auth = try await self.authenticate(
+                        email: email,
+                        password: password,
+                        anisetteData: reprovisioned,
+                        verificationCode: verificationCode
+                    ).value
+                    await trace("ADI 重签后 SRP 登录成功")
+                } else {
                     await trace("SRP 登录失败（无 SIM 同步指令）：\(detail)", level: .error)
                     throw error
                 }
-                await trace("SRP 登录要求 SIM 同步（sim 长度=\(sim.count)），resync 后重试一次", level: .warning)
-                let resyncedAnisetteData = try await anisetteProvider.resync(sim: sim)
-                await trace("resync 完成，重发 SRP")
-                auth = try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
-                await trace("resync 后 SRP 登录成功")
             }
             try Task.checkCancellation()
             stage = .teamLookup
