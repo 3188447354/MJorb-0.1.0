@@ -8172,7 +8172,7 @@
           "role": "comment_reference",
           "semanticFields": [],
           "semanticValues": {},
-          "source": "/// `GsService2/lookup` 对所有身份都回 200 ⇒ 真机日志里的 `SEAL-NET-503` 只可能"
+          "source": "/// 身份都回 200 ⇒ `SEAL-NET-503` 只可能来自 SRP 阶段，不是 provisioning。"
         }
       ],
       "occurrenceCount": 3,

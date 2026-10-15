@@ -643,10 +643,12 @@ private extension ALTAppleAPI {
         let identityTokenData = identityToken.data(using: .utf8)!
         let encodedIdentityToken = identityTokenData.base64EncodedString()
 
-        // Keep every /auth request on the Android AuthKit identity used for
-        // the GrandSlam SRP exchange. This is SideInstaller's working flow;
-        // its phone endpoints use JSON while the trusted-device endpoints use
-        // XML plist.
+        // Keep every /auth request on the same client identity as the GrandSlam
+        // SRP exchange. That identity is now declared client-side (a macOS/akd
+        // one, see `AnisetteV3Client.declaredClientInfo`) instead of being taken
+        // from the anisette server, so this is not an Android identity any more.
+        // SideInstaller's working shape is kept: its phone endpoints use JSON
+        // while the trusted-device endpoints use XML plist.
         let isPhoneEndpoint = url.path == "/auth/verify/phone" || url.path == "/auth/verify/phone/securitycode"
         let httpHeaders = [
             "Accept": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
