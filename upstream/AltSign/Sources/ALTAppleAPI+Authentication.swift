@@ -537,7 +537,50 @@ private extension ALTAppleAPI {
         }
     }
 
+    /// 429 重试的间隔；对齐 isideload 的 `RETRY_429_DELAYS = [2s, 5s]`。
+    ///
+    /// isideload 的注释（iLoader 2.3.4 / upstream a00c3a7）记了原因：
+    /// 「iLoader 发现这些 429 常常是瞬时的，重试一次就过了。上游连着重试 10 次；
+    ///  但**持续的限流只会随着每次尝试越拖越长**，所以这里再多试两次、间隔开，
+    ///  然后放弃。」—— 所以是「少量 + 间隔」，绝不是连打。
+    static let grandSlamRetry429Delays: [TimeInterval] = [2, 5]
+
     func sendAuthenticationRequest(parameters requestParameters: [String: Any], anisetteData: ALTAnisetteData, completionHandler: @escaping (Result<[String: Any], Error>) -> Void) {
+        performAuthenticationRequest(parameters: requestParameters,
+                                     anisetteData: anisetteData,
+                                     remainingRetryDelays: Self.grandSlamRetry429Delays,
+                                     completionHandler: completionHandler)
+    }
+
+    private func performAuthenticationRequest(parameters requestParameters: [String: Any],
+                                              anisetteData: ALTAnisetteData,
+                                              remainingRetryDelays: [TimeInterval],
+                                              completionHandler: @escaping (Result<[String: Any], Error>) -> Void) {
+        sendAuthenticationRequestOnce(parameters: requestParameters, anisetteData: anisetteData) { result in
+            guard case .failure(let error) = result,
+                  let delay = remainingRetryDelays.first,
+                  Self.isThrottlingError(error) else {
+                return completionHandler(result)
+            }
+            let rest = Array(remainingRetryDelays.dropFirst())
+            verboseLog("[AltSign] sendAuthenticationRequest throttled; retry in \(delay)s (\(rest.count) left)")
+            DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+                self.performAuthenticationRequest(parameters: requestParameters,
+                                                  anisetteData: anisetteData,
+                                                  remainingRetryDelays: rest,
+                                                  completionHandler: completionHandler)
+            }
+        }
+    }
+
+    /// 是否为 Apple 的限流响应。按**文案**判定：429 被包装进
+    /// `ALTServerError.badServerResponse(reason:)` 抛出，没有独立的错误类型可用。
+    private static func isThrottlingError(_ error: Error) -> Bool {
+        let text = String(describing: error)
+        return text.contains("429") || text.lowercased().contains("too many requests")
+    }
+
+    func sendAuthenticationRequestOnce(parameters requestParameters: [String: Any], anisetteData: ALTAnisetteData, completionHandler: @escaping (Result<[String: Any], Error>) -> Void) {
         do {
             let requestURL = URL(string: "https://gsa.apple.com/grandslam/GsService2")!
 
@@ -587,6 +630,21 @@ private extension ALTAppleAPI {
                     guard let data = data, !data.isEmpty else {
                         let err = error ?? ALTServerError.badServerResponse(reason: "Server returned empty response (Content-Length: 0) — session may have timed out", jsonPayload: "0 bytes")
                         throw err
+                    }
+
+                    // Apple answers a throttled sign-in attempt with an HTML 429,
+                    // not a plist, so it used to fall through to
+                    // `invalidResponseFormat` and surface as "Apple ID 验证失败"
+                    // (SEAL-AUTH-107a) -- which reads as a bad account and sends
+                    // people into retry loops that only extend the window. Name it
+                    // for what it is instead. isideload treats the same status the
+                    // same way ("a lasting limit only gets longer with every
+                    // attempt"), so surface a distinct error the caller can word.
+                    if let httpResponse = response as? HTTPURLResponse,
+                       httpResponse.statusCode == 429 {
+                        let rawResponse = self.formatPayloadJSON(data)
+                        verboseLog("[AltSign] sendAuthenticationRequest was throttled: HTTP 429")
+                        throw ALTServerError.badServerResponse(reason: "Apple is throttling sign-in attempts (HTTP 429 Too Many Requests)", jsonPayload: rawResponse)
                     }
 
                     guard let responseDictionary = self.parsePlistOrJSON(data),
