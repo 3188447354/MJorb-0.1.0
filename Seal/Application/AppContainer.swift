@@ -1,3 +1,4 @@
+import AltSign
 import Foundation
 
 @MainActor
@@ -91,6 +92,23 @@ struct AppContainer {
                 fileURL: sealDirectory.appending(path: AppConfiguration.Paths.sealLogFile)
             )
             let anisetteProvider = AnisetteV3Client(logStore: logStore)
+
+            // ── 把 AltSign 的日志接进 Seal 的日志文件 ────────────────────────────
+            //
+            // AltSign 全部走 `print()`，而 iOS 的 `print()` 只写 stdout —— 既不进
+            // unified log，也不进 Seal 的日志文件。后果是认证失败时最关键的两行
+            //   `sendAuthenticationRequest response Status: …`
+            //   `sendAuthenticationRequest response Data: …`
+            // （携带 Apple 返回的完整 `Status` 字典，即 `-80045` 的原始说明）
+            // 在真机上完全不可见 —— 之前拿到的 6 份设备日志里一条 `[AltSign]` 都没有。
+            //
+            // 打开 verbose 并把内容转进 logStore，这类问题以后一次就能定位。
+            // 只保留 DEBUG_LOG 里能用的那部分：AltSign 在认证失败路径上的 verboseLog
+            // 是低频的（每请求几条），不会淹没有效信息。
+            AltSignLogging.setLogging(true)
+            AltSignLogging.relay = { message in
+                Task { try? await logStore.append(category: .account, level: .info, message: message) }
+            }
             let installChannel = MinimuxerInstallChannel(
                 pairingStore: pairingStore,
                 logDirectory: sealDirectory.appending(
