@@ -8122,7 +8122,7 @@
     "SEAL-NET-503": {
       "auditStatus": "contracted",
       "identifierKinds": {
-        "standard_error_code": 2
+        "standard_error_code": 3
       },
       "locations": [
         {
@@ -8164,10 +8164,20 @@
             "retryDisposition": ".manual"
           },
           "source": "code: \"SEAL-NET-503\","
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 23,
+          "path": "Seal/Infrastructure/Accounts/AnisetteClient.swift",
+          "role": "comment_reference",
+          "semanticFields": [],
+          "semanticValues": {},
+          "source": "/// `GsService2/lookup` 对所有身份都回 200 ⇒ 真机日志里的 `SEAL-NET-503` 只可能"
         }
       ],
-      "occurrenceCount": 2,
+      "occurrenceCount": 3,
       "roles": {
+        "comment_reference": 1,
         "structured_failure_emission": 2
       }
     },
@@ -13284,11 +13294,11 @@
     "identifierKinds": {
       "diagnostic_tag": 72,
       "legacy_error_identifier": 1,
-      "standard_error_code": 721
+      "standard_error_code": 722
     },
-    "occurrences": 794,
+    "occurrences": 795,
     "roles": {
-      "comment_reference": 138,
+      "comment_reference": 139,
       "executable_reference": 106,
       "failure_emission_candidate": 207,
       "internal_event_or_log": 195,
