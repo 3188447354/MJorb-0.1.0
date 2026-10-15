@@ -66,7 +66,13 @@ struct SealApp: App {
                             onAgreed: {
                                 agreementAccepted = true
                                 // 协议确认后先显示主界面，再请求系统权限，避免两个弹层竞争。
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+                                //
+                                // 这个延时必须**大于** `LocalNetworkPermissionPrimer` 的
+                                // 探针超时 + 静默期（2 + 6 秒）：本地网络的系统弹窗由
+                                // `RootTabView.task` 触发，只有等它被点掉之后才轮到通知权限，
+                                // 否则两个弹窗会同时出现、互相打架。用户已授权过本地网络时
+                                // 那段等待会直接跳过，这里只是上限。
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
                                     requestNotificationPermissionIfNeeded()
                                 }
                             },

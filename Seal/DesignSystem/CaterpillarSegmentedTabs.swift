@@ -26,6 +26,8 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
 
     @State private var labelMidpoints: [CGFloat] = []
     @State private var labelWidths: [CGFloat] = []
+    /// 对称化用的统一宽度：先按自然尺寸量一遍，取最宽者，再让所有标签对齐到它。
+    @State private var uniformWidth: CGFloat = 0
 
     private static var space: String { "caterpillar-tabs" }
 
@@ -39,6 +41,15 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
         .padding(.horizontal, horizontalPadding)
         .background(alignment: .topLeading) { indicator }
         .coordinateSpace(name: Self.space)
+        .onPreferenceChange(TabNaturalWidthKey.self) { widths in
+            // 取最宽标签作为统一样本。「待签名 2」与「已安装 12」字数、数字位数都不同，
+            // 不统一就会出现「一个宽一个窄」的不对称，下划线也跟着一长一短。
+            // 统一之后文字各自居中、间距均匀，下划线等长。
+            let widest = widths.values.max() ?? 0
+            if widest > 0, abs(uniformWidth - widest) > 0.5 {
+                uniformWidth = widest
+            }
+        }
     }
 
     // MARK: - 单个标签
@@ -71,6 +82,18 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
                     .fill(Color.clear)
                     .frame(height: indicatorHeight)
             }
+            // 自然宽度必须在这里量：`.frame(width:)` 之后测到的是被压过的值，
+            // 拿它去算统一宽度会自锁成 0。
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: TabNaturalWidthKey.self,
+                        value: [index: proxy.size.width]
+                    )
+                }
+            }
+            // 对称化：所有标签对齐到同一个宽度，内容各自居中。
+            .frame(width: uniformWidth > 0 ? uniformWidth : nil, alignment: .center)
             .background {
                 GeometryReader { proxy in
                     Color.clear.preference(
@@ -152,6 +175,14 @@ private struct TabMetrics: Equatable {
 private struct TabMetricsKey: PreferenceKey {
     static var defaultValue: [Int: TabMetrics] { [:] }
     static func reduce(value: inout [Int: TabMetrics], nextValue: () -> [Int: TabMetrics]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+/// 标签在**未被统一宽度约束前**的自然宽度，用于求「最宽者」。
+private struct TabNaturalWidthKey: PreferenceKey {
+    static var defaultValue: [Int: CGFloat] { [:] }
+    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
         value.merge(nextValue()) { _, new in new }
     }
 }
