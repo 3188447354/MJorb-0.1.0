@@ -105,6 +105,16 @@ final class AppleAccountClient {
     }
 
     /// 把错误压缩成一行，便于日志归因（脱敏由 SealLogStore 兜底）。
+    /// 排障日志用的 ISO8601 UTC 格式化器（只在 [SRP-INIT 诊断] 里使用）。
+    private static let iso8601: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
     private nonisolated static func describeError(_ error: Error) -> String {
         if let importFailure = error as? ImportFailure {
             return "ImportFailure(\(importFailure.code))"
@@ -178,6 +188,33 @@ final class AppleAccountClient {
             await trace("阶段 signIn：取 anisette 环境数据")
             let anisetteData = try await anisetteProvider.fetchForAuthentication()
             await trace("anisette 就绪，声明身份=\(anisetteData.deviceDescription)")
+
+            // ── anisette 凭据转储（排障用）──────────────────────────────────────
+            //
+            // 为什么打这些：-80045 出现在 `o=init` 这个**第一个**请求上，而 init 的载荷
+            // 只有 A2k / cpd / ps / o / u —— **不含任何密码材料**（日志里从未走到
+            // `o=complete`）。所以 SRP 数学、PBKDF2、hex 编码、M1 全部与本案无关，
+            // 真正决定 init 被接受与否的是 cpd 里那三个**服务端生成的 anisette 凭据**：
+            // X-Apple-I-MD / X-Apple-I-MD-M / X-Mme-Device-Id。
+            //
+            // 在此之前只核对过"cpd 的字段名与 isideload 一致"，**从未核对过这几个值
+            // 本身是否有效**（它们由 anisette 服务器按 ADI 生成，可能过期、可能与该
+            // ADI 不匹配）。这一段就是为了拿到真实取值，与可用实现逐字节对比。
+            //
+            // X-Apple-I-MD 是一次性口令（服务端按时间派生），仅写入本机日志用于排障。
+            await trace("""
+                [SRP-INIT 诊断] 即将用于 o=init 的 anisette 凭据：
+                  X-Mme-Device-Id      = \(anisetteData.deviceUniqueIdentifier) (len=\(anisetteData.deviceUniqueIdentifier.count))
+                  X-Apple-I-MD-M       = \(anisetteData.machineID) (len=\(anisetteData.machineID.count))
+                  X-Apple-I-MD         = \(anisetteData.oneTimePassword) (len=\(anisetteData.oneTimePassword.count))
+                  X-Apple-I-MD-LU      = \(anisetteData.localUserID) (len=\(anisetteData.localUserID.count))
+                  X-Apple-I-MD-RINFO   = \(anisetteData.routingInfo)
+                  X-Apple-I-SRL-NO     = \(anisetteData.deviceSerialNumber)
+                  locale               = \(anisetteData.locale.identifier)
+                  timeZone             = \(anisetteData.timeZone.abbreviation() ?? "nil")
+                  date                 = \(Self.iso8601.string(from: anisetteData.date))
+                  deviceDescription    = \(anisetteData.deviceDescription)
+                """)
             let auth: AuthObjects
             do {
                 await trace("发起 GrandSlam SRP 登录")
