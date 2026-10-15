@@ -23,7 +23,9 @@ enum AnisetteServerCatalog {
         // 而 Apple 登录边缘会直接拒掉声明自己是 Xcode 的客户端（实测同 ADI 同请求下
         // Xcode 身份 → 503、akd 身份 → 200）。该身份由 `AnisetteV3Client.acceptedClientInfo`
         // 在身份层替换成可用的 macOS/akd 身份，因此这个服务器可以保留为默认。
-        // `ani.jkcoxson.com` 返回 iTunes/Windows 身份，作为兜底放在列表末尾。
+        // ⚠️ 身份**不能**依赖服务器：三台公共服务器实测返回三种不同身份
+        //（stikstore → Xcode、sidestore.io → macOS/akd、jkcoxson → Windows/iTunes），
+        // 所以收口必须在客户端（`AnisetteV3Client.acceptedClientInfo`）。
         AnisetteServer(
             id: "sideinstaller-default",
             url: makeURL("https://ani.stikstore.app"),
@@ -97,9 +99,10 @@ enum AnisetteServerCatalog {
             url: makeURL("https://anisette.crystall1ne.dev"),
             displayName: "crystall1nedev"
         ),
-        // isideload 上游源码的默认值，但返回 Windows/iTunes 身份
-        // `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`，
-        // 与 Xcode 认证指纹不匹配，只作最后的兜底。
+        // isideload 上游源码的默认值，返回 Windows/iTunes 身份
+        // `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`。
+        // 实测该身份同样被 Apple 登录边缘放行（→ 200），所以它作为兜底是可用的；
+        // 放在列表末尾只是为了保留 SideInstaller / SideStore 的优先顺序。
         AnisetteServer(
             id: "jkcoxson",
             url: makeURL("https://ani.jkcoxson.com"),
