@@ -55,22 +55,24 @@ public extension ALTAppleAPI
         debugLog("[AltSign] Starting authenticate for Apple ID: \(sanitizedAppleID)")
 
         do {
+            // cpd（client provided data）是 Apple 判定客户端一致性的字典。
+            // 与 SideInstaller 的 isideload `get_client_provided_data()` 逐字段对齐：
+            // ① 布尔值用**字符串** `"true"`/`"false"`（plist 写成 <string> 而非 <true/>）；
+            // ② `loc` 固定 `en_US`，不取设备 locale（中文机的 zh_CN 会与身份串里的
+            //    en_US 不一致）；
+            // ③ isideload 的 `get_headers()` 把 X-Apple-Locale / MD-LU / MD-RINFO /
+            //    SRL-NO / Client-Time / TimeZone **全部注释掉不发**（试过被拒的痕迹），
+            //    这里同样不发 —— 尤其 `X-Apple-I-SRL-NO: "0"` 是假序列号。
             let clientDictionary = [
-                "bootstrap": true,
-                "icscrec": true,
-                "pbe": false,
-                "prkgen": true,
+                "bootstrap": "true",
+                "icscrec": "true",
+                "pbe": "false",
+                "prkgen": "true",
                 "svct": "iCloud",
-                "loc": anisetteData.locale.sanitizedIdentifier,
-                "X-Apple-Locale": anisetteData.locale.sanitizedIdentifier,
+                "loc": "en_US",
                 "X-Apple-I-MD": anisetteData.oneTimePassword,
                 "X-Apple-I-MD-M": anisetteData.machineID,
-                "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier,
-                "X-Apple-I-MD-LU": anisetteData.localUserID,
-                "X-Apple-I-MD-RINFO": anisetteData.routingInfo,
-                "X-Apple-I-SRL-NO": anisetteData.deviceSerialNumber,
-                "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
-                "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST"
+                "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier
             ] as [String: Any]
 
             let context = GSAContext(username: sanitizedAppleID, password: password)
@@ -668,9 +670,9 @@ private extension ALTAppleAPI {
             "X-Apple-I-MD-RINFO": "\(anisetteData.routingInfo)",
             "X-Mme-Device-Id": anisetteData.deviceUniqueIdentifier,
             "X-MMe-Client-Info": anisetteData.deviceDescription,
-            "X-Apple-I-Client-Time": dateFormatter.string(from: anisetteData.date),
-            "X-Apple-Locale": anisetteData.locale.sanitizedIdentifier,
-            "X-Apple-I-TimeZone": anisetteData.timeZone.abbreviation() ?? "PST",
+            // 与 cpd 同一条对齐规则：isideload 的请求头不发 Client-Time / Locale /
+            // TimeZone（`get_headers()` 里被注释掉）。Locale 会是设备的 zh_CN，
+            // 与身份串里的 en_US 不一致；TimeZone 是猜的占位值。都不发。
             "Connection": "close"
         ]
 
