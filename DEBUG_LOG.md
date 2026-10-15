@@ -6941,3 +6941,10 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：新增 `updatingApp` 操作类型，三个编辑入口均按应用 ID 取得租约；等待超时后显示已有操作的准确提示，不再保存旧快照。签名、导入、安装和批量续签均与它互斥。
 
 **验证**：新增回归测试先红后绿，逐一断言 Bundle ID、显示名与图标编辑均获取 `updatingApp` 租约并消费冲突提示。完整 iOS CI 将负责 Swift 编译、UI 回归与安装包构建。
+
+## 2026-10-15 — Apple ID 登录 503：从本机 ADI 规则迁移到 SideInstaller RemoteV3
+
+- **现象**：构建 16 真机日志中，添加账号在密码和验证码之前立即记录 `SEAL-NET-503`。
+- **根因**：前版只对齐了 GrandSlam 的请求格式，却保留 Seal 的「认证强制本机 AnisetteKit ADI」规则；而用户提供的 SideInstaller 默认使用 RemoteV3。Seal 因而没有执行参考实现最关键的凭证来源，Apple 在 SRP 前拒绝该身份。
+- **修复**：认证、验证码、认证后校验和门户请求统一改为 RemoteV3；优先使用 SideInstaller 默认 `ani.jkcoxson.com`，并把远程 provisioning 状态置于独立钥匙串 service，保留旧本机 ADI 和稳定 identifier。
+- **验收**：CI 必须通过；真机添加 Apple ID 应从即时 503 进入密码/双重认证流程，随后完成团队验证和一次签名。

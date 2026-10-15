@@ -69,14 +69,9 @@ final class AppleAccountClient {
         password: String,
         verificationCode: @escaping @MainActor @Sendable () async -> String?
     ) async throws -> AuthenticatedAppleAccount {
-        // 认证时强制使用本地 anisette（fetchForAuthentication），不允许降级远程。
-        // 用远程 machineID 认证会导致 authToken 与远程绑定，之后切回本地时
-        // machineID 漂移，Apple 判定会话异常返回 1100，表现为"添加 ID 后就失效"。
-        // 本地生成失败直接报错，让用户重试，不要用远程添加 ID。
-        //
-        // 【不要在这里清 adi.pb 重试】machineID 变化会让所有已登录账号签名时
-        // 掉线（1100 需重新添加）——此路径曾被试过并造成严重回归。
-        // Apple 拒绝本地 anisette 时直接报错，由用户决定是否手动重置签名环境。
+        // SideInstaller 使用远程 v3 Anisette 完成认证；Seal 必须让验证码、登录后验证
+        // 和后续门户请求持续使用同一份远程会话，不能认证后切回本机 ADI。
+        // 旧本机 ADI 与 identifier 均保留，远程 provisioning 状态独立保存。
         try await withTimeout(seconds: 240) {
             try await self.authenticateOnce(
                 email: email,

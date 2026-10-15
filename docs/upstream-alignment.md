@@ -288,3 +288,11 @@ on 4.5.2」✗。
 | 503 分类 | 503 是 Apple 登录服务/边缘响应，不是账号状态或 Anisette 服务器事实 | **跟**：`SEAL-NET-503`，只提示稍后重试，不清除现有账号/ADI 标识 |
 
 对照来源：用户提供 `sideinstaller-v1.5.1-d85d59dab8cd.ipa` 的 REA 静态字符串，以及 `nab138/isideload` 当前源码（本地检出 `C:\Users\Administrator\AppData\Local\Temp\isideload-reference-20261015`）；对照 IPA 使用 REA 完整性证据 `ev_f165b8f040e17eae45e6bc955f29b119bc591d84d41114bf3ef3ce31139da671`。
+
+### 2026-10-15 — SideInstaller RemoteV3 作为唯一 Apple 门户会话
+
+| 对照项 | SideInstaller / isideload | Seal 处置 |
+|---|---|---|
+| Anisette 默认来源 | `RemoteV3AnisetteProvider::default()`，默认 `https://ani.jkcoxson.com` | **跟**：认证和门户 `fetch()` 均固定为 RemoteV3，默认服务器置首位 |
+| 会话连续性 | 登录与后续请求由同一 RemoteV3 provider 的持久状态生成 | **跟**：远程 provisioning 独立保存；认证、验证码、团队验证、签名均取同一远程状态 |
+| 本机 ADI | 不参与该参考实现的默认认证路径 | **不删除**：旧本机 ADI 与稳定 identifier 仍保存，避免升级时破坏既有本地数据 |

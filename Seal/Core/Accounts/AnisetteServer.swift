@@ -15,6 +15,12 @@ enum AnisetteServerCatalog {
     }
 
     static let official: [AnisetteServer] = [
+        // SideInstaller/isideload 的默认 RemoteV3 服务。认证和后续门户请求固定从这里开始。
+        AnisetteServer(
+            id: "sideinstaller-default",
+            url: makeURL("https://ani.jkcoxson.com"),
+            displayName: "SideInstaller"
+        ),
         // SideStore 官方维护的公共 Anisette 服务器列表
         // 来源: https://servers.sidestore.io/servers.json
         // Seal 会按顺序自动尝试，一个挂了自动切下一个，避免单点故障

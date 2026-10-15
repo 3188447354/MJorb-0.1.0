@@ -87,7 +87,7 @@ struct AnisetteV3ClientTests {
         let store = TestAnisetteProvisioningStore()
         try await store.saveIdentifier("identifier")
         try await store.save(AnisetteProvisioningState(identifier: "identifier", adiPB: "adi-pb")!)
-        let client = AnisetteV3Client(store: store)
+        let client = AnisetteV3Client(store: store, identityStore: store)
 
         await client.resetProvisioning()
 

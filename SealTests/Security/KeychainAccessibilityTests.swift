@@ -34,11 +34,16 @@ struct KeychainAccessibilityTests {
     }
 
     @Test
-    func servicesCoverBothKeychainStores() {
-        #expect(SealKeychainServices.all == ["com.mjorb.seal.account", "com.mjorb.seal.anisette-v3"])
+    func servicesCoverAllKeychainStores() {
+        #expect(SealKeychainServices.all == [
+            "com.mjorb.seal.account",
+            "com.mjorb.seal.anisette-v3",
+            "com.mjorb.seal.anisette-v3.remote"
+        ])
         // 迁移是按 service 逐个改的 —— 漏一个 service 就等于漏一个 store。
         #expect(SealKeychainServices.all.contains(SealKeychainServices.accountVault))
         #expect(SealKeychainServices.all.contains(SealKeychainServices.anisetteProvisioning))
+        #expect(SealKeychainServices.all.contains(SealKeychainServices.remoteAnisetteProvisioning))
     }
 
     @Test

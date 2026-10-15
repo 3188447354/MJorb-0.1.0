@@ -19,11 +19,12 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
 
     private let servers: [AnisetteServer]
     private let session: URLSession
-    private let store: any AnisetteProvisioningStore
+    /// SideInstaller 风格远程 v3 会话状态。与旧本机 ADI 状态隔离，不能互相覆盖。
+    private let remoteStore: any AnisetteProvisioningStore
+    /// 只保存稳定的设备 identifier；保留旧值以维持设备身份连续性。
+    private let identityStore: any AnisetteProvisioningStore
     private let serverStore: any AnisetteServerStore
     private let anisetteProvider: AnisetteDataProvider
-    /// 一次性标志：为 true 时本次 fetch 跳过本地生成、直接走远程（消费后自动复位）
-    private let bypassLocal = AnisetteBypassFlag()
 
     /// 本地 ADI 模拟（Unicorn TCI）冷启动可能超过 45 秒，超时后遗弃但**不取消**任务：
     /// 杀在 provisioning 中途会弄脏 adi.pb，导致之后每次生成都失败。
@@ -58,20 +59,27 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     init(
         servers: [AnisetteServer] = AnisetteServerCatalog.official,
         session: URLSession = .shared,
-        store: any AnisetteProvisioningStore = KeychainAnisetteProvisioningStore(),
+        store: (any AnisetteProvisioningStore)? = nil,
+        identityStore: (any AnisetteProvisioningStore)? = nil,
         serverStore: any AnisetteServerStore = UserDefaultsAnisetteServerStore(),
         anisetteProvider: AnisetteDataProvider = .shared
     ) {
         self.servers = servers
         self.session = session
-        self.store = store
+        let remoteStore = store ?? KeychainAnisetteProvisioningStore(
+            service: SealKeychainServices.remoteAnisetteProvisioning
+        )
+        let identityStore = identityStore ?? KeychainAnisetteProvisioningStore(
+            service: SealKeychainServices.anisetteProvisioning
+        )
+        self.remoteStore = remoteStore
+        self.identityStore = identityStore
         self.serverStore = serverStore
         self.anisetteProvider = anisetteProvider
     }
 
     func preferRemoteOnNextFetch() async {
-        bypassLocal.set()
-        Self.logger.error("下一次 Anisette 获取将跳过本地生成、直接使用远程服务器")
+        // 兼容协议调用：远程 v3 已是唯一请求路径，无需切换状态。
     }
 
     /// 把 App Bundle 中内置的 .so 复制到 AnisetteDataProvider 的可写 libsDir。
@@ -144,7 +152,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         let clientInfo = "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
 
         // 第一次尝试：用 keychain 中已有的 adi.pb
-        let existingState = try? await store.load()
+        let existingState = try? await identityStore.load()
         var existingBlob = existingState.flatMap { Data(base64Encoded: $0.adiPB) }
 
         do {
@@ -159,7 +167,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             // 保存新的 adi.pb 到 keychain
             if let newBlob, !newBlob.isEmpty,
                let state = AnisetteProvisioningState(identifier: identity.encodedIdentifier, adiPB: newBlob.base64EncodedString()) {
-                try? await store.save(state)
+                try? await identityStore.save(state)
             }
             guard let alt = convert(data) else {
                 throw AnisetteV3Error.localGenerationFailed("Failed to convert AnisetteData to ALTAnisetteData")
@@ -171,7 +179,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             let msg = error.localizedDescription
             if msg.contains("Device not provisioned") || msg.contains("-45061") {
                 Self.logger.warning("检测到 Device not provisioned，清除旧 adi.pb 重新 provisioning")
-                try? await store.remove()
+                try? await identityStore.remove()
                 existingBlob = nil
                 let (data, newBlob) = try await anisetteProvider.fetchAnisetteData(
                     mode: .localODA(libsDir: anisetteProvider.libsDir),
@@ -183,7 +191,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
                 )
                 if let newBlob, !newBlob.isEmpty,
                    let state = AnisetteProvisioningState(identifier: identity.encodedIdentifier, adiPB: newBlob.base64EncodedString()) {
-                    try? await store.save(state)
+                    try? await identityStore.save(state)
                 }
                 guard let alt = convert(data) else {
                     throw AnisetteV3Error.localGenerationFailed("Failed to convert AnisetteData to ALTAnisetteData")
@@ -195,60 +203,40 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     }
 
 
-    /// 本地生成是否曾成功过。一旦成功，machineID 已固定，后续必须继续用本地，
-    /// 降级远程会导致 machineID 漂移，Apple 判定会话异常返回 1100，触发重新登录+2FA。
-    private static let localSucceededKey = "com.mjorb.seal.anisette.localSucceeded"
-
+    /// SideInstaller 的默认策略：认证、验证码、认证后验证和门户请求始终用同一个
+    /// 远程 v3 Anisette 会话。不能先用远程取得 authToken、随后切回本机 ADI。
     func fetch() async throws -> ALTAnisetteData {
-        // 本地与远程共享同一套稳定设备标识（16 字节 → localUserID / deviceIdentifier），
-        // 但 machineID 本地与远程不同：本地 adi.pb 恒定，远程与服务器绑定。
-        // 一旦本地成功过就必须继续用本地，切换通道会使 Apple 会话失效（1100）。
         let identity = try await loadIdentity()
-        let localHasSucceeded = UserDefaults.standard.bool(forKey: Self.localSucceededKey)
+        return try await fetchRemote(identity: identity)
+    }
 
-        // 1. 优先使用设备本地 AnisetteKit 生成（指纹恒定，不依赖公共服务器）
-        // 本地首次生成需初始化 Unicorn(TCI) 引擎，最慢约 30 秒；超过 45 秒遗弃本地任务
-        // 本地曾成功过则 machineID 已与 Apple 会话绑定，必须始终走本地，
-        // 忽略 bypassLocal（认证失败时的"换远程重试"会导致 machineID 漂移触发 2FA）
-        let shouldUseLocal = localHasSucceeded || bypassLocal.consume() == false
-        if shouldUseLocal {
+    func fetchForAuthentication() async throws -> ALTAnisetteData {
+        try await fetch()
+    }
+
+    func resetProvisioning() async {
+        // 只重置远程 v3 provisioning 状态；稳定 identifier 和旧本机 ADI 都不删除。
+        try? await remoteStore.remove()
+    }
+
+    func resync(sim: String) async throws -> ALTAnisetteData {
+        let identity = try await loadIdentity()
+        guard let state = try await remoteStore.load() else { throw AnisetteV3Error.staleProvisioning }
+        var lastError: Error?
+        for server in await prioritizedServers() where server.url.scheme == "https" {
             do {
-                let data = try await HardTimeout.run(
-                    seconds: Self.localGenerationTimeoutSeconds,
-                    cancelsWorkOnTimeout: false
-                ) {
-                    try await self.fetchLocalCoalesced(identity: identity)
-                }
-                if localHasSucceeded == false {
-                    UserDefaults.standard.set(true, forKey: Self.localSucceededKey)
-                }
-                return data
-            } catch let error as HardTimeout.TimeoutError {
-                Self.logger.error("本地 Anisette 生成超时（\(Int(error.seconds))s）")
-                if localHasSucceeded {
-                    // 本地曾成功过，machineID 已固定，降级远程会导致会话失效，直接报错让用户重试
-                    Self.logger.error("本地曾成功，拒绝降级远程以避免 machineID 漂移导致 Apple 会话失效")
-                    throw AnisetteV3Error.localGenerationFailed(error.localizedDescription)
-                }
-                Self.logger.error("首次使用本地未成功，降级远程服务器")
-            } catch {
-                Self.logger.error("本地 Anisette 生成失败：\(String(describing: error), privacy: .public)")
-                if localHasSucceeded {
-                    Self.logger.error("本地曾成功，拒绝降级远程以避免 machineID 漂移导致 Apple 会话失效")
-                    throw AnisetteV3Error.localGenerationFailed(error.localizedDescription)
-                }
-                Self.logger.error("首次使用本地未成功，降级远程服务器")
-            }
-        } else {
-            Self.logger.error("按上一次认证结果跳过本地 Anisette，直接使用远程服务器")
+                let clientInfo = try await fetchClientInfo(from: server.url)
+                return try await fetchHeaders(from: server.url, state: state, clientInfo: clientInfo, identity: identity, sim: sim)
+            } catch { lastError = error }
         }
+        throw lastError ?? AnisetteV3Error.unavailable
+    }
 
-        // 2. 远程公共服务器降级路径（带总时长预算，避免逐个服务器重试拖到数分钟）
+    private func fetchRemote(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
         let fallbackDeadline = Date().addingTimeInterval(Self.remoteFallbackBudgetSeconds)
         var lastError: Error?
         for server in await prioritizedServers() where server.url.scheme == "https" {
             if Date() > fallbackDeadline {
-                Self.logger.error("远程 Anisette 降级预算耗尽（\(Int(Self.remoteFallbackBudgetSeconds))s），停止尝试剩余服务器")
                 break
             }
             do {
@@ -257,52 +245,9 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                Self.logger.error("Anisette 服务器 \(server.displayName, privacy: .public) 失败：\(String(describing: error), privacy: .public)")
+                Self.logger.error("远程 Anisette 服务器 \(server.displayName, privacy: .public) 失败：\(String(describing: error), privacy: .public)")
                 lastError = error
             }
-        }
-        throw lastError ?? AnisetteV3Error.unavailable
-    }
-
-    func fetchForAuthentication() async throws -> ALTAnisetteData {
-        // 认证时强制使用本地 anisette，不允许降级远程。
-        // 用远程 machineID 认证会导致 authToken 与远程绑定，
-        // 之后切回本地时 machineID 漂移，Apple 判定会话异常返回 1100，
-        // 表现为"第一次添加 ID 后就失效"。
-        let identity = try await loadIdentity()
-        do {
-            let data = try await HardTimeout.run(
-                seconds: Self.localGenerationTimeoutSeconds,
-                cancelsWorkOnTimeout: false
-            ) {
-                try await self.fetchLocalCoalesced(identity: identity)
-            }
-            UserDefaults.standard.set(true, forKey: Self.localSucceededKey)
-            return data
-        } catch {
-            Self.logger.error("认证时本地 Anisette 生成失败，拒绝降级远程以避免 machineID 漂移：\(String(describing: error), privacy: .public)")
-            throw AnisetteV3Error.localGenerationFailed(error.localizedDescription)
-        }
-    }
-
-    func resetProvisioning() async {
-        // 只清除远程 v3 provisioning session，不清除本地 adi.pb 和 identifier。
-        // adi.pb 是本地 machineID 的来源，与 Apple authToken 绑定；
-        // identifier（16字节 → localUserID/deviceUniqueIdentifier）也与 authToken 绑定。
-        // 清除任一项都会导致所有已登录 Apple ID 全部失效（1100 会话过期），触发重新登录+2FA。
-        // 本地 adi.pb 仅在用户手动清除应用数据时才会重置。
-        try? await store.remove()
-    }
-
-    func resync(sim: String) async throws -> ALTAnisetteData {
-        let identity = try await loadIdentity()
-        guard let state = try await store.load() else { throw AnisetteV3Error.staleProvisioning }
-        var lastError: Error?
-        for server in await prioritizedServers() where server.url.scheme == "https" {
-            do {
-                let clientInfo = try await fetchClientInfo(from: server.url)
-                return try await fetchHeaders(from: server.url, state: state, clientInfo: clientInfo, identity: identity, sim: sim)
-            } catch { lastError = error }
         }
         throw lastError ?? AnisetteV3Error.unavailable
     }
@@ -323,7 +268,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private func fetch(from server: URL, identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
         let clientInfo = try await fetchClientInfo(from: server)
 
-        if let state = try await store.load() {
+        if let state = try await remoteStore.load() {
             do {
                 return try await fetchHeaders(
                     from: server,
@@ -335,7 +280,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
                     AnisetteV3Error.invalidServerResponse,
                     AnisetteV3Error.provisioningFailed {
                 // 本地 provisioning 失效或服务器响应异常，重置后重新 provision
-                try await store.remove()
+                try await remoteStore.remove()
             }
         }
 
@@ -347,7 +292,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             clientInfo: clientInfo,
             identity: identity
         )
-        try await store.save(state)
+        try await remoteStore.save(state)
         return try await fetchHeaders(
             from: server,
             state: state,
@@ -357,7 +302,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     }
 
     private func loadIdentity() async throws -> AnisetteV3Identity {
-        if let encoded = try await store.loadIdentifier(),
+        if let encoded = try await identityStore.loadIdentifier(),
            let bytes = Data(base64Encoded: encoded) {
             return try AnisetteV3Identity(bytes: bytes)
         }
@@ -365,7 +310,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         var generator = SystemRandomNumberGenerator()
         let bytes = Data((0..<16).map { _ in UInt8.random(in: 0...255, using: &generator) })
         let encoded = bytes.base64EncodedString()
-        try await store.saveIdentifier(encoded)
+        try await identityStore.saveIdentifier(encoded)
         return try AnisetteV3Identity(bytes: bytes)
     }
 

@@ -4,20 +4,18 @@ import Foundation
 
 protocol AnisetteProvider: Sendable {
     func fetch() async throws -> ALTAnisetteData
-    /// 认证时强制使用本地 anisette，不允许降级远程。
-    /// 用远程 machineID 认证会导致 authToken 与远程绑定，
-    /// 之后切回本地时 machineID 漂移，Apple 判定会话异常返回 1100。
+    /// 认证与后续门户请求使用同一份 Anisette，会话机器身份不得切换。
     func fetchForAuthentication() async throws -> ALTAnisetteData
     func resync(sim: String) async throws -> ALTAnisetteData
     func resetProvisioning() async
-    /// 下一次 fetch 跳过设备本地生成、直接走远程公共服务器（本地指纹被 Apple 拒绝时换指纹重试）
+    /// 兼容旧调用；实现可以始终使用同一个远程 Anisette 会话。
     func preferRemoteOnNextFetch() async
 }
 
 extension AnisetteProvider {
     /// 默认无操作；只有同时具备本地/远程双通道的实现需要覆盖
     func preferRemoteOnNextFetch() async {}
-    /// 默认走 fetch；具备本地/远程双通道的实现应覆盖为强制本地
+    /// 默认走 fetch，确保认证与后续请求使用相同来源。
     func fetchForAuthentication() async throws -> ALTAnisetteData {
         try await fetch()
     }

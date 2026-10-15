@@ -5,10 +5,12 @@ import Security
 enum SealKeychainServices {
     /// `KeychainVault`：账号密钥（Apple ID 口令、authToken、各证书的 P12）。
     static let accountVault = "com.mjorb.seal.account"
-    /// `KeychainAnisetteProvisioningStore`：anisette 机器标识与 provisioning 状态。
+    /// 历史本机 ADI 与稳定设备标识。
     static let anisetteProvisioning = "com.mjorb.seal.anisette-v3"
+    /// SideInstaller 风格远程 v3 provisioning 状态；与历史本机 ADI 隔离。
+    static let remoteAnisetteProvisioning = "com.mjorb.seal.anisette-v3.remote"
 
-    static var all: [String] { [accountVault, anisetteProvisioning] }
+    static var all: [String] { [accountVault, anisetteProvisioning, remoteAnisetteProvisioning] }
 }
 
 /// 钥匙串条目的可访问性等级 —— **必须能在锁屏下读到**。
