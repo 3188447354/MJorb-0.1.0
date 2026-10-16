@@ -44,7 +44,7 @@ enum AnisetteServerCatalog {
         // ── 以下为 Mac 身份的公共服务器 ──────────────────────────────────────
         // 保留在列表里作为兜底（Apple 对 Mac 身份在边缘是放行的），但**不再优先**。
         // 它们返回 `<MacBookPro13,2> <macOS;13.1;22C65>`；返回 Xcode 身份的那几台
-        // 会被 `identityRejectedByApple` 判为不可用并自动换下一台。
+        // 会按 SideInstaller 策略归一化为 Windows 身份后继续使用。
         AnisetteServer(
             id: "sidestore-io",
             url: makeURL("https://ani.sidestore.io"),

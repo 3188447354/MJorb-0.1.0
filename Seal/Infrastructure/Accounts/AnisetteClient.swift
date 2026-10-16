@@ -12,37 +12,38 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private static let grandSlamAuthenticationXcodeVersion = "27.0 (27A5218g)"
     private static let grandSlamAuthenticationAppInfo = "com.apple.gs.xcode.auth"
 
-    /// Apple 登录边缘只放行「桌面系统、且不是 Xcode」的客户端身份。
+    /// 与 SideInstaller 当前 isideload 完全相同的登录身份归一化策略。
     ///
-    /// 实测证据（`GsService2` 的 `o=init` SRP 请求，合成 anisette 占位、只改
-    /// `X-Mme-Client-Info`、每次重复 2 遍，只看边缘 HTTP 状态）：
-    /// - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>` → 503 / 503
-    /// - `<MacBookPro18,3> <macOS;26.5.2;25F84> <com.apple.AuthKit/1 (com.apple.dt.Xcode/26.0)>`     → 503 / 503
-    /// - `<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`          → 503 / 503
-    /// - `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`             → 200 / 200
-    /// - `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`                → 200 / 200
-    /// - `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`          → 200 / 200
-    ///
-    /// `X-Xcode-Version` / `X-Apple-App-Info` 的有无不改变结果；`GsService2/lookup` 对所有
-    /// 身份都回 200 ⇒ `SEAL-NET-503` 只可能来自 SRP 阶段，不是 provisioning。
-    ///
-    /// REA（SideInstaller 1.5.1 的 isideload 源码）确定真实形态是
-    /// **「用服务器返回的身份 + 多服务器兜底」**，不是固定声明某个身份：
-    /// `remote_v3/mod.rs:121` 注释写明「本可以硬编码，但 Apple 变化太快，不如直接从
-    /// 服务器取」，`:194` 把 `/v3/client_info` 返回值原样当 `device_description`，
-    /// `grandslam.rs:220` 的 SRP 头就用它；那条 `<Mac15,7> …` 硬编码只出现在
-    /// URL bag 一个请求（`grandslam.rs:59`，注释 "we lie for this request"）。
-    /// 实测它内置目录 15 台服务器中 8 台返回 Xcode 身份（边缘必 503）——它靠换服务器
-    /// 绕开这些，落到 `ani.sidestore.io` 的
-    /// `<MacBookPro13,2> <macOS;13.1;22C65> … com.apple.akd` 上就成功。
-    ///
-    /// Seal 采用同一形态：身份**原样取服务器返回值**；返回的是必被拒的身份
-    ///（Xcode / Android）时判定该服务器不可用、换下一台（复刻 SideInstaller 的
-    /// failover），绝不把「必失败的身份」硬发给 Apple。因身份随服务器变化，
-    /// ADI 由身份戳保证「建它的身份」与「声明的身份」一致。
-    static func identityRejectedByApple(_ clientInfo: String) -> Bool {
-        let lowered = clientInfo.lowercased()
-        return lowered.contains("com.apple.dt.xcode") || lowered.contains("android")
+    /// 某些 v3 服务器用 Android ADI 生成数据，却仍宣称旧版 Mac/Xcode 或 Android 身份。
+    /// Apple 已会直接拒绝这些声明。SideInstaller 会在这种情况下以 Windows iTunes
+    /// 身份请求，并在 provisioning、SRP 和后续认证中始终使用同一有效身份。
+    /// Seal 必须同样将**归一化后的身份**写入 ADI 身份戳，避免再把旧 ADI 与新声明混用。
+    private static let windowsClientInfo =
+        "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
+    private static let akdUserAgent = "akd/1.0 CFNetwork/808.1.4"
+    private static let stockServerClientPrefixes = [
+        "<MacBookPro13,2> <macOS;13.1;22C65>",
+        "<MacBookPro15,1> <Mac OS X;10.15.2;19C57>"
+    ]
+
+    static func authenticationClientInfo(
+        advertisedClientInfo: String,
+        advertisedUserAgent: String
+    ) -> AnisetteV3ClientInfo {
+        let clientInfo = advertisedClientInfo.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isStockServerIdentity = stockServerClientPrefixes.contains { clientInfo.hasPrefix($0) }
+        if clientInfo.isEmpty || isStockServerIdentity || clientInfo.contains("<Android;") {
+            return AnisetteV3ClientInfo(
+                clientInfo: windowsClientInfo,
+                userAgent: akdUserAgent
+            )
+        }
+
+        let userAgent = advertisedUserAgent.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AnisetteV3ClientInfo(
+            clientInfo: clientInfo,
+            userAgent: userAgent.isEmpty ? akdUserAgent : userAgent
+        )
     }
 
     /// Anisette 时间格式（ISO8601 UTC），两处复用，避免每次新建 DateFormatter。
@@ -352,30 +353,13 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         } catch {
             throw AnisetteV3Error.invalidServerResponse
         }
-        guard
-              let clientInfo = json["client_info"] as? String,
-              let userAgent = json["user_agent"] as? String,
-              clientInfo.isEmpty == false,
-              userAgent.isEmpty == false else {
+        guard let clientInfo = json["client_info"] as? String else {
             throw AnisetteV3Error.invalidServerResponse
         }
-        // 身份原样取服务器返回值（isideload `remote_v3/mod.rs:194` 就是这么做的：
-        // 把 `/v3/client_info` 的返回值直接当 device_description）；但返回的是必被
-        // Apple 拒的身份（Xcode / Android）时判为「该服务器不可用」，抛错让上层换
-        // 下一台，而不是把必失败的身份硬发给 Apple —— 复刻 SideInstaller 的
-        // failover（它内置目录 15 台里 8 台回 Xcode 身份，靠换服务器落到
-        // ani.sidestore.io 才成功）。
-        //
-        // 这里**不要**改成固定某个身份：`identityRejectedByApple` 的注释里记了边沿
-        // 探测结果，三种 `akd` 身份（MacBookPro13,2 / Mac15,7 / Windows PC）都是
-        // 200/200，说明真正起作用的是 `akd` 而非 Xcode/Android；固定值带不来额外
-        // 收益，反而会在 Apple 改口径时失效。身份随服务器变化由 ADI 身份戳保证一致。
-        guard Self.identityRejectedByApple(clientInfo) == false else {
-            throw AnisetteV3Error.rejectedIdentity
-        }
-        return AnisetteV3ClientInfo(
-            clientInfo: clientInfo,
-            userAgent: userAgent
+        let userAgent = json["user_agent"] as? String ?? ""
+        return Self.authenticationClientInfo(
+            advertisedClientInfo: clientInfo,
+            advertisedUserAgent: userAgent
         )
     }
 

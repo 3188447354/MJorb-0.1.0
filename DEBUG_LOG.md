@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-16 SideInstaller 登录策略对齐：Anisette 身份归一化
+
+- **现象**：Seal 会把 `/v3/client_info` 返回旧 Mac/Xcode 或 Android 身份的服务器直接跳过，导致可用 Anisette 服务集合缩小；用户提供的 SideInstaller 在相同阶段能继续登录。
+- **根因**：Seal 采用了早期“拒绝身份即换服务器”的推断，而当前 SideInstaller 的 isideload 已改为将这类服务器身份统一归一化为 Windows iTunes 身份，并全链路保持一致。
+- **修复**：不直接替换 Rust 登录模块（Seal 的 Swift/AltSign 架构不兼容），只移植可验证的身份归一化策略；归一化结果同时用于 provisioning、ADI 身份戳和认证请求，旧不匹配 ADI 会安全重建，稳定 identifier 与已保存账号会话不动。
+- **涉及文件**：`AnisetteClient.swift`、`AnisetteV3ClientTests.swift`、`AnisetteServer.swift`、`upstream-alignment.md`。
+- **验证状态**：`ani.jkcoxson.com`、`ani.sidestore.io`、`ani2.stikstore.app` 的 `/v3/client_info` 均返回 HTTP 200；测试覆盖旧 Mac/Xcode、Android、自建身份和空 User-Agent。Windows 无 Xcode，待 CI 编译与真机 Apple ID 登录验证。
+
+---
+
 ## 2026-10-16 CI #117：发布守卫误报与界面测试陈旧契约
 
 - **现象**：CI #117 的 Swift 编译已经通过，但 `build-package` 的 R65 变异测试仍失败；`swift-regression` 又把已上线的“待安装”分组名报成界面回归。
