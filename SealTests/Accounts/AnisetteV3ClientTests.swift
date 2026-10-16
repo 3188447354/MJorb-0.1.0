@@ -118,15 +118,15 @@ struct AnisetteV3ClientTests {
     }
 
     @Test
-    func clientInfoParsingUsesServerIdentityVerbatim() throws {
-        let serverValue = "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+    func clientInfoParsingPreservesCustomServerIdentity() throws {
+        let serverValue = "<Mac14,2> <macOS;14.6;23G80> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
         let data = try JSONSerialization.data(withJSONObject: [
             "client_info": serverValue,
             "user_agent": "akd/1.0 CFNetwork/808.1.4"
         ])
 
-        // isideload 同款：身份原样取服务器返回值（`remote_v3/mod.rs:194`），
-        // 只用服务器的 user_agent 拼请求头。
+        // SideInstaller 只替换已知公共服务器的旧 Mac/Xcode 或 Android 声明；
+        // 自建服务器的真实身份必须保留，不能被无差别覆盖。
         #expect(
             try AnisetteV3Client.parseClientInfo(data: data) ==
                 AnisetteV3ClientInfo(

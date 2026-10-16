@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-17 CI #119：身份策略测试契约与错误码清单快照
+
+- **现象**：CI #119 的发布打包在错误码清单差异检查失败；Swift 回归同时保留了一条“旧 Mac 身份必须原样保留”的测试，与新引入的 SideInstaller 身份归一化策略互相矛盾。
+- **根因**：错误码库存是受版本控制的派生快照，代码新增标识后未同步提交；测试仅改了新策略覆盖用例，遗漏了原有自建服务器用例的语义边界。
+- **修复**：重新生成并提交错误码库存；把原测试明确为“仅自建服务器身份原样保留”，旧 Mac/Xcode 与 Android 的归一化仍由相邻测试覆盖。
+- **涉及文件**：`error-code-inventory.json`、`AnisetteV3ClientTests.swift`。
+- **验证状态**：`git diff --check` 待本次提交前执行；Windows 无 Xcode，Swift 回归仍由下一轮云 CI 验证。
+
+---
+
 ## 2026-10-16 SideInstaller 登录策略对齐：Anisette 身份归一化
 
 - **现象**：Seal 会把 `/v3/client_info` 返回旧 Mac/Xcode 或 Android 身份的服务器直接跳过，导致可用 Anisette 服务集合缩小；用户提供的 SideInstaller 在相同阶段能继续登录。
