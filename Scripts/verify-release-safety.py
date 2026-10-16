@@ -1746,11 +1746,18 @@ def violations(load=read):
     # 剩下的第一个（1.1.16）**自己就是最高** ⇒ 判据照样 PASS ✗✗，
     # 变异检查当场报 `Guard failed mutation check: R60b` ✓。
     # ⇒ 改成跟 `MARKETING_VERSION` **对账** ✓（这才是真正要守的东西 ✓）。
-    marketing_versions = re.findall(r"MARKETING_VERSION:\s*(\S+)", load("project.yml"))
+    # ⚠️ 2026-10-16：`len(marketing_versions) == 1` 改成「唯一取值」。
+    #    新增 Live Activity 扩展 target（`SealLiveActivity`）后 `project.yml` 里有**两份**
+    #    `MARKETING_VERSION`（扩展那份是必需的：`Config/Base.xcconfig` 不定义它，
+    #    而该 target 用 `GENERATE_INFOPLIST_FILE: NO` + `$(MARKETING_VERSION)`，
+    #    删掉会把扩展版本解析成空串，且 iOS 要求嵌入扩展与宿主版本一致）。
+    #    真正要守的是「发布说明第一节能对上实际发出去的版本」，与版本号写了几份无关 ⇒
+    #    取唯一取值来对账，原意一条不少，也不会因为再加 target 而误报。
+    marketing_versions = set(re.findall(r"MARKETING_VERSION:\s*(\S+)", load("project.yml")))
     notes_first = re.findall(r"^# (\d+\.\d+\.\d+)", load("RELEASE_NOTES.md"), re.M)
     check(len(marketing_versions) == 1
           and len(notes_first) >= 1
-          and notes_first[0] == marketing_versions[0],
+          and notes_first[0] in marketing_versions,
           "R60b: `RELEASE_NOTES.md` 的**第一节版本必须等于 `MARKETING_VERSION`** ✗ —— "
           "发布正文只取第一节（R60）⇒ 不一致就会**给用户发错版本的说明** ✗；"
           "新版本必须**置顶**，不能追加到末尾 ✓")
@@ -4052,9 +4059,23 @@ def violations(load=read):
           "Copy: recovery must not instruct manual certificate revocation ("
           + " | ".join(manual_revoke_copy) + ")")
 
+    # 版本号必须**处处一致**，不允许各 target 漂移。
+    #
+    # ⚠️ 2026-10-16 从「只允许出现 1 次」改成「所有出现必须同值」：
+    #    新增了 Live Activity 扩展 target 后它有自己的一份 `MARKETING_VERSION`。
+    #    这一份是**必需的**，不是冗余 —— `Config/Base.xcconfig` 里没有定义它
+    #    （只有 `IPHONEOS_DEPLOYMENT_TARGET` / `SWIFT_VERSION` 等），而该 target 用
+    #    `GENERATE_INFOPLIST_FILE: NO` + `CFBundleShortVersionString: $(MARKETING_VERSION)`，
+    #    删掉就会在构建期把版本解析成空串；iOS 还要求嵌入扩展的版本与宿主一致。
+    #    所以这里改为校验「唯一取值」—— 原意（防漂移）一条不少，且以后再加 target 也不必改数字。
     versions = re.findall(r"MARKETING_VERSION:\s*(\S+)", load("project.yml"))
-    check(len(versions) == 1,
-          "Release: Seal must declare a single MARKETING_VERSION (no extension target)")
+    build_versions = re.findall(r"CURRENT_PROJECT_VERSION:\s*(\S+)", load("project.yml"))
+    check(len(versions) >= 1 and len(set(versions)) == 1,
+          "Release: every target's MARKETING_VERSION must agree (found: "
+          + ", ".join(sorted(set(versions))) + ")")
+    check(len(build_versions) >= 1 and len(set(build_versions)) == 1,
+          "Release: every target's CURRENT_PROJECT_VERSION must agree (found: "
+          + ", ".join(sorted(set(build_versions))) + ")")
     for workflow in ("ios.yml", "ios-release.yml"):
         text = load(".github/workflows/" + workflow)
         check("inputs.publish_release == true" in text
@@ -4644,14 +4665,18 @@ def violations(load=read):
     r69_pairing_view = load("Seal/Features/Settings/PairingSettingsView.swift")
     r69_assistant = load("Tools/SealPairingAssistant/patch_upstream.py")
     r69_assistant_ui = load("Tools/SealPairingAssistant/seal_ui_tail.rs.txt")
-    # ① `project.yml` 的 5 处必须全是 17.4。
+    # ① `project.yml` 的部署目标必须全是 17.4。
     #    ⚠️ 用**计数**而不是 `in`：只写 `in` 的话，把其中一个 target 落回 17.0 会被
-    #    其余三处掩盖（R67 / R68 都实测漏网过）。
-    check(r69_project.count('deploymentTarget: "17.4"') == 4
+    #    其余几处掩盖（R67 / R68 都实测漏网过）。
+    #    ⚠️ 计数在 2026-10-16 从 4 改为 5：新增了 Live Activity 扩展 target
+    #    `SealLiveActivity`（配对码镜像到灵动岛，见 `Shared/PairingActivityAttributes.swift`）。
+    #    ActivityKit 的视图只能住在 widget 扩展里 ⇒ 这个 target 是必需的，不是可选装饰。
+    #    加 target 时必须同步改这里的数字 —— 否则正是这条守卫想拦的「漏改一处」。
+    check(r69_project.count('deploymentTarget: "17.4"') == 5
           and 'iOS: "17.4"' in r69_project
           and 'deploymentTarget: "17.0"' not in r69_project
           and 'iOS: "17.0"' not in r69_project,
-          "R69①: `project.yml` 的 5 处部署目标必须全是 17.4 —— 4 个 target 的 "
+          "R69①: `project.yml` 的 6 处部署目标必须全是 17.4 —— 5 个 target 的 "
           "`deploymentTarget` 加 `options.deploymentTarget.iOS`；漏一处系统就仍允许装 17.0–17.3.1")
     # ② 项目级 xcconfig 也写着部署目标，必须同步。
     check(r69_base.count("IPHONEOS_DEPLOYMENT_TARGET = 17.4") == 1

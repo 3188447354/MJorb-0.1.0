@@ -170,14 +170,24 @@ targets:
     sources:
       - path: SealLiveActivity
       - path: Shared/PairingActivityAttributes.swift
-    info:
-      path: SealLiveActivity/Info.plist
-      properties:
-        CFBundleDisplayName: Seal 配对
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
       base:
+        # ⚠️ 由 Xcode 生成扩展的 Info.plist，**不要**手写一份精简的。
+        #
+        # 实测（2026-10-16，run #62）：手写的 plist 只有 `NSExtension`，
+        # 能编译、但模拟器安装直接失败：
+        #   Simulator device failed to install the application.
+        #   Failure Reason: Invalid placeholder attributes.
+        #   FunctionName = -[IXPlaceholder setPlaceholderAttributes:error:]
+        # 因为 XcodeGen 不会替扩展补 `CFBundleExecutable` / `CFBundlePackageType` /
+        # `CFBundleSupportedPlatforms` / `MinimumOSVersion` / `UIDeviceFamily` 这些键，
+        # 而它们在安装期是必填（对照 SideInstaller 那份**能装进真机**的 appex：
+        # 同样这些键一个不少）。改成让 Xcode 生成后，这些键由构建系统按 target 设置填好。
+        GENERATE_INFOPLIST_FILE: YES
+        # 只有声明成 widgetkit-extension，系统才会把它当作承载 Live Activity 视图的扩展。
+        # 写成别的会装得上、但灵动岛永远不出现，且没有任何报错。
+        INFOPLIST_KEY_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        INFOPLIST_KEY_CFBundleDisplayName: Seal 配对
         # ⚠️ 扩展的 Bundle ID **必须以主 App 的为前缀**：爱思助手自签带扩展的 IPA 时，
         #    扩展 ID 不是主 App ID 的前缀会直接报 `AppexBundleIDNotPrefixed` 并**拒绝安装整个包**
         #    （不是静默跳过扩展）。`com.mjorb.seal.LiveActivity` 满足该规则。
@@ -187,7 +197,6 @@ targets:
         TARGETED_DEVICE_FAMILY: "1,2"
         MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 3
-        GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: YES
         # 与主 App 同样关掉：扩展里的 Debug dylib 更容易被第三方签名工具漏签。
