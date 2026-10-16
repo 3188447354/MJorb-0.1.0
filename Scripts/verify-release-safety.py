@@ -1749,8 +1749,8 @@ def violations(load=read):
     # ⚠️ 2026-10-16：`len(marketing_versions) == 1` 改成「唯一取值」。
     #    新增 Live Activity 扩展 target（`SealLiveActivity`）后 `project.yml` 里有**两份**
     #    `MARKETING_VERSION`（扩展那份是必需的：`Config/Base.xcconfig` 不定义它，
-    #    而该 target 用 `GENERATE_INFOPLIST_FILE: NO` + `$(MARKETING_VERSION)`，
-    #    删掉会把扩展版本解析成空串，且 iOS 要求嵌入扩展与宿主版本一致）。
+    #    而扩展要把版本填进自己生成的 Info.plist，删掉会把版本解析成空串，
+    #    且 iOS 要求嵌入扩展与宿主版本一致）。
     #    真正要守的是「发布说明第一节能对上实际发出去的版本」，与版本号写了几份无关 ⇒
     #    取唯一取值来对账，原意一条不少，也不会因为再加 target 而误报。
     marketing_versions = set(re.findall(r"MARKETING_VERSION:\s*(\S+)", load("project.yml")))
@@ -4064,9 +4064,9 @@ def violations(load=read):
     # ⚠️ 2026-10-16 从「只允许出现 1 次」改成「所有出现必须同值」：
     #    新增了 Live Activity 扩展 target 后它有自己的一份 `MARKETING_VERSION`。
     #    这一份是**必需的**，不是冗余 —— `Config/Base.xcconfig` 里没有定义它
-    #    （只有 `IPHONEOS_DEPLOYMENT_TARGET` / `SWIFT_VERSION` 等），而该 target 用
-    #    `GENERATE_INFOPLIST_FILE: NO` + `CFBundleShortVersionString: $(MARKETING_VERSION)`，
-    #    删掉就会在构建期把版本解析成空串；iOS 还要求嵌入扩展的版本与宿主一致。
+    #    （只有 `IPHONEOS_DEPLOYMENT_TARGET` / `SWIFT_VERSION` 等），而扩展要用它填
+    #    自己生成的 Info.plist，删掉就会在构建期把版本解析成空串；
+    #    iOS 还要求嵌入扩展的版本与宿主一致。
     #    所以这里改为校验「唯一取值」—— 原意（防漂移）一条不少，且以后再加 target 也不必改数字。
     versions = re.findall(r"MARKETING_VERSION:\s*(\S+)", load("project.yml"))
     build_versions = re.findall(r"CURRENT_PROJECT_VERSION:\s*(\S+)", load("project.yml"))
@@ -9018,12 +9018,15 @@ def main():
          "        guard selectable.isEmpty == false else { return .noSelectableAccount }\n",
          "R68③b: 「记录账号是否存在」的判定必须排在"),
         # ── R69：最低支持 = iOS 17.4（禁止 16.0–17.3.1，2026-09-24 用户指令）──
-        # ① 某个 target 落回 17.0 ⇒ 计数从 4 变 3 ✓ 报红（覆盖「漏改一处」这个真实退化）。
+        # ① 某个 target 落回 17.0 ⇒ 计数从 5 变 4 ✓ 报红（覆盖「漏改一处」这个真实退化）。
         #    ⚠️ `replace(..., 1)` 只改**第一处**，所以断言必须用计数才抓得到。
+        #    ⚠️ 期望文案必须与上面 `check(...)` 的原文一致 —— 变异检查是按**字符串**匹配
+        #    报错信息的（2026-10-16 把「5 处 / 4 个 target」改成「6 处 / 5 个 target」时
+        #    漏改这里，CI 就报 `Guard failed mutation check: R69①`）。
         ("project.yml",
          '    deploymentTarget: "17.4"',
          '    deploymentTarget: "17.0"',
-         "R69①: `project.yml` 的 5 处部署目标必须全是 17.4"),
+         "R69①: `project.yml` 的 6 处部署目标必须全是 17.4"),
         # ② 项目级 xcconfig 落回 17.0 ⇒ 与 project.yml 不一致 ✓ 报红。
         ("Config/Base.xcconfig",
          "IPHONEOS_DEPLOYMENT_TARGET = 17.4",

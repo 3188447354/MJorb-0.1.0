@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
+	<key>CFBundleDisplayName</key>
+	<string>Seal 配对</string>
+	<!-- 这些 CFBundle* 键必须是**字面量**，不能写成 $(...) 变量。
+	     GENERATE_INFOPLIST_FILE: NO 时 Xcode 不会替扩展展开它们，
+	     留下未展开的值会让安装期报：
+	       Failure Reason: Invalid placeholder attributes.
+	       FunctionName = -[IXPlaceholder setPlaceholderAttributes:error:] -->
+	<key>CFBundleExecutable</key>
+	<string>SealLiveActivity</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.mjorb.seal.LiveActivity</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>SealLiveActivity</string>
+	<!-- 扩展的包类型是 XPC!（不是 APPL）。写错系统不会把它当扩展装配。 -->
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>3</string>
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+	<key>NSExtension</key>
+	<dict>
+		<!-- 只有声明成 widgetkit-extension，系统才会把它当作承载 Live Activity
+		     视图的扩展。写成别的会装得上、但灵动岛永远不出现，且没有任何报错。 -->
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
+</dict>
+</plist>
