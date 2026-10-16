@@ -55,21 +55,27 @@ final class PairingLiveActivityController {
         activity = nil
 
         let attributes = PairingActivityAttributes(deviceName: deviceName)
-        let state = Self.codeState(code)
-        do {
-            activity = try Activity.request(
-                attributes: attributes,
-                content: .init(state: state, staleDate: nil),
-                pushType: nil,
-                // 创建时就带 alert ⇒ 灵动岛立刻展开并把码摆出来，
-                // 用户不必先点一下。
-                alertConfiguration: Self.codeAlert(code)
-            )
-            scheduleAutoDismiss()
-        } catch {
-            // 不致命：App 内仍然显示配对码，只是没有灵动岛镜像。
-            activity = nil
-        }
+
+        // ⚠️ **`AlertConfiguration` 挂在 `ActivityContent` 上，不挂在 `request` 的参数上**
+        // （2026-10-16 编译报错后改）：
+        // Xcode 26 的 `Activity.request(attributes:content:pushType:style:alertConfiguration:start:)`
+        // 里 `style` / `start` 是**必填**且没有带默认值的旧重载 —— 只传前三个参数会报
+        //   error: missing arguments for parameters 'style', 'start' in call
+        // 而那个不带 style/start 的重载**不抛任何错误**（编译器会连带报
+        // `'catch' block is unreachable`）。AlertConfiguration 的正式归宿是
+        // `ActivityContent(state:staleDate:alertConfiguration:)`，走它就不必猜
+        // `style` / `start` 的类型。
+        let content = ActivityContent(
+            state: Self.codeState(code),
+            staleDate: nil,
+            alertConfiguration: Self.codeAlert(code)
+        )
+        activity = Activity.request(
+            attributes: attributes,
+            content: content,
+            pushType: nil
+        )
+        scheduleAutoDismiss()
     }
 
     /// 配对成功。**不结束活动** —— 用户还在「设置」里，需要一个返回入口。
