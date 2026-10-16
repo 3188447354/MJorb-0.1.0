@@ -51,6 +51,9 @@ targets:
       - path: Seal
         excludes:
           - "Resources/Anisette/*.so"
+      # 与 Live Activity 扩展共享的属性定义。放在 `Shared/` 而不是 `Seal/` 下，
+      # 是为了让两个 target 都能引用同一个文件、且扩展不必用 `../` 跨出仓库根。
+      - path: Shared
     resources:
       - path: Seal/Resources/Anisette
     dependencies:
@@ -66,6 +69,12 @@ targets:
       - package: Crypto
         product: CryptoExtras
       - target: DeviceSupport
+      # 嵌入式扩展。XcodeGen 会把它放进 `Seal.app/PlugIns/SealLiveActivity.appex`，
+      # 这是 Live Activity 视图唯一能待的地方。
+      # ⚠️ 侧载签名链对它的处理见 `PairingCodeNotification` 的注释：显式描述文件会把它剥掉，
+      #    那时自动退回通知路径。
+      - target: SealLiveActivity
+        embed: true
     info:
       path: Seal/Resources/Info.plist
       properties:
@@ -134,6 +143,11 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        # 配对码镜像到灵动岛 / 锁屏（2026-10-16 新增）。
+        # 配对码要输进**系统设置**，进设置就得离开 Seal；镜像到灵动岛后输码时一直看得见，
+        # 点一下还能跳回 Seal（`seal://pairing`）。
+        # ⚠️ 缺这个键 ⇒ `Activity.request` 抛错、灵动岛永不出现，且**没有任何日志**。
+        NSSupportsLiveActivities: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal
@@ -146,6 +160,37 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Seal/Resources/Seal.entitlements
         # Xcode 16+ Debug 构建默认把代码拆进 <Name>.debug.dylib（预览调试用）。
         # 侧载分发场景第三方签名工具常漏签根目录 dylib → 白图标+秒闪退。关闭之。
+        ENABLE_DEBUG_DYLIB: NO
+  # 配对码的 Live Activity 界面。**必须**是独立 target：ActivityKit 的视图只能住在
+  # widget 扩展里，放进主 App 会编译通过但永远不显示。
+  SealLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.4"
+    sources:
+      - path: SealLiveActivity
+      - path: Shared/PairingActivityAttributes.swift
+    info:
+      path: SealLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Seal 配对
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+    settings:
+      base:
+        # ⚠️ 扩展的 Bundle ID **必须以主 App 的为前缀**：爱思助手自签带扩展的 IPA 时，
+        #    扩展 ID 不是主 App ID 的前缀会直接报 `AppexBundleIDNotPrefixed` 并**拒绝安装整个包**
+        #    （不是静默跳过扩展）。`com.mjorb.seal.LiveActivity` 满足该规则。
+        #    代价：扩展会占用免费 Apple ID 每周 10 个 App ID 名额中的 1 个。
+        PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.LiveActivity
+        PRODUCT_NAME: SealLiveActivity
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 3
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+        # 与主 App 同样关掉：扩展里的 Debug dylib 更容易被第三方签名工具漏签。
         ENABLE_DEBUG_DYLIB: NO
   DeviceSupport:
     type: library.static

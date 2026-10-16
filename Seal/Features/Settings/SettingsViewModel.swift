@@ -1,5 +1,7 @@
 import Combine
 import Foundation
+// `UIDevice.current.name` 用于给配对活动填设备名（灵动岛上显示「在给谁配对」）。
+import UIKit
 @preconcurrency import AltSign
 
 enum SettingsRoute: Hashable {
@@ -189,6 +191,11 @@ final class SettingsViewModel: ObservableObject {
     private let selfReplacementStore: SelfReplacementTransactionStore?
     private var phonePairingHost: PhonePairingHost?
     private var phonePairingLease: OperationCoordinator.Lease?
+    /// 把配对码镜像到灵动岛 / 锁屏。见 `PairingLiveActivityController` 的注释。
+    private let pairingLiveActivity = PairingLiveActivityController()
+    /// 本轮配对是否走通知回退（灵动岛不可用时）。
+    /// 在配对开始时**定一次**，中途不改：否则中途切换会让用户先看到灵动岛、又冒出通知横幅。
+    private var pairingUsesNotifications = false
     private var isPhonePairingAutomaticCheckRunning = false
     private var certificateInventoryRefreshGate = ApplePortalInventoryRefreshGate()
     private var hasLoaded = false
@@ -2336,6 +2343,18 @@ final class SettingsViewModel: ObservableObject {
         phonePairingLease = operationLease
         let host = PhonePairingHost()
         phonePairingHost = host
+        // 本轮的投递方式在开始时就定死：灵动岛可用就走灵动岛，否则走通知横幅。
+        // ⚠️ 必须在 `host.start` **之前**定：`.requestingLocalNetwork` 是 `start()` 里
+        //    同步发出的第一个事件，也是唯一一次「App 确定还在前台」的时机 ——
+        //    `Activity.request` 只在前台可用，晚一步就再也起不来活动。
+        pairingUsesNotifications = PairingCodeNotification.shouldUseNotifications(
+            liveActivityAvailable: pairingLiveActivity.isEnabled
+        )
+        if pairingUsesNotifications {
+            Task { _ = await PairingCodeNotification.requestAuthorizationIfNeeded() }
+        } else {
+            pairingLiveActivity.begin(deviceName: Self.phonePairingDeviceDisplayName)
+        }
         host.start { [weak self] event in
             self?.handlePhonePairingEvent(event)
         }
@@ -2362,17 +2381,48 @@ final class SettingsViewModel: ObservableObject {
             phonePairingState = .waitingForSystemConfirmation
         case let .showingCode(code):
             phonePairingState = .showingCode(code)
+            presentPairingCode(code)
         case let .completed(fileURL):
             phonePairingHost = nil
+            markPairingPaired()
             Task { await finishPhonePairing(at: fileURL) }
         case let .failed(message):
             phonePairingHost = nil
+            finishPairingPresentation()
             let failure = Self.phonePairingHostFailure(message: message)
             phonePairingState = .failed(failure)
             alertFailure = failure
             releasePhonePairingLease()
         }
     }
+
+    /// 配对码显示给用户之后，App 差不多就该被切到后台去「设置」里输码了。
+    /// 这里把码交给灵动岛（或通知），让它留在屏幕上。
+    private func presentPairingCode(_ code: String) {
+        if pairingUsesNotifications {
+            Task { await PairingCodeNotification.present(code: code) }
+        } else {
+            pairingLiveActivity.presentCode(code)
+        }
+    }
+
+    private func markPairingPaired() {
+        if pairingUsesNotifications {
+            Task { await PairingCodeNotification.markPaired() }
+        } else {
+            pairingLiveActivity.markPaired()
+        }
+    }
+
+    /// 收掉灵动岛活动 / 清掉通知。配对结束或失败时都要调用，
+    /// 否则灵动岛上会一直挂着一个过期的码。
+    private func finishPairingPresentation() {
+        pairingLiveActivity.finish()
+        Task { await PairingCodeNotification.clear() }
+    }
+
+    private static let phonePairingDeviceDisplayName: String =
+        UIDevice.current.name.isEmpty ? "此 iPhone" : UIDevice.current.name
 
     private func finishPhonePairing(at fileURL: URL) async {
         defer { releasePhonePairingLease() }

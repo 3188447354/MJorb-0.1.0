@@ -1,4 +1,7 @@
 import SwiftUI
+// `NSUserActivityTypeLiveActivity` 由 WidgetKit 定义（不是 ActivityKit），
+// 只 import ActivityKit 会编译不过。
+import WidgetKit
 
 struct RootTabView: View {
     @ObservedObject var appsViewModel: AppsViewModel
@@ -51,6 +54,9 @@ struct RootTabView: View {
         .preferredColorScheme(SealAppearance(rawValue: appearanceRawValue)?.colorScheme)
         .id("\(accentRawValue)-\(customAccentHex)")
         .sealScreenBackground()
+        .onContinueUserActivity(NSUserActivityTypeLiveActivity) { _ in
+            openPairingSettings()
+        }
         .task {
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
@@ -101,6 +107,19 @@ struct RootTabView: View {
                 return
             }
 
+            // 点灵动岛 / 锁屏卡片跳回 Seal（`widgetURL` 给的 `seal://pairing`）。
+            //
+            // ⚠️ 必须并入**这一个** `onOpenURL`：SwiftUI 里同一个视图挂两个
+            //    `onOpenURL` 是后者覆盖前者，分开放会静默吃掉上面的 LocalDevVPN 回调。
+            //
+            // 另一条路径 `onContinueUserActivity(NSUserActivityTypeLiveActivity)` 是
+            // 在**没有** `widgetURL` 时系统才会走的；我们给了 deep link，所以正常走这里，
+            // 但两条都接上，避免以后有人去掉 `widgetURL` 时变成「打开了 App 停在首页」。
+            if url.scheme == PairingDeepLink.scheme, url.host == PairingDeepLink.host {
+                openPairingSettings()
+                return
+            }
+
             guard url.isFileURL else { return }
             selection = .apps
             Task { await appsViewModel.importSelectedFile(url) }
@@ -123,6 +142,18 @@ struct RootTabView: View {
                 )
             }
         }
+    }
+
+    /// 从灵动岛 / 锁屏卡片跳回配对页。
+    ///
+    /// 复用 `requestedRoute` 而不是直接改 `navigationPath`：那条路径由
+    /// `SettingsRootView` 持有，`requestedRoute` 是双方既有的约定（`.addAccount`
+    /// 也走它），在这里自己推栈会因为视图还没出现而丢失。
+    private func openPairingSettings() {
+        selection = .settings
+        settingsViewModel.requestedRoute = .pairing
+        // 人已经回到 App，浮在系统设置上方的配对码横幅没有存在意义了。
+        Task { await PairingCodeNotification.clear() }
     }
 
     private func installSelfUpdate(_ localURL: URL) {
