@@ -20,20 +20,35 @@ done
 #
 # 直接把守卫删掉会丢掉它真正要保的东西：「别让任意/意外的扩展混进发布包」。
 # 所以改成白名单 —— **只认这一个扩展**，任何别的 `.appex` 仍然拒收。
-allowed_extension="Payload/Seal.app/PlugIns/SealLiveActivity.appex/"
+#
+# ⚠️ 两个必须写对的地方（2026-10-16 两轮实测各踩一个）：
+#   ① `unzip -Z1` 会把**目录本身**也列为条目 ⇒ 要放行 `PlugIns/` 这一级，
+#      否则报 `Unexpected app extension in Seal IPA: Payload/Seal.app/PlugIns/`，
+#      那是守卫自己的误报。
+#   ② 放行 `PlugIns/` **只能是精确匹配那一条目录条目**，不能当成前缀 ——
+#      写成前缀会把 `PlugIns/Evil.appex/…` 一起放进来，让守卫比原来更弱。
+allowed_exact=(
+  "Payload/Seal.app/PlugIns/"
+  "Payload/Seal.app/PlugIns/SealLiveActivity.appex/"
+)
+allowed_prefix="Payload/Seal.app/PlugIns/SealLiveActivity.appex/"
 if grep -q '^Payload/Seal\.app/PlugIns/' <<<"$entries"; then
   while IFS= read -r entry; do
     [[ -z "$entry" ]] && continue
-    case "$entry" in
-      "$allowed_extension"*) ;;
-      *)
-        echo "Unexpected app extension in Seal IPA: $entry (only SealLiveActivity is allowed)" >&2
-        exit 1
-        ;;
-    esac
+    allowed=0
+    for exact in "${allowed_exact[@]}"; do
+      [[ "$entry" == "$exact" ]] && { allowed=1; break; }
+    done
+    if [[ "$allowed" -ne 1 && "$entry" == "$allowed_prefix"* ]]; then
+      allowed=1
+    fi
+    if [[ "$allowed" -ne 1 ]]; then
+      echo "Unexpected app extension in Seal IPA: $entry (only SealLiveActivity is allowed)" >&2
+      exit 1
+    fi
   done < <(grep '^Payload/Seal\.app/PlugIns/' <<<"$entries")
-  # 白名单命中了目录，但目录里必须真有可执行文件，否则是空壳扩展（装上也永远不会显示）。
-  if ! grep -q "^${allowed_extension}[^/]\+$" <<<"$entries"; then
+  # 白名单命中了目录，但目录里必须真有可执行文件 —— 空壳 appex 装得上却永远不会显示。
+  if ! grep -q '^Payload/Seal\.app/PlugIns/SealLiveActivity\.appex/[^/]\+$' <<<"$entries"; then
     echo "SealLiveActivity.appex is present but contains no executable" >&2
     exit 1
   fi
