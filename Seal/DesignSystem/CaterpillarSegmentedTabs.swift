@@ -9,6 +9,22 @@ import UIKit
 ///
 /// 进度语义：`progress ∈ [0, count-1]`，`0.4` 表示在第 0 与第 1 个标签之间、
 /// 偏向前者六成的位置。点击标签时把进度补间到整数，所以点击和滑动共用同一条动画路径。
+///
+/// ## 几何是怎么算出来的（改这个文件前先读这段）
+///
+/// 早先的实现用「`GeometryReader` + `PreferenceKey` + 命名坐标系」测量每个标签的
+/// `midX`，结果**七项症状全中**（下划线错位、宽度不对、两标签不等宽、字色不切换、
+/// 点击不跳页、滑动异常、布局错乱）。三处根因：
+///
+/// 1. `.coordinateSpace(name:)` 挂在 HStack 上，而 `GeometryReader` 读 `.named(space)`
+///    —— 命名坐标系**没有可靠地向下传递**，量到的 `midX` 全是错的或全 0。
+/// 2. 用 `.onPreferenceChange` 回写 `@State` 再驱动**静态布局的 frame**（统一宽度），
+///    这需要额外一轮布局 ⇒ 首帧必然不同步。
+/// 3. 分页进度用 `frame.minX / proxy.size.width`，分母是**页宽**而非分页器视口宽。
+///
+/// 现在全部改成**确定性几何**：标签宽度用 `frame(width:)` 的提案回调算（这是纯粹的
+/// 「给定提案返回尺寸」，与坐标系无关）；下划线放在 `.overlay(alignment: .topLeading)`
+/// 里 —— overlay 的原点就是标签行的原点，**它就是坐标系本身**，不需要任何跨层传递。
 struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     let items: [Item]
     let title: (Item) -> String
@@ -18,45 +34,38 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     @Binding var progress: CGFloat
 
     /// 标签之间的水平间距。
-    var spacing: CGFloat = 28
+    var spacing: CGFloat = 24
     /// 静止时下划线的高度。
     var indicatorHeight: CGFloat = 3
     /// 左右内边距，需与内容页一致，否则下划线与文字对不齐。
     var horizontalPadding: CGFloat = 20
+    /// 标签宽度下限，避免内容极短时下划线缩成一小段。
+    var minTabWidth: CGFloat = 64
 
-    @State private var labelMidpoints: [CGFloat] = []
-    @State private var labelWidths: [CGFloat] = []
-    /// 对称化用的统一宽度：先按自然尺寸量一遍，取最宽者，再让所有标签对齐到它。
-    @State private var uniformWidth: CGFloat = 0
+    @State private var tabWidth: CGFloat = 0
+    /// 标签文字那一行的高度。下划线要贴在它下方，所以必须**量出来**而不是猜一个
+    /// 常数 —— 一旦与真实行高不一致，下划线就会压住文字或浮在半空。
+    @State private var labelHeight: CGFloat = 0
 
-    private static var space: String { "caterpillar-tabs" }
+    private static var labelSpacing: CGFloat { 8 }
 
     var body: some View {
         HStack(alignment: .top, spacing: spacing) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                label(item, index: index)
+                tab(item, index: index)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, horizontalPadding)
-        .background(alignment: .topLeading) { indicator }
-        .coordinateSpace(name: Self.space)
-        .onPreferenceChange(TabNaturalWidthKey.self) { widths in
-            // 取最宽标签作为统一样本。「待签名 2」与「已安装 12」字数、数字位数都不同，
-            // 不统一就会出现「一个宽一个窄」的不对称，下划线也跟着一长一短。
-            // 统一之后文字各自居中、间距均匀，下划线等长。
-            let widest = widths.values.max() ?? 0
-            if widest > 0, abs(uniformWidth - widest) > 0.5 {
-                uniformWidth = widest
-            }
-        }
+        .overlay(alignment: .topLeading) { indicator }
     }
 
     // MARK: - 单个标签
 
-    private func label(_ item: Item, index: Int) -> some View {
+    private func tab(_ item: Item, index: Int) -> some View {
         // 该标签离当前位置有多近：1 = 完全选中，0 = 相邻或更远。
-        let proximity = max(0, 1 - abs(progress - CGFloat(index)))
+        // 颜色与字重都跟着它渐变，所以拖到一半时两边都是中间态。
+        let proximity = max(0, min(1, 1 - abs(progress - CGFloat(index))))
 
         return Button {
             withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
@@ -64,60 +73,72 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
                 progress = CGFloat(index)
             }
         } label: {
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Text(title(item))
-                        .font(.system(size: 17, weight: Self.weight(for: proximity)))
-                        .foregroundStyle(
-                            Color.sealAccent.blended(with: Color.sealTextSecondary, amount: 1 - proximity)
-                        )
-                    if let count {
-                        Text("\(count(item))")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Color.sealTextSecondary)
-                    }
-                }
-                // 占位：下划线统一由背景层的 indicator 绘制，这里只把标签撑到统一高度。
-                Capsule()
-                    .fill(Color.clear)
-                    .frame(height: indicatorHeight)
-            }
-            // 自然宽度必须在这里量：`.frame(width:)` 之后测到的是被压过的值，
-            // 拿它去算统一宽度会自锁成 0。
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: TabNaturalWidthKey.self,
-                        value: [index: proxy.size.width]
-                    )
-                }
-            }
-            // 对称化：所有标签对齐到同一个宽度，内容各自居中。
-            .frame(width: uniformWidth > 0 ? uniformWidth : nil, alignment: .center)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: TabMetricsKey.self,
-                        value: [index: TabMetrics(midX: proxy.frame(in: .named(Self.space)).midX,
-                                                 width: proxy.size.width)]
-                    )
-                }
-            }
+            tabLabel(item, proximity: proximity)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(count.map { "\(title(item))，\($0(item)) 个" } ?? title(item))
         .accessibilityAddTraits(selection == item ? .isSelected : [])
-        .onPreferenceChange(TabMetricsKey.self) { metrics in
-            let total = items.count
-            var midpoints = [CGFloat](repeating: 0, count: total)
-            var widths = [CGFloat](repeating: 0, count: total)
-            for (index, metric) in metrics where index < total {
-                midpoints[index] = metric.midX
-                widths[index] = metric.width
+    }
+
+    private func tabLabel(_ item: Item, proximity: CGFloat) -> some View {
+        // 内容先按自然尺寸摆好；下面用同一个宽度把它居中，
+        // 于是所有标签等宽、内容居中，既对称又不浪费横向空间。
+        let content = HStack(spacing: 6) {
+            Text(title(item))
+                .font(.system(size: 17, weight: Self.weight(for: proximity)))
+                .foregroundStyle(Color.sealAccent.blended(with: Color.sealTextSecondary,
+                                                          amount: 1 - proximity))
+            if let count {
+                Text("\(count(item))")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.sealTextSecondary)
             }
-            if labelMidpoints != midpoints { labelMidpoints = midpoints }
-            if labelWidths != widths { labelWidths = widths }
         }
+        // `.fixedSize()` 让这一行保持自然尺寸，宽度与字重无关 ⇒ 量到的宽度稳定，
+        // 不会因为选中态字重变化而反复触发重新布局。
+        .fixedSize()
+
+        return VStack(spacing: Self.labelSpacing) {
+            content
+                .frame(width: tabWidth > 0 ? tabWidth : nil, alignment: .center)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { recordLabelHeight(proxy.size.height) }
+                            .onChange(of: proxy.size.height) { recordLabelHeight($0) }
+                    }
+                }
+            // 占位：下划线由 overlay 里的 indicator 绘制，这里只把标签撑到统一高度。
+            Capsule()
+                .fill(Color.clear)
+                .frame(width: tabWidth > 0 ? tabWidth : nil, height: indicatorHeight)
+        }
+        // 量宽：`frame(width:)` 的入参是**提案**、返回值是**实际采纳的尺寸**。
+        // 传 `nil` 表示「按内容自然尺寸」，取回来的宽度就是这个标签的自然宽度。
+        // 这一步与坐标系无关，所以不会像命名坐标系那样静默失效。
+        .background {
+            GeometryReader { proxy in
+                Color.clear
+                    .onAppear { recordTabWidth(proxy.size.width) }
+                    .onChange(of: proxy.size.width) { recordTabWidth($0) }
+            }
+        }
+    }
+
+    private func recordLabelHeight(_ height: CGFloat) {
+        guard height > 0, abs(labelHeight - height) > 0.5 else { return }
+        labelHeight = height
+    }
+
+    /// 统一宽度 = 所有标签里最宽的那个。
+    ///
+    /// 「待签名 2」与「已安装 12」字数、数字位数都不同 ⇒ 不统一就会一个宽一个窄、
+    /// 下划线也跟着一长一短。取最宽者后两者都对齐到它、内容各自居中。
+    private func recordTabWidth(_ width: CGFloat) {
+        guard width > 0 else { return }
+        let target = max(width, minTabWidth)
+        guard abs(tabWidth - target) > 0.5 else { return }
+        tabWidth = target
     }
 
     /// 按接近程度在 `medium` 与 `bold` 之间取字重。
@@ -126,22 +147,30 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     /// 字体度量。视觉上足够连续，且不依赖任何私有 API。
     private static func weight(for proximity: CGFloat) -> Font.Weight {
         switch proximity {
-        case ..<0.25: return .medium
-        case ..<0.5: return .medium
-        case ..<0.75: return .semibold
+        case ..<0.35: return .medium
+        case ..<0.7: return .semibold
         default: return .bold
         }
     }
 
     // MARK: - 毛毛虫下划线
 
+    /// 下划线所在的一行。`overlay(alignment: .topLeading)` 让它与标签行**原点重合**，
+    /// 所以这里的 `offset(x:)` 直接就是屏幕上的水平位置。
     private var indicator: some View {
         let geometry = indicatorGeometry
-        return Capsule()
-            .fill(Color.sealAccent)
-            .frame(width: max(geometry.width, 1), height: indicatorHeight)
-            .offset(x: geometry.x)
-            .opacity(labelMidpoints.count == items.count ? 1 : 0)
+        return VStack(spacing: 0) {
+            // 顶到标签文字下方：用**量出来的**行高，不用猜的常数。
+            Color.clear
+                .frame(height: labelHeight + Self.labelSpacing)
+            Capsule()
+                .fill(Color.sealAccent)
+                .frame(width: max(geometry.width, 1), height: indicatorHeight)
+                .offset(x: geometry.x)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .allowsHitTesting(false)
+        .opacity(tabWidth > 0 && labelHeight > 0 ? 1 : 0)
     }
 
     /// 下划线的位置与宽度。
@@ -151,39 +180,20 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     /// - 进度在两者之间时两端分开 ⇒ 先伸长覆盖两点之间，再随进度收拢到目标。
     /// 「先伸长、再收尾」的观感就来自这里，而不是对位置做简单插值。
     private var indicatorGeometry: (x: CGFloat, width: CGFloat) {
-        guard labelMidpoints.count == items.count, !labelMidpoints.isEmpty else { return (0, 0) }
-
-        let clamped = min(max(progress, 0), CGFloat(items.count - 1))
+        let lastIndex = max(items.count - 1, 0)
+        let clamped = min(max(progress, 0), CGFloat(lastIndex))
         let lower = Int(floor(clamped))
-        let upper = min(lower + 1, items.count - 1)
+        let upper = min(lower + 1, lastIndex)
         let t = clamped - CGFloat(lower)
 
-        let lowerMid = labelMidpoints[lower]
-        let upperMid = labelMidpoints[upper]
-        // 宽度也插值，避免两项宽度不同时下划线跳动。
-        let width = labelWidths[lower] + (labelWidths[upper] - labelWidths[lower]) * t
+        // 第 i 个标签的内容区中心（相对标签行内容起点）。
+        let lowerMid = CGFloat(lower) * (tabWidth + spacing) + tabWidth / 2
+        let upperMid = CGFloat(upper) * (tabWidth + spacing) + tabWidth / 2
         let mid = lowerMid + (upperMid - lowerMid) * t
-        return (mid - width / 2, width)
-    }
-}
-
-private struct TabMetrics: Equatable {
-    var midX: CGFloat
-    var width: CGFloat
-}
-
-private struct TabMetricsKey: PreferenceKey {
-    static var defaultValue: [Int: TabMetrics] { [:] }
-    static func reduce(value: inout [Int: TabMetrics], nextValue: () -> [Int: TabMetrics]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
-/// 标签在**未被统一宽度约束前**的自然宽度，用于求「最宽者」。
-private struct TabNaturalWidthKey: PreferenceKey {
-    static var defaultValue: [Int: CGFloat] { [:] }
-    static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
-        value.merge(nextValue()) { _, new in new }
+        // 静止时宽度 = 标签宽度；过渡中两端分开 ⇒ 被拉开成「毛毛虫」。
+        // 拉伸量随 `t` 收敛回 0，所以到位后自然收尾，不需要额外动画。
+        let stretched = tabWidth + (upperMid - lowerMid) * (1 - abs(2 * t - 1))
+        return (mid - stretched / 2, stretched)
     }
 }
 
@@ -192,21 +202,29 @@ private extension Color {
     ///
     /// 不叫 `mix` 是为了避开 iOS 18 起系统自带的 `Color.mix(with:by:)` —— 同名扩展
     /// 会在较新 SDK 上产生歧义调用。
+    ///
+    /// `Color.sealAccent` 是动态色（随主题/深色模式变化），所以两端都先解析成具体
+    /// RGBA 再插值。解析失败时退回端点色，绝不返回无效颜色 —— 无效值会让 SwiftUI
+    /// 在渲染期断言崩溃，而这只是个装饰性下划线。
     func blended(with other: Color, amount: CGFloat) -> Color {
         let t = min(max(amount, 0), 1)
-        if t <= 0 { return self }
-        if t >= 1 { return other }
-        return Color(uiColor: UIColor(self).blended(with: UIColor(other), amount: t))
+        if t <= 0.001 { return self }
+        if t >= 0.999 { return other }
+        guard let mixed = UIColor(self).blended(with: UIColor(other), amount: t) else {
+            return t < 0.5 ? self : other
+        }
+        return Color(uiColor: mixed)
     }
 }
 
 private extension UIColor {
-    func blended(with other: UIColor, amount: CGFloat) -> UIColor {
+    /// 在两种颜色之间插值；任一颜色无法解析成 RGB 时返回 `nil`（调用方负责兜底）。
+    func blended(with other: UIColor, amount: CGFloat) -> UIColor? {
         var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
         var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
         guard getRed(&r1, green: &g1, blue: &b1, alpha: &a1),
               other.getRed(&r2, green: &g2, blue: &b2, alpha: &a2) else {
-            return self
+            return nil
         }
         return UIColor(
             red: r1 + (r2 - r1) * amount,

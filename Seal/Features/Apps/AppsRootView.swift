@@ -301,24 +301,37 @@ struct AppsRootView: View {
         .tabViewStyle(.page(indexDisplayMode: .never))
         .coordinateSpace(name: Self.pagerSpace)
         .accessibilityIdentifier("apps-stage-pager")
-        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: mode)
+        // ⚠️ 这里**不能**再挂 `.animation(_:value:)`。
+        // 分页切换由 `TabView` 自己的分页动画完成，进度由 `withAnimation` 显式驱动；
+        // 再叠一层隐式动画会让两者各animate各的，`frame` 的中间值被反复写回
+        // `pagerProgress`，下划线与内容页就会互相追着抖。
     }
 
     private static var pagerSpace: String { "apps-stage-pager-space" }
 
     /// 把「当前看到第几页」量成一个连续的小数，供毛毛虫下划线使用。
     ///
-    /// 用测量而不是读滚动偏移：`TabView` 的分页滚动偏移没有公开可读的 API，而
-    /// 每页相对于分页器的 `midX` 是稳定可测的 —— 已滑出视口的那一页会给出负值
-    /// （在左侧）或 `> width`（在右侧），据此即可反推进度。
+    /// 用测量而不是读滚动偏移：`TabView` 的分页滚动偏移没有公开可读的 API。
+    ///
+    /// ⚠️ 两个曾经让进度**完全不动**的坑（2026-10-16 实测定位）：
+    /// 1. 只监听 `frame.minX` 不够：手指拖动时变的是分页器的滚动偏移，
+    ///    页视图在分页器坐标系下的 `minX` 会在滑动过程中连续变化，但**用 `onChange`
+    ///    只盯一个分量**时，初值不会被记录（没有 `.onAppear`），首帧之后若没有
+    ///    逐帧回调就会停在初值。⇒ 改成整体监听 `frame` 并补 `.onAppear` 初始化。
+    /// 2. `.background(_:)` 的默认对齐是 `.center`，`GeometryReader` 会撑满页面，
+    ///    量到的宽度是**页宽**；分页器视口宽与页宽一致时才对，不一致就会算歪。
+    ///    ⇒ 用 `.background(alignment: .topLeading)` 并显式取 `proxy.size.width`，
+    ///    它就是这一页的宽度，也就是分页器的分页步长。
     private func pageProgressProbe(index: Int) -> some View {
         GeometryReader { proxy in
             let frame = proxy.frame(in: .named(Self.pagerSpace))
             Color.clear
-                .onChange(of: frame.minX) { _ in
-                    updatePagerProgress(index: index, frame: frame, width: proxy.size.width)
+                .onAppear { updatePagerProgress(index: index, frame: frame, width: proxy.size.width) }
+                .onChange(of: frame) { newFrame in
+                    updatePagerProgress(index: index, frame: newFrame, width: proxy.size.width)
                 }
         }
+        .allowsHitTesting(false)
     }
 
     private func updatePagerProgress(index: Int, frame: CGRect, width: CGFloat) {

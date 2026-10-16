@@ -115,6 +115,12 @@ final class AppleAccountClient {
         return formatter
     }()
 
+    /// Apple 返回 503（服务暂时不可用）后的退避时长。
+    ///
+    /// 取 5 秒而不是更短：真机实测 `o=apptokens` 连续 503 时，紧接着重试仍然 503；
+    /// 5 秒足够让 Apple 那一侧把请求排完，又不会让用户等得以为卡住。
+    private static let serviceUnavailableBackoffSeconds: TimeInterval = 5
+
     private nonisolated static func describeError(_ error: Error) -> String {
         if let importFailure = error as? ImportFailure {
             return "ImportFailure(\(importFailure.code))"
@@ -125,11 +131,49 @@ final class AppleAccountClient {
 
     /// Apple 认证/团队请求直接发出。服务端暂不可用由统一失败策略如实呈现，
     /// 不把它猜测成网络出口或账号状态问题。
-    private static func directAppleRequest<T>(
+    /// 所有直接对 Apple 开发者门户发起的请求都必须经过这里。
+    ///
+    /// ⚠️ **这里承担「瞬时 5xx 自动退避重试」这一层职责**（2026-10-16 加）。
+    ///
+    /// 为什么必须集中在这一层、而不是在各调用点分别写：
+    /// 真机实测（build 75）登录链全通之后，失败点会在 `apptokens`（登录最后一步）
+    /// 与 `fetchTeams`（登录后第一步门户请求）之间游走 —— 哪个先撞上 Apple 的
+    /// 瞬时 503，报错就从哪里出来。若每个调用点各写一份重试，就必然出现
+    /// 「修好了登录、却在取团队那一步漏掉」这种半修状态（本文件此前正是如此：
+    /// 登录有重试、`fetchTeams` 走这个透传函数因而零重试）。
+    ///
+    /// ⇒ 把重试放在唯一的公共入口上，**新增任何门户请求都会自动获得同样的行为**，
+    /// 不再依赖「记得给新调用点补一个」。
+    ///
+    /// 只对**瞬时性**错误重试：503（服务暂时不可用）与 5xx。参数错误、鉴权失败这类
+    /// 重试多少次都一样，重试只会把用户拖慢并加深 Apple 的限流。
+    private func directAppleRequest<T>(
+        _ label: String,
         _ operation: @escaping () async throws -> T
     ) async throws -> T {
-        try await operation()
+        do {
+            return try await operation()
+        } catch {
+            guard AppleServiceFailurePolicy.isRateLimited(error) else { throw error }
+            // 只对**瞬时性**错误退避重试：503（服务暂时不可用）。参数错误、鉴权失败
+            // 这类重试多少次都一样，重试只会拖慢用户并加深 Apple 的限流。
+            //
+            // 记一条日志是刻意的：否则「重试成功」与「一次就成功」在日志里长得一样，
+            // 下次真机排障就分不清 503 到底有多频繁、退避是否真的有效。
+            await trace("\(label)：Apple 返回瞬时不可用（503），退避 \(Self.portalTransientRetryBackoffSeconds) 秒后重试一次", level: .warning)
+            try? await Task.sleep(nanoseconds: UInt64(Self.portalTransientRetryBackoffSeconds * 1_000_000_000))
+            try Task.checkCancellation()
+            let result = try await operation()
+            await trace("\(label)：503 退避后重试成功")
+            return result
+        }
     }
+
+    /// 门户瞬时错误（503）的重试退避时长。
+    ///
+    /// 取 5 秒：真机实测连续重试时 503 会持续，说明 Apple 那一侧需要时间把请求排完；
+    /// 更短等于没退避，更长会让用户以为卡死。
+    private static let portalTransientRetryBackoffSeconds: TimeInterval = 5
 
     /// 给异步操作加超时，超时后抛出超时错误。
     /// 认证可能卡在无法协作取消的调用里（本地 ADI 模拟、AltSign 内部回调），
@@ -255,7 +299,11 @@ final class AppleAccountClient {
                     //
                     // 只重试一次：这既不是限流（不该连打），也不保证可恢复；
                     // 重试仍失败就把错误抛出，交由上层按 SEAL-AUTH-80045 呈现。
-                    await trace("SRP 登录失败（无 SIM 同步指令）：\(detail)", level: .error)
+                    //
+                    // ⚠️ 文案不再写「无 SIM 同步指令」：能走到这里说明
+                    // `resyncSIM` 已判过「没有 SIM」，而 503 已被上一条分支拦下 ⇒
+                    // 这里的成因就是 -80045 本身，写别的会把排障引偏。
+                    await trace("SRP 登录失败：-80045（Apple 暂时拒绝）：\(detail)", level: .error)
                     await trace("检测到 -80045：作废远程 ADI 并重新 provisioning，随后重试一次", level: .warning)
                     await anisetteProvider.resetProvisioning()
                     let reprovisioned = try await anisetteProvider.fetchForAuthentication()
@@ -267,14 +315,43 @@ final class AppleAccountClient {
                         verificationCode: verificationCode
                     ).value
                     await trace("ADI 重签后 SRP 登录成功")
+                } else if AppleServiceFailurePolicy.isRateLimited(error) {
+                    // ── 503：Apple 服务端暂时不可用，退避后重试 ──────────────────
+                    //
+                    // 真机实测（2026-10-16，build 75）：整条 SRP 链已经全通 ——
+                    // `o=init` → `hsc=434` + `X-Apple-I-MD-DATA` → resync 成功 →
+                    // `o=init`/`o=complete` 双双 `ec=0` → 2FA 输入通过 →
+                    // `o=apptokens` 也**成功过一次**（`ec=0, hsc=200`）。
+                    // 随后同一步 `o=apptokens` 开始返回 **HTTP 503 的 HTML 页**：
+                    //   <html><head><title>503 Service Temporarily Unavailable</title>…
+                    //
+                    // 这是 Apple 的**服务端**状态，不是请求形态问题：
+                    // 同一次进程里同样的载荷刚刚成功过，客户端没有任何东西变了。
+                    // 所以这里**绝不能**走 -80045 那条「作废 ADI 重新 provisioning」——
+                    // 那改的是 anisette 环境，治不了服务端 503，只会每次失败都白签一份 ADI。
+                    //
+                    // 503 的语义就是「稍后再试」，所以退避一次再重发同一个请求。
+                    // 只重试一次：连续猛打只会让 Apple 那边更久不恢复。
+                    await trace("SRP 登录失败：Apple 返回 503（服务暂时不可用），退避 \(Self.serviceUnavailableBackoffSeconds) 秒后重试一次", level: .warning)
+                    try? await Task.sleep(nanoseconds: UInt64(Self.serviceUnavailableBackoffSeconds * 1_000_000_000))
+                    try Task.checkCancellation()
+                    auth = try await self.authenticate(
+                        email: email,
+                        password: password,
+                        anisetteData: anisetteData,
+                        verificationCode: verificationCode
+                    ).value
+                    await trace("503 退避后 SRP 登录成功")
                 } else {
-                    await trace("SRP 登录失败（无 SIM 同步指令）：\(detail)", level: .error)
+                    // 到这里的错误与「SIM 同步」无关（503 已在上一条分支拦下），
+                    // 所以文案不能再说「无 SIM 同步指令」—— 那会把排障引向错误的方向。
+                    await trace("SRP 登录失败：\(detail)", level: .error)
                     throw error
                 }
             }
             try Task.checkCancellation()
             stage = .teamLookup
-            let teams = try await Self.directAppleRequest {
+            let teams = try await self.directAppleRequest("取开发者团队") {
                 try await self.fetchTeams(
                     account: auth.account,
                     session: auth.session

@@ -2,39 +2,37 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- 全部用 Xcode 构建变量，**不写字面量**（2026-10-16 修正）。
+	     照 `upstream/AltStore/AltWidget/Info.plist` 那份可用配置写 ——
+	     它是同一仓库里唯一实测能装配的 widget 扩展。
+
+	     上一版失败的原因：我曾把 CFBundleExecutable / CFBundleIdentifier /
+	     CFBundlePackageType 写成硬编码字面量，**并且额外手写了一个
+	     UIDeviceFamily 数组**。正常扩展的 UIDeviceFamily 由
+	     `TARGETED_DEVICE_FAMILY` 构建设置**注入**，手写会与它冲突，
+	     安装期即报 Invalid placeholder attributes。这里不再手写它。 -->
 	<key>CFBundleDevelopmentRegion</key>
-	<string>zh_CN</string>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
 	<string>Seal 配对</string>
-	<!-- 这些 CFBundle* 键必须是**字面量**，不能写成 $(...) 变量。
-	     GENERATE_INFOPLIST_FILE: NO 时 Xcode 不会替扩展展开它们，
-	     留下未展开的值会让安装期报：
-	       Failure Reason: Invalid placeholder attributes.
-	       FunctionName = -[IXPlaceholder setPlaceholderAttributes:error:] -->
 	<key>CFBundleExecutable</key>
-	<string>SealLiveActivity</string>
+	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.mjorb.seal.LiveActivity</string>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>SealLiveActivity</string>
-	<!-- 扩展的包类型是 XPC!（不是 APPL）。写错系统不会把它当扩展装配。 -->
+	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
-	<string>XPC!</string>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
-	<key>UIDeviceFamily</key>
-	<array>
-		<integer>1</integer>
-		<integer>2</integer>
-	</array>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- 只有声明成 widgetkit-extension，系统才会把它当作承载 Live Activity
+	     视图的扩展。写成别的会装得上、但灵动岛永远不出现，且没有任何报错。 -->
 	<key>NSExtension</key>
 	<dict>
-		<!-- 只有声明成 widgetkit-extension，系统才会把它当作承载 Live Activity
-		     视图的扩展。写成别的会装得上、但灵动岛永远不出现，且没有任何报错。 -->
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.widgetkit-extension</string>
 	</dict>

@@ -8,7 +8,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 674,
+          "line": 751,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -29,7 +29,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 722,
+          "line": 799,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -62,7 +62,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 686,
+          "line": 763,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -95,7 +95,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 698,
+          "line": 775,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -128,7 +128,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 710,
+          "line": 787,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -161,7 +161,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 367,
+          "line": 444,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -569,7 +569,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 327,
+          "line": 404,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -592,7 +592,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 762,
+          "line": 839,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -708,7 +708,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 340,
+          "line": 417,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -743,7 +743,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 427,
+          "line": 504,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -900,7 +900,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 302,
+          "line": 379,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -1597,7 +1597,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 762,
+          "line": 839,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -1628,7 +1628,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 379,
+          "line": 456,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -1661,7 +1661,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 147,
+          "line": 191,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -1950,7 +1950,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 417,
+          "line": 494,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -2159,7 +2159,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 257,
+          "line": 301,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13161,7 +13161,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 465,
+          "line": 542,
           "path": "Seal/Infrastructure/Accounts/AppleAccountClient.swift",
           "role": "structured_failure_emission",
           "semanticFields": [

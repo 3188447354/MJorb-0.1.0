@@ -40,11 +40,10 @@ struct SupportSealView: View {
                 .foregroundStyle(Color.sealAccent)
                 .frame(width: 72, height: 72)
                 .background(Color.sealAccent.opacity(0.12), in: Circle())
-            Text("支持 Seal")
-                .font(.title2.weight(.semibold))
+            // 「感谢你的喜欢」是**内容标题**（页面顶部另有导航标题「支持 Seal」）。
+            // 按 2026-10-16 的文案要求：不再重复一个同名的内容标题。
             Text("感谢你的喜欢")
-                .font(.subheadline)
-                .foregroundStyle(Color.sealTextSecondary)
+                .font(.title2.weight(.semibold))
             Text("你的鼓励让 Seal 走的更远")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)

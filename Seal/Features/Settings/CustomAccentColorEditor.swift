@@ -154,32 +154,25 @@ struct CustomAccentColorEditor: View {
         }
     }
 
-    /// 取色过程中的统一出口：更新 HEX 文本，并把颜色**实时下发到全局主题**。
+    /// 取色过程中的统一出口：只更新 HEX 草稿文本。
     ///
-    /// 为什么在这里下发而不只在「完成」时下发：`accentRawValue` / `customHex` 是
-    /// `@AppStorage` 绑定，直通 `RootTabView` 的 `.id("\(accentRawValue)-\(customAccentHex)")`
-    /// —— 写进去整棵视图树就会用新颜色重建。所以拖动滑块时主题色跟着变，不需要额外的
-    /// 预览通道。写入前先比较，避免无变化时触发无谓的整树重建。
+    /// ⚠️ **这里绝不能写 `customHex` / `accentRawValue`**（2026-10-16 实测踩过）：
+    /// `RootTabView` 挂着 `.id("\(accentRawValue)-\(customAccentHex)")`，所以每次写这两个
+    /// 值都会让**整棵视图树重建** —— 而本编辑器就在那棵树里。拖动时逐帧写入 ⇒ 逐帧重建
+    /// ⇒ 挂着手势的视图被反复销毁，表现为「点一下颜色变了、窗口消失、拖不动」。
+    ///
+    /// 根因在架构上：`Color.sealAccent` 是读 `UserDefaults` 的静态计算属性
+    /// （`SealBackdrop.sealAccent` → `SealAccentTheme.current`），全 App 依赖 `.id`
+    /// 变化才看得到新颜色，因此**不存在"改色但不重建"的通道**。要真正做到实时预览，
+    /// 得先把主题色换成可观察状态（`@Observable`/`@Environment`）并去掉这个 `.id`，
+    /// 那是一次跨全 App 的重构，不能顺手做。
+    ///
+    /// ⇒ 因此恢复「拖动改草稿、点『完成』才应用」：即时反馈由面板里的色块与 HEX 提供。
     private func synchronizeHex() {
-        applyLive(color.hex)
-    }
-
-    /// 把某个 HEX 实时应用到全局主题。`HSBAColor.hex` 每次生成的都是规范化大写
-    /// 六位形式，因此比较是稳定的。
-    private func applyLive(_ hex: String) {
-        hexInput = hex
-        if customHex != hex {
-            customHex = hex
-        }
-        if accentRawValue != SealAccentTheme.custom.rawValue {
-            accentRawValue = SealAccentTheme.custom.rawValue
-        }
+        hexInput = color.hex
     }
 
     /// 取消：还原进入编辑器前的颜色与主题选择。
-    ///
-    /// 必须还原两件事：拖动期间已经写进 AppStorage 的 `customHex`，以及可能被切到
-    /// `.custom` 的 `accentRawValue`。只还原前者会让用户「取消」后仍停在自定义主题上。
     private func cancel() {
         customHex = originalHex
         accentRawValue = originalAccentRawValue
