@@ -157,7 +157,7 @@ final class AppleAccountClient {
         try await Self.retryingServiceUnavailable(
             attempts: Self.portalTransientRetryAttempts,
             onRetry: { attempt, delay in
-                await trace("\(label)：Apple 返回瞬时不可用（503），第 \(attempt) 次退避 \(Int(delay)) 秒后重试", level: .warning)
+                await self.trace("\(label)：Apple 返回瞬时不可用（503），第 \(attempt) 次退避 \(Int(delay)) 秒后重试", level: .warning)
             },
             operation: {
                 try await operation()
@@ -370,7 +370,7 @@ final class AppleAccountClient {
                     auth = try await Self.retryingServiceUnavailable(
                         attempts: Self.serviceUnavailableBackoffSeconds.count,
                         onRetry: { attempt, delay in
-                            await trace("Apple 返回 503（服务暂时不可用），第 \(attempt)/\(Self.serviceUnavailableBackoffSeconds.count) 次退避 \(Int(delay)) 秒后重试", level: .warning)
+                            await self.trace("Apple 返回 503（服务暂时不可用），第 \(attempt)/\(Self.serviceUnavailableBackoffSeconds.count) 次退避 \(Int(delay)) 秒后重试", level: .warning)
                         },
                         operation: {
                             try await self.authenticate(
