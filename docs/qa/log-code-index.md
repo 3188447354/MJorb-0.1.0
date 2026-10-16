@@ -81,6 +81,7 @@
 | `SEAL-PROFILE-363` | `profile-only`（只换描述文件）的设备端身份核验**没有确认**（带原因：记录缺字段 / 设备端没有该身份 / 设备端枚举不可用）。⚠️ **2026-09-26 起它只是诊断信号，不再回落完整重签** —— 按上游 SideStore 的做法继续只更新描述文件，由注入后的逐份读回（`SEAL-PROFILE-354`）兜底。出现它意味着记录与设备现实可能有偏差，但**仍会成功** —— 不是失败 | `SigningCoordinator.swift` |
 | `SEAL-PROFILE-364` | **本机没有该应用当前证书的私钥**（重装 Seal 清了 Keychain / 删过 Apple ID / 证书刚轮换）⇒ 本次**改为完整重签并安装**，重签后证书与本机匹配，后续续签会回到「只更新描述文件」。它是**降级而非失败**：出现它说明这一次会重装，但会成功。级别是 `警告` | `SigningCoordinator.swift` |
 | `SEAL-PROFILE-365` | **记录里有一条「已导入但尚未安装」的更新源**（覆盖更新把记录写成了新导入包的版本号）⇒ 本次**改为完整重签并安装**，装完新版本才真正生效，之后续签回到「只更新描述文件」。它是**降级而非失败**。看到它说明「已安装列表里显示的版本号」是**待安装的源包**、不是正在运行的版本（用户 2026-09-26 实测：导入 1.3.20 到 1.3.19，点续签「直接续签了」而「关于」里仍是 1.3.19）。级别是 `警告` | `SigningCoordinator.swift` |
+| `SEAL-PROFILE-366` | 普通 IPA 选择共享主描述文件时，某个扩展请求了主应用未声明的能力。Seal 已在创建任何新的 App ID 前停止；用户可取消，或明确选择“改为独立签名”后再额外申请所需 App ID 并完成签名 | `ApplePortalSigningService.swift` |
 | `SEAL-PROFILE-352` | 注入描述文件超过 30 秒未返回 —— **警告级**。会置「污染」标记：下一次注入前自动重置并重建设备通道（见 `SEAL-PROFILE-355`），并纳入续签重试 | `ProfileOnlyProvisioningProfileInstaller.swift` |
 | `SEAL-PROFILE-353` | 设备端读回描述文件超过 30 秒未完成 —— **警告级**。同样置污染标记 | `ProfileOnlyProvisioningProfileInstaller.swift` |
 | `SEAL-PROFILE-354` | 注入报成功但设备端**读不回**该描述文件 ⇒ 本地到期日未更新（终态失败，不重试） | `ProfileOnlyProvisioningProfileInstaller.swift` |

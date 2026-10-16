@@ -5,6 +5,34 @@
 
 ---
 
+## 2026-10-16 手机配对灵动岛状态与生命周期
+
+- **现象**：旧实现等系统交付 PIN 才创建 Live Activity，用户若已切去系统设置可能错过前台创建窗口；系统回调 `.completed` 时又先显示“配对成功”，而凭证导入失败会造成成功假象。旧活动失败时直接消失，用户看不到应回 Seal 排查的状态。
+- **根因**：配对 UI 的展示时机按“有码才建”理解，却没有覆盖 ActivityKit 的前台创建约束；系统完成回调与 Seal 成功保存可用凭证被当成同一事件。
+- **修复**：用户主动开始配对时只预创建一个不含假码的准备态活动；真实六码到达后更新活动，活动创建或更新不可用才走通知回退。仅在 `PairingStore.importFile` 成功后显示“配对完成”；主机失败或导入失败显示“配对未完成，返回 Seal 查看原因”，隐藏旧码并在短超时后清理。用户点回 Seal 立即关闭；前台恢复只清理已过期活动。小组件改用 Seal 的真实品牌图标，六码按 `123 456` 分组，完成/失败分别显示绿勾/红色感叹号。系统决定是否展开，代码不承诺或伪造强制展开。
+- **涉及文件**：`SettingsViewModel.swift`、`PairingLiveActivityController.swift`、`PairingCodeNotification.swift`、`PairingLiveActivityWidget.swift`、`PairingActivityAttributes.swift`、`RootTabView.swift`、`project.yml`。
+- **验证状态**：错误码清单测试通过，`git diff --check` 通过。Windows 无 Xcode，待云 CI 编译并在 iPhone 验证准备态、六码、完成、失败、通知回退和点按回 Seal 六条路径。
+
+## 2026-10-16 扩展描述文件共享不得静默消耗 App ID
+
+- **现象**：普通含扩展 IPA 的默认策略是独立描述文件；共享主描述文件遇到扩展能力高于主应用时，又自动降级为独立。用户无法得知本次会额外创建几个 App ID，免费账号容易被悄悄耗尽名额。
+- **根因**：`AppExtensionProfileStrategy.defaultFor` 把“含扩展”直接判为独立；`resolvedForSigning` 把共享能力阻塞直接转换为独立策略，门户随后继续创建扩展 App ID。
+- **修复**：普通 IPA 默认共享主描述文件；Seal 与 LiveContainer 固定独立。共享被扩展能力阻塞时，在门户读取或创建 App ID 前抛 `SEAL-PROFILE-366`，界面准确列出扩展与缺失能力，用户可取消，或明确选择“改为独立签名”后再次开始签名。用户选择后的策略会随成功签名记录持久化。完整签名也会在证书/App ID/描述文件操作前确认安装通道就绪；签后再次核验，设备中途断开只保留并复用已签名包重试安装，不重复签名。
+- **涉及文件**：`AppExtensionProfileStrategy.swift`、`AppRecord.swift`、`ApplePortalSigningService.swift`、`AppSigningSheet.swift`、`SigningCoordinator.swift`。
+- **验证状态**：单元测试覆盖默认策略、LiveContainer 例外、持久化独立策略和共享阻塞识别；`git diff --check` 待最终检查。Windows 本机无法编译 Swift，待云 CI 与含扩展真机 IPA 验证。
+
+---
+
+## 2026-10-16 Apple ID 登录需反复重试（构建 95）
+
+- **现象**：双重认证输入框可以正常出现且账号最终能登录，但同一账号常需反复点“添加账号”。日志显示 GrandSlam 的 `init` 或 `complete` 随机收到 Apple 返回的 HTML `503 Service Temporarily Unavailable`。
+- **根因**：Seal 的 503 退避虽会重新生成 SRP 会话，但每一轮都复用第一次取得的 `ALTAnisetteData`。其中 `X-Apple-I-MD` 是 anisette 服务签发的一次性认证数据；503 后继续用旧数据，既不能换到新的 Apple 边缘会话，也可能继续带已过时凭据，自动重试成功率低。
+- **修复**：每一次完整的 503 重试都重新请求 anisette headers，再用新的 `X-Apple-I-MD`、新的 SRP 会话发起登录；保持原有 SIM resync 和退避节奏，不清除设备 identifier、ADI 或已登录账号。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AppleAccountClient.swift`。
+- **验证状态**：构建 95 日志已确认 503 出现在 Apple GrandSlam，而不是密码或双重认证输入流程；`git diff --check` 通过。待云 CI 和真机验证自动重试后的成功率。
+
+---
+
 ## 2026-10-16 CI #112：灵动岛 API 与空间守卫阻断打包
 
 - **现象**：手动构建 #112 在 Swift 回归报 `ActivityContent` 的 `alertConfiguration` 为多余参数；打包门随后又报 R35「临时空间公式只许有一份」。因此本次没有生成 IPA，尚未进入 Apple ID 实机验证。

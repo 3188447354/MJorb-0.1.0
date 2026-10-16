@@ -19,6 +19,8 @@ struct AppSigningSheet: View {
     @State private var isPhotoPickerPresented = false
     @State private var isIconFileImporterPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var isInstallingSignedArtifact = false
+    @State private var selectedExtensionProfileStrategy: AppExtensionProfileStrategy?
 
     var body: some View {
         Group {
@@ -100,7 +102,7 @@ struct AppSigningSheet: View {
 
     private var configuration: some View {
         let presentation = AppOperationPresentation(app: workingApp)
-        return SealDrawer(title: isRenewal ? "正在续签" : "签名") {
+        return SealDrawer(title: drawerTitle) {
             VStack(spacing: 14) {
                 appIdentity(presentation: presentation)
                 operationSummaryCard
@@ -109,10 +111,14 @@ struct AppSigningSheet: View {
         } footer: {
             VStack(spacing: 10) {
                 Button(primaryActionTitle(for: presentation)) {
-                    startSigning(completionMode: .signAndInstall)
+                    if isPendingInstall {
+                        installSignedArtifact()
+                    } else {
+                        startSigning(completionMode: .signAndInstall)
+                    }
                 }
                 .sealPrimaryAction(cornerRadius: 14)
-                .disabled(bundleIDValidationError != nil)
+                .disabled(bundleIDValidationError != nil || isInstallingSignedArtifact)
                 .opacity(bundleIDValidationError == nil ? 1 : 0.48)
 
                 if isRenewal == false {
@@ -137,7 +143,8 @@ struct AppSigningSheet: View {
         if let selectedAccountID = resolvedSelectedAccountID {
             Task {
                 var appForSigning = workingApp
-                appForSigning.extensionProfileStrategy = appForSigning.effectiveExtensionProfileStrategy
+                appForSigning.extensionProfileStrategy = selectedExtensionProfileStrategy
+                    ?? appForSigning.effectiveExtensionProfileStrategy
                 await viewModel.beginSigning(
                     for: appForSigning,
                     accountID: selectedAccountID,
@@ -147,6 +154,17 @@ struct AppSigningSheet: View {
             }
         } else {
             viewModel.openSettings(route: .account)
+            dismiss()
+        }
+    }
+
+    private func installSignedArtifact() {
+        isInstallingSignedArtifact = true
+        Task {
+            let installed = await viewModel.installSignedArtifact(workingApp)
+            isInstallingSignedArtifact = false
+            guard installed else { return }
+            onFinish(.signAndInstall)
             dismiss()
         }
     }
@@ -459,7 +477,9 @@ struct AppSigningSheet: View {
     }
 
     private var statusText: String {
-        workingApp.belongsInInstalledList ? "已安装" : "待签名"
+        if workingApp.belongsInInstalledList { return "已安装" }
+        if workingApp.belongsInSignedList { return "已签名·待安装" }
+        return "待签名"
     }
 
     private var extensionSummary: String {
@@ -467,7 +487,16 @@ struct AppSigningSheet: View {
     }
 
     private func primaryActionTitle(for presentation: AppOperationPresentation) -> String {
+        if isPendingInstall { return isInstallingSignedArtifact ? "正在安装" : "安装" }
         resolvedSelectedAccountID == nil ? "去添加 Apple ID" : presentation.primaryAction
+    }
+
+    private var drawerTitle: String {
+        return isRenewal ? "正在续签" : "签名"
+    }
+
+    private var isPendingInstall: Bool {
+        workingApp.belongsInSignedList
     }
 
     private var isRenewal: Bool {
@@ -514,6 +543,17 @@ struct AppSigningSheet: View {
     }
 
     private func standardAlert(_ failure: ImportFailure) -> Alert {
+        if failure.code == "SEAL-PROFILE-366" {
+            return Alert(
+                title: Text(failure.title),
+                message: Text(failure.userMessage),
+                primaryButton: .default(Text("改为独立签名")) {
+                    selectedExtensionProfileStrategy = .independentProfiles
+                    startSigning(completionMode: .signAndInstall)
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
+        }
         return Alert(
             title: Text(failure.title),
             message: Text(failure.userMessage),

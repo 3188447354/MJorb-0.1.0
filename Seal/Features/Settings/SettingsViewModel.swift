@@ -193,8 +193,7 @@ final class SettingsViewModel: ObservableObject {
     private var phonePairingLease: OperationCoordinator.Lease?
     /// 把配对码镜像到灵动岛 / 锁屏。见 `PairingLiveActivityController` 的注释。
     private let pairingLiveActivity = PairingLiveActivityController()
-    /// 本轮配对是否走通知回退（灵动岛不可用时）。
-    /// 在配对开始时**定一次**，中途不改：否则中途切换会让用户先看到灵动岛、又冒出通知横幅。
+    /// 本轮是否走通知回退；仅当预创建失败或活动在出码前被系统回收时切换。
     private var pairingUsesNotifications = false
     private var isPhonePairingAutomaticCheckRunning = false
     private var certificateInventoryRefreshGate = ApplePortalInventoryRefreshGate()
@@ -2343,15 +2342,12 @@ final class SettingsViewModel: ObservableObject {
         phonePairingLease = operationLease
         let host = PhonePairingHost()
         phonePairingHost = host
-        // 本轮的投递方式在开始时就定死：灵动岛可用就走灵动岛，否则走通知横幅。
-        // 定在这里而不是出码时，是为了让「要不要请求通知权限」与配对流程同时决定 ——
-        // 中途改主意会让用户在配对途中突然被弹权限框。
-        //
-        // ⚠️ 灵动岛活动**不在这里创建**：此刻还没有配对码，先建只会让灵动岛挂一个
-        //    没有码的空壳。创建挪到 `presentPairingCode(_:)`（见那里的说明）。
-        pairingUsesNotifications = PairingCodeNotification.shouldUseNotifications(
-            liveActivityAvailable: pairingLiveActivity.isEnabled
-        )
+        // 用户主动开始配对时先预创建 Live Activity。系统设置会把 App 放到后台，
+        // 等拿到 PIN 才 request 可能已经错过前台创建窗口；预创建态不展示假码，
+        // 并在失败、取消和超时后清理。创建失败才回退到通知。
+        pairingUsesNotifications = pairingLiveActivity.prepare(
+            deviceName: Self.phonePairingDeviceDisplayName
+        ) == false
         if pairingUsesNotifications {
             Task { _ = await PairingCodeNotification.requestAuthorizationIfNeeded() }
         }
@@ -2384,11 +2380,11 @@ final class SettingsViewModel: ObservableObject {
             presentPairingCode(code)
         case let .completed(fileURL):
             phonePairingHost = nil
-            markPairingPaired()
+            // 系统确认不等于 Seal 已拿到可用凭证；导入成功后才展示「配对完成」。
             Task { await finishPhonePairing(at: fileURL) }
         case let .failed(message):
             phonePairingHost = nil
-            finishPairingPresentation()
+            markPairingFailed()
             let failure = Self.phonePairingHostFailure(message: message)
             phonePairingState = .failed(failure)
             alertFailure = failure
@@ -2396,45 +2392,52 @@ final class SettingsViewModel: ObservableObject {
         }
     }
 
-    /// 配对码即将显示给用户：把它交给灵动岛（或通知），让用户切到「设置」输码时还看得见。
-    ///
-    /// ⚠️ **灵动岛活动在这里创建，不在配对开始时**（2026-10-16 按真机反馈改）。
-    /// 配对开始到出码之间有若干秒（发布 Bonjour → 系统弹窗 → 生成码），
-    /// 早创建会让灵动岛先挂一个没有码的空壳；而这里正是「用户盯着配对页、马上要去
-    /// 设置输码」的时刻，既满足 `Activity.request` 的前台要求，又让灵动岛上的码与
-    /// App 内的码**同时出现**。
+    /// 配对码到达后才显示真实六码。预创建失败或活动已被系统移除时，才回退到通知。
     private func presentPairingCode(_ code: String) {
         if pairingUsesNotifications {
             Task { await PairingCodeNotification.present(code: code) }
-        } else {
-            pairingLiveActivity.begin(deviceName: Self.phonePairingDeviceDisplayName, code: code)
+            return
+        }
+        guard pairingLiveActivity.showCode(code) == false else { return }
+        pairingUsesNotifications = true
+        Task {
+            _ = await PairingCodeNotification.requestAuthorizationIfNeeded()
+            await PairingCodeNotification.present(code: code)
         }
     }
 
+    /// 仅在配对凭证已经导入成功后调用。
     private func markPairingPaired() {
         if pairingUsesNotifications {
             Task { await PairingCodeNotification.markPaired() }
         } else {
-            // 刻意**不结束**活动：用户此刻还在「设置」里，需要看到「配对成功」并有个
-            // 返回入口。真正的收尾在 `RootTabView.openPairingSettings()`（用户点回来时）
-            // 以及控制器里的超时兜底。
             pairingLiveActivity.markPaired()
         }
     }
 
-    /// 收掉灵动岛活动 / 清掉通知。配对失败或用户主动取消时调用，
-    /// 否则灵动岛上会留着一个再也用不上的码。
+    private func markPairingFailed() {
+        if pairingUsesNotifications {
+            Task { await PairingCodeNotification.markFailed() }
+        } else {
+            pairingLiveActivity.markFailed()
+        }
+    }
+
+    /// 收掉灵动岛活动 / 清掉通知。用户取消时调用。
     private func finishPairingPresentation() {
         pairingLiveActivity.abandon()
         Task { await PairingCodeNotification.clear() }
     }
 
-    /// 用户点回 Seal（`seal://pairing`）时收掉灵动岛活动。
-    ///
-    /// 这是「配对完成后灵动岛消失」的**唯一正常路径** —— 见控制器里的生命周期说明。
+    /// 用户点回 Seal 时收掉活动或通知。
     func dismissPairingPresentation() {
         pairingLiveActivity.finish()
         Task { await PairingCodeNotification.clear() }
+    }
+
+    /// 前台恢复时只清理已超时的活动，不打断正在进行的系统配对。
+    func discardExpiredPairingPresentationIfNeeded() {
+        pairingLiveActivity.discardExpiredActivityIfNeeded()
     }
 
     private static let phonePairingDeviceDisplayName: String =
@@ -2445,6 +2448,8 @@ final class SettingsViewModel: ObservableObject {
         guard let pairingStore else { return }
         do {
             pairingRecord = try await pairingStore.importFile(at: fileURL)
+            // 凭证持久化成功才把岛上的状态改为完成，避免导入失败却显示成功。
+            markPairingPaired()
             await installChannel?.reset()
             installDiagnostics = .empty
             phonePairingState = .validating
@@ -2472,6 +2477,7 @@ final class SettingsViewModel: ObservableObject {
                 diagnosticState: diagnosticState
             )
         } catch let failure as ImportFailure {
+            markPairingFailed()
             phonePairingState = .failed(failure)
             alertFailure = failure
         } catch {
@@ -2481,6 +2487,7 @@ final class SettingsViewModel: ObservableObject {
                 recovery: "重新配对",
                 code: "SEAL-PAIR-216"
             )
+            markPairingFailed()
             phonePairingState = .failed(failure)
             alertFailure = failure
         }

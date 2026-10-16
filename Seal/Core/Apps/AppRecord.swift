@@ -303,14 +303,22 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
             && provisioningProfileExpirationDate != nil
     }
 
-    /// 只要原始包含 `.appex`，每个 target 都必须使用独立 App ID/profile。共享主
-    /// profile 无法证明 iOS 会注册 LiveProcess 等运行时扩展，也无法把 App Group 绑定
-    /// 到正确 target；历史共享产物由续签准入回落完整重签一次后迁移。
+    /// 用户明确选择的策略优先。普通 IPA 默认共享主描述文件，只有 Seal 与
+    /// LiveContainer 的扩展固定使用独立描述文件。
     var effectiveExtensionProfileStrategy: AppExtensionProfileStrategy {
+        if let extensionProfileStrategy {
+            return extensionProfileStrategy
+        }
         AppExtensionProfileStrategy.defaultFor(
             isSeal: isSeal,
-            hasExtensions: extensions.isEmpty == false
+            isLiveContainer: isLiveContainer
         )
+    }
+
+    private var isLiveContainer: Bool {
+        let identifier = originalBundleIdentifier.lowercased()
+        return identifier == "com.kdt.livecontainer"
+            || identifier.hasPrefix("com.kdt.livecontainer.")
     }
 
     var requiresLockedSigningIdentity: Bool {
@@ -368,7 +376,19 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var belongsInSignedList: Bool {
-        false
+        guard belongsInInstalledList == false,
+              hasSignedArtifact else {
+            return false
+        }
+
+        // 只有可再次下发到设备的签名包才进入「待安装」。损坏、缺失或过期的
+        // 产物重复安装没有意义，仍留在「待签名」让用户重新生成一份有效包。
+        switch signedArtifactStatus {
+        case .available, .awaitingVerification, .installFailed, .deviceUnavailable, nil:
+            return true
+        case .installed, .expired, .damaged, .missing:
+            return false
+        }
     }
 
     var belongsInUnsignedList: Bool {
@@ -377,7 +397,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         if isSeal, replacesInstalledAppID != nil {
             return true
         }
-        return isSeal == false && belongsInInstalledList == false
+        return belongsInInstalledList == false && belongsInSignedList == false
     }
 
     var userIdentityKeys: Set<String> {

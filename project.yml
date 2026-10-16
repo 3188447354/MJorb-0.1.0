@@ -181,6 +181,9 @@ targets:
     sources:
       - path: SealLiveActivity
       - path: Shared/PairingActivityAttributes.swift
+    resources:
+      # 与主 App 共用真实 Seal 品牌图标，避免 Live Activity 退化成 SF Symbol。
+      - path: Seal/Resources/Assets.xcassets
     info:
       path: SealLiveActivity/Info.plist
       properties:

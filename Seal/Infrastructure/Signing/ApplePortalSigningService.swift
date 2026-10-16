@@ -912,9 +912,8 @@ actor ApplePortalSigningService {
         //  · 共享模式：门户里只有主 App 的 App ID ⇒ **只应**取回主 App 那一份，扩展嵌入的就是它
         //    （与设备端只登记这一份相符）。多一份说明「策略」与「门户实际返回」不一致，
         //    宁可失败也别猜 —— 猜错就是把扩展的描述文件漏续，而记录写着已续签 ✗。
-        // ⚠️ 份数与结果都必须用**解析后**的策略：`provisioningProfiles` 内部可能因
-        // 「扩展请求了主 App 没有声明的能力」把共享**降级**成独立（`resolvedForSigning`）
-        // ⇒ 用请求的策略会出现「拿回 N 份描述文件却按共享模式解释」的自相矛盾 ✗。
+        // ⚠️ 份数与结果都必须用门户实际执行的策略。共享能力不满足时，首签会在
+        // 门户写入前停止并由用户明确选择独立签名；续签则沿用已记录的策略，不能猜测。
         let resolvedRenewalStrategy = preparation.extensionProfileStrategy
         let expectedProfileCount = resolvedRenewalStrategy == .sharedMainProfile
             ? 1
@@ -2202,7 +2201,7 @@ actor ApplePortalSigningService {
         // 而它只声明在扩展上、不在主 App 上 ⇒ 共享模式下门户**只为主 App** 提交能力
         // ⇒ 主描述文件不授予它 ⇒ 签后逐 bundle 校验必报 `SEAL-ENTITLEMENT-401`
         // （LiveContainer 连续 5 次签不上）。
-        // ⇒ 出现这种扩展就回退独立描述文件：独立模式下扩展有自己的 App ID，能力提交到它自己那份上。
+        // ⇒ 出现这种扩展时必须在创建任何 App ID 前停下，交由用户明确选择是否改为独立签名。
         // ⚠️ 拓扑判据与门户 feature 请求不能混为一谈：后者只能包含可提交 feature，
         // 前者必须保留原 IPA 中所有非签名器托管的能力，才能给 LiveProcess 一类扩展
         // 建立独立 App ID / profile / App Group 绑定。签后校验仍只使用可由 profile
@@ -2227,22 +2226,19 @@ actor ApplePortalSigningService {
             entitlementsByBundleID[mappedBundleID] =
                 AppExtensionProfileStrategy.profileTopologyEntitlements(from: rawKeys)
         }
-        let resolvedExtensionProfileStrategy = AppExtensionProfileStrategy.resolvedForSigning(
-            requested: extensionProfileStrategy,
-            mainBundleID: mappedMainBundleID,
-            entitlementsByBundleID: entitlementsByBundleID
-        )
-        if resolvedExtensionProfileStrategy != extensionProfileStrategy,
+        if extensionProfileStrategy == .sharedMainProfile,
            let blocker = AppExtensionProfileStrategy.sharedProfileBlocker(
                mainBundleID: mappedMainBundleID,
                entitlementsByBundleID: entitlementsByBundleID
            ) {
-            await diagnostic(
-                "签名：共享主描述文件不适用于本次 IPA —— 扩展 \(blocker.extensionBundleID) 请求了主 App "
-                    + "未声明的能力 \(blocker.entitlements.joined(separator: "、"))，"
-                    + "已回退独立扩展描述文件（会为每个扩展各申请一个 App ID）"
+            throw Self.failure(
+                title: "扩展需要独立签名",
+                reason: "扩展 \(blocker.extensionBundleID) 需要主应用未声明的能力（\(blocker.entitlements.joined(separator: "、"))）。共享主描述文件无法满足它。改为独立签名会额外占用 App ID 名额。",
+                recovery: "改为独立签名",
+                code: "SEAL-PROFILE-366"
             )
         }
+        let resolvedExtensionProfileStrategy = extensionProfileStrategy
 
         // ⚠️ **Phase 1 的入口也要先留痕**（2026-09-18 真机）。
         // 下面那条完整的「名额」诊断要读 `existing`（账号已有列表），所以必须排在 `fetchAppIDs`

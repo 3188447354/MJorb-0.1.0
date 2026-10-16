@@ -1,122 +1,140 @@
 import ActivityKit
 import Foundation
 
-/// 把配对码推到灵动岛 / 锁屏。
+/// 控制手机配对的 Live Activity 生命周期。
 ///
-/// ## 生命周期（2026-10-16 按真机反馈重做）
-///
-/// 前一版是「配对一开始就建活动，配对成功后一直挂着」，真机表现是：
-/// 配对完了灵动岛不消失、且活动远远早于配对码出现就存在了。现在改成**跟着配对码走**：
-///
-/// ```
-/// .showingCode   → 创建 + 展开，显示配对码        ← 与 App 内配对码同一时刻
-/// .completed     → 改成「配对成功，点此返回 Seal」，**保留**
-/// 用户点回 Seal   → finish() 收掉
-/// 超时兜底        → finish() 收掉
-/// ```
-///
-/// ⚠️ **为什么 `begin` 放在 `.showingCode` 而不是配对开始**：
-/// `Activity.request` 只有 App 在前台才成功，而 `.showingCode` 恰恰是用户正盯着
-/// 配对页、准备去「设置」输码的那一刻 —— 既满足前台要求，又让灵动岛与 App 内的码
-/// **同时出现**，不会先挂一个空的「正在准备」。
-///
-/// ⚠️ **为什么配对成功后不立刻 `end`**：那时用户还在「设置」里，需要看到结果并有一个
-/// 明确的返回入口。Apple 也不允许「点了就跳转」—— 灵动岛点击只能启动 App，
-/// 所以文案要说清「点此返回」。用户真的回来了（`RootTabView` 收到 `seal://pairing`）
-/// 才 `end`。
-///
-/// ⚠️ **`AlertConfiguration` 是展开灵动岛的开关**：当前项目使用的 ActivityKit SDK
-/// 只支持把它传给 `update`，不能传给 `ActivityContent` 的初始化器。创建时先显示
-/// 配对码，配对成功时通过 `update` 展开并提示返回 Seal。
+/// 活动只在用户主动开始配对时预创建，保证随后切去系统设置前已经取得系统允许的
+/// 前台创建窗口；预创建态没有假配对码，也会在短超时、失败、取消或用户回到 Seal 时清理。
+/// 真正六码到达后才显示号码；只有凭证已成功导入本地后才显示完成。
 @MainActor
 final class PairingLiveActivityController {
 
     private var activity: Activity<PairingActivityAttributes>?
+    private var expiresAt: Date?
+    private var dismissTask: Task<Void, Never>?
 
-    /// 配对流程结束后，如果用户始终没点回来，多久自动收掉。
-    ///
-    /// 必须有这个兜底：Live Activity 默认会在锁屏/灵动岛留 8 小时，
-    /// 而一个「配对成功」的卡片挂 8 小时毫无意义，还会一直占着灵动岛。
-    private static let autoDismissAfterSeconds: TimeInterval = 180
-    private var autoDismissTask: Task<Void, Never>?
+    private static let preparationLifetime: TimeInterval = 60
+    private static let resultLifetime: TimeInterval = 180
+    private static let failureLifetime: TimeInterval = 30
 
     var isEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
-    /// 配对码即将显示时调用。**必须在前台**（用户正看着配对页）。
-    func begin(deviceName: String, code: String) {
-        guard isEnabled else { return }
-        autoDismissTask?.cancel()
-        autoDismissTask = nil
+    /// 在用户按下「开始配对」的前台时调用。返回 false 时由调用方走通知回退。
+    @discardableResult
+    func prepare(deviceName: String) -> Bool {
+        guard isEnabled else { return false }
+        finish()
 
-        // 同一时刻只留一枚活动，避免灵动岛里叠两个码。
-        if let stale = Activity<PairingActivityAttributes>.activities.first {
-            activity = stale
-            Task { await stale.end(nil, dismissalPolicy: .immediate) }
-        }
-        activity = nil
-
+        let expiry = Date().addingTimeInterval(Self.preparationLifetime)
         let attributes = PairingActivityAttributes(deviceName: deviceName)
-
-        let content = ActivityContent(state: Self.codeState(code), staleDate: nil)
-        activity = Activity.request(
-            attributes: attributes,
-            content: content,
-            pushType: nil
-        )
-        scheduleAutoDismiss()
+        do {
+            activity = try Activity.request(
+                attributes: attributes,
+                content: .init(state: Self.preparingState, staleDate: expiry),
+                pushType: nil
+            )
+            scheduleDismiss(at: expiry)
+            return true
+        } catch {
+            activity = nil
+            return false
+        }
     }
 
-    /// 配对成功。**不结束活动** —— 用户还在「设置」里，需要一个返回入口。
+    /// 只在收到系统给出的真实六码后调用。若活动已不可用，调用方应切换到通知回退。
+    @discardableResult
+    func showCode(_ code: String) -> Bool {
+        guard code.range(of: #"^\\d{6}$"#, options: .regularExpression) != nil,
+              let activity else {
+            return false
+        }
+        let expiry = Date().addingTimeInterval(Self.resultLifetime)
+        scheduleDismiss(at: expiry)
+        Task {
+            await activity.update(.init(state: Self.codeState(code), staleDate: expiry))
+        }
+        return true
+    }
+
+    /// 只能在配对凭证已经成功保存后调用。完成态保留返回 Seal 的入口，用户点回 App 后关闭。
     func markPaired() {
-        guard let activity else { return }
-        let state = PairingActivityAttributes.ContentState(
-            stage: .paired,
-            code: "",
-            title: "配对成功",
-            detail: "点此返回 Seal"
+        updateResult(
+            state: .init(stage: .paired, code: "", title: "配对完成", detail: "点按返回 Seal"),
+            lifetime: Self.resultLifetime,
+            alertTitle: "配对完成",
+            alertBody: "点按返回 Seal"
         )
+    }
+
+    /// 失败态不保留旧配对码，短暂显示返回入口后自动清理。
+    func markFailed() {
+        updateResult(
+            state: .init(stage: .failed, code: "", title: "配对未完成", detail: "返回 Seal 查看原因"),
+            lifetime: Self.failureLifetime,
+            alertTitle: "配对未完成",
+            alertBody: "返回 Seal 查看原因"
+        )
+    }
+
+    /// 用户点回 Seal、取消流程，或到了兜底时间时关闭活动。
+    func finish() {
+        dismissTask?.cancel()
+        dismissTask = nil
+        expiresAt = nil
+        guard let activity else { return }
+        self.activity = nil
+        Task { await activity.end(nil, dismissalPolicy: .immediate) }
+    }
+
+    func abandon() { finish() }
+
+    /// App 回到前台时只回收已过期活动，不中断仍在进行的配对。
+    func discardExpiredActivityIfNeeded() {
+        if let expiresAt, expiresAt <= Date() {
+            finish()
+        }
+    }
+
+    private func updateResult(
+        state: PairingActivityAttributes.ContentState,
+        lifetime: TimeInterval,
+        alertTitle: String,
+        alertBody: String
+    ) {
+        guard let activity else { return }
+        let expiry = Date().addingTimeInterval(lifetime)
+        scheduleDismiss(at: expiry)
         Task {
             await activity.update(
-                .init(state: state, staleDate: nil),
+                .init(state: state, staleDate: expiry),
                 alertConfiguration: AlertConfiguration(
-                    title: LocalizedStringResource(stringLiteral: "配对成功"),
-                    body: LocalizedStringResource(stringLiteral: "点此返回 Seal"),
+                    title: LocalizedStringResource(stringLiteral: alertTitle),
+                    body: LocalizedStringResource(stringLiteral: alertBody),
                     sound: .default
                 )
             )
         }
     }
 
-    /// 收掉活动。三处会调用：用户点回 Seal、配对失败、超时兜底。
-    func finish() {
-        autoDismissTask?.cancel()
-        autoDismissTask = nil
-        guard let activity else { return }
-        self.activity = nil
-        Task { await activity.end(nil, dismissalPolicy: .immediate) }
-    }
-
-    /// 配对流程中途失败/取消时也要收掉，否则灵动岛上会留一个过期的码。
-    func abandon() {
-        finish()
-    }
-
-    private func scheduleAutoDismiss() {
-        autoDismissTask?.cancel()
-        autoDismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.autoDismissAfterSeconds * 1_000_000_000))
+    private func scheduleDismiss(at expiry: Date) {
+        dismissTask?.cancel()
+        expiresAt = expiry
+        dismissTask = Task { [weak self] in
+            let delay = max(0, expiry.timeIntervalSinceNow)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard Task.isCancelled == false else { return }
-            await MainActor.run { self?.finish() }
+            await MainActor.run { self?.discardExpiredActivityIfNeeded() }
         }
     }
 
-    private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
-        PairingActivityAttributes.ContentState(
-            stage: .code,
-            code: code,
-            title: "配对码",
-            detail: "在「设置」中核对并确认"
-        )
-    }
+    private static let preparingState = PairingActivityAttributes.ContentState(
+        stage: .preparing,
+        code: "",
+        title: "Seal",
+        detail: "正在准备配对"
+    )
 
+    private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
+        .init(stage: .code, code: code, title: "Seal 配对码", detail: "在系统设置中核对并确认")
+    }
 }

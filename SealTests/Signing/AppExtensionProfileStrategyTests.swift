@@ -57,14 +57,14 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func sealAlwaysUsesIndependentProfiles() {
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, hasExtensions: true) == .independentProfiles)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, hasExtensions: false) == .independentProfiles)
+    func onlySealAndLiveContainerUseIndependentProfilesByDefault() {
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: false) == .sharedMainProfile)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .independentProfiles)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
     }
 
     @Test
-    func ordinaryAppWithExtensionsUsesIndependentProfiles() {
+    func ordinaryAppWithExtensionsUsesTheSharedDefault() {
         let app = AppRecord(
             originalBundleIdentifier: originalMain,
             name: "Video",
@@ -82,14 +82,27 @@ struct AppExtensionProfileStrategyTests {
             ]
         )
 
-        // 每个 .appex 都必须使用自身的 App ID 与描述文件；主包能力恰好覆盖扩展
-        // 不是将它们共用同一 profile 的安全条件。否则 IPA 内虽保留扩展，iOS 仍可能
-        // 不把它注册为可运行扩展（真机：LiveProcess extension not found）。
+        #expect(app.effectiveExtensionProfileStrategy == .sharedMainProfile)
+    }
+
+    @Test
+    func liveContainerAlwaysUsesIndependentProfilesByDefault() {
+        let app = AppRecord(
+            originalBundleIdentifier: "com.kdt.livecontainer",
+            name: "LiveContainer",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .imported,
+            ipaRelativePath: "LiveContainer.ipa",
+            importedAt: .now
+        )
+
         #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
     }
 
     @Test
-    func legacyAppWithExtensionsUsesTheIndependentDefaultForItsNextFullSign() {
+    func persistedIndependentStrategyRemainsIndependent() {
         let app = AppRecord(
             originalBundleIdentifier: originalMain,
             name: "Video",
@@ -106,7 +119,8 @@ struct AppExtensionProfileStrategyTests {
                     originalBundleIdentifier: "com.example.video.Share",
                     provisioningProfileUUID: "extension-profile"
                 )
-            ]
+            ],
+            extensionProfileStrategy: .independentProfiles
         )
 
         #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
@@ -183,36 +197,6 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func resolvedForSigningKeepsTheSharedProfileWhenExtensionsAreCovered() {
-        #expect(
-            AppExtensionProfileStrategy.resolvedForSigning(
-                requested: .sharedMainProfile,
-                mainBundleID: mappedMain,
-                entitlementsByBundleID: [
-                    mappedMain: ["com.apple.developer.kernel.increased-memory-limit"],
-                    mappedShare: ["com.apple.developer.kernel.increased-memory-limit"]
-                ]
-            ) == .sharedMainProfile
-        )
-    }
-
-    @Test
-    func resolvedForSigningFallsBackToIndependentProfilesWhenAnExtensionNeedsExtraEntitlements() {
-        // 真机实证（构建 27）：LiveContainer 的 LiveProcess 请求 increased-memory-limit，
-        // 而主 App 没有声明它 ⇒ 共享主描述文件在签后逐 bundle 校验必报 SEAL-ENTITLEMENT-401。
-        #expect(
-            AppExtensionProfileStrategy.resolvedForSigning(
-                requested: .sharedMainProfile,
-                mainBundleID: mappedMain,
-                entitlementsByBundleID: [
-                    mappedMain: [],
-                    mappedShare: ["com.apple.developer.kernel.increased-memory-limit"]
-                ]
-            ) == .independentProfiles
-        )
-    }
-
-    @Test
     func profileTopologyKeepsUnsupportedExtensionCapabilitiesAsAnIndependentProfileBlocker() {
         // `increased-memory-limit` 不是当前门户 feature API 可提交的开关，但它仍然是
         // IPA 的真实扩展能力。不能因为它不会送进 updateAppId 就把 LiveProcess 错判为
@@ -226,31 +210,13 @@ struct AppExtensionProfileStrategyTests {
         ])
 
         #expect(topology == ["com.apple.developer.kernel.increased-memory-limit"])
-        #expect(
-            AppExtensionProfileStrategy.resolvedForSigning(
-                requested: .sharedMainProfile,
-                mainBundleID: mappedMain,
-                entitlementsByBundleID: [
-                    mappedMain: [],
-                    mappedShare: topology
-                ]
-            ) == .independentProfiles
-        )
-    }
-
-    @Test
-    func resolvedForSigningNeverUpgradesIndependentProfilesToShared() {
-        // 只允许「共享 → 独立」这一个方向；反向会静默丢扩展能力，正是这条要防的。
-        #expect(
-            AppExtensionProfileStrategy.resolvedForSigning(
-                requested: .independentProfiles,
-                mainBundleID: mappedMain,
-                entitlementsByBundleID: [
-                    mappedMain: [],
-                    mappedShare: ["com.apple.developer.kernel.increased-memory-limit"]
-                ]
-            ) == .independentProfiles
-        )
+        #expect(AppExtensionProfileStrategy.sharedProfileBlocker(
+            mainBundleID: mappedMain,
+            entitlementsByBundleID: [
+                mappedMain: [],
+                mappedShare: topology
+            ]
+        )?.extensionBundleID == mappedShare)
     }
 
     // MARK: - 能力被拒时的请求集清空范围（2026-09-24，构建 30 真机）

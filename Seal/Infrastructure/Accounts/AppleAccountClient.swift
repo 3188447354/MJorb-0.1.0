@@ -365,18 +365,23 @@ final class AppleAccountClient {
                     // 手动重试又会加深 Apple 的限流 —— 那是正反馈，越试越糟。
                     // 让这一层自己把短暂抖动吃掉，用户才不必反复点。
                     //
-                    // 每一次重试都必须是**完整的一次登录**：SRP 会话是一次性的，
-                    // 拿旧的 A2k/c 重发会被 Apple 拒。
+                    // 每一次重试都必须是**完整的一次登录，并重新取 anisette headers**：
+                    // SRP 会话是一次性的，A2k/c 不能复用；同样，X-Apple-I-MD 是服务端
+                    // 按时间签发的一次性数据。此前这里只重建 SRP，却反复使用第一次
+                    // fetchForAuthentication() 拿到的 MD，503 后很容易再次撞到同一台
+                    // Apple 边缘或过期凭据，用户只能手动反复点“添加账号”。
                     auth = try await Self.retryingServiceUnavailable(
                         attempts: Self.serviceUnavailableBackoffSeconds.count,
                         onRetry: { attempt, delay in
                             await self.trace("Apple 返回 503（服务暂时不可用），第 \(attempt)/\(Self.serviceUnavailableBackoffSeconds.count) 次退避 \(Int(delay)) 秒后重试", level: .warning)
                         },
                         operation: {
+                            let retryAnisetteData = try await self.anisetteProvider.fetchForAuthentication()
+                            await self.trace("503 重试：已重新取得 anisette 一次性凭据，声明身份=\(retryAnisetteData.deviceDescription)")
                             try await self.authenticate(
                                 email: email,
                                 password: password,
-                                anisetteData: anisetteData,
+                                anisetteData: retryAnisetteData,
                                 verificationCode: verificationCode
                             ).value
                         }

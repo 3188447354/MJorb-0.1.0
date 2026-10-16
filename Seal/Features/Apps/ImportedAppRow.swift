@@ -140,6 +140,11 @@ struct ImportedAppRow: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(color(for: validity?.tone))
                 .frame(minWidth: 70, alignment: .trailing)
+        } else if app.belongsInSignedList {
+            Text(pendingInstallStatus)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(pendingInstallColor)
+            .frame(minWidth: 82, alignment: .trailing)
         } else {
             VStack(alignment: .trailing, spacing: 5) {
                 Text(app.size.formatted(.byteCount(style: .file)))
@@ -182,7 +187,27 @@ struct ImportedAppRow: View {
         if app.belongsInInstalledList {
             return AppOperationPresentation(app: app).validity?.text ?? "已安装"
         }
+        if app.belongsInSignedList {
+            return "已签名·\(pendingInstallStatus)"
+        }
         return "\(app.size.formatted(.byteCount(style: .file)))，\(AppImportTimeFormatter.string(from: app.importedAt))"
+    }
+
+    private var pendingInstallStatus: String {
+        switch app.signedArtifactStatus {
+        case .awaitingVerification: "待验证"
+        case .installFailed: "安装失败"
+        case .deviceUnavailable: "设备不可用"
+        default: "待安装"
+        }
+    }
+
+    private var pendingInstallColor: Color {
+        switch app.signedArtifactStatus {
+        case .installFailed: .sealDanger
+        case .deviceUnavailable: .sealWarning
+        default: .sealTextSecondary
+        }
     }
 
     private func color(for tone: AppValidityTone?) -> Color {

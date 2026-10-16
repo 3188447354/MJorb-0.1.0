@@ -307,16 +307,21 @@ final class AppsViewModel: ObservableObject {
     var unsignedApps: [AppRecord] {
         let installedKeys = installedAppIdentityKeys
         return apps
-            .filter(\.belongsInUnsignedList)
-            // 2026-10-09: 覆盖更新包（replacesInstalledAppID 非空）就是要和已安装的同 ID，
-            // 不能用 identityKeys 过滤掉，否则待签名页永远空。
-            .filter { $0.replacesInstalledAppID != nil || $0.userIdentityKeys.isDisjoint(with: installedKeys) }
+            // 首页只保留两个稳定分组：「待安装」承接尚未安装到设备的所有本地 IPA，
+            // 行内标签再明确区分待签名与已签名待安装，避免三个分页把主路径拆碎。
+            .filter { $0.belongsInUnsignedList || $0.belongsInSignedList }
+            // 覆盖更新包和已签名待安装包都可能与设备上的旧版本使用同一个 Bundle ID；
+            // 不能因 identityKeys 相同而从待处理里藏掉。
+            .filter {
+                $0.belongsInSignedList
+                    || $0.replacesInstalledAppID != nil
+                    || $0.userIdentityKeys.isDisjoint(with: installedKeys)
+            }
             .sorted { lhs, rhs in
                 if lhs.importedAt != rhs.importedAt { return lhs.importedAt > rhs.importedAt }
                 return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
             }
     }
-
 
     private var installedAppIdentityKeys: Set<String> {
         apps

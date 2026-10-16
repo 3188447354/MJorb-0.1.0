@@ -2,15 +2,14 @@ import Foundation
 
 /// 含扩展 IPA 的描述文件分配策略。
 ///
-/// 每个保留的 `.appex` 都必须拥有自己的 App ID 与描述文件。仅没有扩展的普通 IPA
-/// 可以共享主描述文件；这既保证门户能力和 App Group 绑定落在正确 target，也让 iOS
-/// 能在安装时注册每一个运行时扩展。
+/// 普通 IPA 的扩展默认共用主应用描述文件，以控制免费账号的 App ID 名额。
+/// LiveContainer 与 Seal 是明确的例外，保留独立扩展描述文件。
 enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Sendable {
     case sharedMainProfile
     case independentProfiles
 
-    static func defaultFor(isSeal: Bool, hasExtensions: Bool = false) -> Self {
-        isSeal || hasExtensions ? .independentProfiles : .sharedMainProfile
+    static func defaultFor(isSeal: Bool, isLiveContainer: Bool) -> Self {
+        isSeal || isLiveContainer ? .independentProfiles : .sharedMainProfile
     }
 
     /// 为「共用主描述文件是否安全」保留 IPA 的真实能力边界。
@@ -81,22 +80,6 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
             .sorted { $0.0 < $1.0 }
         guard let first = blockers.first else { return nil }
         return SharedProfileBlocker(extensionBundleID: first.0, entitlements: first.1)
-    }
-
-    /// 把「想要的策略」解析成「本次真正可用的策略」。
-    ///
-    /// 只可能把 `.sharedMainProfile` 降级成 `.independentProfiles`，永不反向 ——
-    /// 反向（独立→共享）会静默丢扩展能力，正是这条要防的。
-    static func resolvedForSigning(
-        requested: Self,
-        mainBundleID: String,
-        entitlementsByBundleID: [String: Set<String>]
-    ) -> Self {
-        guard requested == .sharedMainProfile else { return requested }
-        return sharedProfileBlocker(
-            mainBundleID: mainBundleID,
-            entitlementsByBundleID: entitlementsByBundleID
-        ) == nil ? .sharedMainProfile : .independentProfiles
     }
 
     /// 某个 bundle 的能力被 Apple 拒绝、描述文件降级为空时，**还有哪些 bundle 的请求集必须一并清空**。

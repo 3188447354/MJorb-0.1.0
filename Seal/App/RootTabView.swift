@@ -79,6 +79,8 @@ struct RootTabView: View {
                 appsViewModel.stopProfileServiceKeepalive()
             }
             guard phase == .active else { return }
+            // 只回收已过期的配对活动，不中断仍在系统设置中进行的配对。
+            settingsViewModel.discardExpiredPairingPresentationIfNeeded()
             // 此刻设备必然已解锁 ⇒ 是补做钥匙串迁移最可靠的时机（锁屏冷启动那次会被系统拒绝）。
             migrateKeychainAccessibility()
             // 回到前台启动 misagent 保活：保持 profile 服务热状态，下次续签注入更快。

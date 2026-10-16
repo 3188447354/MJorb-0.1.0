@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 struct AppsRootView: View {
     private enum ListMode: String, Identifiable, CaseIterable {
-        case unsigned = "待签名"
+        case unsigned = "待安装"
         case installed = "已安装"
 
         var id: Self { self }
@@ -14,7 +14,7 @@ struct AppsRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .largeTitle) private var sealTitleSize = 38
     @State private var mode: ListMode = .installed
-    /// 内容页的连续位置（0 = 待签名，1 = 已安装），由分页器测量写入、驱动毛毛虫下划线。
+    /// 内容页的连续位置（0 = 待安装，1 = 已安装），由分页器测量写入、驱动毛毛虫下划线。
     @State private var pagerProgress: CGFloat = 1
     @State private var detailApp: AppRecord?
     @State private var pendingDeleteApp: AppRecord?
@@ -565,14 +565,14 @@ struct AppsRootView: View {
     }
     private func sectionTitle(for pageMode: ListMode) -> String {
         switch pageMode {
-        case .unsigned: "待签名应用"
+        case .unsigned: "待安装应用"
         case .installed: "已安装应用"
         }
     }
 
     private func emptyTitle(for pageMode: ListMode) -> String {
         switch pageMode {
-        case .unsigned: "暂无待签名应用"
+        case .unsigned: "暂无待安装应用"
         case .installed: "暂无已安装应用"
         }
     }
@@ -600,7 +600,7 @@ struct AppsRootView: View {
 
     private var deleteAlertMessage: String {
         guard pendingDeleteApp?.belongsInInstalledList == true else {
-            return "删除后将从 Seal 的待签名列表中移除，并删除 Seal 保存的导入 IPA，不会影响手机上已安装的应用。"
+            return "删除后将从 Seal 的待安装列表中移除，并删除 Seal 保存的导入 IPA，不会影响手机上已安装的应用。"
         }
         return "删除后将从 Seal 的已安装列表中移除，不会卸载手机上的应用。"
     }

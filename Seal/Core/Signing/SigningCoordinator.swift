@@ -584,6 +584,14 @@ actor SigningCoordinator {
                     || isInstalledRenewal
             )
 
+            // App ID、证书撤销和描述文件创建都可能改变账号状态，必须先确认设备确实
+            // 可安装。否则本轮明知安装通道不可用仍继续签名，会留下一个不能安装的
+            // 签名包，甚至白白创建新的 App ID。真正安装前仍会再检查一次，覆盖签名
+            // 期间设备断开等不可预知变化。
+            if installAfterSigning {
+                try await requireReadyInstallChannel(channelStart, beforeSigning: true)
+            }
+
             if installAfterSigning, !forceResign,
                let cachedInstall = try await installCachedSignedIPAIfPossible(
                 app: app,
@@ -803,24 +811,9 @@ actor SigningCoordinator {
 
             guard installAfterSigning else { return app }
 
-            // 签名期间已在后台平行拉起隧道（channelStart）。进入安装前 await 它，
-            // 让安装直接用已就绪的通道。平行启动失败 ≠ 现在一定不可用（可能只是那一次
-            // 诊断抖动），所以只有通道确实没就绪才把底层诊断错误（SEAL-VPN-* /
-            // SEAL-PAIR-*）升级为用户可见的失败，而不是留一个笼统的 channelNotReady；
-            // installSignedIPA 内的 ensure 仍作兜底，覆盖缓存 / 纯安装路径。
-            if let channelStart {
-                do {
-                    _ = try await channelStart.value
-                } catch {
-                    if try await !installChannel.isReady() {
-                        throw (error as? ImportFailure) ?? Self.failure(
-                            reason: "签名完成后仍无法连接设备完成安装。",
-                            recovery: "确认 LocalDevVPN 已连接、开发者模式已开启后重试",
-                            code: "SEAL-VPN-001"
-                        )
-                    }
-                }
-            }
+            // 签名期间设备仍可能断开；再次核验只拦安装，不回滚已落盘的签名包。
+            // 后续重试将复用该包，不再重复签名或申请 App ID。
+            try await requireReadyInstallChannel(channelStart, beforeSigning: false)
 
             try? await logStore?.append(
                 category: .installation,
@@ -2455,6 +2448,40 @@ actor SigningCoordinator {
         }) else { return }
         app.state = stage.appState
         try await appStore.save(app)
+    }
+
+    /// 签名涉及证书、App ID 和描述文件等账号侧资源。只有安装通道确实就绪才允许
+    /// 进入该阶段；这样可把“已知装不了”的失败挡在资源变更之前。签名结束后会再次调用，
+    /// 防止设备在耗时签名期间断开。
+    private func requireReadyInstallChannel(
+        _ channelStart: Task<String, Error>?,
+        beforeSigning: Bool
+    ) async throws {
+        guard let channelStart else { return }
+        let reason = beforeSigning
+            ? "设备连接尚未就绪，已在签名开始前停止。"
+            : "签名完成后设备连接中断，已保留签名包供稍后直接安装。"
+        do {
+            _ = try await channelStart.value
+            guard try await installChannel.isReady() else {
+                throw Self.failure(
+                    reason: reason,
+                    recovery: "确认 LocalDevVPN 已连接、设备已配对后重试",
+                    code: "SEAL-VPN-001"
+                )
+            }
+        } catch let failure as ImportFailure {
+            throw failure
+        } catch {
+            if try await installChannel.isReady() {
+                return
+            }
+            throw Self.failure(
+                reason: reason,
+                recovery: "确认 LocalDevVPN 已连接、设备已配对后重试",
+                code: "SEAL-VPN-001"
+            )
+        }
     }
 
     private static func failure(

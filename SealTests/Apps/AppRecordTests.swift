@@ -108,10 +108,8 @@ struct AppRecordTests {
         )
 
         #expect(record.belongsInInstalledList == false)
-        // 两列表设计：已签但未安装、非 Seal 的副本仍归待处理（unsigned）列表，直到真正安装；
-        // 不存在独立的 signed 列表（belongsInSignedList 恒 false）
-        #expect(record.belongsInSignedList == false)
-        #expect(record.belongsInUnsignedList)
+        #expect(record.belongsInSignedList)
+        #expect(record.belongsInUnsignedList == false)
     }
 
     @Test
@@ -124,6 +122,27 @@ struct AppRecordTests {
             size: 1,
             state: .imported,
             ipaRelativePath: "Apps/imported/Original.ipa",
+            importedAt: Date()
+        )
+
+        #expect(record.belongsInInstalledList == false)
+        #expect(record.belongsInSignedList == false)
+        #expect(record.belongsInUnsignedList)
+    }
+
+    @Test
+    func damagedSignedArtifactReturnsToUnsignedListForResigning() {
+        let record = AppRecord(
+            originalBundleIdentifier: "com.example.damaged",
+            name: "Damaged",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .signed,
+            ipaRelativePath: "Apps/damaged/Original.ipa",
+            signedIPARelativePath: "Apps/damaged/Signed.ipa",
+            signedIPASHA256: String(repeating: "c", count: 64),
+            signedArtifactStatus: .damaged,
             importedAt: Date()
         )
 

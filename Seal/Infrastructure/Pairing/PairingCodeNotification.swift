@@ -14,17 +14,11 @@ import UserNotifications
 ///
 /// ⚠️ 代价：**会弹系统的通知授权框**（首次配对时）。若同一安装里灵动岛可用，
 /// 就**不应该**再去请求通知权限 —— 否则用户会看到一个本该没有的权限框。
-/// 所以 `prepare()` 在能走灵动岛时直接返回 false，不触发任何权限请求。
+/// 只有 Live Activity 预创建失败，或系统在出码前回收活动时，才会请求通知权限。
 enum PairingCodeNotification {
 
     /// 同一条通知反复替换，避免码变了在通知中心堆一列。
     private static let identifier = "seal.pairing.code"
-
-    /// - Returns: 是否**应该**改用通知路径。true 时才需要请求通知权限。
-    @MainActor
-    static func shouldUseNotifications(liveActivityAvailable: Bool) -> Bool {
-        liveActivityAvailable == false
-    }
 
     /// 请求通知权限。只在确定要走通知路径时调用。
     static func requestAuthorizationIfNeeded() async -> Bool {
@@ -47,9 +41,14 @@ enum PairingCodeNotification {
         await post(title: "配对码 \(code)", body: "在系统设置中核对此配对码")
     }
 
-    /// 配对完成后替换成「已配对」，并让其自动消失。
+    /// 配对完成后替换成完成状态。只有凭证已成功导入后才调用。
     static func markPaired() async {
-        await post(title: "已配对", body: "可以返回 Seal 继续")
+        await post(title: "配对完成", body: "点按返回 Seal")
+    }
+
+    /// 配对失败时隐藏旧码，避免用户继续使用已经失效的号码。
+    static func markFailed() async {
+        await post(title: "配对未完成", body: "返回 Seal 查看原因")
     }
 
     /// 流程结束时清掉残留通知（回到 App 前台时也该清）。
