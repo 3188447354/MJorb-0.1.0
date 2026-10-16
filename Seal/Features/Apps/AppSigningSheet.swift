@@ -483,7 +483,7 @@ struct AppSigningSheet: View {
     }
 
     private var extensionSummary: String {
-        workingApp.extensions.isEmpty ? "无" : "\(workingApp.extensions.count) 个"
+        return workingApp.extensions.isEmpty ? "无" : "\(workingApp.extensions.count) 个"
     }
 
     private func primaryActionTitle(for presentation: AppOperationPresentation) -> String {

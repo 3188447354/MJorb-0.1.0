@@ -378,7 +378,7 @@ final class AppleAccountClient {
                         operation: {
                             let retryAnisetteData = try await self.anisetteProvider.fetchForAuthentication()
                             await self.trace("503 重试：已重新取得 anisette 一次性凭据，声明身份=\(retryAnisetteData.deviceDescription)")
-                            try await self.authenticate(
+                            return try await self.authenticate(
                                 email: email,
                                 password: password,
                                 anisetteData: retryAnisetteData,

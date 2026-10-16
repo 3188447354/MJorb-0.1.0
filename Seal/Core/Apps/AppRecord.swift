@@ -309,7 +309,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         if let extensionProfileStrategy {
             return extensionProfileStrategy
         }
-        AppExtensionProfileStrategy.defaultFor(
+        return AppExtensionProfileStrategy.defaultFor(
             isSeal: isSeal,
             isLiveContainer: isLiveContainer
         )

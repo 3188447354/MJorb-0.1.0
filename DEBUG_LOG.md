@@ -5,6 +5,14 @@
 
 ---
 
+## 2026-10-16 CI #114：扩展策略守卫陈旧且三个闭包遗漏返回值
+
+- **现象**：CI #114 的 `build-package` 在发布安全守卫 R65 失败；`swift-regression` 随后报三个 `missing return`，分别在扩展策略 getter、签名抽屉的扩展摘要、以及 Apple 503 重试认证闭包。
+- **根因**：R65 仍将“所有含扩展 IPA 必须独立签名”当作契约，与已确认的“普通扩展默认共享，能力不兼容时由用户明确改为独立”的产品规则冲突。三处修改把原本隐式返回的单表达式函数扩为多行后，遗漏了 Swift 要求的显式 `return`。
+- **修复**：R65 与其变异锚点改为守护现行策略：普通扩展共享，Seal/LiveContainer 独立，共享能力阻塞在门户写入前以 `SEAL-PROFILE-366` 明示并在 UI 经用户确认后才独立签名；补回三个 `return`。
+- **涉及文件**：`verify-release-safety.py`、`AppRecord.swift`、`AppSigningSheet.swift`、`AppleAccountClient.swift`。
+- **验证状态**：`py_compile`、错误码清单测试、`git diff --check` 通过。Windows 无 Swift；完整发布守卫在本机执行超过工具单次时限，待下一次 CI 验证。
+
 ## 2026-10-16 手机配对灵动岛状态与生命周期
 
 - **现象**：旧实现等系统交付 PIN 才创建 Live Activity，用户若已切去系统设置可能错过前台创建窗口；系统回调 `.completed` 时又先显示“配对成功”，而凭证导入失败会造成成功假象。旧活动失败时直接消失，用户看不到应回 Seal 排查的状态。
