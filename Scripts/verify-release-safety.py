@@ -4668,15 +4668,14 @@ def violations(load=read):
     # ① `project.yml` 的部署目标必须全是 17.4。
     #    ⚠️ 用**计数**而不是 `in`：只写 `in` 的话，把其中一个 target 落回 17.0 会被
     #    其余几处掩盖（R67 / R68 都实测漏网过）。
-    #    ⚠️ 计数在 2026-10-16 从 4 改为 5：新增了 Live Activity 扩展 target
-    #    `SealLiveActivity`（配对码镜像到灵动岛，见 `Shared/PairingActivityAttributes.swift`）。
-    #    ActivityKit 的视图只能住在 widget 扩展里 ⇒ 这个 target 是必需的，不是可选装饰。
-    #    加 target 时必须同步改这里的数字 —— 否则正是这条守卫想拦的「漏改一处」。
-    check(r69_project.count('deploymentTarget: "17.4"') == 5
+    #    ⚠️ 计数必须与实际 target 数一致。2026-10-16 曾为 Live Activity 扩展短暂改成 5，
+    #    但扩展因 `Scripts/verify-ipa.sh` 的扩展闸门未嵌入 ⇒ 又改回 4。
+    #    **新增/移除 target 时这里必须同步**，否则正是这条守卫想拦的「漏改一处」。
+    check(r69_project.count('deploymentTarget: "17.4"') == 4
           and 'iOS: "17.4"' in r69_project
           and 'deploymentTarget: "17.0"' not in r69_project
           and 'iOS: "17.0"' not in r69_project,
-          "R69①: `project.yml` 的 6 处部署目标必须全是 17.4 —— 5 个 target 的 "
+          "R69①: `project.yml` 的 5 处部署目标必须全是 17.4 —— 4 个 target 的 "
           "`deploymentTarget` 加 `options.deploymentTarget.iOS`；漏一处系统就仍允许装 17.0–17.3.1")
     # ② 项目级 xcconfig 也写着部署目标，必须同步。
     check(r69_base.count("IPHONEOS_DEPLOYMENT_TARGET = 17.4") == 1
@@ -9018,15 +9017,15 @@ def main():
          "        guard selectable.isEmpty == false else { return .noSelectableAccount }\n",
          "R68③b: 「记录账号是否存在」的判定必须排在"),
         # ── R69：最低支持 = iOS 17.4（禁止 16.0–17.3.1，2026-09-24 用户指令）──
-        # ① 某个 target 落回 17.0 ⇒ 计数从 5 变 4 ✓ 报红（覆盖「漏改一处」这个真实退化）。
+        # ① 某个 target 落回 17.0 ⇒ 计数从 4 变 3 ✓ 报红（覆盖「漏改一处」这个真实退化）。
         #    ⚠️ `replace(..., 1)` 只改**第一处**，所以断言必须用计数才抓得到。
         #    ⚠️ 期望文案必须与上面 `check(...)` 的原文一致 —— 变异检查是按**字符串**匹配
-        #    报错信息的（2026-10-16 把「5 处 / 4 个 target」改成「6 处 / 5 个 target」时
-        #    漏改这里，CI 就报 `Guard failed mutation check: R69①`）。
+        #    报错信息的（2026-10-16 改这两个字符串时漏同步过一次，CI 报
+        #    `Guard failed mutation check: R69①`）。
         ("project.yml",
          '    deploymentTarget: "17.4"',
          '    deploymentTarget: "17.0"',
-         "R69①: `project.yml` 的 6 处部署目标必须全是 17.4"),
+         "R69①: `project.yml` 的 5 处部署目标必须全是 17.4"),
         # ② 项目级 xcconfig 落回 17.0 ⇒ 与 project.yml 不一致 ✓ 报红。
         ("Config/Base.xcconfig",
          "IPHONEOS_DEPLOYMENT_TARGET = 17.4",
