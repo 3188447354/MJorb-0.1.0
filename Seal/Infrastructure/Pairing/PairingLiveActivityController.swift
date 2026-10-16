@@ -25,8 +25,9 @@ import Foundation
 /// 所以文案要说清「点此返回」。用户真的回来了（`RootTabView` 收到 `seal://pairing`）
 /// 才 `end`。
 ///
-/// ⚠️ **`AlertConfiguration` 是展开灵动岛的开关**：只在 `update` 时带它，创建时不带，
-/// 灵动岛就不会主动展开。这里创建（`.showingCode`）与「配对成功」两次都带。
+/// ⚠️ **`AlertConfiguration` 是展开灵动岛的开关**：当前项目使用的 ActivityKit SDK
+/// 只支持把它传给 `update`，不能传给 `ActivityContent` 的初始化器。创建时先显示
+/// 配对码，配对成功时通过 `update` 展开并提示返回 Seal。
 @MainActor
 final class PairingLiveActivityController {
 
@@ -56,20 +57,7 @@ final class PairingLiveActivityController {
 
         let attributes = PairingActivityAttributes(deviceName: deviceName)
 
-        // ⚠️ **`AlertConfiguration` 挂在 `ActivityContent` 上，不挂在 `request` 的参数上**
-        // （2026-10-16 编译报错后改）：
-        // Xcode 26 的 `Activity.request(attributes:content:pushType:style:alertConfiguration:start:)`
-        // 里 `style` / `start` 是**必填**且没有带默认值的旧重载 —— 只传前三个参数会报
-        //   error: missing arguments for parameters 'style', 'start' in call
-        // 而那个不带 style/start 的重载**不抛任何错误**（编译器会连带报
-        // `'catch' block is unreachable`）。AlertConfiguration 的正式归宿是
-        // `ActivityContent(state:staleDate:alertConfiguration:)`，走它就不必猜
-        // `style` / `start` 的类型。
-        let content = ActivityContent(
-            state: Self.codeState(code),
-            staleDate: nil,
-            alertConfiguration: Self.codeAlert(code)
-        )
+        let content = ActivityContent(state: Self.codeState(code), staleDate: nil)
         activity = Activity.request(
             attributes: attributes,
             content: content,
@@ -131,11 +119,4 @@ final class PairingLiveActivityController {
         )
     }
 
-    private static func codeAlert(_ code: String) -> AlertConfiguration {
-        AlertConfiguration(
-            title: LocalizedStringResource(stringLiteral: "配对码 \(code)"),
-            body: LocalizedStringResource(stringLiteral: "在「设置」中核对并确认"),
-            sound: .default
-        )
-    }
 }

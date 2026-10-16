@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-16 CI #112：灵动岛 API 与空间守卫阻断打包
+
+- **现象**：手动构建 #112 在 Swift 回归报 `ActivityContent` 的 `alertConfiguration` 为多余参数；打包门随后又报 R35「临时空间公式只许有一份」。因此本次没有生成 IPA，尚未进入 Apple ID 实机验证。
+- **根因**：当前 CI 使用的 ActivityKit SDK 支持 `activity.update(_:alertConfiguration:)`，但 `ActivityContent(state:staleDate:)` 没有带 `alertConfiguration` 的初始化器。空间公式已经从 `expanded + 2 × ipa + 200MB` 校正为 `expanded + ipa + 300MB`，发布守卫却仍硬编码检查旧的 `× 2` 写法。
+- **修复**：创建 Live Activity 时使用当前 SDK 支持的两参数 `ActivityContent`，配对成功的提示仍通过已有的 `update` API 发送；将 R35 守卫改为锁定新公式的唯一实现，防止恢复旧公式或复制第二份。
+- **涉及文件**：`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`Scripts/verify-release-safety.py`。
+- **验证状态**：待重新运行完整云 CI；Windows 本机无法编译 Swift，Apple ID 添加仍需通过 CI 后真机复测。
+
+---
+
 ## 2026-10-15 Apple ID `-80045` 的真实根因：ADI 与「声明身份」不一致（构建 21）
 
 - **现象**：构建 21 的 `SEAL-NET-503` 消失，但真机添加 Apple ID 立刻变成 `Apple.APIError -80045`（首试即现，不是重试风暴独有）。**同一台手机、同一网络下用 SideInstaller 加同一个 Apple ID 能够成功** ⇒ 排除环境 / IP 限流（日志里 2 分钟内约 10 次重试中出现过一次 Apple `429`）。

@@ -2204,7 +2204,9 @@ def violations(load=read):
           "能签的机器（假警报），或低估高压缩比的包")
     # 公式**只许一份**（本仓「同一条规则两份实现」已踩过 6 次）。
     check(workspace_source.count("static func requiredTemporarySpace(") == 1
-          and workspace_source.count("multipliedReportingOverflow(by: 2)") == 1,
+          and workspace_source.count("expandedBytes.addingReportingOverflow(ipaBytes)") == 1
+          and workspace_source.count("300 * 1024 * 1024") == 1
+          and "multipliedReportingOverflow(by: 2)" not in workspace_source,
           "R35: 「需要多少临时空间」的公式只许有一份 —— 两处各写一遍迟早漂移")
 
     # R37: 判 Mach-O magic **之前不许整体读入文件**（2026-09-18，由一份第三方审计发现）。
