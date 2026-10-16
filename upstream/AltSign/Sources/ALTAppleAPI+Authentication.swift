@@ -683,7 +683,19 @@ private extension ALTAppleAPI {
                     switch errorCode
                     {
                     case -20101, -22406: throw ALTAppleAPIError.incorrectCredentials
-                    case -22421: throw ALTAppleAPIError.invalidAnisetteData
+                    // `-22421` **不能**在这里直接归成 invalidAnisetteData。
+                    //
+                    // Apple 用它来表达「anisette 需要重新同步」：此时响应里同时带着
+                    // `hsc = 434` 与 `X-Apple-I-MD-DATA`（SIM），后者正是重同步要回送的
+                    // 凭据。以前在 switch 里直接抛错，就绕过了下面提取 SIM 的分支 ——
+                    // 真机日志因此一直显示「SRP 登录失败（无 SIM 同步指令）」，
+                    // 而 Apple 其实已经下发了 SIM。
+                    //
+                    // 让它落到 default 分支：那里会把 SIM 与 hsc 放进 userInfo，
+                    // 上层 `AppleAccountClient.resyncSIM(from:)` 才能取到并触发 resync。
+                    // 取不到 SIM 时（旧式回复只有 hsc）仍按 invalidAnisetteData 处理。
+                    case -22421 where Self.resyncSIM(in: dictionary, status: status) == nil:
+                        throw ALTAppleAPIError.invalidAnisetteData
                     default:
                         guard let errorDescription = status["em"] as? String else { throw ALTAppleAPIError.unknown }
 
@@ -695,8 +707,14 @@ private extension ALTAppleAPI {
                         if let hsc = dictionary["hsc"] ?? status["hsc"] {
                             userInfo["ALTAppleAPIStatusHSC"] = hsc
                         }
-                        if let sim = dictionary["X-Apple-I-MD-DATA"] ?? status["X-Apple-I-MD-DATA"] {
+                        if let sim = Self.resyncSIM(in: dictionary, status: status) {
                             userInfo["ALTAppleAPIResyncSIM"] = sim
+                        }
+                        // Apple 在要求 resync 时还会给 `X-Apple-I-MD-Cmd-Target`
+                        // （实测值 `native`）。isideload 把它一并回送给 anisette
+                        // 服务器，这里透出去让上层能用同样的方式重同步。
+                        if let target = dictionary["X-Apple-I-MD-Cmd-Target"] ?? status["X-Apple-I-MD-Cmd-Target"] {
+                            userInfo["ALTAppleAPIResyncCmdTarget"] = target
                         }
                         throw NSError(domain: ALTUnderlyingAppleAPIErrorDomain, code: errorCode, userInfo: userInfo)
                     }
@@ -711,6 +729,25 @@ private extension ALTAppleAPI {
             verboseLog("[AltSign] sendAuthenticationRequest failed before sending: \(error)")
             completionHandler(.failure(error))
         }
+    }
+
+    /// 取 Apple 下发的 resync 凭据（SIM）。
+    ///
+    /// Apple 要求 anisette 重新同步时，响应里带 `X-Apple-I-MD-DATA`：
+    /// - 多数回复是 **base64 字符串**（真机实测
+    ///   `AAAABOyLnRH7R3k+P8CGlOM8JZuN1UBO4iZLsGrRfsQ=`），回送给 anisette 服务器的
+    ///   `/v3/get_headers` 时用原样的 base64；
+    /// - plist 的 `<data>` 会被解析成 `Data`，此时补一次 base64 编码，保证线上格式一致。
+    ///
+    /// 它是 `Status` 的**兄弟节点**（在 `Response` 里），不是 `Status` 的字段，
+    /// 所以两处都找一遍以兼容旧式回复。
+    static func resyncSIM(in dictionary: [String: Any], status: [String: Any]) -> String? {
+        guard let raw = dictionary["X-Apple-I-MD-DATA"] ?? status["X-Apple-I-MD-DATA"] else {
+            return nil
+        }
+        if let string = raw as? String, string.isEmpty == false { return string }
+        if let data = raw as? Data, data.isEmpty == false { return data.base64EncodedString() }
+        return nil
     }
 
     func makeTwoFactorCodeRequest(url: URL,
