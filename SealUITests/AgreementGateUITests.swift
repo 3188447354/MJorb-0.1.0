@@ -39,7 +39,7 @@ final class AgreementGateUITests: XCTestCase {
         //    「门关了但主界面也没起来」这种死锁放过去。
         agree.tap()
         XCTAssertTrue(app.buttons["import-toolbar-button"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["待签名，0 个"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))
     }
 
     @MainActor

@@ -5,6 +5,16 @@
 
 ---
 
+## 2026-10-16 CI #117：发布守卫误报与界面测试陈旧契约
+
+- **现象**：CI #117 的 Swift 编译已经通过，但 `build-package` 的 R65 变异测试仍失败；`swift-regression` 又把已上线的“待安装”分组名报成界面回归。
+- **根因**：R65 的变异条目仍期待已替换的旧提示文本；App Group 映射守卫查的是整个门户文件，另一处同名调用会掩盖被改坏的筛选函数。UI 测试仍断言旧“待签名”标签，与已确认的产品文案不一致。
+- **修复**：变异断言统一绑定当前守卫提示，并把能力筛选校验收窄到 `filteredAppIDEntitlements`；UI 测试全面对齐“待安装”标签与页面标题，不改产品界面。
+- **涉及文件**：`verify-release-safety.py`、`ImportFlowUITests.swift`、`AgreementGateUITests.swift`。
+- **验证状态**：833 条静态守卫、13 条 R65 定向变异、错误码清单测试和 `git diff --check` 均通过；Windows 无 Xcode，待 CI 跑完整 Swift 回归。
+
+---
+
 ## 2026-10-16 CI #116：R65 变异守卫失配与签名抽屉漏返回
 
 - **现象**：CI #116 的发布守卫静态检查已通过，但 R65 的若干变异测试报告“未拦截”；Swift 回归编译同时报 `AppSigningSheet.primaryActionTitle` 缺少 `return`。

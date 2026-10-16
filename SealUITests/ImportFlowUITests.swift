@@ -5,7 +5,7 @@ final class ImportFlowUITests: XCTestCase {
     func testEmptyStateHasImportEntry() {
         let app = launch(with: "--ui-testing-empty")
         XCTAssertTrue(app.staticTexts["Seal"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["待签名，0 个"].exists)
+        XCTAssertTrue(app.buttons["待安装，0 个"].exists)
         XCTAssertTrue(app.buttons["import-toolbar-button"].exists)
         XCTAssertFalse(element("imported-app-row", in: app).exists)
     }
@@ -13,9 +13,9 @@ final class ImportFlowUITests: XCTestCase {
     @MainActor
     func testNormalColdLaunchDefaultsToInstalledAndPendingItemRemainsAvailable() {
         let app = launch(with: "--ui-testing-imported")
-        XCTAssertTrue(app.buttons["待签名，1 个"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["待安装，1 个"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["已安装应用"].waitForExistence(timeout: 10))
-        app.buttons["待签名，1 个"].tap()
+        app.buttons["待安装，1 个"].tap()
         XCTAssertTrue(element("imported-app-row", in: app).waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["import-toolbar-button"].exists)
     }
@@ -35,11 +35,11 @@ final class ImportFlowUITests: XCTestCase {
     @MainActor
     func testTwoStageNavigationCanBeTappedWithoutChangingHeaderAlignment() {
         let app = launch(with: "--ui-testing-empty")
-        XCTAssertTrue(app.buttons["待签名，0 个"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["已安装，0 个"].exists)
         // 稳定初始态：等 resolveInitialModeIfNeeded 把 mode 从初始 .installed 异步切到 .unsigned
         // 完成后再点，避免 tap 命中中转窗口导致 TabView 不切页（header 竞态）。
-        XCTAssertTrue(app.staticTexts["待签名应用"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["待安装应用"].waitForExistence(timeout: 10))
 
         // ⚠️ 用 `tapStage` 而不是裸 `tap()` + `waitForExistence`（2026-09-17）。
         // 这一条在 CI 上红过一次（`ImportFlowUITests.swift:45` 的 XCTAssertTrue 超时），
@@ -47,7 +47,7 @@ final class ImportFlowUITests: XCTestCase {
         // 机制与上面注释写的是同一个：**初始 mode 切换是程序化翻页，动画未结束时 tap 会被吞掉**。
         // 裸 tap 只点一次，撞上动画尾部就必然失败；改成「点 → 等 → 没到就再点」。
         tapStage(app.buttons["已安装，0 个"])
-        tapStage(app.buttons["待签名，0 个"])
+        tapStage(app.buttons["待安装，0 个"])
         // 测试名字里的另一半：切 tab 之后**头部仍在**（「不带歪头部」的最低可测形式）。
         XCTAssertTrue(app.staticTexts["Seal"].exists, "两段导航切换后头部不应消失")
     }
@@ -56,7 +56,7 @@ final class ImportFlowUITests: XCTestCase {
     @MainActor
     func testTwoStageNavigationSupportsHorizontalSwipe() {
         let app = launch(with: "--ui-testing-empty")
-        XCTAssertTrue(app.staticTexts["待签名应用"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["待安装应用"].waitForExistence(timeout: 10))
         let pager = element("apps-stage-pager", in: app)
         XCTAssertTrue(pager.waitForExistence(timeout: 10))
 
@@ -72,7 +72,7 @@ final class ImportFlowUITests: XCTestCase {
         // ⚠️ 同一轮 CI 里 `testTwoStageNavigationCanBeTappedWithoutChangingHeaderAlignment`（已改）是绿的，
         // 只有这条滑动路径还在断言翻页 —— 这正是「同一条规则只落在两条链路中的一条」（本仓第 7 次）。
         swipeStage(pager, to: .left, expecting: app.buttons["已安装，0 个"])
-        swipeStage(pager, to: .right, expecting: app.buttons["待签名，0 个"])
+        swipeStage(pager, to: .right, expecting: app.buttons["待安装，0 个"])
     }
 
     @MainActor
@@ -87,7 +87,7 @@ final class ImportFlowUITests: XCTestCase {
             "UICTContentSizeCategoryAccessibilityExtraExtraExtraLarge"
         ]
         app.launch()
-        XCTAssertTrue(app.buttons["待签名，0 个"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["已安装，0 个"].exists)
         XCTAssertTrue(app.buttons["import-toolbar-button"].exists)
     }
