@@ -59,9 +59,8 @@ enum ProfileOnlyRenewalPolicy {
         /// 记录证实上一份产物曾移除扩展。profile-only 只能换描述文件，无法把已
         /// 删除的二进制扩展装回去；必须完整重签并覆盖安装一次才能自愈。
         case incompleteExtensionSet
-        /// 旧版本允许含 `.appex` 的应用共用主描述文件。即使 IPA 文件内的扩展仍在，
-        /// 这种产物也没有逐 target 的 App ID/profile/App Group 绑定，iOS 可能不会注册
-        /// LiveProcess 等运行时扩展。profile-only 不能改变已安装二进制，必须完整重签迁移。
+        /// 扩展的持久化描述文件拓扑无法证明与当前策略一致。profile-only 只替换描述文件，
+        /// 不能修复已安装二进制的签名拓扑，必须完整重签迁移。
         case extensionProfileIntegrityMigration
         /// 🔴 **本机没有「该应用当前使用的那张证书」的私钥**（2026-09-26，构建 48 真机）。
         ///
@@ -153,7 +152,7 @@ enum ProfileOnlyRenewalPolicy {
         case .incompleteSigningIdentity: "记录里的签名身份不完整"
         case .missingTargetRecord: "记录里缺少签名目标"
         case .incompleteExtensionSet: "上一份签名产物缺少扩展，需要完整重签修复"
-        case .extensionProfileIntegrityMigration: "扩展仍使用旧共享描述文件，需要完整重签修复"
+        case .extensionProfileIntegrityMigration: "扩展的描述文件记录与签名策略不一致，需要完整重签修复"
         case .missingLocalCertificateMaterial: "本机没有该证书的私钥"
         case .pendingSelfUpdateSource: "已导入的更新源尚未安装"
         }
@@ -451,8 +450,8 @@ enum ProfileOnlyRenewalPolicy {
         app: AppRecord,
         liveIdentity: LiveProfileOnlyIdentity?
     ) -> Decision {
-        // 实时运行身份只能证明“当前 IPA 可读”，不能把历史共享 profile 的扩展产物
-        // 伪装成已完成逐 target 注册。迁移必须先于 Seal 自身的实时身份快路径。
+        // 实时运行身份只能证明“当前 IPA 可读”，不能掩盖持久化签名拓扑的矛盾。
+        // 签名记录不完整或不一致时，迁移必须先于 Seal 自身的实时身份快路径。
         if extensionProfileIntegrityBlock(app) != nil {
             return .requiresFullResign(.extensionProfileIntegrityMigration)
         }
@@ -516,11 +515,35 @@ enum ProfileOnlyRenewalPolicy {
         return normalized.isEmpty ? "0" : String(normalized)
     }
 
-    /// 含扩展的应用只能在已经按独立 profile 完整签名过一次后进入 profile-only。
-    /// `nil` 是旧版本未持久化策略的记录，也必须迁移；把它当作共享会让旧产物永久
-    /// 无法修复 LiveProcess 等运行时扩展的注册状态。
+    /// 带扩展的应用必须先证明持久化记录与当初的签名策略一致，才能只更新描述文件。
+    ///
+    /// 明确的独立策略沿用每个目标自己的描述文件；明确的共享策略要求主 App、每个
+    /// 扩展快照和每个签名目标都记录同一份主描述文件。`nil` 属于旧版没有策略字段的
+    /// 记录，不能猜成共享或独立，必须完整重签一次来建立可信拓扑。
     private static func extensionProfileIntegrityBlock(_ app: AppRecord) -> Bool? {
         guard app.extensions.isEmpty == false else { return nil }
-        return app.extensionProfileStrategy == .independentProfiles ? nil : true
+
+        switch app.extensionProfileStrategy {
+        case .none:
+            return true
+        case .independentProfiles:
+            return nil
+        case .sharedMainProfile:
+            guard let mainProfileUUID = nonBlank(app.provisioningProfileUUID) else {
+                // 由后续完整身份检查给出更准确的 `.incompleteSigningIdentity` 原因。
+                return nil
+            }
+            for ext in app.extensions {
+                guard let bundleIdentifier = nonBlank(ext.mappedBundleIdentifier),
+                      let extensionProfileUUID = nonBlank(ext.provisioningProfileUUID),
+                      extensionProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame,
+                      let target = app.signingTargets.first(where: { $0.bundleIdentifier == bundleIdentifier }),
+                      let targetProfileUUID = nonBlank(target.profileUUID),
+                      targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame else {
+                    return true
+                }
+            }
+            return nil
+        }
     }
 }

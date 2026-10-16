@@ -139,9 +139,24 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func sharedProfileWithExtensionsForcesAFullResignMigration() {
-        var app = makeEligibleApp()
-        app.extensionProfileStrategy = .sharedMainProfile
+    func completeSharedProfileWithExtensionsIsEligibleForProfileOnlyRenewal() {
+        let app = makeEligibleSharedProfileApp()
+
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app)
+                == .eligible(
+                    targetBundleIdentifiers: [
+                        "com.example.demo.TEAM123456",
+                        "com.example.demo.TEAM123456.share"
+                    ]
+                )
+        )
+    }
+
+    @Test
+    func sharedProfileWithMismatchedExtensionRecordForcesAFullResignMigration() {
+        var app = makeEligibleSharedProfileApp()
+        app.extensions[0].provisioningProfileUUID = "UNEXPECTED-PROFILE"
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
@@ -161,9 +176,9 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func liveIdentityCannotBypassTheLegacyExtensionProfileMigration() {
+    func liveIdentityCannotBypassTheUnrecordedExtensionProfileMigration() {
         var app = makeEligibleApp()
-        app.extensionProfileStrategy = .sharedMainProfile
+        app.extensionProfileStrategy = nil
         let live = LiveProfileOnlyIdentity(
             mainBundleIdentifier: "com.example.demo.TEAM123456",
             profileUUID: "MAIN-PROFILE",
@@ -725,6 +740,18 @@ struct ProfileOnlyRenewalPolicyTests {
         )
     }
 
+    private func makeEligibleSharedProfileApp() -> AppRecord {
+        var app = makeEligibleApp()
+        app.extensionProfileStrategy = .sharedMainProfile
+        let mainBundleID = "com.example.demo.TEAM123456"
+        let extensionBundleID = "\(mainBundleID).share"
+        app.extensions[0].provisioningProfileUUID = "MAIN-PROFILE"
+        app.signingTargets = [
+            target(bundleIdentifier: mainBundleID, profileUUID: "MAIN-PROFILE", expiry: app.expiryDate!),
+            target(bundleIdentifier: extensionBundleID, profileUUID: "MAIN-PROFILE", expiry: app.expiryDate!)
+        ]
+        return app
+    }
     private func target(
         bundleIdentifier: String,
         profileUUID: String,

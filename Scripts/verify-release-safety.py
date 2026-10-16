@@ -4358,7 +4358,7 @@ def violations(load=read):
 
     portal_source = strip_comments(load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift"))
     check("let portalMappings = resolvedExtensionProfileStrategy.portalMappings(" in portal_source
-          and "SharedProfileBlocker" in portal_source
+          and "AppExtensionProfileStrategy.sharedProfileBlocker(" in portal_source
           and 'code: "SEAL-PROFILE-366"' in portal_source,
           "R65⑤: 共享被扩展能力阻塞时必须在门户写入前报 SEAL-PROFILE-366 ✗")
     check("expectedBundleID: extensionProfileStrategy.expectedProfileBundleID(" in portal_source
@@ -4367,19 +4367,43 @@ def violations(load=read):
     check("let renewalStrategy = app.extensionProfileStrategy ?? .independentProfiles" in portal_source
           and "let expectedProfileCount = resolvedRenewalStrategy == .sharedMainProfile" in portal_source,
           "R65⑦: 续签必须沿用已记录策略，并正确处理一份共享描述文件 ✗")
+    check("func binding(forBundle bundleIdentifier: String)" in portal_source
+          and "return profileBindings[mappedMainBundleID]" in portal_source
+          and "return profileBindings[bundleIdentifier]" in portal_source,
+          "R65⑦: 共享续签必须将每个目标解析到主描述文件，独立续签保留逐目标解析 ✗")
+
+    renewal_policy_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift"))
+    check("case .none:\n            return true" in renewal_policy_source
+          and "case .sharedMainProfile:" in renewal_policy_source
+          and "extensionProfileUUID.caseInsensitiveCompare(mainProfileUUID)" in renewal_policy_source
+          and "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID)" in renewal_policy_source,
+          "R65⑧: 共享模式只有完整记录同一主描述文件时才可快速续签，旧记录不得猜测策略 ✗")
+
+    record_updater_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift"))
+    check("SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key)" in record_updater_source,
+          "R65⑨: 共享描述文件续签后仍必须为每个实际目标保留独立记录键 ✗")
 
     coordinator_source = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
     sheet_source = strip_comments(load("Seal/Features/Apps/AppSigningSheet.swift"))
     check("app.extensionProfileStrategy = result.extensionProfileStrategy" in coordinator_source
           and "selectedExtensionProfileStrategy = .independentProfiles" in sheet_source
           and 'failure.code == "SEAL-PROFILE-366"' in sheet_source,
-          "R65⑧: 独立签名必须经用户明确确认，并将实际策略落回记录 ✗")
+          "R65⑩: 独立签名必须经用户明确确认，并将实际策略落回记录 ✗")
 
     strategy_tests = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
     check("func onlySealAndLiveContainerUseIndependentProfilesByDefault()" in strategy_tests
           and "func ordinaryAppWithExtensionsUsesTheSharedDefault()" in strategy_tests
-          and "func sharedProfileBlockerReportsTheFirstUncoveredExtensionDeterministically()" in strategy_tests,
-          "R65⑨: 必须覆盖普通扩展共享、两类独立例外和共享阻塞扩展 ✗")
+          and "func sharedProfileBlockerReportsTheFirstUncoveredExtensionDeterministically()" in strategy_tests
+          and "func downgradeUnderSharedProfileClearsEveryBundleEmbeddingThatProfile()" in strategy_tests,
+          "R65⑪: 必须覆盖默认策略、共享阻塞和共享描述文件的能力降级范围 ✗")
+
+    renewal_policy_tests = load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift")
+    renewal_record_tests = load("SealTests/Renewal/ProfileOnlyRenewalRecordUpdaterTests.swift")
+    check("func completeSharedProfileWithExtensionsIsEligibleForProfileOnlyRenewal()" in renewal_policy_tests
+          and "func sharedProfileWithMismatchedExtensionRecordForcesAFullResignMigration()" in renewal_policy_tests
+          and "func unrecordedLegacyExtensionStrategyAlsoForcesTheMigration()" in renewal_policy_tests
+          and "func sharedMainProfileIsRecordedForEveryTargetWithoutCollapsingThem()" in renewal_record_tests,
+          "R65⑫: 共享续签必须放行完整新记录，阻断不一致或旧记录，并保留所有目标记录 ✗")
 
     # R68: **续签的账号判据只能有一份，且必须识别悬空引用**（2026-09-24 构建 34 真机）。
     #
@@ -8621,6 +8645,18 @@ def main():
          "return [originalMainBundleID: mappedMainBundleID]",
          "return mappings",
          "R65②: 共享模式只能向门户提交主 App"),
+        ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
+         "        case .none:\n            return true",
+         "        case .none:\n            return false",
+         "R65⑧: 未记录策略的历史扩展必须完整重签，不能猜测放行"),
+        ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
+         "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame",
+         "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame",
+         "R65⑧: 共享续签必须逐目标核对主描述文件"),
+        ("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift",
+         "SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key)",
+         "SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.value.bundleIdentifier)",
+         "R65⑨: 共享续签不得把所有目标记录折叠为主 App"),
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          'code: "SEAL-PROFILE-366"',
          'code: "SEAL-PROFILE-000"',
