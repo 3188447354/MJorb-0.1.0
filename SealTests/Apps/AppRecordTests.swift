@@ -267,7 +267,7 @@ struct AppRecordTests {
     }
 
     @Test
-    func missingOnDeviceMovesRecordOutOfInstalledListWithoutDiscardingSignedArtifact() {
+    func missingOnDeviceMovesSignedArtifactToPendingInstallWithoutDiscardingIt() {
         var record = AppRecord(
             originalBundleIdentifier: "com.example.installed",
             mappedBundleIdentifier: "com.example.installed.seal",
@@ -287,7 +287,8 @@ struct AppRecordTests {
         record.markMissingOnDevice()
 
         #expect(record.belongsInInstalledList == false)
-        #expect(record.belongsInUnsignedList == true)
+        #expect(record.belongsInSignedList == true)
+        #expect(record.belongsInUnsignedList == false)
         #expect(record.state == .signed)
         #expect(record.lastInstalledAt == nil)
         #expect(record.signedIPARelativePath == "Apps/installed/Signed.ipa")
