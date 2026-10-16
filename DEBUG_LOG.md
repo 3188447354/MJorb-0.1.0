@@ -5,6 +5,13 @@
 
 ---
 
+## 2026-10-16 CI #116：R65 变异守卫失配与签名抽屉漏返回
+
+- **现象**：CI #116 的发布守卫静态检查已通过，但 R65 的若干变异测试报告“未拦截”；Swift 回归编译同时报 `AppSigningSheet.primaryActionTitle` 缺少 `return`。
+- **根因**：扩展策略规则更新后，部分变异条目仍期待旧的 R65 编号，能力过滤/App Group 映射的静态断言曾被删掉，导致变异测试没有对应的失败消息。`primaryActionTitle` 从单表达式改为多行后遗漏显式返回。
+- **修复**：恢复能力过滤与 App Group 映射守卫，同步全部 R65 变异期望到新规则编号，并为 `primaryActionTitle` 增加源码与变异守卫；补回 Swift 的 `return`。
+- **涉及文件**：`verify-release-safety.py`、`AppSigningSheet.swift`。
+- **验证状态**：833 条静态守卫、Python 错误码测试与 `git diff --check` 通过。Windows 无 Swift/Xcode，待下一次 CI 编译验证。
 ## 2026-10-16 共享扩展的快速续签规则与安全守卫对齐
 
 - **现象**：普通 IPA 已改为共享主描述文件以节省 App ID，但续签准入仍把所有“带扩展 + 共享”的完整记录视为旧产物，强制完整重签；这会让已经按新规则成功签过的应用在每次续签时失去快速续签。

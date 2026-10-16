@@ -488,7 +488,7 @@ struct AppSigningSheet: View {
 
     private func primaryActionTitle(for presentation: AppOperationPresentation) -> String {
         if isPendingInstall { return isInstallingSignedArtifact ? "正在安装" : "安装" }
-        resolvedSelectedAccountID == nil ? "去添加 Apple ID" : presentation.primaryAction
+        return resolvedSelectedAccountID == nil ? "去添加 Apple ID" : presentation.primaryAction
     }
 
     private var drawerTitle: String {

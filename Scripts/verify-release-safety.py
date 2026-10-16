@@ -4371,12 +4371,15 @@ def violations(load=read):
           and "return profileBindings[mappedMainBundleID]" in portal_source
           and "return profileBindings[bundleIdentifier]" in portal_source,
           "R65⑦: 共享续签必须将每个目标解析到主描述文件，独立续签保留逐目标解析 ✗")
+    check("guard ALTFeature(entitlement: entitlement) != nil else { continue }" in portal_source
+          and "signingWorkspace.bundleIDMapper.appGroupID(" in portal_source,
+          "R65⑲: 能力请求必须过滤非 Apple feature，并映射 App Group 标识 ✗")
 
     renewal_policy_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift"))
     check("case .none:\n            return true" in renewal_policy_source
           and "case .sharedMainProfile:" in renewal_policy_source
           and "extensionProfileUUID.caseInsensitiveCompare(mainProfileUUID)" in renewal_policy_source
-          and "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID)" in renewal_policy_source,
+          and "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame" in renewal_policy_source,
           "R65⑧: 共享模式只有完整记录同一主描述文件时才可快速续签，旧记录不得猜测策略 ✗")
 
     record_updater_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift"))
@@ -4389,6 +4392,13 @@ def violations(load=read):
           and "selectedExtensionProfileStrategy = .independentProfiles" in sheet_source
           and 'failure.code == "SEAL-PROFILE-366"' in sheet_source,
           "R65⑩: 独立签名必须经用户明确确认，并将实际策略落回记录 ✗")
+    action_title_body = section_or_empty(
+        sheet_source,
+        "private func primaryActionTitle(for presentation: AppOperationPresentation) -> String {",
+        "\n    private var drawerTitle"
+    )
+    check("return resolvedSelectedAccountID == nil ? \"去添加 Apple ID\" : presentation.primaryAction" in action_title_body,
+          "Swift compile: primaryActionTitle 必须显式 return String ✗")
 
     strategy_tests = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
     check("func onlySealAndLiveContainerUseIndependentProfilesByDefault()" in strategy_tests
@@ -8664,23 +8674,27 @@ def main():
         ("Seal/Features/Apps/AppSigningSheet.swift",
          'failure.code == "SEAL-PROFILE-366"',
          'failure.code == "SEAL-PROFILE-000"',
-         "R65⑧: 只有共享阻塞才能显示独立签名确认"),
+         "R65⑩: 只有共享阻塞才能显示独立签名确认"),
         ("Seal/Features/Apps/AppSigningSheet.swift",
          "selectedExtensionProfileStrategy = .independentProfiles",
          "selectedExtensionProfileStrategy = .sharedMainProfile",
-         "R65⑧: 用户确认后必须切换到独立签名"),
+         "R65⑩: 用户确认后必须切换到独立签名"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "app.extensionProfileStrategy = result.extensionProfileStrategy",
          "app.extensionProfileStrategy = nil",
-         "R65⑧: 实际采用的扩展策略必须持久化"),
+         "R65⑩: 实际采用的扩展策略必须持久化"),
         ("SealTests/Signing/AppExtensionProfileStrategyTests.swift",
          "func ordinaryAppWithExtensionsUsesTheSharedDefault()",
          "func ordinaryAppWithExtensionsUsesTheLegacyDefault()",
-         "R65⑨: 普通扩展共享必须有单测"),
+         "R65⑪: 普通扩展共享必须有单测"),
         ("SealTests/Signing/AppExtensionProfileStrategyTests.swift",
          "func sharedProfileBlockerReportsTheFirstUncoveredExtensionDeterministically()",
          "func sharedProfileBlockerLegacy()",
-         "R65⑨: 共享阻塞扩展必须有单测"),
+         "R65⑪: 共享阻塞扩展必须有单测"),
+        ("Seal/Features/Apps/AppSigningSheet.swift",
+         "        return resolvedSelectedAccountID == nil ? \"去添加 Apple ID\" : presentation.primaryAction",
+         "        resolvedSelectedAccountID == nil ? \"去添加 Apple ID\" : presentation.primaryAction",
+         "Swift compile: primaryActionTitle 必须显式 return String"),
         # ── R68：续签的账号判据只能有一份，且必须识别悬空引用（2026-09-24 构建 34 真机）──
         # ①a 单项续签退回「直接采用记录里的 UUID」⇒ 悬空引用原样进签名链路 ✓ 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",
