@@ -21,19 +21,33 @@ struct AnisetteV3ClientTests {
         #expect(servers == AnisetteServerCatalog.official)
     }
 
-    /// SideInstaller 1.5.1 内置 anisette 目录第一条是 `https://ani.sidestore.io`，
-    /// 且它实测返回的是唯一可用身份（`MacBookPro13,2` / macOS 13.1 / akd），
-    /// 因此 Seal 把它排在默认第一位：身份原样取服务器值时，直接命中 SideInstaller
-    /// 的成功落点，不必先撞那 8 台 Xcode 身份服务器再靠 failover 绕开。
+    /// **Windows（iTunes）身份的服务器必须排在第一位**（2026-10-16 更正）。
+    ///
+    /// 这条断言原来守的是「`ani.sidestore.io` 排第一」——那是基于 SideInstaller 1.5.1
+    /// 仍在用 Mac 身份时的观察。自 2026-10-12 起 Apple 开始返回 `-80045`，
+    /// 原因是 **anisette 数据与声明的客户端身份不同源**；10-14 起连声明安卓/ Xcode
+    /// 身份都会被边缘直接 503。当前唯一可用的是 **Windows ADI（iTunes）**。
+    ///
+    /// 实测（直接向 `GsService2` 发同一个 init 请求，只改身份）：
+    ///   `<PC> <Windows;6.2(0,0);9200> …(com.apple.iTunes/12.12.4.1)>` → 200 正常处理
+    ///   `<MacBookPro13,2> <macOS;13.1;22C65> …(com.apple.akd/1.0)>`   → 200 但登录回 -80045
+    ///   `<Pixel 7> <Android;14;…>` / `dt.Xcode`                       → **503 HTML 硬拒**
+    ///
+    /// 而 13 台公共服务器里**只有 `ani.jkcoxson.com` 返回 Windows 身份**。
+    /// 它曾经排在末尾，于是前面那台"能成功返回 Mac 身份"的服务器先命中、
+    /// Windows 这台**永远不会被 fallback 到** —— 这正是登录一直修不好的直接原因。
     @Test
-    func defaultServerKeepsSideInstallerDefaultServer() throws {
+    func windowsIdentityServersComeFirst() throws {
         let servers = AnisetteServerCatalog.official
         let first = try #require(servers.first)
 
-        #expect(first.url.absoluteString == "https://ani.sidestore.io")
+        #expect(first.url.absoluteString == "https://ani.jkcoxson.com")
         #expect(Set(servers.map(\.id)).count == servers.count)
+        // 只出现一次：既不能被删掉（那样就没有 Windows 身份可用了），也不能重复。
         #expect(servers.filter { $0.url.absoluteString == "https://ani.jkcoxson.com" }.count == 1)
-        #expect(servers.last?.url.absoluteString == "https://ani.jkcoxson.com")
+        // Mac 身份的服务器保留作兜底，但**必须排在 Windows 之后**。
+        let macIndex = try #require(servers.firstIndex { $0.url.absoluteString == "https://ani.sidestore.io" })
+        #expect(macIndex > 0)
     }
 
     @Test
