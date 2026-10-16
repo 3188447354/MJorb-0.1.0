@@ -15,14 +15,36 @@ enum AnisetteServerCatalog {
     }
 
     static let official: [AnisetteServer] = [
-        // SideInstaller 内置 anisette 目录的第一条（`anisetteServerURL` 紧邻其前），
-        // 也是实测里返回**可用身份**的那台：
-        // `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`
-        // ⇒ 身份原样取服务器返回值时（`AnisetteV3Client.parseClientInfo`），
-        // 这台就是 SideInstaller 实际登录成功的落点，排在第一位即可命中。
-        // 目录里另外 8 台（stikstore、sidestore.zip、846969.xyz、npeg.us、
-        // wedotstud.io、xu30.top、ani3server.fly.dev、crystall1ne.dev）返回 Xcode
-        // 身份，被身份层判为不可用后自动换下一台——这正是 SideInstaller 的 failover。
+        // ── 首选：**提供 Windows（iTunes）身份**的服务器 ──────────────────────
+        //
+        // 2026-10-16 定论（来源：altstoreio/AltStore#1834 的实测记录 + 本机独立探测）：
+        // 从 10-12 起，`-80045 / hsc=500` 的原因是 **anisette 数据与声明的客户端身份
+        // 不是同一套**；而 10-14 ~20:50 UTC 起 Apple 更进一步，**对任何声明安卓身份的
+        // 请求直接返回 503 HTML**。真正还能用的是 **Windows 的 ADI（iTunes）**。
+        //
+        // 本机探测（直接向 GsService2 发同一个 init 请求，只改身份）：
+        //   `<PC> <Windows;6.2(0,0);9200> …(com.apple.iTunes/12.12.4.1)>` → 200 正常处理
+        //   `<MacBookPro13,2> <macOS;13.1;22C65> …(com.apple.akd/1.0)>`   → 200 正常处理
+        //   `<Pixel 7> <Android;14;…>`                                    → **503 HTML 硬拒**
+        //
+        // 而 13 台公共服务器里**只有 `ani.jkcoxson.com` 返回 Windows 身份**；
+        // `ani.sidestore.io` 等返回的是 Mac 身份，其 ADI 被 Apple 判为不符而回 -80045。
+        // 所以必须把它排在第一位：它排在末尾时，前面那台"能成功返回 Mac 身份"的服务器
+        // 会先命中，Windows 这台**永远不会被 fallback 到** —— 这正是修不好登录的原因。
+        AnisetteServer(
+            id: "jkcoxson",
+            url: makeURL("https://ani.jkcoxson.com"),
+            displayName: "jkcoxson (Windows)"
+        ),
+        AnisetteServer(
+            id: "stikstore2",
+            url: makeURL("https://ani2.stikstore.app"),
+            displayName: "stikstore (Windows)"
+        ),
+        // ── 以下为 Mac 身份的公共服务器 ──────────────────────────────────────
+        // 保留在列表里作为兜底（Apple 对 Mac 身份在边缘是放行的），但**不再优先**。
+        // 它们返回 `<MacBookPro13,2> <macOS;13.1;22C65>`；返回 Xcode 身份的那几台
+        // 会被 `identityRejectedByApple` 判为不可用并自动换下一台。
         AnisetteServer(
             id: "sidestore-io",
             url: makeURL("https://ani.sidestore.io"),
@@ -90,15 +112,6 @@ enum AnisetteServerCatalog {
             id: "crystall1nedev",
             url: makeURL("https://anisette.crystall1ne.dev"),
             displayName: "crystall1nedev"
-        ),
-        // isideload 上游源码的默认值，返回 Windows/iTunes 身份
-        // `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`。
-        // 实测该身份同样被 Apple 登录边缘放行（→ 200），所以它作为兜底是可用的；
-        // 放在列表末尾只是为了保留 SideInstaller / SideStore 的优先顺序。
-        AnisetteServer(
-            id: "jkcoxson",
-            url: makeURL("https://ani.jkcoxson.com"),
-            displayName: "jkcoxson"
         )
     ]
 
