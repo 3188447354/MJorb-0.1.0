@@ -14,8 +14,8 @@ final class PairingLiveActivityController {
     private var dismissTask: Task<Void, Never>?
 
     private static let preparationLifetime: TimeInterval = 60
-    private static let resultLifetime: TimeInterval = 180
-    private static let failureLifetime: TimeInterval = 30
+    private static let completionLifetime: TimeInterval = 6
+    private static let failureLifetime: TimeInterval = 12
 
     var isEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
@@ -44,7 +44,7 @@ final class PairingLiveActivityController {
     /// 只在收到系统给出的真实六码后调用。若活动已不可用，调用方应切换到通知回退。
     @discardableResult
     func showCode(_ code: String) -> Bool {
-        guard code.range(of: #"^\\d{6}$"#, options: .regularExpression) != nil,
+        guard code.range(of: #"^\d{6}$"#, options: .regularExpression) != nil,
               let activity else {
             return false
         }
@@ -56,23 +56,20 @@ final class PairingLiveActivityController {
         return true
     }
 
-    /// 只能在配对凭证已经成功保存后调用。完成态保留返回 Seal 的入口，用户点回 App 后关闭。
+    /// 只有凭证已经成功保存后调用。结束请求交给系统在短暂完成态后执行，
+    /// 不依赖 Seal 继续在前台或后台运行。
     func markPaired() {
-        updateResult(
-            state: .init(stage: .paired, code: "", title: "配对完成", detail: "点按返回 Seal"),
-            lifetime: Self.resultLifetime,
-            alertTitle: "配对完成",
-            alertBody: "点按返回 Seal"
+        endWithResult(
+            state: .init(stage: .paired, code: "", title: "配对完成", detail: "已连接到 Seal"),
+            lifetime: Self.completionLifetime
         )
     }
 
-    /// 失败态不保留旧配对码，短暂显示返回入口后自动清理。
+    /// 失败态不保留旧配对码；同样由系统在短暂提示后结束活动。
     func markFailed() {
-        updateResult(
+        endWithResult(
             state: .init(stage: .failed, code: "", title: "配对未完成", detail: "返回 Seal 查看原因"),
-            lifetime: Self.failureLifetime,
-            alertTitle: "配对未完成",
-            alertBody: "返回 Seal 查看原因"
+            lifetime: Self.failureLifetime
         )
     }
 
@@ -95,24 +92,21 @@ final class PairingLiveActivityController {
         }
     }
 
-    private func updateResult(
+    /// 把结束时刻提交给 ActivityKit。过去只用本地 `Task.sleep`，Seal 被挂起或杀掉时
+    /// 任务不会执行，导致完成卡片长期残留。
+    private func endWithResult(
         state: PairingActivityAttributes.ContentState,
-        lifetime: TimeInterval,
-        alertTitle: String,
-        alertBody: String
+        lifetime: TimeInterval
     ) {
+        dismissTask?.cancel()
+        dismissTask = nil
+        expiresAt = nil
         guard let activity else { return }
-        let expiry = Date().addingTimeInterval(lifetime)
-        scheduleDismiss(at: expiry)
+        self.activity = nil
+        let dismissalDate = Date().addingTimeInterval(lifetime)
+        let content = ActivityContent(state: state, staleDate: dismissalDate)
         Task {
-            await activity.update(
-                .init(state: state, staleDate: expiry),
-                alertConfiguration: AlertConfiguration(
-                    title: LocalizedStringResource(stringLiteral: alertTitle),
-                    body: LocalizedStringResource(stringLiteral: alertBody),
-                    sound: .default
-                )
-            )
+            await activity.end(content, dismissalPolicy: .after(dismissalDate))
         }
     }
 
