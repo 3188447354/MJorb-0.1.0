@@ -2,15 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 全部用 Xcode 构建变量，**不写字面量**（2026-10-16 修正）。
-	     照 `upstream/AltStore/AltWidget/Info.plist` 那份可用配置写 ——
-	     它是同一仓库里唯一实测能装配的 widget 扩展。
+	<!-- ⚠️ 这个文件**不是**最终的 Info.plist。
+	     XcodeGen 会照 `project.yml` 里 `targets.SealLiveActivity.info.properties`
+	     **重新生成**一份，本文件只提供下面这些键。
 
-	     上一版失败的原因：我曾把 CFBundleExecutable / CFBundleIdentifier /
-	     CFBundlePackageType 写成硬编码字面量，**并且额外手写了一个
-	     UIDeviceFamily 数组**。正常扩展的 UIDeviceFamily 由
-	     `TARGETED_DEVICE_FAMILY` 构建设置**注入**，手写会与它冲突，
-	     安装期即报 Invalid placeholder attributes。这里不再手写它。 -->
+	     ⇒ `NSExtension`（把本扩展声明成 widget 扩展的那个键）**必须写在 project.yml 里**。
+	       写在下面的 dict 中会被 XcodeGen 静默丢掉 —— 2026-10-16 实测：
+	       产物里 NSExtension 整个键不存在，导致安装被拒、且就算装上灵动岛也永不显示。
+	       那正是我此前三轮都修不好的原因。
+
+	     全部用 Xcode 构建变量，不写字面量：
+	     `CFBundleExecutable` / `CFBundleIdentifier` / `CFBundlePackageType` 这类值由
+	     构建设置决定，硬编码会和 `PRODUCT_NAME` / `TARGETED_DEVICE_FAMILY` 打架。
+	     也**不要**手写 `UIDeviceFamily` —— 它由 `TARGETED_DEVICE_FAMILY` 注入。 -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -29,12 +33,5 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
-	<!-- 只有声明成 widgetkit-extension，系统才会把它当作承载 Live Activity
-	     视图的扩展。写成别的会装得上、但灵动岛永远不出现，且没有任何报错。 -->
-	<key>NSExtension</key>
-	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.widgetkit-extension</string>
-	</dict>
 </dict>
 </plist>

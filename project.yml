@@ -183,6 +183,27 @@ targets:
       - path: Shared/PairingActivityAttributes.swift
     info:
       path: SealLiveActivity/Info.plist
+      properties:
+        # 🔴 **`NSExtension` 必须写在这里，不能只写在源文件里**（2026-10-16 实测定位）。
+        #
+        # XcodeGen 的 `info: path:` **不是**「在源文件基础上补齐」，而是照 `properties`
+        # **重新生成**一份 plist。源 `SealLiveActivity/Info.plist` 里写着的
+        # `NSExtension` 因此被整个丢掉 —— 直接把产物拆开用 `plistlib` 解析可见：
+        #     NSExtension 存在: False
+        #     UIDeviceFamily = [1]          ✓（由 TARGETED_DEVICE_FAMILY 注入）
+        #     CFBundlePackageType = XPC!    ✓
+        #     MinimumOSVersion = 17.4       ✓
+        # 其余键都在，**只有 `NSExtension` 没了**。
+        #
+        # 这一个原因解释了此前三轮失败的全部现象：
+        #   ① 系统不把它当扩展 ⇒ 安装期即被拒（`Invalid placeholder attributes`）；
+        #   ② 就算装上也**永远不会显示灵动岛** —— 没有 `NSExtensionPointIdentifier`，
+        #      系统根本不知道这是 widget 扩展，而且**没有任何报错**。
+        #
+        # ⚠️ 只有 `com.apple.widgetkit-extension` 才会被当作承载 Live Activity 的扩展。
+        #    写成别的会装得上但灵动岛不出现。
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         # ⚠️ 本 target 的配置**照 `upstream/AltStore/AltWidget` 抄** ——
