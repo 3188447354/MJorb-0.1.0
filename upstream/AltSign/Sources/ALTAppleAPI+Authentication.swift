@@ -659,6 +659,22 @@ private extension ALTAppleAPI {
                     verboseLog("[AltSign] sendAuthenticationRequest response Status: \(status)")
                     verboseLog("[AltSign] sendAuthenticationRequest response Data: \(dictionary)")
 
+                    // GSA 的 `Status` 是一组固定字段，逐项摊平打印。
+                    // 排障时它们区分得开三种完全不同的拒绝（2026-10-16 独立探测实测）：
+                    //   无设备证明   → hsc=200  ec=-80009  em="MID is invalid."
+                    //   设备证明不合格 → hsc=433  ec=-29004  em="…possible environment mismatch."
+                    //   真实凭据走到更深 → hsc=500  ec=-80045  em="This action cannot be completed at this time."
+                    // `hsc` 最有判别力：它说明请求走到了哪一道校验。
+                    verboseLog("""
+                    [AltSign] GSA Status 全字段:
+                      ec    = \(status["ec"].map { "\($0)" } ?? "nil")
+                      em    = \(status["em"].map { "\($0)" } ?? "nil")
+                      ed    = \(status["ed"].map { "\($0)" } ?? "nil")
+                      hsc   = \(status["hsc"].map { "\($0)" } ?? "nil")
+                      rsh   = \(status["rsh"].map { "\($0)" } ?? "nil")
+                      ptxid = \(status["ptxid"].map { "\($0)" } ?? "nil")
+                    """)
+
                     let errorCode = status["ec"] as? Int ?? 0
                     guard errorCode != 0 else { return completionHandler(.success(dictionary)) }
 

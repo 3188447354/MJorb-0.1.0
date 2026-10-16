@@ -122,8 +122,16 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     /// 解决不了本问题；这里做的是换成**另一个已知可用实现里真实存在的字面量**。
     ///
     /// 置回 `nil` 即恢复原行为（用服务器返回的身份），其余逻辑一概不动。
-    private static let experimentalSignInClientInfo: String? =
-        "<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+    ///
+    /// ⚠️ 2026-10-16 **已实测证伪，保持为 nil**。
+    /// 真机日志（build 48）显示身份确实换成了 `<Mac15,7> <macOS;27.0;26A5378j>`
+    /// 且 ADI 重新 provisioning，Apple 仍返回 `-80045 / hsc=500`。
+    /// 另外用独立探测（不经 App、直接向 `GsService2` 发同样的 init 请求）跑过身份矩阵：
+    /// `Mac15,7` / `MacBookPro13,2` / `MacBookPro18,3` / Windows PC 四条 `akd` 身份
+    /// **全部得到同一个 `-80009 MID is invalid`**，行为完全一致；只有 `dt.Xcode` 与
+    /// Android 会被边缘以 503 拒绝。⇒ Apple 只区分 `akd` vs Xcode/Android，
+    /// **不区分具体机型或系统版本**，所以「换身份」这条路是死的。
+    private static let experimentalSignInClientInfo: String? = nil
 
     func fetch() async throws -> ALTAnisetteData {
         let identity = try await loadIdentity()
