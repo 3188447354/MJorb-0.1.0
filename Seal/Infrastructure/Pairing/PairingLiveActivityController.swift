@@ -14,6 +14,7 @@ final class PairingLiveActivityController {
     private var dismissTask: Task<Void, Never>?
 
     private static let preparationLifetime: TimeInterval = 60
+    private static let codeLifetime: TimeInterval = 180
     private static let completionLifetime: TimeInterval = 6
     private static let failureLifetime: TimeInterval = 12
 
@@ -48,7 +49,7 @@ final class PairingLiveActivityController {
               let activity else {
             return false
         }
-        let expiry = Date().addingTimeInterval(Self.resultLifetime)
+        let expiry = Date().addingTimeInterval(Self.codeLifetime)
         scheduleDismiss(at: expiry)
         Task {
             await activity.update(.init(state: Self.codeState(code), staleDate: expiry))
