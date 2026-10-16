@@ -347,7 +347,7 @@ struct SigningWorkspace: Sendable {
         return expandedSize
     }
 
-    /// 解压**之前**按「解压后」体积判可用空间（2026-09-18）。
+    /// 解压**之前**按「解压后」体积判可用空间（2026-09-18，2026-10-16 修正）。
     ///
     /// 原先只有签名服务里那道 `IPA × 4 + 200MB`，用的是**压缩**体积。它对抖音这种
     /// 「压缩比 ≈1.9×」的包偏保守（780MB ⇒ 门槛 3.32GB，实测峰值 ≈3.0GB）；
@@ -357,16 +357,31 @@ struct SigningWorkspace: Sendable {
     ///
     /// 这里 `validate(entries)` 已经把解压后总量算出来了（它本来只用于 8GB 安全上限），
     /// 顺手拿它判一次真实空间。**必须排在真正解压之前**，否则就变成「解压到一半没空间」。
-    /// 需要同时容纳：解压产物 + 输出 IPA（≈原包）+ 原包 + 200MB 余量。
     ///
-    /// ⚠️ **只留一份公式**：`prepare` 里的检查与签名服务的**前置**检查都用它 ——
-    /// 同一条规则两份实现会漂移（本仓已踩过 6 次）。
+    /// ## 峰值的真实构成（2026-10-16 按真机日志修正）
+    ///
+    /// 打包时同时存在的只有三样：
+    ///   1. 解压产物 `expanded`（必须在，边读边打包）；
+    ///   2. **输出包 ≈ `ipa`**（压缩后写入）；
+    ///   3. 原包 `ipa`（在 Documents/Caches，**不在工作区内**，但同样占设备空闲空间）。
+    ///
+    /// ⇒ `expanded + ipa + ipa`。
+    ///
+    /// ⚠️ 旧实现是 `expanded + 2 × ipa + 200MB` —— **把 `ipa` 算了两遍**，
+    /// 而输出的那一份是**压缩**体积（本文件 `compressionMethod(forEntry:)` 对已压过的
+    /// 载荷用 store、其余 deflate），不是解压体积。真机证据：日志报「约需 3.2GB」，
+    /// 而实际已用约 2.3GB。
+    ///
+    /// 这个高估有真实代价：手机剩余空间介于「真实峰值」与「高估门槛」之间时，
+    /// 签名会被直接拒绝（`SEAL-SIGN-405` / `SEAL-SIGN-406`），
+    /// 用户清理到远超所需的程度才能签 —— 而免费账号常见的场景恰恰是快满的机器。
+    ///
+    /// 余量从 200MB 提到 300MB：少算的那一份 `ipa` 是压缩体积，与真实输出之间的
+    /// 偏差有界，300MB 足够覆盖元数据重写（Info.plist / 签名块）带来的膨胀。
     static func requiredTemporarySpace(expandedBytes: UInt64, ipaBytes: UInt64) -> UInt64 {
-        let (outputAndOriginal, outputOverflow) = ipaBytes.multipliedReportingOverflow(by: 2)
-        guard outputOverflow == false else { return expandedBytes }
-        let (required, requiredOverflow) = expandedBytes.addingReportingOverflow(outputAndOriginal)
+        let (required, requiredOverflow) = expandedBytes.addingReportingOverflow(ipaBytes)
         guard requiredOverflow == false else { return expandedBytes }
-        let (total, totalOverflow) = required.addingReportingOverflow(200 * 1024 * 1024)
+        let (total, totalOverflow) = required.addingReportingOverflow(300 * 1024 * 1024)
         return totalOverflow ? required : total
     }
 
@@ -410,7 +425,7 @@ struct SigningWorkspace: Sendable {
         }
         throw Self.signingFailure(
             reason: "解压这个 IPA 需要约 \(gigabytes(total)) 空间（按**解压后**体积算："
-                + "解压产物 \(gigabytes(expandedBytes))，其余是输出包 / 原包 / 200MB 余量），"
+                + "解压产物 \(gigabytes(expandedBytes))，加一份压缩输出包与原包，另留 300MB 余量），"
                 + "当前剩余 \(gigabytes(UInt64(freeBytes)))。",
             code: "SEAL-SIGN-406"
         )

@@ -4246,7 +4246,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 544,
+          "line": 559,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4267,7 +4267,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 579,
+          "line": 594,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4288,7 +4288,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 589,
+          "line": 604,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4309,7 +4309,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 600,
+          "line": 615,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -12217,7 +12217,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 456,
+          "line": 471,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -12238,7 +12238,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 477,
+          "line": 492,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -12259,7 +12259,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 617,
+          "line": 632,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -12275,7 +12275,7 @@
     "SEAL-SIGN-405": {
       "auditStatus": "reference_only",
       "identifierKinds": {
-        "standard_error_code": 1
+        "standard_error_code": 2
       },
       "locations": [
         {
@@ -12286,22 +12286,41 @@
           "semanticFields": [],
           "semanticValues": {},
           "source": "code: \"SEAL-SIGN-405\""
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 376,
+          "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
+          "role": "comment_reference",
+          "semanticFields": [],
+          "semanticValues": {},
+          "source": "/// 签名会被直接拒绝（`SEAL-SIGN-405` / `SEAL-SIGN-406`），"
         }
       ],
-      "occurrenceCount": 1,
+      "occurrenceCount": 2,
       "roles": {
+        "comment_reference": 1,
         "failure_emission_candidate": 1
       }
     },
     "SEAL-SIGN-406": {
       "auditStatus": "reference_only",
       "identifierKinds": {
-        "standard_error_code": 1
+        "standard_error_code": 2
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 415,
+          "line": 376,
+          "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
+          "role": "comment_reference",
+          "semanticFields": [],
+          "semanticValues": {},
+          "source": "/// 签名会被直接拒绝（`SEAL-SIGN-405` / `SEAL-SIGN-406`），"
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 430,
           "path": "Seal/Infrastructure/Signing/SigningWorkspace.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -12309,8 +12328,9 @@
           "source": "code: \"SEAL-SIGN-406\""
         }
       ],
-      "occurrenceCount": 1,
+      "occurrenceCount": 2,
       "roles": {
+        "comment_reference": 1,
         "failure_emission_candidate": 1
       }
     },
@@ -13302,11 +13322,11 @@
     "identifierKinds": {
       "diagnostic_tag": 72,
       "legacy_error_identifier": 1,
-      "standard_error_code": 724
+      "standard_error_code": 726
     },
-    "occurrences": 797,
+    "occurrences": 799,
     "roles": {
-      "comment_reference": 141,
+      "comment_reference": 143,
       "executable_reference": 106,
       "failure_emission_candidate": 207,
       "internal_event_or_log": 195,
