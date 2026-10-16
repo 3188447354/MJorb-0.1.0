@@ -40,6 +40,21 @@ struct BundleIDMapper: Sendable {
     ) -> String {
         let originalLower = original.lowercased()
         let mainLower = originalMainBundleID.lowercased()
+
+        // 🔴 **幂等保护**（2026-10-16 真机实测）：
+        // 扩展的 Bundle ID 可能**已经是映射后的形态**，此时绝不能再套一次。
+        //
+        // 实测证据：主 App 得到 `com.mjorb.seal.3432ZHJUF9`（正确），
+        // 扩展却被注册成 `com.mjorb.seal.3432ZHJUF9.3432ZHJUF9.LiveActivity`
+        // —— 团队后缀出现了两次。那一个多余的 App ID 既浪费免费账号每周 10 个的名额，
+        // 又让签名产物与运行中的 Seal 结构对不上 ⇒ 自更新被 `SEAL-SELF-106` 拦下。
+        //
+        // 判据：原始 ID 以「映射后的主 ID」开头 ⇒ 它已经是映射过的形态，原样返回。
+        if originalLower == mappedMainBundleID.lowercased()
+            || originalLower.hasPrefix(mappedMainBundleID.lowercased() + ".") {
+            return original
+        }
+
         if originalLower.hasPrefix(mainLower + ".") {
             let suffixIndex = original.index(
                 original.startIndex,

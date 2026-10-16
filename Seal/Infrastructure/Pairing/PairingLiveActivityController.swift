@@ -3,109 +3,133 @@ import Foundation
 
 /// 把配对码推到灵动岛 / 锁屏。
 ///
-/// 三条来自 Apple 的硬约束，写在这里免得以后被"优化"掉：
+/// ## 生命周期（2026-10-16 按真机反馈重做）
 ///
-/// 1. **`Activity.request` 必须在前台调用**。系统不给后台启动 Live Activity 的机会，
-///    所以本类型要在「配对服务刚起来、App 还在前台」的那一刻就 `begin`，
-///    而不是等系统给出配对码时才首次请求。
-/// 2. **`AlertConfiguration` 才是"打开灵动岛"的开关**。只 `request` 不带它，
-///    活动会安静地待在锁屏，灵动岛不展开 —— 而"输码时能一直看见"正是这个功能的全部意义。
-/// 3. **后台 `update` 依赖 App 仍活着**。Seal 的后台保活音频（`BackgroundKeepAliveService`）
-///    让进程在切到「设置」后继续运行，更新才发得出去；保活一旦停，码就不会再变。
+/// 前一版是「配对一开始就建活动，配对成功后一直挂着」，真机表现是：
+/// 配对完了灵动岛不消失、且活动远远早于配对码出现就存在了。现在改成**跟着配对码走**：
+///
+/// ```
+/// .showingCode   → 创建 + 展开，显示配对码        ← 与 App 内配对码同一时刻
+/// .completed     → 改成「配对成功，点此返回 Seal」，**保留**
+/// 用户点回 Seal   → finish() 收掉
+/// 超时兜底        → finish() 收掉
+/// ```
+///
+/// ⚠️ **为什么 `begin` 放在 `.showingCode` 而不是配对开始**：
+/// `Activity.request` 只有 App 在前台才成功，而 `.showingCode` 恰恰是用户正盯着
+/// 配对页、准备去「设置」输码的那一刻 —— 既满足前台要求，又让灵动岛与 App 内的码
+/// **同时出现**，不会先挂一个空的「正在准备」。
+///
+/// ⚠️ **为什么配对成功后不立刻 `end`**：那时用户还在「设置」里，需要看到结果并有一个
+/// 明确的返回入口。Apple 也不允许「点了就跳转」—— 灵动岛点击只能启动 App，
+/// 所以文案要说清「点此返回」。用户真的回来了（`RootTabView` 收到 `seal://pairing`）
+/// 才 `end`。
+///
+/// ⚠️ **`AlertConfiguration` 是展开灵动岛的开关**：只在 `update` 时带它，创建时不带，
+/// 灵动岛就不会主动展开。这里创建（`.showingCode`）与「配对成功」两次都带。
 @MainActor
 final class PairingLiveActivityController {
 
-    /// 只有一枚活动；重复 `begin` 会先收掉旧的，避免灵动岛上叠两个码。
     private var activity: Activity<PairingActivityAttributes>?
 
-    /// Live Activity 是否可用（用户可能把 App 的实时活动总开关关了）。
+    /// 配对流程结束后，如果用户始终没点回来，多久自动收掉。
+    ///
+    /// 必须有这个兜底：Live Activity 默认会在锁屏/灵动岛留 8 小时，
+    /// 而一个「配对成功」的卡片挂 8 小时毫无意义，还会一直占着灵动岛。
+    private static let autoDismissAfterSeconds: TimeInterval = 180
+    private var autoDismissTask: Task<Void, Never>?
+
     var isEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
-    /// 服务起来时调用。**必须在前台**，见类型注释第 1 条。
-    func begin(deviceName: String) {
+    /// 配对码即将显示时调用。**必须在前台**（用户正看着配对页）。
+    func begin(deviceName: String, code: String) {
         guard isEnabled else { return }
-        // 已经有一枚就先结束，保证同一时刻只有一个码。
-        if let existing = activity {
-            Task { await existing.end(nil, dismissalPolicy: .immediate) }
-            activity = existing
-        } else {
-            activity = Activity<PairingActivityAttributes>.activities.first
+        autoDismissTask?.cancel()
+        autoDismissTask = nil
+
+        // 同一时刻只留一枚活动，避免灵动岛里叠两个码。
+        if let stale = Activity<PairingActivityAttributes>.activities.first {
+            activity = stale
+            Task { await stale.end(nil, dismissalPolicy: .immediate) }
         }
-        guard activity == nil else { return }
+        activity = nil
 
         let attributes = PairingActivityAttributes(deviceName: deviceName)
-        let state = PairingActivityAttributes.ContentState(
-            stage: .waiting,
-            code: "",
-            title: "正在准备配对",
-            detail: "请在 Seal 中保持此页面打开"
-        )
+        let state = Self.codeState(code)
         do {
             activity = try Activity.request(
                 attributes: attributes,
                 content: .init(state: state, staleDate: nil),
-                pushType: nil
+                pushType: nil,
+                // 创建时就带 alert ⇒ 灵动岛立刻展开并把码摆出来，
+                // 用户不必先点一下。
+                alertConfiguration: Self.codeAlert(code)
             )
+            scheduleAutoDismiss()
         } catch {
-            // 失败不是致命问题：App 内仍然显示配对码，只是没有灵动岛镜像。
+            // 不致命：App 内仍然显示配对码，只是没有灵动岛镜像。
             activity = nil
         }
     }
 
-    /// 系统给出配对码时调用。
-    func presentCode(_ code: String) {
-        update(
-            stage: .code,
-            code: code,
-            title: "配对码",
-            detail: "在系统设置中核对此配对码",
-            alertTitle: "配对码 \(code)",
-            alertBody: "在系统设置中核对后确认"
-        )
-    }
-
-    /// 配对成功时调用。
+    /// 配对成功。**不结束活动** —— 用户还在「设置」里，需要一个返回入口。
     func markPaired() {
-        update(
+        guard let activity else { return }
+        let state = PairingActivityAttributes.ContentState(
             stage: .paired,
             code: "",
-            title: "已配对",
-            detail: "可以返回 Seal 继续",
-            alertTitle: "已配对",
-            alertBody: "可以返回 Seal 继续"
+            title: "配对成功",
+            detail: "点此返回 Seal"
         )
+        Task {
+            await activity.update(
+                .init(state: state, staleDate: nil),
+                alertConfiguration: AlertConfiguration(
+                    title: LocalizedStringResource(stringLiteral: "配对成功"),
+                    body: LocalizedStringResource(stringLiteral: "点此返回 Seal"),
+                    sound: .default
+                )
+            )
+        }
     }
 
-    /// 配对流程结束（无论成败）时调用，把灵动岛收掉。
+    /// 收掉活动。三处会调用：用户点回 Seal、配对失败、超时兜底。
     func finish() {
+        autoDismissTask?.cancel()
+        autoDismissTask = nil
         guard let activity else { return }
         self.activity = nil
         Task { await activity.end(nil, dismissalPolicy: .immediate) }
     }
 
-    private func update(
-        stage: PairingActivityAttributes.Stage,
-        code: String,
-        title: String,
-        detail: String,
-        alertTitle: String,
-        alertBody: String
-    ) {
-        guard let activity else { return }
-        let state = PairingActivityAttributes.ContentState(
-            stage: stage,
+    /// 配对流程中途失败/取消时也要收掉，否则灵动岛上会留一个过期的码。
+    func abandon() {
+        finish()
+    }
+
+    private func scheduleAutoDismiss() {
+        autoDismissTask?.cancel()
+        autoDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.autoDismissAfterSeconds * 1_000_000_000))
+            guard Task.isCancelled == false else { return }
+            await MainActor.run { self?.finish() }
+        }
+    }
+
+    private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
+        PairingActivityAttributes.ContentState(
+            stage: .code,
             code: code,
-            title: title,
-            detail: detail
+            title: "配对码",
+            detail: "在「设置」中核对并确认"
         )
-        // 用 `.sound` 之外的缺省选项：配对是用户正盯着的操作，不需要额外提示音。
-        let alert = AlertConfiguration(
-            title: LocalizedStringResource(stringLiteral: alertTitle),
-            body: LocalizedStringResource(stringLiteral: alertBody),
+    }
+
+    private static func codeAlert(_ code: String) -> AlertConfiguration {
+        AlertConfiguration(
+            title: LocalizedStringResource(stringLiteral: "配对码 \(code)"),
+            body: LocalizedStringResource(stringLiteral: "在「设置」中核对并确认"),
             sound: .default
         )
-        Task {
-            await activity.update(.init(state: state, staleDate: nil), alertConfiguration: alert)
-        }
     }
 }

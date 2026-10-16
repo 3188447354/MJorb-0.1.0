@@ -115,11 +115,14 @@ final class AppleAccountClient {
         return formatter
     }()
 
-    /// Apple 返回 503（服务暂时不可用）后的退避时长。
+    /// Apple 返回 503（服务暂时不可用）后的退避档位。
     ///
-    /// 取 5 秒而不是更短：真机实测 `o=apptokens` 连续 503 时，紧接着重试仍然 503；
-    /// 5 秒足够让 Apple 那一侧把请求排完，又不会让用户等得以为卡住。
-    private static let serviceUnavailableBackoffSeconds: TimeInterval = 5
+    /// 真机实测（2026-10-16）：只退避一次、5 秒**不够** —— 用户反馈「登上的概率很小」，
+    /// 而每次失败都逼用户手动重试，手动重试又会加深 Apple 的限流，形成正反馈。
+    ///
+    /// ⇒ 改成三档递增：约 3 + 8 + 15 秒，累计约 26 秒。这样一次「添加账号」能自己吃掉
+    /// 短暂的 503 抖动，用户不必反复点。取三档而不是更多，是因为再长用户会以为卡死。
+    private static let serviceUnavailableBackoffSeconds: [TimeInterval] = [3, 8, 15]
 
     private nonisolated static func describeError(_ error: Error) -> String {
         if let importFailure = error as? ImportFailure {
@@ -151,29 +154,54 @@ final class AppleAccountClient {
         _ label: String,
         _ operation: @escaping () async throws -> T
     ) async throws -> T {
-        do {
-            return try await operation()
-        } catch {
-            guard AppleServiceFailurePolicy.isRateLimited(error) else { throw error }
-            // 只对**瞬时性**错误退避重试：503（服务暂时不可用）。参数错误、鉴权失败
-            // 这类重试多少次都一样，重试只会拖慢用户并加深 Apple 的限流。
-            //
-            // 记一条日志是刻意的：否则「重试成功」与「一次就成功」在日志里长得一样，
-            // 下次真机排障就分不清 503 到底有多频繁、退避是否真的有效。
-            await trace("\(label)：Apple 返回瞬时不可用（503），退避 \(Self.portalTransientRetryBackoffSeconds) 秒后重试一次", level: .warning)
-            try? await Task.sleep(nanoseconds: UInt64(Self.portalTransientRetryBackoffSeconds * 1_000_000_000))
-            try Task.checkCancellation()
-            let result = try await operation()
-            await trace("\(label)：503 退避后重试成功")
-            return result
-        }
+        try await Self.retryingServiceUnavailable(
+            attempts: Self.portalTransientRetryAttempts,
+            onRetry: { attempt, delay in
+                await trace("\(label)：Apple 返回瞬时不可用（503），第 \(attempt) 次退避 \(Int(delay)) 秒后重试", level: .warning)
+            },
+            operation: {
+                try await operation()
+            }
+        )
     }
 
-    /// 门户瞬时错误（503）的重试退避时长。
+    /// 「Apple 返回瞬时 5xx ⇒ 退避后重试」的**唯一实现**。
     ///
-    /// 取 5 秒：真机实测连续重试时 503 会持续，说明 Apple 那一侧需要时间把请求排完；
-    /// 更短等于没退避，更长会让用户以为卡死。
-    private static let portalTransientRetryBackoffSeconds: TimeInterval = 5
+    /// 登录链（SRP）与门户链（取团队、证书、描述文件）都走这里。
+    /// 集中一处是刻意的：本文件此前正是「登录有重试、`fetchTeams` 走一个纯透传函数
+    /// 因而零重试」的半修状态 —— 失败点会在两条链之间游走，每修一处就冒出下一处。
+    ///
+    /// 参数 `operation` 每次重试都**重新执行**，因为 SRP 会话是一次性的：
+    /// 拿旧 A2k/c 重发会被 Apple 拒，必须完整重来一次。
+    private static func retryingServiceUnavailable<T>(
+        attempts: Int,
+        onRetry: @escaping (Int, TimeInterval) async -> Void,
+        operation: @escaping () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        for attempt in 0...max(attempts, 0) {
+            do {
+                return try await operation()
+            } catch {
+                guard AppleServiceFailurePolicy.isRateLimited(error) else { throw error }
+                lastError = error
+                guard attempt < attempts else { break }
+                let delay = serviceUnavailableBackoffSeconds[
+                    min(attempt, serviceUnavailableBackoffSeconds.count - 1)
+                ]
+                await onRetry(attempt + 1, delay)
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try Task.checkCancellation()
+            }
+        }
+        throw lastError ?? AppleServiceFailurePolicy.rateLimitedFailure()
+    }
+
+    /// 门户请求的重试**次数**（档位复用 `serviceUnavailableBackoffSeconds`）。
+    ///
+    /// 比登录少一次：门户请求在登录成功之后，那时账号已经可用，多等不如让用户
+    /// 早点看到结果并手动重试。
+    private static let portalTransientRetryAttempts = 2
 
     /// 给异步操作加超时，超时后抛出超时错误。
     /// 认证可能卡在无法协作取消的调用里（本地 ADI 模拟、AltSign 内部回调），
@@ -330,17 +358,29 @@ final class AppleAccountClient {
                     // 所以这里**绝不能**走 -80045 那条「作废 ADI 重新 provisioning」——
                     // 那改的是 anisette 环境，治不了服务端 503，只会每次失败都白签一份 ADI。
                     //
-                    // 503 的语义就是「稍后再试」，所以退避一次再重发同一个请求。
-                    // 只重试一次：连续猛打只会让 Apple 那边更久不恢复。
-                    await trace("SRP 登录失败：Apple 返回 503（服务暂时不可用），退避 \(Self.serviceUnavailableBackoffSeconds) 秒后重试一次", level: .warning)
-                    try? await Task.sleep(nanoseconds: UInt64(Self.serviceUnavailableBackoffSeconds * 1_000_000_000))
-                    try Task.checkCancellation()
-                    auth = try await self.authenticate(
-                        email: email,
-                        password: password,
-                        anisetteData: anisetteData,
-                        verificationCode: verificationCode
-                    ).value
+                    // 503 的语义就是「稍后再试」，所以退避后重发同一个请求。
+                    //
+                    // ⚠️ 用**多档递增**退避，而不是只等一次（2026-10-16 按真机反馈改）：
+                    // 用户反馈「登上的概率很小」，而每次失败都逼他手动重试，
+                    // 手动重试又会加深 Apple 的限流 —— 那是正反馈，越试越糟。
+                    // 让这一层自己把短暂抖动吃掉，用户才不必反复点。
+                    //
+                    // 每一次重试都必须是**完整的一次登录**：SRP 会话是一次性的，
+                    // 拿旧的 A2k/c 重发会被 Apple 拒。
+                    auth = try await Self.retryingServiceUnavailable(
+                        attempts: Self.serviceUnavailableBackoffSeconds.count,
+                        onRetry: { attempt, delay in
+                            await trace("Apple 返回 503（服务暂时不可用），第 \(attempt)/\(Self.serviceUnavailableBackoffSeconds.count) 次退避 \(Int(delay)) 秒后重试", level: .warning)
+                        },
+                        operation: {
+                            try await self.authenticate(
+                                email: email,
+                                password: password,
+                                anisetteData: anisetteData,
+                                verificationCode: verificationCode
+                            ).value
+                        }
+                    )
                     await trace("503 退避后 SRP 登录成功")
                 } else {
                     // 到这里的错误与「SIM 同步」无关（503 已在上一条分支拦下），

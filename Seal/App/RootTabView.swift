@@ -152,8 +152,10 @@ struct RootTabView: View {
     private func openPairingSettings() {
         selection = .settings
         settingsViewModel.requestedRoute = .pairing
-        // 人已经回到 App，浮在系统设置上方的配对码横幅没有存在意义了。
-        Task { await PairingCodeNotification.clear() }
+        // 人已经回到 App：
+        //  - 浮在系统设置上方的配对码横幅没有存在意义了；
+        //  - **灵动岛上那枚「配对成功」也要收掉** —— 这是它消失的唯一正常路径。
+        settingsViewModel.dismissPairingPresentation()
     }
 
     private func installSelfUpdate(_ localURL: URL) {
