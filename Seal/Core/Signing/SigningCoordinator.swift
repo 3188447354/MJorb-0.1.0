@@ -1276,8 +1276,9 @@ actor SigningCoordinator {
         )
         let apps = (try? await appStore.fetchAll()) ?? []
         let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
-        guard runningIdentity?.isComplete == true,
-              runningIdentity?.mainTarget?.signerSerialNumber != nil else {
+        guard let runningIdentity,
+              runningIdentity.isComplete,
+              runningIdentity.mainTarget?.signerSerialNumber != nil else {
             let summary = runningIdentity?.readFailureSummary ?? "installedIdentity 读取失败"
             try? await logStore?.append(
                 category: .signing,
