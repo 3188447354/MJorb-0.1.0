@@ -187,6 +187,7 @@ struct ImportConfirmationView: View {
         }
     }
 
+    @ViewBuilder
     private var summaryCard: some View {
         if isVersionUnrecognized {
             unrecognizedVersionSummaryCard
@@ -359,8 +360,12 @@ struct ImportConfirmationView: View {
             return "同版本降级 · v\(version)"
         case .unreadableVersion:
             return "无法比较版本变化"
-        default:
-            return "v\(existing.version) → v\(draft.parsedIPA.version)"
+        case .upgrade(let oldVersion, let newVersion), .downgrade(let oldVersion, let newVersion):
+            return "v\(oldVersion) → v\(newVersion)"
+        case .alreadyLatest(let version):
+            return "已是最新版 · v\(version)"
+        case .newApp:
+            return "v\(draft.parsedIPA.version)"
         }
     }
 
