@@ -9,6 +9,7 @@ struct SigningProgressView: View {
     /// Seal 自续签进入安装阶段后置 true：界面先做一次可感知的淡出转场并改文案，
     /// 再由 Seal 触发系统级回主屏，避免「静止数秒后瞬间消失」被误读成闪退。
     @State private var isReturningHome = false
+    @State private var isCertificatePickerPresented = false
 
     var body: some View {
         // footer 常显：运行中要给出「取消」退出通道。旧实现运行中 footer 为空
@@ -22,7 +23,11 @@ struct SigningProgressView: View {
 
                 statusContent
 
-                if let session {
+                if let session,
+                   case .failed(let failure) = session.status,
+                   ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code) {
+                    EmptyView()
+                } else if let session {
                     signingRuntimeCard(session)
                 }
             }
@@ -31,6 +36,11 @@ struct SigningProgressView: View {
             actions
         }
         .interactiveDismissDisabled(isRunning)
+        .sheet(isPresented: $isCertificatePickerPresented) {
+            if let session {
+                CertificateSacrificePickerView(viewModel: viewModel, session: session)
+            }
+        }
         // Seal 自续签=覆盖安装运行中的自己：进入 .installing（上传完成）后自动切到后台，
         // 让 iOS 用新版替换旧进程，无需人手按 Home；安装续由重新打开的新进程对账确认。
         //
@@ -273,6 +283,11 @@ struct SigningProgressView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(successTitle)
                     .font(.system(size: 16, weight: .semibold))
+                if isPendingUpdate {
+                    Text("\(installed.displayName) 已更新至 v\(installed.version)")
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(Color.sealTextSecondary)
+                }
                 Text(expiryText(for: installed))
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(Color.sealTextSecondary)
@@ -283,33 +298,104 @@ struct SigningProgressView: View {
         .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
+    @ViewBuilder
     private func failureContent(_ failure: ImportFailure) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(Color.sealDanger)
-                Text(failure.title)
-                    .font(.system(size: 16, weight: .semibold))
-                Spacer()
+        if failure.code == "SEAL-CERT-204e" {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.system(size: 21, weight: .medium))
+                        .foregroundStyle(Color.sealDanger)
+                        .padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("开发证书名额已满")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+                        Text("Apple 暂时无法创建新证书。撤销一张旧证书后，可重新尝试签名。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.sealTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
             }
-            Text(userFacingReason(failure))
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            // Only show recovery hint when it differs from primary action button
-            let recovery = recoveryText(failure)
-            if recovery.isEmpty == false, recovery != primaryRecoveryTitle(failure) {
-                Text(recovery)
+            .padding(14)
+            .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
+            }
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.sealAccent)
+                    .foregroundStyle(Color.sealWarning)
+                Text("撤销可能影响使用该证书签名的应用，继续前可查看影响范围。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.sealTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .padding(14)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealDanger.opacity(0.18), lineWidth: 0.8)
+            .padding(.horizontal, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else if failure.code == "SEAL-CERT-204g" {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("证书列表已变化")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("所选证书当前已不满足撤销条件，本次没有撤销任何证书。请重新读取列表。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.sealTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
+            }
+        } else if failure.code == "SEAL-CERT-204f" {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("撤销结果未确认")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text(userFacingReason(failure))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.sealTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color.sealDanger)
+                    Text(failure.title)
+                        .font(.system(size: 16, weight: .semibold))
+                    Spacer()
+                }
+                Text(userFacingReason(failure))
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(Color.sealTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Only show recovery hint when it differs from primary action button
+                let recovery = recoveryText(failure)
+                if recovery.isEmpty == false, recovery != primaryRecoveryTitle(failure) {
+                    Text(recovery)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.sealAccent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(14)
+            .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.sealDanger.opacity(0.18), lineWidth: 0.8)
+            }
         }
     }
 
@@ -328,7 +414,20 @@ struct SigningProgressView: View {
                 .sealPrimaryAction(cornerRadius: 14)
 
         case .failed(let failure):
-            if failure.code == "SEAL-APPID-DEVICELIMIT" {
+            if ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code) {
+                Button(failure.code == "SEAL-CERT-204e" ? "查看证书并继续" : "重新读取证书") {
+                    isCertificatePickerPresented = true
+                }
+                .sealPrimaryAction(cornerRadius: 14)
+                Button("关闭") {
+                    viewModel.dismissSigningResult()
+                    dismiss()
+                }
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(Color.sealTextSecondary)
+                .frame(maxWidth: .infinity)
+                .frame(height: 36)
+            } else if failure.code == "SEAL-APPID-DEVICELIMIT" {
                 VStack(spacing: 10) {
                     Button("已处理数量上限，继续安装") {
                         viewModel.continueBypassingDeviceLimit()
@@ -509,11 +608,18 @@ struct SigningProgressView: View {
     private var session: SigningSession? { viewModel.signingSession }
     private var isRenewal: Bool { session?.app.belongsInInstalledList == true }
     private var sealRenewal: Bool { session?.app.isSeal == true }
+    private var isPendingUpdate: Bool { session?.app.replacesInstalledAppID != nil }
 
     private var title: String {
         switch session?.status {
+        case .running where isPendingUpdate: "正在更新"
+        case .succeeded where isPendingUpdate: "更新完成"
+        case .failed where isPendingUpdate: "更新未完成"
         case .running: isRenewal ? "正在续签" : "正在签名"
         case .succeeded: isRenewal ? "续签完成" : "签名完成"
+        case .failed(let failure) where failure.code == "SEAL-CERT-204e": "签名未完成"
+        case .failed(let failure) where failure.code == "SEAL-CERT-204g": "证书状态已变化"
+        case .failed(let failure) where failure.code == "SEAL-CERT-204f": "撤销结果待确认"
         case .failed: isRenewal ? "续签失败" : "签名失败"
         case nil: "签名"
         }
@@ -526,6 +632,7 @@ struct SigningProgressView: View {
 
     private var successTitle: String {
         guard session != nil else { return "签名完成" }
+        if isPendingUpdate { return "更新完成" }
         if let renewalExecutionPath = session?.renewalExecutionPath {
             return renewalExecutionPath.successTitle
         }
@@ -549,7 +656,9 @@ struct SigningProgressView: View {
     private func primaryRecoveryTitle(_ failure: ImportFailure) -> String {
         if let title = semanticPrimaryRecoveryTitle(failure) { return title }
         if isNonRetryableFailure(failure) { return "知道了" }
-        if failure.code == "SEAL-CERT-204e" { return "撤销并继续签名" }
+        if failure.code == "SEAL-CERT-204e" { return "查看证书并继续" }
+        if failure.code == "SEAL-CERT-204g" { return "重新读取证书" }
+        if failure.code == "SEAL-CERT-204f" { return "重新读取证书" }
         if failure.code.hasPrefix("SEAL-NET-") { return "重新签名" }
         if isResignRequired(failure) { return "重新签名" }
         if isInstallChannelFailure(failure) { return "重新安装" }
@@ -564,6 +673,10 @@ struct SigningProgressView: View {
     }
 
     private func performPrimaryRecovery(_ failure: ImportFailure) {
+        if ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code) {
+            isCertificatePickerPresented = true
+            return
+        }
         if let route = InstallFailureSettingsRoute.route(for: failure) {
             openSettings(route)
             return
@@ -573,8 +686,7 @@ struct SigningProgressView: View {
             viewModel.dismissSigningResult()
             dismiss()
         } else if failure.code == "SEAL-CERT-204e" {
-            // 一键盘活：撤销无钥匙证书 → 自动重试本次签名 → 自动重签受影响已装 App。
-            viewModel.confirmCertificateSacrificeAndRetry()
+            isCertificatePickerPresented = true
         } else if failure.code.hasPrefix("SEAL-NET-") {
             viewModel.retrySigning()
         } else if isResignRequired(failure) {

@@ -32,6 +32,33 @@
 > 复盘记录：现象 → 根因 → 修复 → 涉及文件 → 验证状态。新条目追加到「历史记录」顶部（最新在前）。
 > 动手前先查阅下方「常犯坑位」，避免同类问题重复发生。
 
+## 2026-10-17 Seal 与 IPA 更新链路文案和状态统一
+
+- **现象**：更新流程把“检查失败”与“已是最新版”合并；下载/校验阶段的失败文案过度归因于网络；Seal 自更新与普通 IPA 覆盖确认共用一套冗余内容；长内容或小屏会挤压操作区。
+- **修复**：检查结果区分不可用、最新版、已有更新和已提醒版本；统一启动/手动检查及延后提醒行为；更新抽屉固定操作区、滚动内容，明确展示版本差异、下载/校验/失败/重试状态；Seal 自更新确认精简并复用在线下载与“+”导入后的签名流程；普通 IPA 仍走通用覆盖确认并展示 Bundle ID；数字版本按分段比较，无法解析时不猜升降级；更新包删除需确认，更新失败保留待更新包。
+- **涉及文件**：`UpdateChecker.swift`、`Version.swift`、`UpdateNoticeView.swift`、`UpdateIPADownloader.swift`、`AboutView.swift`、`RootTabView.swift`、`ImportWorkflow.swift`、`ImportDraft.swift`、`ImportConfirmationView.swift`、`AppSigningSheet.swift`、`SigningProgressView.swift`、`AppsRootView.swift`、`VersionTests.swift`、`RELEASE_NOTES.md`。
+- **验证状态**：本机 Windows 无 Swift 编译器，尚未编译；待 CI 编译与 Swift 回归测试验证。尚未推送 CI。
+
+---
+
+## 2026-10-17 扩展描述文件按目标混合分配
+
+- **现象**：只要一个扩展能力超出主 App，整组扩展都会各自申请 App ID/profile，兼容扩展也白占名额；续签无法准确还原“哪些扩展真正独立”。
+- **根因**：原来的策略是整包二选一（全共享 / 全独立），无法表达用户确认的“兼容扩展共享，单个不兼容扩展单独处理”。
+- **修复**：增加混合策略；每个不兼容或能力读取失败的扩展独立申请，其余继续使用主 profile。沿用 `signingTargets` 中每目标 profile UUID 还原实际分配；更新门户映射、签名嵌入、目标级校验、Apple 能力降级的影响范围和 profile-only 续签。补充多扩展分配与降级范围单测。
+- **涉及文件**：`AppExtensionProfileStrategy.swift`、`AppRecord.swift`、`ProfileOnlyRenewalPolicy.swift`、`ApplePortalSigningService.swift`、`AppDetailView.swift`、`AppExtensionProfileStrategyTests.swift`、`docs/upstream-alignment.md`。
+- **验证状态**：`git diff --check` 已通过；本机 Windows 无 Swift 编译器，测试与完整编译必须由 GitHub CI 验证；真机需测 LiveContainer 多扩展签名、名额、覆盖安装和 profile-only 续签。未推送 CI。
+
+---
+
+## 2026-10-17 证书名额满时逐张选择撤销，避免一次撤掉整批证书
+
+- **现象**：签名失败页只有「撤销并继续签名」，点一次会撤销账号下所有本机没有私钥的证书；用户看不到每张证书对应的影响范围。
+- **根因**：Seal 把 SideStore 的「撤销决策交给用户」简化成一个批量确认动作，确认粒度比上游更粗。
+- **修复**：失败抽屉改为「查看证书并继续」；读取最新 Apple 清单后逐张展示证书与本机可确认影响，选定后再次确认；执行时重拉清单并只撤销所选证书，然后继续签名与受影响应用恢复。Seal 主程序及扩展真实签名证书都从候选中排除。失败页与列表页文案去重，撤销失败写入独立错误码与底层诊断。
+- **涉及文件**：`SigningProgressView.swift`、`CertificateSacrificePickerView.swift`、`AppsViewModel.swift`、`SigningCoordinator.swift`、`CertificateCleanupPolicy.swift`、`verify-release-safety.py`、证书错误目录、`docs/upstream-alignment.md`。
+- **验证状态**：Windows 无法编译 iOS Swift；CI 尚未运行。生成目录后需由 GitHub CI 编译和守卫验证，再做真机证书撤销与恢复回归。
+
 ---
 
 ## 2026-10-17 Release 目标切换到 MJorb-0.1.0
@@ -7187,6 +7214,26 @@ CMake Error at CMakeLists.txt:394 (message):
 - **根因**：前版只对齐了 GrandSlam 的请求格式，却保留 Seal 的「认证强制本机 AnisetteKit ADI」规则；而用户提供的 SideInstaller 默认使用 RemoteV3。Seal 因而没有执行参考实现最关键的凭证来源，Apple 在 SRP 前拒绝该身份。
 - **修复**：认证、验证码、认证后校验和门户请求统一改为 RemoteV3；优先使用 SideInstaller 默认 `ani.jkcoxson.com`，并把远程 provisioning 状态置于独立钥匙串 service，保留旧本机 ADI 和稳定 identifier。
 - **验收**：CI 必须通过；真机添加 Apple ID 应从即时 503 进入密码/双重认证流程，随后完成团队验证和一次签名。
+
+## 2026-10-17 — 签名预检、Apple App ID 额度取证与设置文案
+
+- **症状**：设备通道可能在 Apple 侧签名准备之后才暴露不可用；用户看到有效 App ID 数量少于 10，却仍被 Apple 拒绝注册；支持及协议页面还有重复/不准确的说明。
+- **根因**：签名时只并行启动设备通道，门户准备阶段没有等待通道就绪；App ID 当前列表数与 Apple 返回的滑动注册额度不是同一指标；隐私文案将本地数据与网络服务边界混为一谈，并将卸载描述成可保证清除钥匙串数据。
+- **修复**：签名在创建证书、App ID 和描述文件前等待设备通道就绪；保留并展示 Apple 同次响应的 `availableQuantity`，Apple 拒绝创建后绕缓存强制刷新并记录原始额度；更新隐私/用户协议和支持文案，修正钥匙串卸载说明与协议生效日期，将协议版本升至 2；协议卡片使用实色表面。
+- **验证**：新增库存额度保留及旧缓存兼容测试；`git diff --check` 通过。Windows 环境无法编译 Swift，最终编译与测试需由 iOS 云 CI 验证；Apple 实际额度和签名结果仍需真机账号测试。
+
+## 2026-10-17 — Seal 版本序列重置为 0.1.x
+
+- **需求**：正式展示版本从 `0.1.0` 起，后续迭代按 `0.1.1`、`0.1.2` 递增；协议版本维持 1；Seal 页面不展示 CI 构建号。
+- **改动**：主 App 与 Live Activity target 的 `MARKETING_VERSION` 同步为 `0.1.0`；About、设置和 Seal 应用行只显示营销版本；版本规则写入 `AGENTS.md`。导入当前运行的 Seal 时，仅在 CI 构建号更高的情况下允许从旧 `1.x` 迁移到 `0.1.0`，普通 IPA 的降级规则不变。
+- **验证**：新增对旧 `1.0.0` 与 `1.3.x` Seal 记录迁移的导入回归用例；协议门禁版本保持 1。`git diff --check` 通过；Swift 编译和测试待 iOS 云 CI。
+
+## 2026-10-17 — 「+」导入 Seal 更新后自动进入签名
+
+- **现象**：关于页下载的 Seal 更新会自动打开签名抽屉，但通过「+」导入同一 Seal 更新包后只留在待安装列表，需要用户再手动找到更新。
+- **根因**：自动打开签名抽屉只由关于页下载入口传入的临时标记控制，没有根据已识别的 Seal 自身更新记录统一处理。
+- **修复**：导入完成时，Seal 自身更新与关于页下载更新都会选中对应待安装记录并打开同一签名抽屉；普通已安装 IPA 更新逻辑不变。版本推进到 `0.1.1`。
+- **验证**：`git diff --check` 通过；Windows 环境无法编译 Swift，云 CI 负责编译验证。
 
 ## 2026-10-15 — Apple ID 登录仍 503：SRP 请求缺 X-Apple-App-Info / X-Xcode-Version
 

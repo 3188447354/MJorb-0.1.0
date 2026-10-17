@@ -41,6 +41,14 @@ struct AddAccountView: View {
                 cancelAuthentication()
             }
             .alert(item: $authenticationFailure) { failure in
+                if failure.code == "SEAL-AUTH-RATE-LIMITED" {
+                    return Alert(
+                        title: Text(failure.title),
+                        message: Text(failure.userMessage),
+                        primaryButton: .default(Text("重试"), action: startAuthentication),
+                        secondaryButton: .cancel(Text("取消"))
+                    )
+                }
                 Alert(title: Text(failure.title), message: Text(failure.userMessage), dismissButton: .default(Text(failure.recovery)))
             }
         }

@@ -8,6 +8,10 @@ enum AppleServiceFailurePolicy {
     /// or a device-specific restriction.
     static let temporaryAuthenticationRejectionCode = -80045
 
+    /// GrandSlam codes SideSign identifies as authentication/2FA throttling.
+    /// These must not enter the automatic 503 retry loop.
+    private static let authenticationRateLimitCodes: Set<Int> = [-22411, -21668, -20102]
+
     static func isNetworkError(_ error: Error) -> Bool {
         if let urlError = error as? URLError {
             return networkCodes.contains(urlError.code)
@@ -85,6 +89,40 @@ enum AppleServiceFailurePolicy {
             return isTemporaryAuthenticationRejection(underlying)
         }
         return false
+    }
+
+    static func isAuthenticationRateLimited(_ error: Error) -> Bool {
+        authenticationRateLimitCode(in: error) != nil
+    }
+
+    private static func authenticationRateLimitCode(in error: Error) -> Int? {
+        let nsError = error as NSError
+        if nsError.domain == "Apple.APIError",
+           authenticationRateLimitCodes.contains(nsError.code) {
+            return nsError.code
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return authenticationRateLimitCode(in: underlying)
+        }
+        return nil
+    }
+
+    static func authenticationRateLimitFailure(
+        underlying error: Error,
+        operation: FailureOperation = .authenticateAccount
+    ) -> ImportFailure {
+        let code = authenticationRateLimitCode(in: error) ?? (error as NSError).code
+        return ImportFailure(
+            title: "登录验证暂时受限",
+            reason: "Apple 暂时拒绝了这次登录验证（错误码 \(code)），不代表密码错误或账号异常。你可以立即重试；如果仍失败，请稍后再试或换用其他 Apple ID。",
+            recovery: "立即重试",
+            code: "SEAL-AUTH-RATE-LIMITED",
+            condition: .appleRateLimited,
+            action: .retry,
+            retryDisposition: .manual,
+            operation: operation,
+            origin: .authentication
+        )
     }
 
     static func temporaryAuthenticationRejectionFailure(

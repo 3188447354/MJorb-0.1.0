@@ -7,6 +7,7 @@ struct CustomAccentColorEditor: View {
     @Binding var customHex: String
     @Binding var accentRawValue: String
     @Binding var isPresented: Bool
+    let onComplete: () -> Void
 
     @State private var color: HSBAColor
     @State private var hexInput: String
@@ -17,11 +18,13 @@ struct CustomAccentColorEditor: View {
     init(
         customHex: Binding<String>,
         accentRawValue: Binding<String>,
-        isPresented: Binding<Bool>
+        isPresented: Binding<Bool>,
+        onComplete: @escaping () -> Void
     ) {
         self._customHex = customHex
         self._accentRawValue = accentRawValue
         self._isPresented = isPresented
+        self.onComplete = onComplete
         let initial = HSBAColor(hex: customHex.wrappedValue) ?? HSBAColor(hex: SealAccentTheme.defaultCustomHex)!
         _color = State(initialValue: initial)
         _hexInput = State(initialValue: initial.hex)
@@ -54,6 +57,7 @@ struct CustomAccentColorEditor: View {
                     customHex = normalized
                     accentRawValue = SealAccentTheme.custom.rawValue
                     isPresented = false
+                    onComplete()
                 }
                 .buttonStyle(AccentEditorPrimaryButtonStyle(tint: color.swiftUIColor))
                 .disabled(SealAccentTheme.normalizedHex(hexInput) == nil)
@@ -142,6 +146,7 @@ struct CustomAccentColorEditor: View {
                 .onChange(of: hexInput) { value in
                     guard let incoming = HSBAColor(hex: value) else { return }
                     color = incoming
+                    applyPreview(value)
                 }
                 .accessibilityLabel("十六进制颜色")
         }
@@ -154,22 +159,17 @@ struct CustomAccentColorEditor: View {
         }
     }
 
-    /// 取色过程中的统一出口：只更新 HEX 草稿文本。
-    ///
-    /// ⚠️ **这里绝不能写 `customHex` / `accentRawValue`**（2026-10-16 实测踩过）：
-    /// `RootTabView` 挂着 `.id("\(accentRawValue)-\(customAccentHex)")`，所以每次写这两个
-    /// 值都会让**整棵视图树重建** —— 而本编辑器就在那棵树里。拖动时逐帧写入 ⇒ 逐帧重建
-    /// ⇒ 挂着手势的视图被反复销毁，表现为「点一下颜色变了、窗口消失、拖不动」。
-    ///
-    /// 根因在架构上：`Color.sealAccent` 是读 `UserDefaults` 的静态计算属性
-    /// （`SealBackdrop.sealAccent` → `SealAccentTheme.current`），全 App 依赖 `.id`
-    /// 变化才看得到新颜色，因此**不存在"改色但不重建"的通道**。要真正做到实时预览，
-    /// 得先把主题色换成可观察状态（`@Observable`/`@Environment`）并去掉这个 `.id`，
-    /// 那是一次跨全 App 的重构，不能顺手做。
-    ///
-    /// ⇒ 因此恢复「拖动改草稿、点『完成』才应用」：即时反馈由面板里的色块与 HEX 提供。
+    /// 每次滑块变化都更新全局主题；RootTabView 的主题 ID 会刷新主界面，
+    /// 取色器由 RootTabView 外层呈现，因此刷新不会打断当前手势。
     private func synchronizeHex() {
         hexInput = color.hex
+        applyPreview(hexInput)
+    }
+
+    private func applyPreview(_ value: String) {
+        guard let normalized = SealAccentTheme.normalizedHex(value) else { return }
+        customHex = normalized
+        accentRawValue = SealAccentTheme.custom.rawValue
     }
 
     /// 取消：还原进入编辑器前的颜色与主题选择。

@@ -68,6 +68,27 @@ struct AppleServiceFailurePolicyTests {
         #expect(AppleServiceFailurePolicy.isRateLimited(error))
     }
 
+    @Test(arguments: [-22411, -21668, -20102])
+    func grandSlamAuthenticationThrottlingIsNotRetriedAs503(code: Int) {
+        let error = NSError(
+            domain: "Apple.APIError",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: "This action cannot be completed at this time (\(code))"]
+        )
+
+        #expect(AppleServiceFailurePolicy.isAuthenticationRateLimited(error))
+        #expect(AppleServiceFailurePolicy.isRateLimited(error) == false)
+
+        let failure = AppleAuthenticationFailure.make(stage: .signIn, error: error)
+        #expect(failure.code == "SEAL-AUTH-RATE-LIMITED")
+        #expect(failure.title == "登录验证暂时受限")
+        #expect(failure.reason.contains(String(code)))
+        #expect(failure.recovery == "立即重试")
+        #expect(failure.condition == .appleRateLimited)
+        #expect(failure.action == .retry)
+        #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure) == false)
+    }
+
     @Test
     func temporaryAppleAuthenticationRejectionDoesNotImplyAccountRestriction() {
         let error = NSError(

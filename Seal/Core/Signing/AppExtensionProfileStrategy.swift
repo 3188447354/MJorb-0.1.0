@@ -2,12 +2,17 @@ import Foundation
 
 /// 含扩展 IPA 的描述文件分配策略。
 ///
-/// 普通 IPA 的扩展默认共用主应用描述文件，以控制免费账号的 App ID 名额。
-/// LiveContainer 与 Seal 是明确的例外，保留独立扩展描述文件。
+/// 普通 IPA 默认共享主描述文件；能力不兼容的扩展单独分配。Seal 与 LiveContainer 默认独立。
+///
+/// 普通 IPA 共享模式下，门户只为主 App 申请一份描述文件；不兼容扩展单独申请，
+/// 兼容扩展继续共享，避免无谓消耗 App ID。
+///
 enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Sendable {
     case sharedMainProfile
     case independentProfiles
+    case selectiveProfiles
 
+    /// 默认策略。
     static func defaultFor(isSeal: Bool, isLiveContainer: Bool) -> Self {
         isSeal || isLiveContainer ? .independentProfiles : .sharedMainProfile
     }
@@ -28,7 +33,8 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
 
     func portalMappings(
         from mappings: [String: String],
-        originalMainBundleID: String
+        originalMainBundleID: String,
+        independentBundleIdentifiers: Set<String> = []
     ) -> [String: String] {
         switch self {
         case .sharedMainProfile:
@@ -36,18 +42,25 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
             return [originalMainBundleID: mappedMainBundleID]
         case .independentProfiles:
             return mappings
+        case .selectiveProfiles:
+            return mappings.filter {
+                $0.key == originalMainBundleID || independentBundleIdentifiers.contains($0.value)
+            }
         }
     }
 
     func expectedProfileBundleID(
         for signedBundleID: String,
-        mappedMainBundleID: String
+        mappedMainBundleID: String,
+        independentBundleIdentifiers: Set<String> = []
     ) -> String {
         switch self {
         case .sharedMainProfile:
             return mappedMainBundleID
         case .independentProfiles:
             return signedBundleID
+        case .selectiveProfiles:
+            return independentBundleIdentifiers.contains(signedBundleID) ? signedBundleID : mappedMainBundleID
         }
     }
 
@@ -62,6 +75,95 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
     struct SharedProfileBlocker: Equatable, Sendable {
         let extensionBundleID: String
         let entitlements: [String]
+
+        /// 该扩展的**能力读不出来**（而不是「读出来发现它要得更多」）。
+        ///
+        /// ⚠️ 两种成因必须分开：前者的处置是「保守走独立」，后者是「它确实需要独立」。
+        /// 日志里也得分得清，否则真机看到「扩展 X 请求了未声明的能力 」后面是空白，
+        /// 根本不知道该去修能力解析还是该接受独立模式。
+        ///
+        /// 带默认值 ⇒ 既有调用点与单测的 memberwise 初始化不受影响。
+        var isUnreadable: Bool = false
+    }
+
+    /// 同上，但**期望集合由调用方显式传入**，且 `entitlementsByBundleID` 里**缺失条目按
+    /// 「读不到能力」处理 ⇒ 直接判为阻塞**（fail closed）。
+    ///
+    /// ⚠️ 为什么需要它（2026-10-16 全局共享化时补）：签名链路是按
+    /// `mappings.values`（映射后 Bundle ID）去 `applications` 里取能力的，
+    /// 取不到就 `continue` **静默跳过** ⇒ 该 bundle 在 `entitlementsByBundleID` 里**根本没有键**。
+    /// 上面那个 2 参数版本用 `?? []` 把缺失当空集 ⇒ 差集为空 ⇒ 判「共享安全」。
+    ///
+    /// **在默认独立时这无所谓；一旦默认改为共享，它就是把 LiveProcess 那个 401 回归
+    /// 放回来的入口。** 所以签名链路必须用这个版本：读不到扩展能力时**保守走独立**，
+    /// 多花一个 App ID，也好过签出一个扩展拿不到能力的包。
+    static func sharedProfileBlocker(
+        mainBundleID: String,
+        entitlementsByBundleID: [String: Set<String>],
+        expectedBundleIdentifiers: [String]
+    ) -> SharedProfileBlocker? {
+        sharedProfileBlockers(
+            mainBundleID: mainBundleID,
+            entitlementsByBundleID: entitlementsByBundleID,
+            expectedBundleIdentifiers: expectedBundleIdentifiers
+        ).first
+    }
+
+    static func sharedProfileBlockers(
+        mainBundleID: String,
+        entitlementsByBundleID: [String: Set<String>],
+        expectedBundleIdentifiers: [String]
+    ) -> [SharedProfileBlocker] {
+        let mainEntitlements = entitlementsByBundleID[mainBundleID] ?? []
+        let others = Set(expectedBundleIdentifiers).subtracting([mainBundleID])
+
+        // 先判「读不到」：`nil` 与「真的是空集」必须区分开 —— 前者不能当作安全。
+        let unreadable = others
+            .filter { entitlementsByBundleID[$0] == nil }
+            .sorted()
+        let unreadableBlockers = unreadable.map { bundleID in
+            SharedProfileBlocker(
+                extensionBundleID: bundleID,
+                entitlements: [],
+                isUnreadable: true
+            )
+        }
+
+        let blockers = others
+            .compactMap { bundleID -> SharedProfileBlocker? in
+                guard let entitlements = entitlementsByBundleID[bundleID] else { return nil }
+                let extra = entitlements.subtracting(mainEntitlements).sorted()
+                guard extra.isEmpty == false else { return nil }
+                return SharedProfileBlocker(extensionBundleID: bundleID, entitlements: extra)
+            }
+            .sorted { $0.extensionBundleID < $1.extensionBundleID }
+        return (unreadableBlockers + blockers).sorted {
+            $0.extensionBundleID < $1.extensionBundleID
+        }
+    }
+
+    /// 返回每个不能安全共用主描述文件的扩展。读不到扩展能力时也按独立处理。
+    static func independentBundleIdentifiers(
+        mainBundleID: String,
+        entitlementsByBundleID: [String: Set<String>],
+        expectedBundleIdentifiers: [String]
+    ) -> Set<String> {
+        let mainEntitlements = entitlementsByBundleID[mainBundleID] ?? []
+        return Set(expectedBundleIdentifiers.filter { bundleID in
+            guard bundleID != mainBundleID,
+                  let entitlements = entitlementsByBundleID[bundleID] else { return bundleID != mainBundleID }
+            return entitlements.subtracting(mainEntitlements).isEmpty == false
+        })
+    }
+
+    static func resolvedStrategy(
+        mainBundleID: String,
+        expectedBundleIdentifiers: [String],
+        independentBundleIdentifiers: Set<String>
+    ) -> Self {
+        let extensionCount = expectedBundleIdentifiers.filter { $0 != mainBundleID }.count
+        if independentBundleIdentifiers.isEmpty { return .sharedMainProfile }
+        return independentBundleIdentifiers.count == extensionCount ? .independentProfiles : .selectiveProfiles
     }
 
     /// 返回第一个「请求了主 App 未声明能力」的扩展；没有则 `nil`。
@@ -80,6 +182,33 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
             .sorted { $0.0 < $1.0 }
         guard let first = blockers.first else { return nil }
         return SharedProfileBlocker(extensionBundleID: first.0, entitlements: first.1)
+    }
+
+    /// 把「想要的策略」解析成「本次真正可用的策略」。
+    ///
+    /// 只可能把 `.sharedMainProfile` 降级成独立或混合分配，永不反向 ——
+    /// 反向（独立→共享）会静默丢扩展能力，正是这条要防的。
+    ///
+    /// - Parameter expectedBundleIdentifiers: 本次签名**应当**存在的映射后 Bundle ID 集合。
+    ///   传入时会用 fail-closed 版本判阻塞（读不到某个扩展的能力 ⇒ 保守走独立）；
+    ///   传 `nil`（默认）保持原有语义，供纯函数单测使用。
+    static func resolvedForSigning(
+        requested: Self,
+        mainBundleID: String,
+        entitlementsByBundleID: [String: Set<String>],
+        expectedBundleIdentifiers: [String]? = nil
+    ) -> Self {
+        guard requested == .sharedMainProfile else { return requested }
+        let independent = independentBundleIdentifiers(
+            mainBundleID: mainBundleID,
+            entitlementsByBundleID: entitlementsByBundleID,
+            expectedBundleIdentifiers: expectedBundleIdentifiers ?? Array(entitlementsByBundleID.keys)
+        )
+        let extensionCount = (expectedBundleIdentifiers ?? Array(entitlementsByBundleID.keys))
+            .filter { $0 != mainBundleID }
+            .count
+        if independent.isEmpty { return .sharedMainProfile }
+        return independent.count == extensionCount ? .independentProfiles : .selectiveProfiles
     }
 
     /// 某个 bundle 的能力被 Apple 拒绝、描述文件降级为空时，**还有哪些 bundle 的请求集必须一并清空**。
@@ -106,7 +235,8 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
         whenDowngrading bundleIdentifier: String,
         strategy: Self,
         mappedMainBundleID: String,
-        mappedBundleIdentifiers: [String]
+        mappedBundleIdentifiers: [String],
+        independentBundleIdentifiers: Set<String> = []
     ) -> [String] {
         switch strategy {
         case .sharedMainProfile:
@@ -121,6 +251,13 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
             return Set(mappedBundleIdentifiers + [bundleIdentifier]).sorted()
         case .independentProfiles:
             // 每个 bundle 有自己的 App ID 与描述文件 ⇒ 降级只影响它自己。
+            return [bundleIdentifier]
+        case .selectiveProfiles:
+            if bundleIdentifier == mappedMainBundleID {
+                return Set(mappedBundleIdentifiers.filter {
+                    $0 == mappedMainBundleID || independentBundleIdentifiers.contains($0) == false
+                } + [mappedMainBundleID]).sorted()
+            }
             return [bundleIdentifier]
         }
     }

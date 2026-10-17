@@ -5,11 +5,11 @@ struct SettingsRootView: View {
     @ObservedObject var viewModel: SettingsViewModel
     let relatedApps: [AppRecord]
     let certificateExportHandler: CertificateExportHandler
+    let onAppearanceThemeRequested: () -> Void
     let onSelfUpdateInstall: ((URL) -> Void)?
 
     @State private var navigationPath = NavigationPath()
     @State private var isAddingAccount = false
-    @State private var isAppearanceThemePresented = false
     @State private var hasLoadedStorageSummary = false
 
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
@@ -82,7 +82,7 @@ struct SettingsRootView: View {
                     }
 
                     settingsSection("管理") {
-                        Button { isAppearanceThemePresented = true } label: {
+                        Button(action: onAppearanceThemeRequested) {
                             settingsRow(
                                 title: "外观与主题",
                                 value: "\(currentAppearanceTitle) · \(currentAccentTitle)",
@@ -229,19 +229,11 @@ struct SettingsRootView: View {
                 AddAccountView(viewModel: viewModel)
             }
         }
-        .sheet(isPresented: $isAppearanceThemePresented) {
-            AppearanceThemeSheet(
-                appearanceRawValue: $appearanceRawValue,
-                accentRawValue: $accentRawValue,
-                customAccentHex: $customAccentHex
-            )
-            .presentationDetents([.height(454), .medium])
-            .presentationDragIndicator(.hidden)
-        }        .sealScreenBackground()
+        .sealScreenBackground()
     }
 
     private var appearanceCard: some View {
-        Button { isAppearanceThemePresented = true } label: {
+        Button(action: onAppearanceThemeRequested) {
             HStack(spacing: 16) {
                 Image(systemName: "circle.lefthalf.filled")
                     .font(.system(size: 18, weight: .medium))
@@ -397,13 +389,7 @@ struct SettingsRootView: View {
     }
 
     private var appVersion: String {
-        let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-        // 显示构建号以区分每次 CI 出包：1.0.0 (172)
-        if !build.isEmpty {
-            return "\(short) (\(build))"
-        }
-        return short
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
     }
 }
 
@@ -414,20 +400,23 @@ private func sectionTitle(_ title: String) -> some View {
 }
 
 
-private struct AppearanceThemeSheet: View {
+struct AppearanceThemeSheet: View {
     @Binding var appearanceRawValue: String
     @Binding var accentRawValue: String
     @Binding var customAccentHex: String
+    @Binding var isThemeSheetPresented: Bool
     @State private var isCustomColorEditorPresented = false
 
     var body: some View {
         ZStack {
-            SealDrawer(title: "\u{5916}\u{89C2}\u{4E0E}\u{4E3B}\u{9898}") {
-                VStack(spacing: 14) {
-                    appearanceCard
-                    accentCard
+            if !isCustomColorEditorPresented {
+                SealDrawer(title: "\u{5916}\u{89C2}\u{4E0E}\u{4E3B}\u{9898}") {
+                    VStack(spacing: 14) {
+                        appearanceCard
+                        accentCard
+                    }
+                    .padding(.bottom, 12)
                 }
-                .padding(.bottom, 12)
             }
 
             if isCustomColorEditorPresented {
@@ -437,7 +426,8 @@ private struct AppearanceThemeSheet: View {
                 CustomAccentColorEditor(
                     customHex: $customAccentHex,
                     accentRawValue: $accentRawValue,
-                    isPresented: $isCustomColorEditorPresented
+                    isPresented: $isCustomColorEditorPresented,
+                    onComplete: { isThemeSheetPresented = false }
                 )
                 .transition(.scale(scale: 0.96).combined(with: .opacity))
                 .zIndex(1)

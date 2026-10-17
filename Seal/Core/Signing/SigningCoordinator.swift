@@ -4,12 +4,19 @@ import CryptoKit
 import ZIPFoundation
 @preconcurrency import AltSign
 
-/// 「撤销并继续签名」（SEAL-CERT-204e 确认）的执行结果。
+/// 用户确认撤销所选证书后的执行结果。
 struct KeylessCertificateSacrificeResult: Sendable {
     /// 实际撤销成功的证书序列号（原始格式，仅用于日志/比对）。
     let revokedSerials: [String]
     /// 因撤销而失效、需要重新签名安装的已装 App。
     let affectedInstalledApps: [AppRecord]
+}
+
+struct CertificateSacrificeCandidate: Identifiable, Sendable {
+    let certificate: ApplePortalCertificateSnapshot
+    let affectedAppCount: Int
+
+    var id: String { certificate.serialNumber }
 }
 
 /// `profile-only`（只换描述文件）准入的设备端身份核验结果 —— **三态，绝不能折成 `Bool`**。
@@ -454,10 +461,8 @@ actor SigningCoordinator {
                 targetBundleIdentifier: targetBundleIdentifier
             )
             let deviceIdentifier: String
-            // 连接设备并行化：隧道启动丢到后台任务，与「卷证书/申请描述文件/签名」同步进行。
-            // 签名所需的 UDID 从配对缓存快速读取即可——Apple 描述文件只认 UDID，与隧道是否就绪无关，
-            // 不再在签名前硬等整段隧道诊断（reset + RSD 握手 + 轮询）。签名完成进入安装时，
-            // installSignedIPA 会 ensure 通道就绪，而平行隧道通常早已起来 → 安装阶段接近零等待。
+            // 隧道在后台并行预热，避免把完整诊断放到签名之后才开始；但必须在门户签名准备前
+            // 等待预热结果并确认通道可用。这样设备故障会在证书、App ID、描述文件操作前中止。
             var channelStart: Task<String, Error>?
             defer { channelStart?.cancel() }
             if installAfterSigning {
@@ -477,6 +482,13 @@ actor SigningCoordinator {
                     recovery: "先完成设备配对后重试",
                     code: "SEAL-PAIR-211"
                 )
+            }
+
+            if installAfterSigning {
+                // SideStore 在操作步骤前确保设备隧道就绪；这里保留并行预热，
+                // 并在任何证书、App ID 或描述文件操作之前等待并执行最终检查。
+                if let channelStart { _ = try await channelStart.value }
+                try await installChannel.requireReadyForSigning()
             }
 
             // 续签 = 覆盖安装**已经存在**的应用（`belongsInInstalledList` 只对已装应用为真）。
@@ -696,7 +708,7 @@ actor SigningCoordinator {
                       let refreshedSecret = try await keychain.load(accountID: accountID) else {
                     if case .blockedByInUseKeylessCerts(let appNames, let deviceOnlyCount) = cleanupOutcome {
                         if policy(for: app).allowsRevocationPrompt == false {
-                            // 自管理应用续签绝不弹「撤销并继续签名」：撤销会让正在
+                            // 自管理应用续签绝不弹「选择证书并撤销」：撤销会让正在
                             // 使用的证书失效，重签安装后立刻打不开（2026-09-14 真机）。
                             // 新策略下前置清理已直接撤非本机证书，本分支基本不会走到。
                             throw failure
@@ -1180,7 +1192,7 @@ actor SigningCoordinator {
         case revokeFailed
     }
 
-    /// 仍可被一键确认盘活（SEAL-CERT-204e）：账号下存在「本机无私钥」的证书，
+    /// 仍可由用户挑选盘活（SEAL-CERT-204e）：账号下存在「本机无私钥」的证书，
     /// 但它们仍被本机已安装应用使用，静默撤销会让这些应用立即打不开。
     private static func inUseKeylessCertificatesFailure(
         appNames: [String],
@@ -1196,7 +1208,7 @@ actor SigningCoordinator {
         return ImportFailure(
             title: "证书名额被占用",
             reason: "Apple 账号下的旧证书在本机没有对应的私钥，无法继续用于签名；但仍有应用靠它们运行。\(affected)。",
-            recovery: "点「撤销并继续签名」将自动撤销旧证书（对应应用立即失效、需重新签名安装）、申请新证书并完成本次签名；受影响的已装应用会自动重签。证书状态可随时在「我的」→「签名证书」查看",
+            recovery: "查看可选证书并挑选一张，确认后 Seal 会尝试完成本次签名，并恢复本机已记录的受影响应用。",
             code: "SEAL-CERT-204e"
         )
     }
@@ -1221,13 +1233,8 @@ actor SigningCoordinator {
         try? await accountRepository.save(clearedAccount)
     }
 
-    /// 签名失败页「撤销并继续签名」（SEAL-CERT-204e）确认后调用：撤销账号下**所有**
-    /// 本机无私钥的远端证书（含仍被已装 App 使用的），返回因撤销而失效、需要重新
-    /// 签名的已装 App。
-    /// 调用前必须已取得用户明确确认 —— 撤销会让仍在用这些证书的 App 立即打不开。
-    func revokeKeylessCertificatesAfterConfirmation(
-        accountID: UUID
-    ) async throws -> KeylessCertificateSacrificeResult {
+    /// 证书选择抽屉的候选只用于展示；展示后仍可能发生变化，因此撤销前必须重新读取 Apple 清单。
+    func certificateSacrificeCandidates(accountID: UUID) async throws -> [CertificateSacrificeCandidate] {
         guard let account = try await accountRepository.fetchAll().first(where: {
             $0.id == accountID
         }) else {
@@ -1259,28 +1266,23 @@ actor SigningCoordinator {
                 SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
             )
         }
+        // Align with SideStore: the replacement flow only offers iOS Development certificates.
+        let iOSDevelopmentCertificates = inventory.certificates.filter { certificate in
+            CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: certificate.certificateName)
+        }
         let candidates = CertificateCleanupPolicy.sacrificeCandidates(
-            certificates: inventory.certificates,
+            certificates: iOSDevelopmentCertificates,
             localUsableSerials: localUsableSerials
         )
-        guard candidates.isEmpty == false else {
-            return KeylessCertificateSacrificeResult(revokedSerials: [], affectedInstalledApps: [])
-        }
-        // Seal 真实签名者绝不可撤销：撤销会让 Seal 立刻打不开（自更新场景，
-        // 2026-09-14 真机踩到）。一键全撤只针对历史及第三方证书，Seal 命根子证书无条件跳过。
-        //
-        // 只相信真实 CMS 签名者（installedIdentity），不信描述文件授权列表、不信 DB 记录：
-        // 授权列表可能包含并未实际签名的证书，DB 记录可能是旧值（2026-09-15 真机确认）。
-        // 身份读不出来时无法证明任何一张证书不是 Seal 的命，整批撤销停止。
         let apps = (try? await appStore.fetchAll()) ?? []
         let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
         guard runningIdentity?.isComplete == true,
-              let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
+              runningIdentity?.mainTarget?.signerSerialNumber != nil else {
             let summary = runningIdentity?.readFailureSummary ?? "installedIdentity 读取失败"
             try? await logStore?.append(
                 category: .signing,
                 level: .warning,
-                message: "一键全撤跳过：无法确认 Seal 真实签名身份（\(summary)）"
+                message: "证书候选列表阻断：无法确认 Seal 真实签名身份（\(summary)）"
             )
             throw Self.failure(
                 reason: "无法确认当前 Seal 的真实签名证书，为保护 Seal 已停止撤销。",
@@ -1288,65 +1290,95 @@ actor SigningCoordinator {
                 code: "SEAL-CERT-230"
             )
         }
-        let sealProtectedSerials: Set<String> = [
-            SigningCertificateSelectionPolicy.normalizedSerialNumber(sealActualSigner)
-        ]
-        let certificateService = ApplePortalCertificateService(logStore: logStore)
-        var revokedSerials: [String] = []
-        for certificate in candidates {
-            let serial = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
-            if sealProtectedSerials.contains(serial) {
-                try? await logStore?.append(
-                    category: .signing,
-                    level: .warning,
-                    message: "一键全撤跳过 Seal 自身在用的证书 …\(serial.suffix(6))"
-                )
-                continue
+        let sealProtectedSerials = Set(
+            runningIdentity.targets.map {
+                SigningCertificateSelectionPolicy.normalizedSerialNumber($0.signerSerialNumber)
             }
-            if (try? await certificateService.revokeCertificate(
+        )
+        let protected = candidates.filter {
+            sealProtectedSerials.contains(SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)) == false
+        }
+        return protected.map { certificate in
+            let affected = CertificateRevocationImpact.affectedApps(
                 serialNumber: certificate.serialNumber,
+                apps: apps
+            )
+            return CertificateSacrificeCandidate(certificate: certificate, affectedAppCount: affected.count)
+        }
+    }
+
+    /// 用户在列表中选定并二次确认后，只撤销这一张；执行前重拉清单并重新验证候选资格。
+    func revokeKeylessCertificateAfterConfirmation(
+        accountID: UUID,
+        serialNumber selectedSerialNumber: String
+    ) async throws -> KeylessCertificateSacrificeResult {
+        let candidates = try await certificateSacrificeCandidates(accountID: accountID)
+        let selectedNormalized = SigningCertificateSelectionPolicy.normalizedSerialNumber(selectedSerialNumber)
+        guard let candidate = candidates.first(where: {
+            SigningCertificateSelectionPolicy.normalizedSerialNumber($0.certificate.serialNumber) == selectedNormalized
+        }) else {
+            throw Self.failure(
+                reason: "这张证书已不可撤销，Apple 证书清单可能已经变化。",
+                recovery: "重新读取证书列表后再选择",
+                code: "SEAL-CERT-204g"
+            )
+        }
+        guard let account = try await accountRepository.fetchAll().first(where: { $0.id == accountID }),
+              let secret = try await keychain.load(accountID: accountID) else {
+            throw Self.failure(
+                reason: "无法读取 Apple ID 或本机登录凭据。",
+                recovery: "重新验证 Apple ID",
+                code: "SEAL-AUTH-105a"
+            )
+        }
+        let certificateService = ApplePortalCertificateService(logStore: logStore)
+        do {
+            try await certificateService.revokeCertificate(
+                serialNumber: candidate.certificate.serialNumber,
                 account: account,
                 secret: secret
-            )) != nil {
-                revokedSerials.append(certificate.serialNumber)
-            }
-        }
-        // 若所有候选都被 Seal 保护跳过，说明账号下只剩 Seal 自身在用的证书可撤，
-        // 不视为失败，返回空结果让上层按「无可撤」收尾（避免误报 204f 再误导用户）。
-        let nonSealCandidates = candidates.filter {
-            sealProtectedSerials.contains(
-                SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)
-            ) == false
-        }
-        if nonSealCandidates.isEmpty {
-            return KeylessCertificateSacrificeResult(revokedSerials: [], affectedInstalledApps: [])
-        }
-        guard revokedSerials.isEmpty == false else {
-            throw Self.failure(
-                reason: "撤销 \(nonSealCandidates.count) 张本机没有私钥的旧证书全部失败，证书名额未释放。",
-                recovery: "稍后重试；仍失败请到「我的」→「签名证书」检查账号状态",
+            )
+        } catch {
+            try? await logStore?.append(
+                category: .signing,
+                level: .error,
+                message: "撤销所选证书失败：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
                 code: "SEAL-CERT-204f"
             )
+            // 请求可能已在 Apple 侧完成，但响应中途丢失。重新读取清单确认状态；
+            // 只在所选证书仍存在时报告失败，避免用户重复撤销或卡在额度满状态。
+            guard let refreshedCandidates = try? await certificateSacrificeCandidates(accountID: accountID) else {
+                throw Self.failure(
+                    reason: "Apple 未确认本次撤销结果，当前无法读取最新证书状态。",
+                    recovery: "重新读取证书列表后再继续",
+                    code: "SEAL-CERT-204f"
+                )
+            }
+            let remainsAvailable = refreshedCandidates.contains {
+                SigningCertificateSelectionPolicy.normalizedSerialNumber($0.certificate.serialNumber)
+                    == selectedNormalized
+            }
+            guard remainsAvailable == false else {
+                throw Self.failure(
+                    reason: "Apple 未能撤销所选证书。当前证书仍在账号中，本次签名没有继续。",
+                    recovery: "检查网络后重新读取证书列表",
+                    code: "SEAL-CERT-204f"
+                )
+            }
         }
         await clearUnusableCertificateBinding(account: account, secret: secret)
-
-        let revokedNormalized = Set(revokedSerials.map {
-            SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
-        })
-        let affectedInstalledApps = apps.filter { app in
-            guard app.belongsInInstalledList,
-                  let serial = app.certificateSerialNumber else { return false }
-            return revokedNormalized.contains(
-                SigningCertificateSelectionPolicy.normalizedSerialNumber(serial)
-            )
-        }
+        let apps = (try? await appStore.fetchAll()) ?? []
+        let affected = CertificateRevocationImpact.affectedApps(
+            serialNumber: candidate.certificate.serialNumber,
+            apps: apps
+        )
         try? await logStore?.append(
             category: .signing,
-            message: "用户确认后撤销 \(revokedSerials.count) 张无钥匙证书；受影响待重签应用 \(affectedInstalledApps.count) 个"
+            message: "用户确认后撤销证书 …\(selectedNormalized.suffix(6))；受影响待重签应用 \(affected.count) 个"
         )
         return KeylessCertificateSacrificeResult(
-            revokedSerials: revokedSerials,
-            affectedInstalledApps: affectedInstalledApps
+            revokedSerials: [candidate.certificate.serialNumber],
+            affectedInstalledApps: affected
         )
     }
 

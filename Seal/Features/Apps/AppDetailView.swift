@@ -351,11 +351,13 @@ struct AppDetailView: View {
     }
 
     private func extensionProfileStrategyText(_ app: AppRecord) -> String {
-        switch app.effectiveExtensionProfileStrategy {
+        switch app.extensionProfileStrategy ?? app.effectiveExtensionProfileStrategy {
         case .sharedMainProfile:
             return "共享主描述文件"
         case .independentProfiles:
             return "独立描述文件"
+        case .selectiveProfiles:
+            return "按扩展分配描述文件"
         }
     }
 

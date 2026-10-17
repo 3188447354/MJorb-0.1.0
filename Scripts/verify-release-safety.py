@@ -2203,6 +2203,12 @@ def violations(load=read):
           "R35: 前置的磁盘检查必须用「解压后」体积的**准确值** —— `压缩体积 × 4` 会先拦住"
           "能签的机器（假警报），或低估高压缩比的包")
     # 公式**只许一份**（本仓「同一条规则两份实现」已踩过 6 次）。
+    # ⚠️ 标记必须换成公式里**仍然唯一**的常量。2026-10-16 公式从
+    #    `expanded + 2 × ipa + 200MB` 改成 `expanded + ipa + 300MB`
+    #    —— 输出的那一份是**压缩**体积，按原包大小算两遍是高估，
+    #    真机日志里「约需 3.2GB」对「实际 2.3GB」就是证据。
+    #    旧的标记 `multipliedReportingOverflow(by: 2)` 随之消失 ⇒ 计数变 0 ⇒ 本守卫误报。
+    #    **改公式时必须同步这里的标记。**
     check(workspace_source.count("static func requiredTemporarySpace(") == 1
           and workspace_source.count("expandedBytes.addingReportingOverflow(ipaBytes)") == 1
           and workspace_source.count("300 * 1024 * 1024") == 1
@@ -3942,7 +3948,7 @@ def violations(load=read):
 
     # Seal 自保护（所有证书清理路径都必须只相信真实 CMS 签名者）：
     # 描述文件授权列表可能包含并未实际签名的证书，DB 记录可能是旧值；
-    # 两处协调器路径（前置清理 / 一键全撤）与设置页两处路径（分析 / 执行）
+    # 两处协调器路径（前置清理 / 用户选择撤销）与设置页两处路径（分析 / 执行）
     # 都必须从 installedIdentity 读真实签名者，且身份不完整时整体停止。
     check("SelfAppMetadata.current()?.installedIdentity" in coord
           and "runningIdentity?.isComplete == true" in coord,
@@ -3950,12 +3956,12 @@ def violations(load=read):
     check("SelfAppMetadata.current()?.installedIdentity" in settings_vm
           and "runningIdentity?.isComplete == true" in settings_vm,
           "Seal self-protection: settings paths must read the actual CMS signer identity")
-    # 一键全撤路径（revokeKeylessCertificatesAfterConfirmation）身份不可读时必须拒绝撤销。
-    revoke_keyless = section(coord, "func revokeKeylessCertificatesAfterConfirmation(",
-                             "private func autoCleanOrphanCertificatesIfPossible(")
+    # 证书候选读取必须核验运行中 Seal 的真实 CMS 身份。
+    revoke_keyless = section(coord, "func certificateSacrificeCandidates(accountID: UUID)",
+                             "func revokeKeylessCertificateAfterConfirmation(")
     check("SelfAppMetadata.current()?.installedIdentity" in revoke_keyless
           and "SEAL-CERT-230" in revoke_keyless,
-          "Seal self-protection: revoke keyless must stop when the actual signer is unreadable")
+          "Seal self-protection: certificate picker must stop when the actual signer is unreadable")
     # 危险推断已被根除：描述文件授权列表首项 / 运行包授权集合不得再用于保护决策。
     for path in ("Seal/Core/Signing/SigningCoordinator.swift",
                  "Seal/Features/Settings/SettingsViewModel.swift",
@@ -4018,38 +4024,47 @@ def violations(load=read):
             check(pattern in text,
                   f"Transaction: required pattern '{pattern}' missing in {path}")
 
-    # 一键确认盘活（SEAL-CERT-204e）：在用的无钥匙证书绝不静默撤，必须经失败页确认。
+    # 用户确认盘活（SEAL-CERT-204e）：在用的无钥匙证书绝不静默撤，必须逐张选择并确认。
     check("if case .blockedByInUseKeylessCerts" in cleanup_retry,
           "204e must surface when keyless certificates are still in use")
     # Seal 自身续签绝不撤自己的证书（会立刻打不开，2026-09-14 真机踩到）。两道护栏：
-    # ① 命中「在用的无钥匙证书」时不抛 204e，回退原错误；② 一键全撤跳过 Seal 在用的证书。
+    # ① 命中「在用的无钥匙证书」时不抛 204e，回退原错误；② 候选列表排除 Seal 的真实签名证书。
     # 规矩盒子化后：① 由 `RenewalPolicy.allowsRevocationPrompt` 表达（自管理应用为 false）。
     check("if case .blockedByInUseKeylessCerts" in cleanup_retry
           and ("if app.isSeal {" in cleanup_retry
                or "allowsRevocationPrompt == false" in cleanup_retry),
           "Seal self-renewal must never surface 204e (revoke makes Seal unlaunchable)")
-    check("sealProtectedSerials" in coord and "sealProtectedSerials.contains" in coord,
-          "Sacrifice: one-tap full revoke must skip Seal's own in-use certificate")
-    check("func revokeKeylessCertificatesAfterConfirmation(" in coord,
-          "Sacrifice: coordinator must expose the confirmation-gated revoke entry")
+    check("sealProtectedSerials" in coord and "sealProtectedSerials.contains" in coord
+          and "runningIdentity.targets.map" in coord,
+          "Sacrifice: candidate picker must protect all actual Seal signing targets")
+    check("func certificateSacrificeCandidates(accountID: UUID)" in coord
+          and "func revokeKeylessCertificateAfterConfirmation(" in coord,
+          "Sacrifice: coordinator must expose fresh candidate listing and single-certificate revoke")
     check("SEAL-CERT-204e" in coord and "SEAL-CERT-204f" in coord,
           "Sacrifice: error codes 204e/204f must stay unique and present")
     check("CertificateCleanupPolicy.sacrificeCandidates(" in coord,
           "Sacrifice: candidates must come from the shared policy")
+    check("CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: certificate.certificateName)" in coord
+          and 'normalized.contains("ios development")' in cleanup_policy
+          and 'normalized.contains("iphone developer")' in cleanup_policy,
+          "Sacrifice: only SideStore-compatible iOS Development certificates may be offered")
     apps_vm = load("Seal/Features/Apps/AppsViewModel.swift")
-    check("func confirmCertificateSacrificeAndRetry()" in apps_vm
+    check("func confirmCertificateSacrificeAndRetry(serialNumber: String)" in apps_vm
           and 'failure.code == "SEAL-CERT-204e"' in apps_vm,
-          "Sacrifice: ViewModel one-tap entry must be gated on the 204e failure")
+          "Sacrifice: ViewModel selected-certificate action must be gated on the 204e failure")
     check("resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)" in apps_vm,
           "Sacrifice: affected installed apps must be re-signed after the retry succeeds")
     progress_view = load("Seal/Features/Apps/SigningProgressView.swift")
-    check('"撤销并继续签名"' in progress_view
-          and "viewModel.confirmCertificateSacrificeAndRetry()" in progress_view,
-          "Sacrifice: failure page must wire the one-tap button to the ViewModel")
+    picker_view = load("Seal/Features/Apps/CertificateSacrificePickerView.swift")
+    check('"查看证书并继续"' in progress_view
+          and "CertificateSacrificePickerView" in progress_view
+          and '"确认撤销并继续签名"' in picker_view
+          and "viewModel.confirmCertificateSacrificeAndRetry(serialNumber: serial)" in picker_view,
+          "Sacrifice: failure page must show picker and require confirmation before selected revoke")
+    check('"SEAL-CERT-204g"' in coord and '"SEAL-CERT-204g"' in progress_view,
+          "Sacrifice: stale selection must stop before revoke and return to candidate refresh")
 
-    # 证书回收已收敛为无感自动清理 + 204e 一键确认；证书页只读，不再提供手动撤销入口。
-    # 任何 recovery 文案都不许再引导用户「去撤销证书」（那是死链接），唯一允许保留的
-    # 「撤销」措辞是 204e 失败页的「撤销并继续签名」（有真实按钮，见 SigningProgressView）。
+    # recovery 文案不应引导用户离开当前恢复流程，去设置页手动撤销证书。
     manual_revoke_copy = []
     for path in ("Seal/Core/Signing/SigningCoordinator.swift",
                  "Seal/Infrastructure/Signing/ApplePortalCertificateService.swift",

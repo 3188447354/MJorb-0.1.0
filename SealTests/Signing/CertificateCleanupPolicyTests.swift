@@ -30,6 +30,14 @@ struct CertificateCleanupPolicyTests {
     /// 不与任何用例证书冲突的真实签名者，让既有用例聚焦自身语义。
     private let unrelatedSealSigner = "SEAL9999"
 
+    @Test
+    func replacementPickerOnlyOffersIOSDevelopmentCertificates() {
+        #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "iOS Development") == true)
+        #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "Apple iPhone Developer") == true)
+        #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "Apple Development") == false)
+        #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: nil) == false)
+    }
+
     // MARK: - makePlan（自动清理须保护所有已知引用）
 
     /// 全部无钥匙、无关联 App 的证书一律可撤。

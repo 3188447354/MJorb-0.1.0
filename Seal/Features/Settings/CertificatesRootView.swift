@@ -239,10 +239,10 @@ struct CertificatesRootView: View {
 
     private func appIDQuotaTitle(_ account: AppleAccountRecord) -> String {
         if let inventory = viewModel.certificateInventory(for: account.id) {
-            if account.isFreeTeam == true {
-                return "已签名 \(inventory.usedBundleIDCount) / 10"
+            if let available = inventory.appIDQuota?.availableQuantity, available >= 0 {
+                return "已注册 \(inventory.usedBundleIDCount) · 可新建 \(available)"
             }
-            return "已签名 \(inventory.usedBundleIDCount) 个"
+            return "已注册 \(inventory.usedBundleIDCount) 个"
         }
         return "暂未统计"
     }

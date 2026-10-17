@@ -13,16 +13,22 @@ struct UpdateNoticeView: View {
     @State private var phase: DownloadPhase = .available
     @State private var downloadTask: Task<Void, Never>?
 
+    private enum DownloadFailure: Equatable {
+        case download
+        case verification
+        case storage
+    }
+
     private enum DownloadPhase: Equatable {
         case available
         case downloading(Int64, Int64?)
         case verifying
         case ready
-        case failed(String)
+        case failed(DownloadFailure)
     }
 
     private var currentVersion: String {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.0.0"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.1.0"
     }
 
     /// Release 的 Markdown 正文转换为抽屉中的简洁更新条目。
@@ -39,7 +45,7 @@ struct UpdateNoticeView: View {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { items.append(trimmed) }
         }
-        return items.isEmpty ? ["修复已知问题"] : items
+        return items
     }
 
     private var usesExpandedLayout: Bool {
@@ -47,15 +53,19 @@ struct UpdateNoticeView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Color.black.opacity(0.34)
-                .ignoresSafeArea()
-                .transition(.opacity)
+        GeometryReader { proxy in
+            ZStack(alignment: .bottom) {
+                Color.black.opacity(0.34)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
 
-            sheetContent
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                sheetContent
+                    .frame(maxWidth: 560)
+                    .frame(height: min(proxy.size.height * 0.9, 700))
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phase)
         .onDisappear {
@@ -66,25 +76,29 @@ struct UpdateNoticeView: View {
 
     private var sheetContent: some View {
         VStack(spacing: 0) {
-            if usesExpandedLayout, case .available = phase {
-                Capsule()
-                    .fill(Color.secondary.opacity(0.22))
-                    .frame(width: 36, height: 5)
-                    .padding(.top, 10)
-            }
+            SealSheetGrabber()
+                .padding(.top, 10)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 16).onEnded { value in
+                    guard isDismissible, value.translation.height > 80 else { return }
+                    onDismiss()
+                })
 
-            switch phase {
-            case .available:
-                availableContent
-            case .downloading(let received, let total):
-                downloadingContent(received: received, total: total)
-            case .verifying:
-                progressContent(title: "正在验证更新包", detail: "检查版本与文件完整性")
-            case .ready:
-                readyContent
-            case .failed(let reason):
-                failureContent(reason)
+            ScrollView(showsIndicators: false) {
+                phaseContent
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 22)
+                    .padding(.top, 12)
+                    .padding(.bottom, 16)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider().overlay(Color.sealHairline.opacity(0.65))
+
+            footer
+                .padding(.horizontal, 22)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
         }
         .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay {
@@ -95,45 +109,91 @@ struct UpdateNoticeView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var availableContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(spacing: 7) {
-                Text("发现新版本")
-                    .font(.title3.weight(.bold))
-                Text(notice.version)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.sealAccent)
-                Text("当前版本 \(currentVersion)")
-                    .font(.footnote)
-                    .foregroundStyle(Color.sealTextSecondary)
+    @ViewBuilder
+    private var phaseContent: some View {
+        switch phase {
+        case .available:
+            availableContent
+        case .downloading(let received, let total):
+            downloadingContent(received: received, total: total)
+        case .verifying:
+            progressContent(title: "正在验证更新包", detail: "核对版本与文件完整性")
+        case .ready:
+            readyContent
+        case .failed(let failure):
+            failureContent(failure)
+        }
+    }
+
+    private var isDismissible: Bool {
+        switch phase {
+        case .downloading(_, _), .verifying, .ready: false
+        case .available, .failed(_): true
+        }
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        switch phase {
+        case .available:
+            VStack(spacing: 4) {
+                primaryButton("下载并更新", action: startDownload)
+                secondaryButton("暂不更新", action: onDismiss)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, usesExpandedLayout ? 18 : 26)
-
-            Text("本次更新")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.sealTextSecondary)
-                .padding(.top, 22)
-                .padding(.bottom, 10)
-
-            Group {
-                if usesExpandedLayout {
-                    ScrollView(showsIndicators: false) {
-                        changesList
-                    }
-                    .frame(maxHeight: 190)
+        case .downloading(_, _):
+            secondaryButton("取消下载", action: cancelDownload)
+        case .verifying, .ready:
+            EmptyView()
+        case .failed(let failure):
+            VStack(spacing: 4) {
+                if failure == .storage {
+                    primaryButton("重试", action: startDownload)
+                    secondaryButton("关闭", action: onDismiss)
                 } else {
-                    changesList
+                    primaryButton("重新下载", action: startDownload)
+                    secondaryButton("暂不更新", action: onDismiss)
                 }
             }
-
-            primaryButton("下载并更新", action: startDownload)
-                .padding(.top, 22)
-            secondaryButton("暂不更新", action: onDismiss)
-                .padding(.top, 4)
-                .padding(.bottom, 16)
         }
-        .padding(.horizontal, 22)
+    }
+
+    private var availableContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("发现新版本")
+                    .font(.title3.weight(.bold))
+                HStack(spacing: 4) {
+                    Text("当前 \(displayVersion(currentVersion))  →")
+                        .foregroundStyle(Color.sealTextSecondary)
+                    Text("新版 \(displayVersion(notice.version))")
+                        .foregroundStyle(Color.sealAccent)
+                }
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if changeItems.isEmpty == false {
+                Text("更新内容")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.sealTextSecondary)
+                    .padding(.top, 20)
+                    .padding(.bottom, 10)
+
+                Group {
+                    if usesExpandedLayout {
+                        ScrollView(showsIndicators: false) {
+                            changesList
+                        }
+                        .frame(maxHeight: 190)
+                    } else {
+                        changesList
+                    }
+                }
+            }
+        }
+        .padding(.top, 8)
     }
 
     private var changesList: some View {
@@ -155,89 +215,72 @@ struct UpdateNoticeView: View {
 
     private func downloadingContent(received: Int64, total: Int64?) -> some View {
         let progress = total.map { $0 > 0 ? min(Double(received) / Double($0), 1) : nil } ?? nil
-        return VStack(spacing: 0) {
+        return VStack(alignment: .leading, spacing: 0) {
             Text("正在下载更新包")
                 .font(.title3.weight(.bold))
-                .padding(.top, 30)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text(downloadDetail(received: received, total: total))
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-            Group {
-                if let progress {
-                    ProgressView(value: progress)
-                        .tint(Color.sealAccent)
-                } else {
-                    ProgressView()
-                        .tint(Color.sealAccent)
-                }
+            if let progress {
+                ProgressView(value: progress)
+                    .tint(Color.sealAccent)
+            } else {
+                ProgressView()
+                    .tint(Color.sealAccent)
             }
             .padding(.top, 22)
-            secondaryButton("取消下载", action: cancelDownload)
-                .padding(.top, 19)
-                .padding(.bottom, 16)
         }
-        .padding(.horizontal, 22)
+        .padding(.top, 12)
     }
 
     private func progressContent(title: String, detail: String) -> some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             ProgressView()
                 .controlSize(.regular)
                 .tint(Color.sealAccent)
-                .padding(.top, 31)
+                .frame(maxWidth: .infinity)
             Text(title)
                 .font(.title3.weight(.bold))
-                .padding(.top, 18)
+                .padding(.top, 14)
             Text(detail)
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-                .padding(.bottom, 28)
         }
         .frame(maxWidth: .infinity)
+        .padding(.top, 18)
     }
 
     private var readyContent: some View {
         VStack(spacing: 0) {
-            Image(systemName: "checkmark")
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .foregroundStyle(.green)
-                .padding(.top, 29)
-            Text("更新包已准备好")
+            Text("更新包验证通过")
                 .font(.title3.weight(.bold))
-                .padding(.top, 18)
-            Text("正在打开签名与安装")
+            Text("正在打开更新确认")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-                .padding(.bottom, 29)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 22)
     }
 
-    private func failureContent(_ reason: String) -> some View {
-        let verificationFailure = reason.contains("安全校验") || reason.contains("文件与版本")
-        return VStack(spacing: 0) {
-            Image(systemName: verificationFailure ? "exclamationmark.shield" : "wifi.exclamationmark")
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(Color.sealAccent)
-                .padding(.top, 28)
-            Text(verificationFailure ? "安全校验未通过" : "下载失败")
+    private func failureContent(_ failure: DownloadFailure) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(failure == .verification ? "更新包校验失败" : failure == .storage ? "存储空间不足" : "下载未完成")
                 .font(.title3.weight(.bold))
-                .padding(.top, 15)
-            Text(verificationFailure ? "已停止安装以保护你的设备" : "网络连接中断 请检查网络后重新下载")
+            Text(failure == .verification
+                 ? "此更新包未通过校验，Seal 已停止使用它。\n当前 Seal 未更改"
+                 : failure == .storage
+                    ? "释放设备空间后，再下载更新包"
+                    : "更新包未下载完整，当前 Seal 未更改")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 8)
-            primaryButton("重新下载", action: startDownload)
-                .padding(.top, 22)
-            secondaryButton("暂不更新", action: onDismiss)
-                .padding(.top, 4)
-                .padding(.bottom, 16)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 22)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 18)
     }
 
     private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {
@@ -291,7 +334,7 @@ struct UpdateNoticeView: View {
                 downloadTask = nil
                 return
             } catch {
-                phase = .failed("下载失败，请检查网络后重试")
+                phase = .failed(Self.isStorageFull(error) ? .storage : .download)
                 downloadTask = nil
                 return
             }
@@ -302,17 +345,34 @@ struct UpdateNoticeView: View {
                 guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version),
                       let checksumURL = notice.sha256DownloadURL else {
                     try? FileManager.default.removeItem(at: localURL)
-                    phase = .failed("下载的文件缺少安全校验信息，已中止安装")
+                    phase = .failed(.verification)
                     downloadTask = nil
                     return
                 }
                 let actual = try AppFileStore.streamingSHA256(url: localURL)
-                let (checksumData, _) = try await URLSession.shared.data(from: checksumURL)
+                let checksumData: Data
+                do {
+                    let (data, response) = try await URLSession.shared.data(from: checksumURL)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        try? FileManager.default.removeItem(at: localURL)
+                        phase = .failed(.download)
+                        downloadTask = nil
+                        return
+                    }
+                    checksumData = data
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    try? FileManager.default.removeItem(at: localURL)
+                    phase = .failed(.download)
+                    downloadTask = nil
+                    return
+                }
                 guard let checksumText = String(data: checksumData, encoding: .utf8),
                       let expected = UpdateChecker.expectedSHA256(from: checksumText),
                       UpdateChecker.hashMatches(expected: expected, actual: actual) else {
                     try? FileManager.default.removeItem(at: localURL)
-                    phase = .failed("下载的文件安全校验未通过，已中止安装")
+                    phase = .failed(.verification)
                     downloadTask = nil
                     return
                 }
@@ -326,7 +386,7 @@ struct UpdateNoticeView: View {
                 phase = .available
             } catch {
                 try? FileManager.default.removeItem(at: localURL)
-                phase = .failed("下载的文件安全校验未通过，已中止安装")
+                phase = .failed(.verification)
             }
             downloadTask = nil
         }
@@ -337,5 +397,17 @@ struct UpdateNoticeView: View {
         downloadTask?.cancel()
         downloadTask = nil
         phase = .available
+    }
+
+    private func displayVersion(_ value: String) -> String {
+        value.hasPrefix("v") || value.hasPrefix("V") ? value : "v\(value)"
+    }
+
+    private static func isStorageFull(_ error: Error) -> Bool {
+        if let downloadError = error as? UpdateDownloadError,
+           case .insufficientStorage = downloadError { return true }
+        let nsError = error as NSError
+        return (nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileWriteOutOfSpaceError)
+            || (nsError.domain == NSPOSIXErrorDomain && nsError.code == 28)
     }
 }

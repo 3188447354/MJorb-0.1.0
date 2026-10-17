@@ -72,6 +72,9 @@ struct UpdateIPADownloader {
 
         do {
             try fileManager.moveItem(at: temporaryURL, to: destination)
+        } catch let error as NSError where Self.isStorageFull(error) {
+            try? fileManager.removeItem(at: temporaryURL)
+            throw UpdateDownloadError.insufficientStorage
         } catch {
             try? fileManager.removeItem(at: temporaryURL)
             throw UpdateDownloadError.saveFailed
@@ -83,11 +86,17 @@ struct UpdateIPADownloader {
     func deleteDownloadedFile(at url: URL) {
         try? FileManager.default.removeItem(at: url)
     }
+
+    private static func isStorageFull(_ error: NSError) -> Bool {
+        (error.domain == NSCocoaErrorDomain && error.code == NSFileWriteOutOfSpaceError)
+            || (error.domain == NSPOSIXErrorDomain && error.code == 28)
+    }
 }
 
 enum UpdateDownloadError: LocalizedError {
     case badHTTPStatus
     case saveFailed
+    case insufficientStorage
     case timeout
     case transport(Error)
 
@@ -97,6 +106,8 @@ enum UpdateDownloadError: LocalizedError {
             return "下载失败（服务器响应异常）"
         case .saveFailed:
             return "下载文件保存失败"
+        case .insufficientStorage:
+            return "设备存储空间不足"
         case .timeout:
             return "网络下载超时，请检查网络后重试"
         case .transport:
@@ -108,6 +119,7 @@ enum UpdateDownloadError: LocalizedError {
         switch self {
         case .badHTTPStatus: return "SEAL-UPDATE-DL-501"
         case .saveFailed: return "SEAL-UPDATE-DL-502"
+        case .insufficientStorage: return "SEAL-UPDATE-DL-505"
         case .timeout: return "SEAL-UPDATE-DL-504"
         case .transport: return "SEAL-UPDATE-DL-503"
         }

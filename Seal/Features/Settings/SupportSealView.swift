@@ -40,11 +40,11 @@ struct SupportSealView: View {
                 .foregroundStyle(Color.sealAccent)
                 .frame(width: 72, height: 72)
                 .background(Color.sealAccent.opacity(0.12), in: Circle())
-            // 「感谢你的喜欢」是**内容标题**（页面顶部另有导航标题「支持 Seal」）。
+            // 页面顶部另有导航标题「支持 Seal」，此处用感谢语作内容标题。
             // 按 2026-10-16 的文案要求：不再重复一个同名的内容标题。
-            Text("感谢你的喜欢")
+            Text("感谢你的支持")
                 .font(.title2.weight(.semibold))
-            Text("你的鼓励让 Seal 走的更远")
+            Text("每一份心意都很重要")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
         }
@@ -57,7 +57,7 @@ struct SupportSealView: View {
             Button { isRewardPresented = true } label: {
                 supportRow(
                     title: "赞赏开发者",
-                    detail: "一份心意，助力项目维护与更新",
+                    detail: "一份心意 助力 Seal 持续更新",
                     icon: "heart.fill",
                     iconColor: .pink
                 )

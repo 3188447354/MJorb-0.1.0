@@ -31,6 +31,13 @@ struct CertificateCleanupPlan: Equatable, Sendable {
 }
 
 enum CertificateCleanupPolicy {
+    /// SideStore 的 certificate replacement 只对 iOS Development 证书提供撤销选择。
+    static func isIOSDevelopmentCertificate(name: String?) -> Bool {
+        guard let name else { return false }
+        let normalized = name.lowercased()
+        return normalized.contains("ios development") || normalized.contains("iphone developer")
+    }
+
     /// 所有来源在比对点归一化。Seal 保护只认主程序的真实 CMS 签名者，
     /// 不认描述文件授权列表——授权 ≠ 实际签名（Task 10）。
     static func makePlan(
@@ -98,10 +105,9 @@ enum CertificateCleanupPolicy {
         )
     }
 
-    /// 签名失败页「撤销并继续签名」（SEAL-CERT-204e）经用户明确确认后的候选：
-    /// 账号下**所有本机无私钥**的远端证书，不论是否仍在使用。
-    /// 与 `makePlan` 的区别仅在这一步 —— 是否忽略「在用」状态；静默自动清理永远走
-    /// `makePlan`，本函数只允许出现在用户确认之后。
+    /// 签名失败页证书选择器的候选：账号下所有本机没有可用私钥的远端开发证书，
+    /// 即使仍被已安装应用使用也可以展示，但 UI 必须显示本机影响数量，并在执行前再次确认。
+    /// 静默自动清理仍使用 `makePlan`，不能借用这里忽略「在用」状态的候选规则。
     static func sacrificeCandidates(
         certificates: [ApplePortalCertificateSnapshot],
         localUsableSerials: Set<String>

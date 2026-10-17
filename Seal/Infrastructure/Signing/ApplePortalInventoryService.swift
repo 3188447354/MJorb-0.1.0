@@ -8,6 +8,7 @@ struct ApplePortalInventory: Codable, Equatable, Sendable {
     let appIDs: [ApplePortalAppIDSnapshot]
     let certificates: [ApplePortalCertificateSnapshot]
     let fetchedAt: Date
+    var appIDQuota: ApplePortalAppIDQuotaSnapshot? = nil
 
     var usedBundleIDCount: Int {
         Set(appIDs.map { $0.bundleIdentifier.lowercased() }).count
@@ -23,9 +24,16 @@ struct ApplePortalInventory: Codable, Equatable, Sendable {
             certificates: certificates.filter {
                 CertificateDismissalStore.isDismissed(serialNumber: $0.serialNumber) == false
             },
-            fetchedAt: fetchedAt
+            fetchedAt: fetchedAt,
+            appIDQuota: appIDQuota
         )
     }
+}
+
+struct ApplePortalAppIDQuotaSnapshot: Codable, Equatable, Sendable {
+    let returnedCount: Int
+    let maxQuantity: Int?
+    let availableQuantity: Int?
 }
 
 struct ApplePortalAppIDSnapshot: Codable, Equatable, Identifiable, Sendable {
@@ -48,6 +56,7 @@ struct ApplePortalAppIDSnapshot: Codable, Equatable, Identifiable, Sendable {
 struct ApplePortalCertificateSnapshot: Codable, Equatable, Identifiable, Sendable {
     var id: String { serialNumber }
     let serialNumber: String
+    var certificateName: String? = nil
     let machineName: String
     let machineIdentifier: String?
     let hasLocalPrivateKey: Bool
@@ -125,9 +134,10 @@ actor ApplePortalInventoryService {
         let certificates = scope.includesCertificates
             ? try await fetchCertificates(team: team, session: session)
             : []
-        let appIDs = scope.includesAppIDs
-            ? try await fetchAppIDs(team: team, session: session)
-            : []
+        let appIDInventory = scope.includesAppIDs
+            ? try await fetchAppIDInventory(team: team, session: session)
+            : nil
+        let appIDs = appIDInventory?.appIDs ?? []
         let fetchedAt = Date()
 
         // 本机私钥判定必须覆盖「当前绑定 + 历史 map」里的每一份 P12：
@@ -152,6 +162,7 @@ actor ApplePortalInventoryService {
                 .notAfter
             return ApplePortalCertificateSnapshot(
                 serialNumber: certificate.serialNumber,
+                certificateName: certificate.name,
                 machineName: certificate.machineName ?? "Apple Development",
                 machineIdentifier: certificate.machineIdentifier,
                 hasLocalPrivateKey: localP12SerialNumbers.contains(
@@ -196,7 +207,14 @@ actor ApplePortalInventoryService {
             teamName: team.name,
             appIDs: sortedAppSnapshots,
             certificates: certificateSnapshots,
-            fetchedAt: fetchedAt
+            fetchedAt: fetchedAt,
+            appIDQuota: appIDInventory.map {
+                ApplePortalAppIDQuotaSnapshot(
+                    returnedCount: $0.appIDs.count,
+                    maxQuantity: $0.maxQuantity,
+                    availableQuantity: $0.availableQuantity
+                )
+            }
         )
     }
 
@@ -255,17 +273,17 @@ actor ApplePortalInventoryService {
         return box.value
     }
 
-    private func fetchAppIDs(
+    private func fetchAppIDInventory(
         team: ALTTeam,
         session: ALTAppleAPISession
-    ) async throws -> [ALTAppID] {
-        let box: LegacyBox<[ALTAppID]> = try await withAppleTimeout {
+    ) async throws -> ALTAppIDInventory {
+        let box: LegacyBox<ALTAppIDInventory> = try await withAppleTimeout {
             try await withCheckedThrowingContinuation {
                 continuation in
                 let callback = ContinuationBox(continuation)
-                ALTAppleAPI.shared.fetchAppIDs(for: team, session: session) { appIDs, error in
-                    if let appIDs {
-                        callback.resume(returning: LegacyBox(appIDs))
+                ALTAppleAPI.shared.fetchAppIDInventory(for: team, session: session) { inventory, error in
+                    if let inventory {
+                        callback.resume(returning: LegacyBox(inventory))
                     } else {
                         callback.resume(throwing: error ?? URLError(.badServerResponse))
                     }

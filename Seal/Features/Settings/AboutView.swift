@@ -6,12 +6,11 @@ struct AboutView: View {
         case checking
         case latest
         case available(String)
+        case unavailable
     }
 
     private var version: String {
-        let short = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.0.0"
-        let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? ""
-        return build.isEmpty ? short : "\(short) (\(build))"
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.1.0"
     }
 
     /// 应用内更新安装回调（下载完成后触发）；为 nil 时回退跳转浏览器。
@@ -19,8 +18,8 @@ struct AboutView: View {
 
     @State private var isCheckingUpdate = false
     @State private var updateStatus: UpdateStatus = .checking
-    @State private var availableUpdate: UpdateNotice?
     @State private var presentedUpdate: UpdateNotice?
+    @State private var isUpdateFailurePresented = false
 
     init(onInstall: ((URL) -> Void)? = nil) {
         self.onInstall = onInstall
@@ -33,6 +32,11 @@ struct AboutView: View {
                 updateSection
                 compatibilitySection
                 legalSection
+                Text("由 MJorb 打造")
+                    .font(.footnote)
+                    .foregroundStyle(Color.sealTextSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 2)
             }
             .padding(20)
         }
@@ -52,6 +56,12 @@ struct AboutView: View {
                     onInstall: installCallback
                 )
             }
+        }
+        .alert("暂时无法检查更新", isPresented: $isUpdateFailurePresented) {
+            Button("重试") { checkUpdate() }
+            Button("关闭", role: .cancel) {}
+        } message: {
+            Text("未能获取版本信息，请检查网络重试")
         }
     }
 
@@ -188,14 +198,11 @@ struct AboutView: View {
         case .checking: return "正在检查"
         case .latest: return "已是最新版本"
         case .available(let version): return "\(version) 可更新"
+        case .unavailable: return "检查失败"
         }
     }
 
     private func checkUpdate() {
-        if let availableUpdate {
-            presentedUpdate = availableUpdate
-            return
-        }
         Task { await refreshUpdateStatus(presentUpdate: true) }
     }
 
@@ -203,12 +210,24 @@ struct AboutView: View {
         guard isCheckingUpdate == false else { return }
         isCheckingUpdate = true
         updateStatus = .checking
-        let notice = await UpdateChecker.shared.check(force: true)
-        availableUpdate = notice
-        updateStatus = notice.map { .available($0.version) } ?? .latest
+        let result = await UpdateChecker.shared.check(force: true)
+        let notice: UpdateNotice?
+        switch result {
+        case .unavailable:
+            notice = nil
+            updateStatus = .unavailable
+        case .latest, .suppressed:
+            notice = nil
+            updateStatus = .latest
+        case .available(let update):
+            notice = update
+            updateStatus = .available(update.version)
+        }
         isCheckingUpdate = false
         if presentUpdate, let notice {
             presentedUpdate = notice
+        } else if presentUpdate, case .unavailable = result {
+            isUpdateFailurePresented = true
         }
     }
 

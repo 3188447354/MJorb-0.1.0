@@ -719,6 +719,11 @@ actor MinimuxerInstallChannel: InstallChannel {
         }
     }
 
+    /// Signing must not consume Apple-side signing resources until the install channel is usable.
+    func requireReadyForSigning() async throws {
+        try await requireReady()
+    }
+
     /// 不就绪原因 → 可操作的失败。**分类只在 `ChannelReadinessPolicy` 里做**，
     /// 这里只负责把类别翻成文案与码（避免出现第二份判据表 —— 本仓反复踩过的坑）。
     static func readinessFailure(for issueRawValue: String?) -> ImportFailure {

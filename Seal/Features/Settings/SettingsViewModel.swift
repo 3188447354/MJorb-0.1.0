@@ -1397,7 +1397,8 @@ final class SettingsViewModel: ObservableObject {
                     teamName: inventory.teamName,
                     appIDs: cachedAppIDs,
                     certificates: inventory.certificates,
-                    fetchedAt: inventory.fetchedAt
+                    fetchedAt: inventory.fetchedAt,
+                    appIDQuota: certificateInventories[account.id]?.appIDQuota
                 )
             }
             inventory = inventory.filteringDismissedCertificates()
@@ -1412,9 +1413,9 @@ final class SettingsViewModel: ObservableObject {
             guard acceptsCertificateInventoryRefresh(ticket) else { return }
             certificateHealthStatuses[account.id] = health
             saveCertificateInventoryCache(inventory)
-            let appIDSummary = account.isFreeTeam == true
-                ? "已注册 \(inventory.usedBundleIDCount) / 10 个 App ID"
-                : "已注册 \(inventory.usedBundleIDCount) 个 App ID"
+            let appIDSummary = "Apple 列表返回 \(inventory.appIDQuota?.returnedCount ?? inventory.usedBundleIDCount) 项，"
+                + "当前有效 \(inventory.usedBundleIDCount) 个，可新建 "
+                + "\(inventory.appIDQuota?.availableQuantity.map { String($0) } ?? "未提供") 个"
             try? await logStore?.append(
                 category: .account,
                 message: "Apple ID 已完整同步：\(appIDSummary)，证书状态已更新"
@@ -1488,7 +1489,8 @@ final class SettingsViewModel: ObservableObject {
                 teamName: fetched.teamName,
                 appIDs: fetched.appIDs,
                 certificates: certificateInventories[account.id]?.certificates ?? [],
-                fetchedAt: fetched.fetchedAt
+                fetchedAt: fetched.fetchedAt,
+                appIDQuota: fetched.appIDQuota
             )
             guard acceptsCertificateInventoryRefresh(ticket) else { return }
             certificateInventories[account.id] = merged
@@ -1501,7 +1503,7 @@ final class SettingsViewModel: ObservableObject {
                 // 还剩 10 个名额，实际是已经用满 10 个（免费账号上限）。
                 // 这直接导致「id 有足够的名额」的误判，进而把多扩展 App 的失败原因找错方向。
                 // 与 CertificatesRootView 的「已签名 N / 10」保持同一口径。
-                message: "Apple App ID 已同步：已注册 \(merged.usedBundleIDCount) / 10 个 App ID"
+                message: "Apple App ID 已同步：Apple 列表返回 \(merged.appIDQuota?.returnedCount ?? merged.usedBundleIDCount) 项，当前有效 \(merged.usedBundleIDCount) 个，可新建 \(merged.appIDQuota?.availableQuantity.map { String($0) } ?? "未提供") 个"
             )
         } catch is CancellationError {
             // 任务取消不是错误：不污染失败标记，静默返回。
@@ -1591,7 +1593,8 @@ final class SettingsViewModel: ObservableObject {
                 teamName: fetched.teamName,
                 appIDs: certificateInventories[account.id]?.appIDs ?? [],
                 certificates: filterDismissedCertificates(fetched.certificates),
-                fetchedAt: fetched.fetchedAt
+                fetchedAt: fetched.fetchedAt,
+                appIDQuota: certificateInventories[account.id]?.appIDQuota
             )
             guard acceptsCertificateInventoryRefresh(ticket) else { return }
             certificateInventories[account.id] = inventory
@@ -1830,7 +1833,8 @@ final class SettingsViewModel: ObservableObject {
             teamName: inventory.teamName,
             appIDs: inventory.appIDs,
             certificates: remaining,
-            fetchedAt: inventory.fetchedAt
+            fetchedAt: inventory.fetchedAt,
+            appIDQuota: inventory.appIDQuota
         )
         certificateInventories[accountID] = updated
         saveCertificateInventoryCache(updated)

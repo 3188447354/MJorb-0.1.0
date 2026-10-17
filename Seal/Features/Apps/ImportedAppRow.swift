@@ -262,29 +262,17 @@ struct ImportedAppRow: View {
         )
     }
 
-    /// 显示版本：Seal 显示 1.0.0（对应构建号），如 v1.0.0 (70)。
-    /// 有待安装更新时显示过渡：v1.0.0 (68) → v1.0.0 (69)
+    /// Seal 只显示营销版本，不在应用列表暴露 CI 构建号。
     private static func displayVersion(for app: AppRecord) -> String {
         guard app.isSeal else { return app.version }
         let short = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? app.version
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
-        let running = !build.isEmpty ? "\(short) (\(build))" : short
 
-        // 有待安装更新时，显示过渡
         if let kind = pendingUpdateKind(app), kind != .none {
-            let newBuild = app.buildNumber ?? ""
-            let newVersion: String
-            if !newBuild.isEmpty {
-                newVersion = "\(app.version) (\(newBuild))"
-            } else {
-                newVersion = app.version
-            }
-            // 运行版和记录版不同才显示箭头
-            if newVersion != running {
-                return "\(running) → \(newVersion)"
+            if app.version != short {
+                return "\(short) → \(app.version)"
             }
         }
 
-        return running
+        return short
     }
 }

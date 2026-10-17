@@ -303,8 +303,8 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
             && provisioningProfileExpirationDate != nil
     }
 
-    /// 用户明确选择的策略优先。普通 IPA 默认共享主描述文件，只有 Seal 与
-    /// LiveContainer 的扩展固定使用独立描述文件。
+    /// 已记录或用户明确选择的策略优先。普通 IPA 默认共享；Seal 与 LiveContainer 默认独立。
+    /// 普通 IPA 的扩展若有不兼容能力，只为该扩展单独申请 profile。
     var effectiveExtensionProfileStrategy: AppExtensionProfileStrategy {
         if let extensionProfileStrategy {
             return extensionProfileStrategy
@@ -319,6 +319,28 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         let identifier = originalBundleIdentifier.lowercased()
         return identifier == "com.kdt.livecontainer"
             || identifier.hasPrefix("com.kdt.livecontainer.")
+    }
+
+    /// 逐目标签名时，独立扩展可由已提交 signingTargets 中的 profile UUID 还原，
+    /// 不需要另存一份容易与签名记录失配的 Bundle ID 清单。
+    var independentlyProvisionedExtensionBundleIdentifiers: Set<String> {
+        let extensionBundleIDs = Set(extensions.compactMap(\.mappedBundleIdentifier))
+        switch extensionProfileStrategy {
+        case .some(.sharedMainProfile):
+            return []
+        case .none:
+            return extensionBundleIDs
+        case .some(.independentProfiles):
+            return extensionBundleIDs
+        case .some(.selectiveProfiles):
+            guard let mainProfileUUID = provisioningProfileUUID else { return [] }
+            return Set(signingTargets.compactMap { target in
+                guard extensionBundleIDs.contains(target.bundleIdentifier),
+                      let profileUUID = target.profileUUID,
+                      profileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame else { return nil }
+                return target.bundleIdentifier
+            })
+    }
     }
 
     var requiresLockedSigningIdentity: Bool {

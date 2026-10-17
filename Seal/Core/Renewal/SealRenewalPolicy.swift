@@ -19,7 +19,7 @@ protocol RenewalPolicy: Sendable {
     /// 由安装校验或启动结算推进到 `.installed`。
     func statusAfterSigning(originalState: AppState) -> SignedArtifactStatus
 
-    /// 是否允许弹「撤销并继续签名」。Seal 永远不允许
+    /// 是否允许打开证书选择与撤销确认。Seal 永远不允许
     /// （撤销运行中 Seal 正在用的证书会导致变砖，2026-09-14 真机）。
     var allowsRevocationPrompt: Bool { get }
 

@@ -16,6 +16,7 @@ struct RootTabView: View {
     let migrateKeychainAccessibility: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection = .apps
+    @State private var isAppearanceThemePresented = false
     @State private var launchCheckInProgress = false
     @State private var lastLaunchCheckAt: Date?
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
@@ -23,6 +24,7 @@ struct RootTabView: View {
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
     @State private var updateNotice: UpdateNotice?
     @State private var lastUpdateCheckAt: Date?
+    @State private var updateCheckInProgress = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -40,6 +42,7 @@ struct RootTabView: View {
                 viewModel: settingsViewModel,
                 relatedApps: appsViewModel.apps,
                 certificateExportHandler: certificateExportHandler,
+                onAppearanceThemeRequested: { isAppearanceThemePresented = true },
                 onSelfUpdateInstall: { localURL in
                     installSelfUpdate(localURL)
                 }
@@ -152,6 +155,16 @@ struct RootTabView: View {
                 )
             }
         }
+        .sheet(isPresented: $isAppearanceThemePresented) {
+            AppearanceThemeSheet(
+                appearanceRawValue: $appearanceRawValue,
+                accentRawValue: $accentRawValue,
+                customAccentHex: $customAccentHex,
+                isThemeSheetPresented: $isAppearanceThemePresented
+            )
+            .presentationDetents([.height(454), .medium])
+            .presentationDragIndicator(.hidden)
+        }
     }
 
     /// 从灵动岛 / 锁屏卡片跳回配对页。
@@ -180,13 +193,28 @@ struct RootTabView: View {
 
     @MainActor
     private func performUpdateCheck() async {
+        guard updateCheckInProgress == false else { return }
         if let last = lastUpdateCheckAt, Date().timeIntervalSince(last) < 60 {
             return
         }
+        updateCheckInProgress = true
+        defer { updateCheckInProgress = false }
+        while scenePhase == .active && hasBlockingUpdateOperation {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+        guard scenePhase == .active else { return }
         lastUpdateCheckAt = Date()
-        if let notice = await UpdateChecker.shared.check() {
+        if case .available(let notice) = await UpdateChecker.shared.check() {
             updateNotice = notice
         }
+    }
+
+    private var hasBlockingUpdateOperation: Bool {
+        selection != .apps
+            || appsViewModel.signingSession != nil
+            || appsViewModel.selectedOperationApp != nil
+            || appsViewModel.isImporterPresented
+            || appsViewModel.isImportSheetPresented
     }
 
     @MainActor

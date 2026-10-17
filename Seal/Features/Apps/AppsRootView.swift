@@ -71,7 +71,7 @@ struct AppsRootView: View {
                 }
             }
             // 已安装包再导入：系统弹窗，不走抽屉
-            .alert("已安装", isPresented: Binding(
+            .alert("已是最新版", isPresented: Binding(
                 get: { viewModel.alreadyInstalledDraft != nil },
                 set: { if !$0 { viewModel.alreadyInstalledDraft = nil } }
             )) {
@@ -81,7 +81,7 @@ struct AppsRootView: View {
                 }
             } message: {
                 if let draft = viewModel.alreadyInstalledDraft {
-                    Text("\(draft.parsedIPA.name) v\(draft.parsedIPA.version) 已安装，无需重复导入")
+                    Text("\(draft.parsedIPA.name) v\(draft.parsedIPA.version) 已安装，无需重复更新")
                 }
             }
             .sheet(item: $viewModel.selectedOperationApp, onDismiss: operationSheetDismissed) { app in
@@ -92,7 +92,11 @@ struct AppsRootView: View {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { mode = .installed }
                     },
                     onDelete: {
-                        pendingDeleteApp = app
+                        if app.replacesInstalledAppID != nil {
+                            Task { _ = await viewModel.delete(app) }
+                        } else {
+                            pendingDeleteApp = app
+                        }
                     }
                 )
                 .presentationDetents(operationDetents(for: app))

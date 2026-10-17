@@ -258,10 +258,10 @@ Windows 本机**无法编译**，一切以云 CI 编译 + 真机回归为准。
 
 ## 6. 版本与发布
 
-- 凡「需发版让用户可检测到」的代码更新，必须 bump `MARKETING_VERSION`（`project.yml` 的 Seal 主 target）。
-  ~~主 target 与 SealTunnel 扩展两处一致~~ → **内置 SealTunnel 扩展已移除**（`project.yml` 只剩一个
-  `MARKETING_VERSION`，`Scripts/verify-ipa.sh` 发现 `PlugIns` 即判失败），VPN 依赖外部 LocalDevVPN。
-- 内置更新比较 `CFBundleShortVersionString` 与 Release `tag_name`（支持 `1.0.13`/`v1.0.13` 前缀），
+- Seal 当前版本序列从 `0.1.0` 开始；每次讨论确定并准备发布的迭代按补丁位递增：`0.1.1`、`0.1.2`，依此类推。主 App 与 Live Activity 扩展的 `MARKETING_VERSION` 必须同步。
+- 普通应用页面只显示营销版本，不显示 CI 构建号。CI 构建号仍由 `GITHUB_RUN_NUMBER` 覆盖，用于构建追踪和诊断日志。
+- 凡「需发版让用户可检测到」的代码更新，必须 bump `MARKETING_VERSION`（`project.yml` 的 Seal 主 target 及 Live Activity 扩展）。
+- 内置更新比较 `CFBundleShortVersionString` 与 Release `tag_name`（支持 `0.1.13`/`v0.1.13` 前缀），
   Release tag 必须与 `MARKETING_VERSION` 对齐，否则检测不到。
   `CURRENT_PROJECT_VERSION` 由 CI `GITHUB_RUN_NUMBER` 覆盖。
 - 发布正文来自 `RELEASE_NOTES.md`；两份工作流的 publish 步骤已加存在性判空，缺文件直接失败并给注解。

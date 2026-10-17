@@ -167,7 +167,7 @@ final class AppsViewModel: ObservableObject {
     private var backgroundBatchPresentationRequested = false
     /// 后台批次只持久化结果；用户回到 Seal 后再恢复为结果抽屉。
     private var isBackgroundBatchRefresh = false
-    /// 「撤销并继续签名」（SEAL-CERT-204e）确认后，因证书被撤而失效、待自动重签的已装 App。
+    /// 用户选定证书并确认后，因证书被撤而失效、待自动重签的已装 App。
     /// 仅本次签名重试成功后才会消费；重试失败时清空并提示手动续签。
     private var certificateSacrificeResignQueue: [UUID] = []
     /// 证书轮换**子流程**自己的阶段簿记 —— 它**不写进父会话**（判据见
@@ -1738,13 +1738,19 @@ final class AppsViewModel: ObservableObject {
         )
     }
 
-    /// 签名失败页「撤销并继续签名」（SEAL-CERT-204e）一键流程：
-    /// 撤销账号下所有本机无私钥的证书 → 自动重试本次签名 → 成功后自动重签因此失效的
-    /// 其余已装 App。撤销会让仍用旧证书的 App 立即打不开，确认弹窗已在失败页给出。
-    func confirmCertificateSacrificeAndRetry() {
+    func loadCertificateSacrificeCandidates() async throws -> [CertificateSacrificeCandidate] {
         guard let session = signingSession,
               case .failed(let failure) = session.status,
-              failure.code == "SEAL-CERT-204e",
+              ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code),
+              let signingCoordinator else { return [] }
+        return try await signingCoordinator.certificateSacrificeCandidates(accountID: session.account.id)
+    }
+
+    /// 用户在证书列表中选定并二次确认后，只撤销所选证书，再重试当前签名。
+    func confirmCertificateSacrificeAndRetry(serialNumber: String) {
+        guard let session = signingSession,
+              case .failed(let failure) = session.status,
+              ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code),
               signingTask == nil,
               batchRefreshTask == nil,
               let signingCoordinator else { return }
@@ -1768,7 +1774,10 @@ final class AppsViewModel: ObservableObject {
             }
             do {
                 let result = try await signingCoordinator
-                    .revokeKeylessCertificatesAfterConfirmation(accountID: session.account.id)
+                    .revokeKeylessCertificateAfterConfirmation(
+                        accountID: session.account.id,
+                        serialNumber: serialNumber
+                    )
                 try? await logStore?.append(
                     category: .signing,
                     message: "用户确认撤销 \(result.revokedSerials.count) 张无钥匙证书，继续本次签名"
@@ -3906,7 +3915,8 @@ final class AppsViewModel: ObservableObject {
                 level: .info,
                 message: "[SEAL-IMPORT-DBG] 导入完成：id=\(record.id.uuidString.prefix(8)), isSeal=\(record.isSeal), state=\(record.state), replacesInstalledAppID=\(record.replacesInstalledAppID?.uuidString.prefix(8) ?? "nil"), belongsInInstalled=\(record.belongsInInstalledList), belongsInUnsigned=\(record.belongsInUnsignedList)"
             )
-            if autoOpenSigningAfterImport {
+            // About 下载由入口标记识别；「+」导入则由已确认的 Seal 记录识别，两者共用签名抽屉。
+            if autoOpenSigningAfterImport || record.isSeal {
                 autoOpenSigningAfterImport = false
                 if let refreshed = apps.first(where: { $0.id == record.id }) {
                     selectedOperationApp = refreshed

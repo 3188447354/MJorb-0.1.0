@@ -4,6 +4,7 @@ protocol InstallChannel: Actor {
     func start() async throws -> String
     func diagnose() async -> InstallChannelDiagnostics
     func isReady() async -> Bool
+    func requireReadyForSigning() async throws
     func storedDeviceIdentifier() async -> String?
     func reset() async
     /// 清除「失败熔断」，让下一次 `start()` 真正重跑完整隧道诊断。
@@ -38,6 +39,23 @@ protocol InstallChannel: Actor {
 extension InstallChannel {
     func storedDeviceIdentifier() async -> String? { nil }
     func reset() async {}
+
+    func requireReadyForSigning() async throws {
+        guard await isReady() else {
+            throw ImportFailure(
+                title: "设备连接失败",
+                reason: "设备通道尚未就绪，本次签名尚未开始，也未申请新的 Apple 签名资源。",
+                recovery: "确认 iPhone 已解锁、已配对，并检查 LocalDevVPN 后重试",
+                code: "SEAL-INSTALL-706b",
+                condition: .tunnelUnavailable,
+                action: .openLocalDevVPN,
+                route: .localDevVPN,
+                retryDisposition: .manual,
+                operation: .install,
+                origin: .deviceChannel
+            )
+        }
+    }
 
     /// 默认空实现：供测试桩与不实现熔断的类型直接遵循。
     /// 真实实现见 `MinimuxerInstallChannel.clearFailureCooldown()`。

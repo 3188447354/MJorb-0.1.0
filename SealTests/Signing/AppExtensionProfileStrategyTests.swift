@@ -56,6 +56,13 @@ struct AppExtensionProfileStrategyTests {
         )
     }
 
+    /// 默认策略是**共享**（2026-10-16 改）。
+    ///
+    /// 原断言编码的是「`isSeal || hasExtensions` ⇒ 独立」，那是在一次 LiveProcess 真机回归
+    /// 之后加的保守兜底；它把「扩展能力 ⊄ 主 App 能力」这个可精确判定的条件放大成了
+    /// 「含扩展就独立」，代价是免费账号每装一个带扩展的包多消耗 N 个 App ID
+    /// （实测记录：共享模式下 9 个 bundle 只占 1 个 App ID 且签名安装成功）。
+    /// 精确判定改由 `resolvedForSigning` + `sharedProfileBlocker` 承担。
     @Test
     func onlySealAndLiveContainerUseIndependentProfilesByDefault() {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: false) == .sharedMainProfile)
@@ -63,6 +70,8 @@ struct AppExtensionProfileStrategyTests {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
     }
 
+    /// 含扩展的普通 App 现在**默认共享**；是否真的共享由 `sharedProfileBlocker` 在拿到
+    /// 实际能力集后决定（扩展要了主 App 没声明的能力 ⇒ 降级独立）。
     @Test
     func ordinaryAppWithExtensionsUsesTheSharedDefault() {
         let app = AppRecord(
@@ -83,6 +92,18 @@ struct AppExtensionProfileStrategyTests {
         )
 
         #expect(app.effectiveExtensionProfileStrategy == .sharedMainProfile)
+        #expect(
+            AppExtensionProfileStrategy.resolvedForSigning(
+                requested: app.effectiveExtensionProfileStrategy,
+                mainBundleID: mappedMain,
+                entitlementsByBundleID: [
+                    mappedMain: [],
+                    "com.example.video.seal.TEAM123.LiveProcess": [
+                        "com.apple.developer.kernel.increased-memory-limit"
+                    ]
+                ]
+            ) == .independentProfiles
+        )
     }
 
     @Test
@@ -101,6 +122,7 @@ struct AppExtensionProfileStrategyTests {
         #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
     }
 
+    /// 已记录的独立策略应保持独立。
     @Test
     func persistedIndependentStrategyRemainsIndependent() {
         let app = AppRecord(
@@ -145,6 +167,54 @@ struct AppExtensionProfileStrategyTests {
 
         #expect(target.bundleIdentifier == mappedShare)
         #expect(target.profileUUID == "shared-profile")
+    }
+
+    @Test
+    func selectiveStrategyRestoresIndependentTargetsFromCommittedProfileUUIDs() {
+        func target(_ bundleID: String, profileUUID: String) -> SigningTargetRecord {
+            SigningTargetRecord(
+                bundleIdentifier: bundleID,
+                profileUUID: profileUUID,
+                profileName: nil,
+                profileCreationDate: nil,
+                profileExpirationDate: .now.addingTimeInterval(7 * 86_400),
+                teamIdentifier: "TEAM123",
+                certificateSerialNumbers: ["1234"],
+                deviceIdentifiers: ["device"]
+            )
+        }
+        let app = AppRecord(
+            originalBundleIdentifier: originalMain,
+            mappedBundleIdentifier: mappedMain,
+            name: "Video",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .installed,
+            provisioningProfileUUID: "main-profile",
+            signingTargets: [
+                target(mappedMain, profileUUID: "main-profile"),
+                target(mappedShare, profileUUID: "share-profile"),
+                target(mappedWidget, profileUUID: "main-profile")
+            ],
+            ipaRelativePath: "Video.ipa",
+            importedAt: .now,
+            extensions: [
+                AppExtensionRecord(
+                    name: "Share",
+                    originalBundleIdentifier: "com.example.video.Share",
+                    mappedBundleIdentifier: mappedShare
+                ),
+                AppExtensionRecord(
+                    name: "Widget",
+                    originalBundleIdentifier: "com.example.video.Widget",
+                    mappedBundleIdentifier: mappedWidget
+                )
+            ],
+            extensionProfileStrategy: .selectiveProfiles
+        )
+
+        #expect(app.independentlyProvisionedExtensionBundleIdentifiers == [mappedShare])
     }
 
     @Test
@@ -194,6 +264,114 @@ struct AppExtensionProfileStrategyTests {
         )
 
         #expect(blocker == nil)
+    }
+
+    @Test
+    func resolvedForSigningKeepsTheSharedProfileWhenExtensionsAreCovered() {
+        #expect(
+            AppExtensionProfileStrategy.resolvedForSigning(
+                requested: .sharedMainProfile,
+                mainBundleID: mappedMain,
+                entitlementsByBundleID: [
+                    mappedMain: ["com.apple.developer.kernel.increased-memory-limit"],
+                    mappedShare: ["com.apple.developer.kernel.increased-memory-limit"]
+                ]
+            ) == .sharedMainProfile
+        )
+    }
+
+    @Test
+    func resolvedForSigningFallsBackToIndependentProfilesWhenAnExtensionNeedsExtraEntitlements() {
+        // 真机实证（构建 27）：LiveContainer 的 LiveProcess 请求 increased-memory-limit，
+        // 而主 App 没有声明它 ⇒ 共享主描述文件在签后逐 bundle 校验必报 SEAL-ENTITLEMENT-401。
+        #expect(
+            AppExtensionProfileStrategy.resolvedForSigning(
+                requested: .sharedMainProfile,
+                mainBundleID: mappedMain,
+                entitlementsByBundleID: [
+                    mappedMain: [],
+                    mappedShare: ["com.apple.developer.kernel.increased-memory-limit"]
+                ]
+            ) == .independentProfiles
+        )
+    }
+
+    @Test
+    func onlyIncompatibleExtensionGetsItsOwnProfileAndAppID() {
+        let mappings = [
+            originalMain: mappedMain,
+            "com.example.video.Share": mappedShare,
+            "com.example.video.Widget": mappedWidget
+        ]
+        let entitlements = [
+            mappedMain: Set<String>(),
+            mappedShare: ["com.apple.developer.kernel.increased-memory-limit"],
+            mappedWidget: Set<String>()
+        ]
+        let independent = AppExtensionProfileStrategy.independentBundleIdentifiers(
+            mainBundleID: mappedMain,
+            entitlementsByBundleID: entitlements,
+            expectedBundleIdentifiers: [mappedMain, mappedShare, mappedWidget]
+        )
+
+        #expect(independent == [mappedShare])
+        #expect(
+            AppExtensionProfileStrategy.resolvedStrategy(
+                mainBundleID: mappedMain,
+                expectedBundleIdentifiers: [mappedMain, mappedShare, mappedWidget],
+                independentBundleIdentifiers: independent
+            ) == .selectiveProfiles
+        )
+        #expect(
+            AppExtensionProfileStrategy.selectiveProfiles.portalMappings(
+                from: mappings,
+                originalMainBundleID: originalMain,
+                independentBundleIdentifiers: independent
+            ) == [originalMain: mappedMain, "com.example.video.Share": mappedShare]
+        )
+        #expect(
+            AppExtensionProfileStrategy.selectiveProfiles.expectedProfileBundleID(
+                for: mappedWidget,
+                mappedMainBundleID: mappedMain,
+                independentBundleIdentifiers: independent
+            ) == mappedMain
+        )
+        #expect(
+            AppExtensionProfileStrategy.selectiveProfiles.expectedProfileBundleID(
+                for: mappedShare,
+                mappedMainBundleID: mappedMain,
+                independentBundleIdentifiers: independent
+            ) == mappedShare
+        )
+    }
+
+    @Test
+    func signingResolutionKeepsCompatibleExtensionsShared() {
+        #expect(
+            AppExtensionProfileStrategy.resolvedForSigning(
+                requested: .sharedMainProfile,
+                mainBundleID: mappedMain,
+                entitlementsByBundleID: [
+                    mappedMain: [],
+                    mappedShare: ["com.apple.developer.kernel.increased-memory-limit"],
+                    mappedWidget: []
+                ],
+                expectedBundleIdentifiers: [mappedMain, mappedShare, mappedWidget]
+            ) == .selectiveProfiles
+        )
+    }
+
+    @Test
+    func selectiveProfileDowngradeAffectsOnlyTargetsSharingThatProfile() {
+        #expect(
+            AppExtensionProfileStrategy.affectedBundles(
+                whenDowngrading: mappedMain,
+                strategy: .selectiveProfiles,
+                mappedMainBundleID: mappedMain,
+                mappedBundleIdentifiers: [mappedMain, mappedShare, mappedWidget],
+                independentBundleIdentifiers: [mappedShare]
+            ) == [mappedMain, mappedWidget]
+        )
     }
 
     @Test
@@ -262,7 +440,8 @@ struct AppExtensionProfileStrategyTests {
                 whenDowngrading: mappedMain,
                 strategy: strategy,
                 mappedMainBundleID: mappedMain,
-                mappedBundleIdentifiers: [mappedShare, mappedWidget]  // ← 刻意漏掉主 App
+                mappedBundleIdentifiers: [mappedShare, mappedWidget],  // ← 刻意漏掉主 App
+                independentBundleIdentifiers: strategy == .selectiveProfiles ? [mappedShare] : []
             )
             #expect(
                 affected.contains(mappedMain),

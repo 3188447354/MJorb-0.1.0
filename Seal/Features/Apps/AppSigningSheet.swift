@@ -16,6 +16,7 @@ struct AppSigningSheet: View {
     @State private var isBundleIDEditorPresented = false
     @State private var isNameEditorPresented = false
     @State private var isIconActionsPresented = false
+    @State private var isUpdatePackageDeleteConfirmPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isIconFileImporterPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -98,6 +99,15 @@ struct AppSigningSheet: View {
         .alert(item: $viewModel.alertFailure) { failure in
             standardAlert(failure)
         }
+        .confirmationDialog("删除更新包？", isPresented: $isUpdatePackageDeleteConfirmPresented, titleVisibility: .visible) {
+            Button("取消", role: .cancel) {}
+            Button("删除更新包", role: .destructive) {
+                dismiss()
+                onDelete?()
+            }
+        } message: {
+            Text("仅删除待安装的更新包，当前已安装的应用不受影响")
+        }
     }
 
     private var configuration: some View {
@@ -123,9 +133,13 @@ struct AppSigningSheet: View {
 
                 if isRenewal == false {
                     if let onDelete {
-                        Button("删除 IPA", role: .destructive) {
-                            dismiss()
-                            onDelete()
+                        Button(isPendingUpdate ? "删除更新包" : "删除 IPA", role: .destructive) {
+                            if isPendingUpdate {
+                                isUpdatePackageDeleteConfirmPresented = true
+                            } else {
+                                dismiss()
+                                onDelete()
+                            }
                         }
                         .frame(maxWidth: .infinity, minHeight: 44)
                     }
@@ -484,11 +498,13 @@ struct AppSigningSheet: View {
 
     private func primaryActionTitle(for presentation: AppOperationPresentation) -> String {
         if isPendingInstall { return isInstallingSignedArtifact ? "正在安装" : "安装" }
-        return resolvedSelectedAccountID == nil ? "去添加 Apple ID" : presentation.primaryAction
+        if resolvedSelectedAccountID == nil { return "去添加 Apple ID" }
+        if isPendingUpdate { return "签名并更新" }
+        return presentation.primaryAction
     }
 
     private var drawerTitle: String {
-        return isRenewal ? "正在续签" : "签名"
+        return isPendingUpdate ? "更新 \(workingApp.displayName)" : isRenewal ? "正在续签" : "签名"
     }
 
     private var isPendingInstall: Bool {
@@ -497,6 +513,10 @@ struct AppSigningSheet: View {
 
     private var isRenewal: Bool {
         workingApp.belongsInInstalledList
+    }
+
+    private var isPendingUpdate: Bool {
+        workingApp.replacesInstalledAppID != nil
     }
 
     private var isRunning: Bool {

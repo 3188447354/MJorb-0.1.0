@@ -244,7 +244,10 @@ enum ProfileOnlyRenewalPolicy {
         guard app.removedExtensionBundleIdentifiers.isEmpty else {
             return .requiresFullResign(.incompleteExtensionSet)
         }
-        guard extensionProfileIntegrityBlock(app) == nil else {
+        // 本次预计使用的策略：与签名链路同源（`effectiveExtensionProfileStrategy` 走
+        // `defaultFor`，再按记录里的能力集过一遍 `sharedProfileBlocker` 的降级条件）。
+        let plannedStrategy = app.extensionProfileStrategy ?? app.effectiveExtensionProfileStrategy
+        guard extensionProfileIntegrityBlock(app, resolvedStrategy: plannedStrategy) == nil else {
             return .requiresFullResign(.extensionProfileIntegrityMigration)
         }
         // `Signed.ipa` 是可再生的安装缓存，不是手机上已安装产物的续签身份。
@@ -450,9 +453,11 @@ enum ProfileOnlyRenewalPolicy {
         app: AppRecord,
         liveIdentity: LiveProfileOnlyIdentity?
     ) -> Decision {
-        // 实时运行身份只能证明“当前 IPA 可读”，不能掩盖持久化签名拓扑的矛盾。
-        // 签名记录不完整或不一致时，迁移必须先于 Seal 自身的实时身份快路径。
-        if extensionProfileIntegrityBlock(app) != nil {
+        // 签名拓扑不完整时，迁移必须先于 Seal 自身的实时身份快路径。
+        if extensionProfileIntegrityBlock(
+            app,
+            resolvedStrategy: app.extensionProfileStrategy ?? app.effectiveExtensionProfileStrategy
+        ) != nil {
             return .requiresFullResign(.extensionProfileIntegrityMigration)
         }
         if let liveIdentity,
@@ -515,35 +520,31 @@ enum ProfileOnlyRenewalPolicy {
         return normalized.isEmpty ? "0" : String(normalized)
     }
 
-    /// 带扩展的应用必须先证明持久化记录与当初的签名策略一致，才能只更新描述文件。
-    ///
-    /// 明确的独立策略沿用每个目标自己的描述文件；明确的共享策略要求主 App、每个
-    /// 扩展快照和每个签名目标都记录同一份主描述文件。`nil` 属于旧版没有策略字段的
-    /// 记录，不能猜成共享或独立，必须完整重签一次来建立可信拓扑。
-    private static func extensionProfileIntegrityBlock(_ app: AppRecord) -> Bool? {
+    /// 旧记录或主应用、扩展、签名目标的描述文件分配不一致时，先完整重签迁移。
+    private static func extensionProfileIntegrityBlock(
+        _ app: AppRecord,
+        resolvedStrategy: AppExtensionProfileStrategy
+    ) -> Bool? {
         guard app.extensions.isEmpty == false else { return nil }
-
-        switch app.extensionProfileStrategy {
-        case .none:
-            return true
-        case .independentProfiles:
-            return nil
-        case .sharedMainProfile:
-            guard let mainProfileUUID = nonBlank(app.provisioningProfileUUID) else {
-                // 由后续完整身份检查给出更准确的 `.incompleteSigningIdentity` 原因。
-                return nil
+        guard let recorded = app.extensionProfileStrategy else { return true }
+        guard recorded == resolvedStrategy,
+              let mainProfileUUID = nonBlank(app.provisioningProfileUUID) else { return true }
+        var independentCount = 0
+        for ext in app.extensions {
+            guard let bundleID = nonBlank(ext.mappedBundleIdentifier),
+                  let extProfileUUID = nonBlank(ext.provisioningProfileUUID),
+                  let target = app.signingTargets.first(where: { $0.bundleIdentifier == bundleID }),
+                  let targetProfileUUID = nonBlank(target.profileUUID),
+                  extProfileUUID.caseInsensitiveCompare(targetProfileUUID) == .orderedSame else {
+                return true
             }
-            for ext in app.extensions {
-                guard let bundleIdentifier = nonBlank(ext.mappedBundleIdentifier),
-                      let extensionProfileUUID = nonBlank(ext.provisioningProfileUUID),
-                      extensionProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame,
-                      let target = app.signingTargets.first(where: { $0.bundleIdentifier == bundleIdentifier }),
-                      let targetProfileUUID = nonBlank(target.profileUUID),
-                      targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame else {
-                    return true
-                }
-            }
-            return nil
+            let independent = targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame
+            if independent { independentCount += 1 }
+            if recorded == .sharedMainProfile && independent { return true }
+            if recorded == .independentProfiles && !independent { return true }
         }
+        if recorded == .selectiveProfiles,
+           (independentCount == 0 || independentCount == app.extensions.count) { return true }
+        return nil
     }
 }

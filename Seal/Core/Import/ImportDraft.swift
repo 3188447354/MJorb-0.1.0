@@ -8,14 +8,14 @@ enum VersionCheckResult: Equatable, Sendable {
     case upgrade(oldVersion: String, newVersion: String)
     /// 同版本同内容：已是最新，阻止导入
     case alreadyLatest(version: String)
-    /// 同版本不同内容：需要用户确认
-    case sameVersionDifferentContent(version: String)
     /// 低版本：降级警告，需要用户二次确认
     case downgrade(oldVersion: String, newVersion: String)
-    /// 同营销版本但构建号更高：视为升级（例如 v1.0.0 build 68 → build 69）
+    /// 同营销版本但构建号更高：视为升级（例如 v0.1.0 build 68 → build 69）
     case buildUpgrade(oldBuild: String, newBuild: String, version: String)
     /// 同营销版本但构建号更低：视为降级
     case buildDowngrade(oldBuild: String, newBuild: String, version: String)
+    /// 版本号无法按数字段解析，不猜测升级或降级
+    case unreadableVersion
 }
 
 struct ImportDraft: Equatable, Identifiable, Sendable {

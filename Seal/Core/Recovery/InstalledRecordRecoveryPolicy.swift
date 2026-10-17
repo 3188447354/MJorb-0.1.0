@@ -424,7 +424,7 @@ enum InstalledRecordRecoveryPolicy {
             // ① `SigningCoordinator.appsAffectedByCertificateRotation` ⇒ 证书轮换时
             //    把这条记录排进「自动重签」，而它没有本地 IPA ⇒ 必然抛
             //    `SEAL-RECOVER-002`，事务里多一条「恢复失败」的错误日志；
-            // ② `revokeKeylessCertificatesAfterConfirmation` 的 `affectedInstalledApps`
+            // ② `revokeKeylessCertificateAfterConfirmation` 的 `affectedInstalledApps`
             //    ⇒ 确认弹窗会告诉用户「这 N 个应用会被自动重新签名安装」，而这 N 个里
             //    有一个**永远不会成功**。那就是「弹窗承诺了做不到的事」，
             //    与本仓「破坏性操作的失败必须让用户看见」是同一条纪律的反面。

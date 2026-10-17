@@ -9,11 +9,11 @@ struct UpdateChecker {
     private let repo = "3188447354/MJorb-0.1.0"
     private let lastNotifiedVersionKey = "update_notifier.last_notified_version"
 
-    /// 检查更新，返回需要展示的通知内容（无更新返回 nil）
+    /// 检查更新。失败与“已是最新版”分开返回，避免 About 页把请求失败误报为最新。
     /// - Parameter force: 手动检查时传 true，忽略已通知记录，有新版本就弹
-    func check(force: Bool = false) async -> UpdateNotice? {
+    func check(force: Bool = false) async -> UpdateCheckResult {
         guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else {
-            return nil
+            return .unavailable
         }
 
         do {
@@ -24,12 +24,12 @@ struct UpdateChecker {
 
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                return nil
+                return .unavailable
             }
 
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tagName = json["tag_name"] as? String else {
-                return nil
+                return .unavailable
             }
 
             // 本地版本
@@ -37,15 +37,18 @@ struct UpdateChecker {
 
             // 只有远端版本「严格高于」当前版本才提示更新；
             // 回滚、发布顺序错乱或 tag 异常返回旧版本时静默忽略，避免提示下载旧 IPA。
-            if Version.compare(tagName, currentVersion) != .orderedDescending {
-                return nil
+            guard let versionComparison = Version.compareIfValid(tagName, currentVersion) else {
+                return .unavailable
+            }
+            if versionComparison != .orderedDescending {
+                return .latest
             }
 
             // 非强制模式：已经通知过这个版本，不重复弹
             if !force {
                 let lastNotified = UserDefaults.standard.string(forKey: lastNotifiedVersionKey)
                 if lastNotified == tagName {
-                    return nil
+                    return .suppressed
                 }
                 // 仅自动检查标记已通知；手动检查不写记录，避免吃掉后续自动弹窗
                 UserDefaults.standard.set(tagName, forKey: lastNotifiedVersionKey)
@@ -55,7 +58,7 @@ struct UpdateChecker {
             let releaseName = json["name"] as? String ?? "发现新版本"
             let releaseBody = (json["body"] as? String)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = releaseBody?.isEmpty == false ? releaseBody! : "点击查看详情并更新"
+            let message = releaseBody ?? ""
 
             // 下载跳转地址：优先 Release 详情页，回退到仓库页面
             let downloadURL = (json["html_url"] as? String)
@@ -68,16 +71,16 @@ struct UpdateChecker {
             // 配套校验和直链：下载 IPA 后必须与其比对口径，堵住「同一合法域名下资产被替换」。
             let sha256DownloadURL = Self.sha256DownloadURL(from: assets)
 
-            return UpdateNotice(
+            return .available(UpdateNotice(
                 version: tagName,
                 title: releaseName,
                 message: message,
                 downloadURL: downloadURL,
                 ipaDownloadURL: ipaDownloadURL,
                 sha256DownloadURL: sha256DownloadURL
-            )
+            ))
         } catch {
-            return nil
+            return .unavailable
         }
     }
 
@@ -94,7 +97,7 @@ struct UpdateChecker {
     /// 用 `Version.compare` 而不是字符串相等：tag 可能是 `v1.0.13`，
     /// IPA 内是 `1.0.13`，而 `Version` 已经处理了 `v` 前缀与多段版本号。
     static func advertisedVersion(_ advertised: String, matchesIPAVersion ipaVersion: String) -> Bool {
-        Version.compare(advertised, ipaVersion) == .orderedSame
+        Version.compareIfValid(advertised, ipaVersion) == .orderedSame
     }
 
     /// Release 资产的下载直链必须来自 GitHub 官方域名，且必须是 HTTPS。
@@ -172,6 +175,13 @@ struct UpdateChecker {
     static func hashMatches(expected: String, actual: String) -> Bool {
         expected.caseInsensitiveCompare(actual) == .orderedSame
     }
+}
+
+enum UpdateCheckResult {
+    case unavailable
+    case latest
+    case suppressed
+    case available(UpdateNotice)
 }
 
 struct UpdateNotice: Identifiable {

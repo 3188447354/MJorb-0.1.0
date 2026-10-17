@@ -85,6 +85,50 @@
     {
       "actions": [
         {
+          "title": "重新读取证书列表确认状态"
+        },
+        {
+          "title": "所选证书仍存在时再决定是否重试撤销"
+        }
+      ],
+      "code": "SEAL-CERT-204f",
+      "confidence": "conditional",
+      "kind": "failure",
+      "notEvidenceOf": [
+        "所选证书一定仍然有效",
+        "本次签名已经重试"
+      ],
+      "source": [
+        "Seal/Core/Signing/SigningCoordinator.swift:revokeKeylessCertificateAfterConfirmation",
+        "Seal/Features/Apps/CertificateSacrificePickerView.swift"
+      ],
+      "summary": "Apple 未确认所选证书的撤销结果；Seal 会读取最新清单，避免直接重复撤销。"
+    },
+    {
+      "actions": [
+        {
+          "title": "重新读取证书列表后再选择"
+        },
+        {
+          "title": "确认目标证书和影响范围后再继续"
+        }
+      ],
+      "code": "SEAL-CERT-204g",
+      "confidence": "conditional",
+      "kind": "failure",
+      "notEvidenceOf": [
+        "证书已经撤销",
+        "本次签名已经重试"
+      ],
+      "source": [
+        "Seal/Core/Signing/SigningCoordinator.swift:revokeKeylessCertificateAfterConfirmation",
+        "Seal/Features/Apps/CertificateSacrificePickerView.swift"
+      ],
+      "summary": "用户选择的证书在执行时已不满足撤销条件；本次未撤销证书。"
+    },
+    {
+      "actions": [
+        {
           "title": "在 iPhone“设置 > 通用 > iPhone 储存空间”清理可用空间"
         },
         {

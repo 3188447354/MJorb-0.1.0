@@ -47,6 +47,8 @@ struct AppleAccountDetailView: View {
     var body: some View {
         AppleAccountAppListView(
             state: contentState,
+            quota: inventory?.appIDQuota,
+            visibleAppIDCount: inventory?.usedBundleIDCount ?? 0,
             onRetry: refreshButtonTapped
         )
         .navigationTitle("已签名 App")
@@ -145,12 +147,52 @@ private enum AppleAccountAppListState: Equatable {
 
 private struct AppleAccountAppListView: View {
     let state: AppleAccountAppListState
+    let quota: ApplePortalAppIDQuotaSnapshot?
+    let visibleAppIDCount: Int
     let onRetry: () -> Void
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            content
+            VStack(spacing: 14) {
+                if case .loading = state {
+                    EmptyView()
+                } else {
+                    appIDQuotaCard
+                }
+                content
+            }
                 .padding(20)
+        }
+    }
+
+    private var appIDQuotaCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Apple 返回的可新建额度")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                if let available = quota?.availableQuantity, available >= 0 {
+                    Text("\(available) 个")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.sealAccent)
+                } else {
+                    Text("未提供")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.sealTextSecondary)
+                }
+            }
+            Text("Apple 列表返回 \(quota?.returnedCount ?? visibleAppIDCount) 项，当前有效 \(visibleAppIDCount) 个\(quota?.maxQuantity.map { " · Apple 返回上限 \($0) 个" } ?? "")。列表数量与可新建额度不同。")
+                .font(.footnote)
+                .foregroundStyle(Color.sealTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
         }
     }
 

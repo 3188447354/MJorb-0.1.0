@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import UIKit
 @preconcurrency import AltSign
 
@@ -754,6 +754,7 @@ actor ApplePortalSigningService {
         // 1.3.5 之前的记录没有这个字段（那时只有独立模式）⇒ 回退 `.independentProfiles`。
         // 守卫 **R65⑨** 钉住「必须取自记录、不得用 effective、不得写死」。
         let renewalStrategy = app.extensionProfileStrategy ?? .independentProfiles
+        let renewalIndependentBundleIdentifiers = app.independentlyProvisionedExtensionBundleIdentifiers
         let installedTargetBundleIdentifiers = [targetBundleIdentifier]
             + app.extensions.compactMap(\.mappedBundleIdentifier)
         // 🔴 **免解压快路径**（2026-09-29）：profile-only 续签只换描述文件、从不重签，
@@ -849,6 +850,7 @@ actor ApplePortalSigningService {
                 targets: targets,
                 mappedMainBundleID: targetBundleIdentifier,
                 extensionProfileStrategy: renewalStrategy,
+                independentExtensionBundleIdentifiers: renewalIndependentBundleIdentifiers,
                 team: team,
                 session: session,
                 progress: progress,
@@ -860,6 +862,7 @@ actor ApplePortalSigningService {
                 originalMainBundleID: app.originalBundleIdentifier,
                 mappedMainBundleID: prepared.mappedMainBundleID,
                 extensionProfileStrategy: renewalStrategy,
+                independentExtensionBundleIdentifiers: renewalIndependentBundleIdentifiers,
                 appName: app.displayName,
                 appURL: prepared.appURL,
                 workspace: prepared,
@@ -915,16 +918,12 @@ actor ApplePortalSigningService {
         // ⚠️ 份数与结果都必须用门户实际执行的策略。共享能力不满足时，首签会在
         // 门户写入前停止并由用户明确选择独立签名；续签则沿用已记录的策略，不能猜测。
         let resolvedRenewalStrategy = preparation.extensionProfileStrategy
-        let expectedProfileCount = resolvedRenewalStrategy == .sharedMainProfile
-            ? 1
-            : installedTargetBundleIdentifiers.count
+        let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count
         guard bindings[targetBundleIdentifier] != nil,
               bindings.count == expectedProfileCount else {
             throw Self.failure(
                 title: "描述文件不完整",
-                reason: resolvedRenewalStrategy == .sharedMainProfile
-                    ? "共享主描述文件续签本应只取回主应用那一份描述文件，实际取回 \(bindings.count) 份。"
-                    : "Apple 未返回已安装应用全部目标所需的描述文件。",
+                reason: "按已安装应用的扩展描述文件分配续签，本应取回 \(expectedProfileCount) 份，实际取回 \(bindings.count) 份。",
                 recovery: "执行完整重签以重新建立应用身份",
                 code: "SEAL-PROFILE-333"
             )
@@ -935,7 +934,8 @@ actor ApplePortalSigningService {
             certificateSerialNumber: resolvedSerial,
             deviceIdentifier: deviceIdentifier,
             materials: materials.sorted { $0.binding.bundleIdentifier < $1.binding.bundleIdentifier },
-            extensionProfileStrategy: resolvedRenewalStrategy
+            extensionProfileStrategy: resolvedRenewalStrategy,
+            independentExtensionBundleIdentifiers: preparation.independentExtensionBundleIdentifiers
         )
     }
 
@@ -1220,14 +1220,13 @@ actor ApplePortalSigningService {
 
             await progress(.signing)
             stage = .signing
-            let sharedProfileBundleIDs: [String]
-            if profilePreparation.extensionProfileStrategy == .sharedMainProfile {
-                sharedProfileBundleIDs = try signingWorkspace
-                    .signedBundleTargets(in: prepared)
-                    .map(\.bundleIdentifier)
-            } else {
-                sharedProfileBundleIDs = []
-            }
+            let sharedProfileBundleIDs = try signingWorkspace
+                .signedBundleTargets(in: prepared)
+                .map(\.bundleIdentifier)
+                .filter {
+                    $0 == prepared.mappedMainBundleID
+                        || profilePreparation.independentExtensionBundleIdentifiers.contains($0) == false
+                }
             try await signApp(
                 at: prepared.appURL,
                 p12Data: identity.secret.certificateP12,
@@ -1316,10 +1315,33 @@ actor ApplePortalSigningService {
         } catch ALTAppleAPIError.invalidAnisetteData {
             throw ALTAppleAPIError(.invalidAnisetteData)
         } catch ALTAppleAPIError.maximumAppIDLimitReached {
+            let refreshedInventory = try? await fetchAppIDInventory(
+                team: team,
+                session: session,
+                bypassCache: true
+            )
+            let refreshedAvailable = refreshedInventory?.availableQuantity
+            await diagnostic(
+                "Apple 拒绝新建 App ID 后已强制刷新清单：返回 \(refreshedInventory.map { String($0.appIDs.count) } ?? "未知") 项，"
+                    + "可新建 \(refreshedAvailable.map { String($0) } ?? "未提供") 个，"
+                    + "上限 \(refreshedInventory?.maxQuantity.map { String($0) } ?? "未提供")"
+            )
+            let reason: String
+            let recovery: String
+            if refreshedAvailable == 0 {
+                reason = "Apple 拒绝了本次 App ID 注册；刚刷新的 Apple 清单也显示当前可新建额度为 0。列表里有多少有效 App ID，不代表 7 天注册额度还剩多少。"
+                recovery = "等待 Apple 注册额度恢复，或改用账号中已有的 Bundle ID 后重试"
+            } else if let refreshedAvailable, refreshedAvailable > 0 {
+                reason = "Apple 拒绝了本次 App ID 注册，但刚刷新的清单仍显示可新建 \(refreshedAvailable) 个。Apple 返回的清单与注册结果不一致，Seal 没有继续重复创建。"
+                recovery = "稍后重新同步 Apple 清单再试；若仍不一致，请导出日志核对 Apple 返回值"
+            } else {
+                reason = "Apple 拒绝了本次 App ID 注册；Apple 未提供可用额度，当前列表数量不足以判断注册额度是否已恢复。"
+                recovery = "稍后重新同步 Apple 清单再试；若仍失败，请导出日志核对 Apple 返回值"
+            }
             throw Self.failure(
                 title: "Apple 暂时拒绝新建 App ID",
-                reason: "Apple 的 7 天注册额度暂不可用；当前 App ID 列表数量不能代表剩余额度。",
-                recovery: "请等待最近一次新建满 7 天后再试，或使用已注册的 Bundle ID / 其他 Apple ID",
+                reason: reason,
+                recovery: recovery,
                 code: "SEAL-APPID-301"
             )
         } catch ALTAppleAPIError.incorrectCredentials {
@@ -2162,6 +2184,7 @@ actor ApplePortalSigningService {
         originalMainBundleID: String,
         mappedMainBundleID: String,
         extensionProfileStrategy: AppExtensionProfileStrategy,
+        independentExtensionBundleIdentifiers recordedIndependentBundleIdentifiers: Set<String>? = nil,
         appName: String,
         appURL: URL,
         workspace: PreparedSigningWorkspace,
@@ -2218,7 +2241,14 @@ actor ApplePortalSigningService {
             cachedEntitlementsByBundleID[bundleID] = application.entitlements
         }
         var entitlementsByBundleID: [String: Set<String>] = [:]
-        for mappedBundleID in mappings.values {
+        // ⚠️ **期望集合取 `mappings.values`（映射后 Bundle ID），不是 `applications` 的键。**
+        // 两者应一致（`ALTApplication` 是在 `SigningWorkspace` 改写 bundle ID **之后**加载的），
+        // 但下面那个 `guard ... else { continue }` 会**静默跳过**读不到的 bundle ——
+        // 那样 `entitlementsByBundleID` 就会缺键，而「缺键」与「真的是空集」在默认共享模式下
+        // 含义完全不同（前者会让判据误以为该扩展什么都没要 ⇒ 共享 ⇒ 能力丢失）。
+        // 把期望集合显式传下去，让 `sharedProfileBlocker` 能对「缺键」fail closed。
+        let expectedBundleIdentifiers = Array(mappings.values)
+        for mappedBundleID in expectedBundleIdentifiers {
             guard let application = applications[mappedBundleID] else { continue }
             let rawKeys = Set((cachedEntitlementsByBundleID[mappedBundleID] ?? application.entitlements)
                 .keys
@@ -2226,19 +2256,44 @@ actor ApplePortalSigningService {
             entitlementsByBundleID[mappedBundleID] =
                 AppExtensionProfileStrategy.profileTopologyEntitlements(from: rawKeys)
         }
-        if extensionProfileStrategy == .sharedMainProfile,
-           let blocker = AppExtensionProfileStrategy.sharedProfileBlocker(
-               mainBundleID: mappedMainBundleID,
-               entitlementsByBundleID: entitlementsByBundleID
-           ) {
-            throw Self.failure(
-                title: "扩展需要独立签名",
-                reason: "扩展 \(blocker.extensionBundleID) 需要主应用未声明的能力（\(blocker.entitlements.joined(separator: "、"))）。共享主描述文件无法满足它。改为独立签名会额外占用 App ID 名额。",
-                recovery: "改为独立签名",
-                code: "SEAL-PROFILE-366"
+        let detectedIndependentBundleIdentifiers: Set<String>
+        if extensionProfileStrategy == .independentProfiles {
+            detectedIndependentBundleIdentifiers = Set(expectedBundleIdentifiers.filter {
+                $0 != mappedMainBundleID
+            })
+        } else {
+            detectedIndependentBundleIdentifiers = AppExtensionProfileStrategy.independentBundleIdentifiers(
+                mainBundleID: mappedMainBundleID,
+                entitlementsByBundleID: entitlementsByBundleID,
+                expectedBundleIdentifiers: expectedBundleIdentifiers
             )
         }
-        let resolvedExtensionProfileStrategy = extensionProfileStrategy
+        let expectedExtensionBundleIdentifiers = Set(expectedBundleIdentifiers).subtracting([mappedMainBundleID])
+        let independentExtensionBundleIdentifiers = detectedIndependentBundleIdentifiers
+            .union(recordedIndependentBundleIdentifiers ?? [])
+            .intersection(expectedExtensionBundleIdentifiers)
+        let resolvedExtensionProfileStrategy = AppExtensionProfileStrategy.resolvedStrategy(
+            mainBundleID: mappedMainBundleID,
+            expectedBundleIdentifiers: expectedBundleIdentifiers,
+            independentBundleIdentifiers: independentExtensionBundleIdentifiers
+        )
+        if detectedIndependentBundleIdentifiers.isEmpty == false,
+           extensionProfileStrategy != .independentProfiles {
+            let blockers = AppExtensionProfileStrategy.sharedProfileBlockers(
+                mainBundleID: mappedMainBundleID,
+                entitlementsByBundleID: entitlementsByBundleID,
+                expectedBundleIdentifiers: expectedBundleIdentifiers
+            )
+            let details = blockers.map { blocker in
+                blocker.isUnreadable
+                    ? "\(blocker.extensionBundleID)：读不到能力声明（保守按不兼容处理）"
+                    : "\(blocker.extensionBundleID)：需要 \(blocker.entitlements.joined(separator: "、"))"
+            }.joined(separator: "；")
+            await diagnostic(
+                "签名：共享主描述文件不适用于以下扩展 —— \(details)。"
+                    + "只为这些扩展申请独立 App ID 与描述文件，其余扩展继续共享主描述文件"
+            )
+        }
 
         // ⚠️ **Phase 1 的入口也要先留痕**（2026-09-18 真机）。
         // 下面那条完整的「名额」诊断要读 `existing`（账号已有列表），所以必须排在 `fetchAppIDs`
@@ -2248,7 +2303,8 @@ actor ApplePortalSigningService {
         // ⇒ 先用一条不依赖 `existing` 的日志把入口钉住（只需要 N，不需要发请求）。
         let portalMappings = resolvedExtensionProfileStrategy.portalMappings(
             from: mappings,
-            originalMainBundleID: originalMainBundleID
+            originalMainBundleID: originalMainBundleID,
+            independentBundleIdentifiers: independentExtensionBundleIdentifiers
         )
         guard portalMappings[originalMainBundleID] == mappedMainBundleID else {
             throw Self.failure(
@@ -2259,8 +2315,13 @@ actor ApplePortalSigningService {
             )
         }
         let extensionAppIDCount = portalMappings.values.filter { $0 != mappedMainBundleID }.count
+        let profileStrategyDescription = resolvedExtensionProfileStrategy == .sharedMainProfile
+            ? "共享主描述文件"
+            : resolvedExtensionProfileStrategy == .independentProfiles
+                ? "所有扩展独立描述文件"
+                : "兼容扩展共享、个别扩展独立描述文件"
         await diagnostic(
-            "App ID 阶段开始：\(resolvedExtensionProfileStrategy == .sharedMainProfile ? "共享主描述文件" : "独立扩展描述文件")，"
+            "App ID 阶段开始：\(profileStrategyDescription)，"
                 + "本次需 \(portalMappings.count) 个 App ID（主 App 1 + 扩展 \(extensionAppIDCount)），准备读取账号已有列表"
         )
         // ⚠️ 「读取 App ID 列表」的退避重试已下沉到 `fetchAppIDs` 内部（withSessionRecovery + 超时重试）。
@@ -2535,7 +2596,8 @@ actor ApplePortalSigningService {
                                 whenDowngrading: mappedBundleID,
                                 strategy: resolvedExtensionProfileStrategy,
                                 mappedMainBundleID: mappedMainBundleID,
-                                mappedBundleIdentifiers: Array(mappings.values)
+                                mappedBundleIdentifiers: Array(mappings.values),
+                                independentBundleIdentifiers: independentExtensionBundleIdentifiers
                             )
                             for affectedBundleID in affectedBundleIDs {
                                 requestedEntitlements[affectedBundleID] = [:]
@@ -2632,6 +2694,7 @@ actor ApplePortalSigningService {
             profiles: profiles,
             requestedEntitlements: requestedEntitlements,
             extensionProfileStrategy: resolvedExtensionProfileStrategy,
+            independentExtensionBundleIdentifiers: independentExtensionBundleIdentifiers,
             droppedExtensionBundleIdentifiers: Array(Set(droppedExtensionBundleIdentifiers))
         )
     }
@@ -2673,32 +2736,29 @@ actor ApplePortalSigningService {
         targets: [ProfileOnlyRenewalTarget],
         mappedMainBundleID: String,
         extensionProfileStrategy: AppExtensionProfileStrategy,
+        independentExtensionBundleIdentifiers: Set<String>,
         team: ALTTeam,
         session: ALTAppleAPISession,
         progress: @escaping @Sendable (SigningStage) async -> Void,
         onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void
     ) async throws -> ProfilePreparation {
-        // 门户层面只需主 App（共享）或每个目标（独立）各一份描述文件；主 App 恒排第一。
-        let portalTargets: [ProfileOnlyRenewalTarget]
-        switch extensionProfileStrategy {
-        case .sharedMainProfile:
-            guard let main = targets.first(where: {
-                $0.mappedBundleIdentifier.caseInsensitiveCompare(mappedMainBundleID) == .orderedSame
-            }) else {
-                throw Self.failure(
-                    title: "主应用标识无效",
-                    reason: "应用记录缺少主应用的续签目标，无法申请新的描述文件。",
-                    recovery: "重新导入 IPA 后重试",
-                    code: "SEAL-PROFILE-319"
-                )
-            }
-            portalTargets = [main]
-        case .independentProfiles:
-            portalTargets = targets.sorted {
-                if $0.mappedBundleIdentifier == mappedMainBundleID { return true }
-                if $1.mappedBundleIdentifier == mappedMainBundleID { return false }
-                return $0.mappedBundleIdentifier < $1.mappedBundleIdentifier
-            }
+        guard targets.contains(where: {
+            $0.mappedBundleIdentifier.caseInsensitiveCompare(mappedMainBundleID) == .orderedSame
+        }) else {
+            throw Self.failure(
+                title: "主应用标识无效",
+                reason: "应用记录缺少主应用的续签目标，无法申请新的描述文件。",
+                recovery: "重新导入 IPA 后重试",
+                code: "SEAL-PROFILE-319"
+            )
+        }
+        let portalTargets = targets.filter {
+            $0.mappedBundleIdentifier == mappedMainBundleID
+                || independentExtensionBundleIdentifiers.contains($0.mappedBundleIdentifier)
+        }.sorted {
+            if $0.mappedBundleIdentifier == mappedMainBundleID { return true }
+            if $1.mappedBundleIdentifier == mappedMainBundleID { return false }
+            return $0.mappedBundleIdentifier < $1.mappedBundleIdentifier
         }
 
         let existing = try await fetchAppIDs(team: team, session: session)
@@ -2746,6 +2806,7 @@ actor ApplePortalSigningService {
             profiles: profiles,
             requestedEntitlements: requestedEntitlements,
             extensionProfileStrategy: extensionProfileStrategy,
+            independentExtensionBundleIdentifiers: independentExtensionBundleIdentifiers,
             droppedExtensionBundleIdentifiers: []
         )
     }
@@ -3207,6 +3268,7 @@ actor ApplePortalSigningService {
         deviceIdentifier: String,
         requestedEntitlements: [String: [String: ProvisioningEntitlementValue]],
         extensionProfileStrategy: AppExtensionProfileStrategy,
+        independentExtensionBundleIdentifiers: Set<String>,
         requestedAfter: Date
     ) throws -> [String: ProvisioningProfileBinding] {
         let reader = ProvisioningProfileReader()
@@ -3228,7 +3290,8 @@ actor ApplePortalSigningService {
                     expectedTeamID: teamID,
                     expectedBundleID: extensionProfileStrategy.expectedProfileBundleID(
                         for: target.bundleIdentifier,
-                        mappedMainBundleID: workspace.mappedMainBundleID
+                        mappedMainBundleID: workspace.mappedMainBundleID,
+                        independentBundleIdentifiers: independentExtensionBundleIdentifiers
                     ),
                     expectedCertificateSerialNumber: certificateSerialNumber,
                     expectedDeviceIdentifier: deviceIdentifier,
@@ -3346,9 +3409,15 @@ actor ApplePortalSigningService {
                let mainMaterial = materials.first(where: {
                    $0.bundleID.caseInsensitiveCompare(mainBundleID) == .orderedSame
                }) ?? materials.first {
-                metadataMaterials = sharedProfileBundleIDs.map {
+                let sharedMaterials = sharedProfileBundleIDs.map {
                     SideSignAppSigner.ProfileMaterial(bundleID: $0, data: mainMaterial.data)
                 }
+                let independentMaterials = materials.filter { material in
+                    sharedProfileBundleIDs.contains(where: { sharedBundleID in
+                        sharedBundleID.caseInsensitiveCompare(material.bundleID) == .orderedSame
+                    }) == false
+                }
+                metadataMaterials = sharedMaterials + independentMaterials
             } else {
                 metadataMaterials = materials
             }
@@ -3545,6 +3614,7 @@ private struct ProfilePreparation {
     let profiles: [ALTProvisioningProfile]
     let requestedEntitlements: [String: [String: ProvisioningEntitlementValue]]
     let extensionProfileStrategy: AppExtensionProfileStrategy
+    let independentExtensionBundleIdentifiers: Set<String>
     let droppedExtensionBundleIdentifiers: [String]
 }
 
@@ -3575,6 +3645,7 @@ struct ProfileOnlyPortalResult: Sendable {
     let materials: [ProfileOnlyProfileMaterial]
     /// 本次续签**实际使用的**策略（取自应用记录，见 `prepareProfileOnlyRenewal`）。
     let extensionProfileStrategy: AppExtensionProfileStrategy
+    let independentExtensionBundleIdentifiers: Set<String>
 
     var profileBindings: [String: ProvisioningProfileBinding] {
         Dictionary(uniqueKeysWithValues: materials.map {
@@ -3593,6 +3664,10 @@ struct ProfileOnlyPortalResult: Sendable {
             return profileBindings[mappedMainBundleID]
         case .independentProfiles:
             return profileBindings[bundleIdentifier]
+        case .selectiveProfiles:
+            return independentExtensionBundleIdentifiers.contains(bundleIdentifier)
+                ? profileBindings[bundleIdentifier]
+                : profileBindings[mappedMainBundleID]
         }
     }
 

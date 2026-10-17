@@ -68,7 +68,8 @@ Seal 的是**自己的 wrapper**（`struct AnisetteV3Client: AnisetteEnvironment
 | 日期 | 对照对象 | Seal 侧 | 上游做法 | 结论 |
 |---|---|---|---|---|
 | **2026-10-16** | **SideInstaller 当前 Anisette `client_info` 归一化** | Seal 会把旧 Mac/Xcode 或 Android 声明身份当作不可用服务器跳过，缩小可用服务集合 | SideInstaller/isideload 的 `client_info_to_use` 将这类旧身份统一替换为 Windows iTunes 身份，并让 provisioning、登录和后续认证共用该有效身份 | **跟**：Seal 按同一规则归一化身份和 User-Agent，再将归一化结果写进 ADI 身份戳；不替换 Rust 登录模块，不清 identifier 或既有账号会话。2026-10-16 对 `ani.jkcoxson.com`、`ani.sidestore.io`、`ani2.stikstore.app` 的 `/v3/client_info` 连通性均为 HTTP 200。 |
-| **2026-10-16** | **扩展描述文件与 App ID 名额** | 原策略将所有含扩展 IPA 默认独立；共享不满足时还会自动转为独立，用户不知道本次会额外创建哪些 App ID | SideStore 按 target 分别准备身份，优先保证运行时扩展完整性；它没有 Seal 的“一个主 App ID 优先共享、用户确认后才增加名额”的产品规则 | **不跟默认策略（用户明确要求）**：普通 IPA 默认共享主描述文件；Seal 与 LiveContainer 固定独立。共享因能力不足受阻时，在任何门户写入前列出阻塞扩展，停止并让用户明确选择是否独立签名；未经确认绝不创建额外 App ID。 |
+| **2026-10-16** | **扩展描述文件与 App ID 名额** | 原策略将所有含扩展 IPA 默认独立，浪费 App ID 名额 | SideStore 按 target 分别准备身份，优先保证运行时扩展完整性 | **按扩展分配**：普通 IPA 的兼容扩展共享主描述文件，不兼容扩展单独申请；Seal 与 LiveContainer 默认独立。签名日志列出每个不兼容扩展与本次所需 App ID 数，门户写入前按 Apple 返回的可用名额预检。 |
+| **2026-10-17** | **SideStore 证书名额满后的撤销交互** | Seal 原来在签名失败后由一个确认动作自动撤销账号下所有本机无私钥的证书；用户看不到逐张影响，也可能一次撤多张 | `CertificateProvisioningFlow.replaceCertificate` 只筛 iOS Development 证书，调用 `resolveRevocation` 让用户选择要撤的证书；用户选择后才逐张撤销并继续申请新证书 | **跟交互与单张撤销**：失败抽屉打开逐张选择器，显示到期时间、Team ID 和本机可确认影响；二次确认后重拉 Apple 清单，只撤用户所选且仍满足条件的一张，再重试签名。所有运行中 Seal 的真实签名目标都从候选中排除；受影响应用按已有 `CertificateRevocationImpact` 判据恢复。 |
 | **2026-10-15** | **SideInstaller / isideload 客户端身份来源** | Seal 曾把服务器 `/v3/client_info` 返回的身份原样当 `X-Mme-Client-Info`（默认服务器返回 Xcode 身份 ⇒ SRP 前 HTML 503）；随后改成「按桌面/非 Xcode 过滤」，又因设备上的 ADI 仍是旧身份建的而收到 `-80045` | REA 主二进制 + 逐台实测其内置目录 15 台服务器：二进制里只有一条非 Android 身份字面量 `<Mac15,7> <macOS;27.0;26A5378j> <com.apple.AuthKit/1 (com.apple.akd/1.0)>`，其中 8 台服务器返回被边缘拒掉的 Xcode 身份而它仍能登录 ⇒ 身份不取服务器返回值 | **跟身份单一事实来源**：固定声明该 macOS/akd 身份，服务器只提供 `user_agent`；ADI 状态带身份戳，不匹配即作废并重新 provisioning。身份与服务器解耦后，多台兜底列表可安全保留，stikstore 这类 Xcode 身份服务器也不再是必失败。 |
 | **2026-10-15** | **AltSign 原生子模块锁定** | Seal 已把 AltSign 切为本地 SwiftPM path，但嵌入源码树不含 `ldid`、`minizip-ng` 两个 Git 子模块；ldid 还锁定了 `libplist` 子模块，未初始化时 CI 找不到 `plist/plist.h` | AltSign 的 `NativeBridge` 直接包含其 `.gitmodules` 中锁定的 ldid/minizip-ng 代码，ldid 再以 Gitlink 锁定 libplist | **跟完整锁定树**：所有 iOS 构建工作流先拉取 AltSign 记录的两个精确提交，再初始化 ldid 的递归子模块后解析本地 SwiftPM 包；不拉取浮动最新版。 |
 | **2026-10-14** | **SideInstaller / isideload App ID 名额预检** | Seal 只读取 `appIds`，丢弃 Apple 同一回复的 `availableQuantity`。因此日志可见“当前存活 8 个”，却不知道 Apple 当前只允许新建 0 个；多扩展应用会按目标逐个创建，额度不足时可能留下部分新建的 App ID | SideInstaller 的 `list_app_ids` 解析 `maxQuantity` / `availableQuantity`；只有 Apple 返回非负可用数且不足时，才在任何 `add_app_id` 前停止；字段缺失或负数时仍让 Apple 最终裁决 | **跟**：AltSign 返回 App ID 清单及 Apple 配额，Seal 在创建前比较本次真实新增数量和 `availableQuantity`，不足时零写入结束；保留原有 Apple 错误兜底。 |
@@ -291,6 +292,31 @@ on 4.5.2」✗。
 | 503 分类 | 503 是 Apple 登录服务/边缘响应，不是账号状态或 Anisette 服务器事实 | **跟**：`SEAL-NET-503`，只提示稍后重试，不清除现有账号/ADI 标识 |
 
 对照来源：用户提供 `sideinstaller-v1.5.1-d85d59dab8cd.ipa` 的 REA 静态字符串，以及 `nab138/isideload` 当前源码（本地检出 `C:\Users\Administrator\AppData\Local\Temp\isideload-reference-20261015`）；对照 IPA 使用 REA 完整性证据 `ev_f165b8f040e17eae45e6bc955f29b119bc591d84d41114bf3ef3ce31139da671`。
+
+### 2026-10-17 — 签名、覆盖安装与续签闭环复核
+
+对照版本：SideStore `d97ec133719d79916675bdaf722b82a8d091d545`、AltStore `56854e66fef2eac32dad88dcbad1dc131d430e60`、SideInstaller `3ef96cef53f415a908e8dc8ead02bb0bde0f0438`。
+
+| 环节 | Seal 现状 | 上游对照与结论 |
+|---|---|---|
+| 完整签名前置 | 先校验账号、设备 UDID、安装名额并行预热设备通道；在门户签名准备证书、App ID、描述文件前等待通道就绪；随后签全部目标、逐目标校验并打包。另有孤儿证书自动清理在门户本地准备之前执行。 | SideStore 在操作步骤前确保 minimuxer 就绪；AltStore 通过 AltServer 完成门户/安装环节，不能直接照搬到纯设备端。Seal 保留并行预热，并在任何 Apple 签名资源操作前等待并检查设备通道，设备不可达时提前失败。孤儿证书预清理仍是独立风险项，未混入本次修改。 |
+| 覆盖安装与重试 | 签名包独立落盘，保存哈希；安装前验证文件、哈希、有效期、Bundle ID、主包与扩展 profile。安装失败保留原已安装记录和失败签名包，可单独重试安装。 | SideStore 也将 resign、send、install 分为步骤。Seal 的安装前验证与失败产物保留是额外保护，本轮未发现需要照搬上游的缺口。 |
+| 只更新描述文件续签 | 仅在签名身份、目标拓扑和本机私钥满足条件时使用；从 Apple 获取新 profile，注入后逐份读回验证，最后才更新本地记录。条件不满足走完整重签。 | SideStore refresh 仅安装新 profile 并更新记录，不重签 IPA；AltStore 同样通过 AltServer 注入 profile。Seal 的逐份设备读回比这两个上游更强，应保留。 |
+| Seal 自身覆盖续签 | 通过自替换事务暂存候选包；新进程启动后核验实际安装的 CMS 身份，再结算成功/失败，批量队列等待新进程确认。 | SideStore 有 staged self-reinstall 状态恢复，但判定模型不同。Seal 依赖本项目的自替换路径，不应直接替换成 SideStore 的数据库标记方式。 |
+| 扩展共享策略 | 现已按目标分配：主 App 与兼容扩展共用主 profile；只有能力超出主 App、或读取不到能力声明的扩展各自申请 App ID/profile。映射、签名嵌入、逐目标 profile 校验、降级影响范围和 profile-only 续签均使用同一份独立扩展集合；每个目标的 profile UUID 已保存在既有 `signingTargets`，没有新增持久化字段。 | SideStore 的 `useMainProfile` 与 isideload/SideInstaller 的共享实现是整包模式，没有逐扩展混合分配可直接复用。**不照搬整包开关**：Seal 按已确认的 LiveContainer 需求加入目标级分配；兼容扩展不额外占名额，不兼容扩展只单独占自己的名额。源码级单测已补，Swift 云 CI 和真机仍待验证。 |
+| SideInstaller 适用范围 | 其 Rust 流程能参考设备端 Apple ID/证书/App ID/profile 与签名操作。 | SideInstaller 不是与 Seal 等价的完整续签/覆盖管理器；其源码说明真实 Apple 登录与账户相关端到端行为未完全验证。只借鉴其已验证的具体请求/签名做法，不把整个工具链视为已验证标准。 |
+
+本轮首次审计未改 Seal 源码；后续已按逐扩展 profile 绑定方案实现，尚未推送 CI。2026-10-17 后续修订已在签名门户准备证书、App ID 和描述文件前等待安装通道就绪；并行预热仍保留，避免把连接等待全部移到串行路径。
+
+### 2026-10-17 — 前置设备检查、App ID 额度取证与设置文案
+
+| 项目 | 上游实际做法 | Seal 修改 |
+|---|---|---|
+| 签名前设备就绪 | SideStore `PipelineRunner` 在执行操作步骤前调用 `ensureMinimuxerReady()`；AltStore 通过 AltServer 处理门户/设备流程，不能直接复制为设备端门禁；SideInstaller 的 Rust sideload 流程将 Apple 门户签名与设备安装分开。 | 保留通道并行预热，但签名在进入证书、App ID、描述文件操作前等待同一预热结果并执行通道就绪判定。设备不通时提前失败，不会继续申请 Apple 签名资源。 |
+| App ID 名额 | AltSign 的 `ALTAppIDInventory` 保留 Apple 同次列表响应的 `maxQuantity` 与 `availableQuantity`，且允许字段缺失或负值；AltStore 文案也把免费账号限制描述为 7 天注册窗口。SideInstaller 的 `addAppId` 以 Apple 门户返回作为最终结果。 | 将 Apple 返回额度与可见/有效 App ID 数量分开存储和显示；仅在 Apple 明确返回非负可用额度且不足时预拦截。注册被拒后绕缓存强制重读并记录 Apple 返回值，用于查明“列表只有 8 个但拒绝新建”，不再把列表数推算成剩余额度。 |
+| 支持、协议、关于 | Apple 隐私要求关注实际数据流及第三方 SDK/服务的数据处理；SideStore/AltStore/SideInstaller 没有可复用的 Seal 文案或页面。 | 协议卡片改为不透明内容表面；补齐 MJorb 个人开发者身份、Apple/Anisette/更新服务数据流、钥匙串卸载边界和准确的支持文案；实质更新协议版本并触发重新同意。 |
+
+上游依据：`upstream/SideStore/SideStore/Core/Operations/PipelineRunner.swift`、`upstream/AltSign/Sources/Model/ALTAppIDInventory.swift`、`upstream/AltSign/Sources/ALTAppleAPI+Operations.swift`、`upstream/AltStore/AltStore/Operations/Errors/OperationError.swift`，以及 SideInstaller/isideload `dev/app_ids.rs` 与 `sideload/sideloader.rs`。此处只移植可对应的机制，不把其他项目的产品文案当作 Seal 事实。
 
 ### 2026-10-15 — SideInstaller RemoteV3 作为唯一 Apple 门户会话
 
