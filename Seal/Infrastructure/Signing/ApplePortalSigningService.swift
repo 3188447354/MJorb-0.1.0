@@ -996,6 +996,7 @@ actor ApplePortalSigningService {
         onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void = { _ in }
     ) async throws -> PortalSigningResult {
         var stage: ApplePortalSigningStage = .account
+        var appIDContext: (team: ALTTeam, session: ALTAppleAPISession)?
         do {
             try Task.checkCancellation()
             await progress(.preparingAccount)
@@ -1192,6 +1193,7 @@ actor ApplePortalSigningService {
             }
             await progress(.preparingAppID)
             stage = .appID
+            appIDContext = (team, session)
             let profileRequestStartedAt = Date()
             let profilePreparation = try await provisioningProfiles(
                 mappings: prepared.bundleIDMappings,
@@ -1260,6 +1262,7 @@ actor ApplePortalSigningService {
                 deviceIdentifier: deviceIdentifier,
                 requestedEntitlements: profilePreparation.requestedEntitlements,
                 extensionProfileStrategy: profilePreparation.extensionProfileStrategy,
+                independentExtensionBundleIdentifiers: profilePreparation.independentExtensionBundleIdentifiers,
                 requestedAfter: profileRequestStartedAt.addingTimeInterval(-Self.profileRequestClockTolerance)
             )
             guard let mainBinding = profileBindings[prepared.mappedMainBundleID] else {
@@ -1315,16 +1318,21 @@ actor ApplePortalSigningService {
         } catch ALTAppleAPIError.invalidAnisetteData {
             throw ALTAppleAPIError(.invalidAnisetteData)
         } catch ALTAppleAPIError.maximumAppIDLimitReached {
-            let refreshedInventory = try? await fetchAppIDInventory(
-                team: team,
-                session: session,
-                bypassCache: true
-            )
+            var refreshedInventory: ALTAppIDInventory?
+            if let appIDContext {
+                refreshedInventory = try? await fetchAppIDInventory(
+                    team: appIDContext.team,
+                    session: appIDContext.session,
+                    bypassCache: true
+                )
+            }
             let refreshedAvailable = refreshedInventory?.availableQuantity
+            let refreshedCount = refreshedInventory.map { String($0.appIDs.count) } ?? "未知"
+            let availableDescription = refreshedAvailable.map { String($0) } ?? "未提供"
+            let maxDescription = refreshedInventory?.maxQuantity.map { String($0) } ?? "未提供"
             await diagnostic(
-                "Apple 拒绝新建 App ID 后已强制刷新清单：返回 \(refreshedInventory.map { String($0.appIDs.count) } ?? "未知") 项，"
-                    + "可新建 \(refreshedAvailable.map { String($0) } ?? "未提供") 个，"
-                    + "上限 \(refreshedInventory?.maxQuantity.map { String($0) } ?? "未提供")"
+                "Apple 拒绝新建 App ID 后已强制刷新清单：返回 \(refreshedCount) 项，"
+                    + "可新建 \(availableDescription) 个，上限 \(maxDescription)"
             )
             let reason: String
             let recovery: String
