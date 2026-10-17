@@ -7186,3 +7186,13 @@ CMake Error at CMakeLists.txt:394 (message):
 - **根因**：Seal 的 `sendAuthenticationRequest`（SRP `init` / `complete`）只带 `Content-Type` / `X-MMe-Client-Info` / `Accept` / `User-Agent` / `Connection: close`，**缺失** `X-Xcode-Version` 与 `X-Apple-App-Info`；同时默认服务器仍为 `ani.jkcoxson.com`，其 `/v3/client_info` 返回 Windows/iTunes 身份 `<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>`，与固定的 `X-Apple-App-Info: com.apple.gs.xcode.auth` 不属于同一个应用，指纹自相矛盾 ⇒ Apple 在密码校验前回 HTML 503。
 - **修复**：① `ALTAppleAPI+Authentication.swift` 的 `sendAuthenticationRequest` 补上 `X-Xcode-Version`（`14.2 (14C18)`）与 `X-Apple-App-Info`（`com.apple.gs.xcode.auth`），复用文件中已有常量；② `AnisetteServerCatalog.official` 首位改为 `https://ani.stikstore.app`（返回 macOS/Xcode 身份 `<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>`，与 Xcode 指纹自洽），`ani.jkcoxson.com` 降为末尾兜底。
 - **验收**：CI 必须通过；真机添加 Apple ID 应从即时 503 进入密码/双重认证流程，随后完成团队验证和一次签名。
+
+## 2026-10-17 — CI 125：泛型标签组件的静态存储属性导致 Swift 编译失败
+
+**现象**：CI 125 的 `swift-regression` 在 `CaterpillarSegmentedTabs.swift` 编译失败，错误为“static stored properties not supported in generic types”；同时错误编号清单因本轮 UI 文件行号变化未同步而使 `build-package` 失败。
+
+**根因**：`CaterpillarSegmentedTabs<Item>` 是泛型 SwiftUI 视图，却声明了静态存储属性 `labelSpacing`。Swift 不允许泛型类型持有静态存储属性。错误编号清单是版本控制的生成物，源码位置变化后必须重新生成。
+
+**修复**：将 `labelSpacing` 改为等值实例常量，保留原有标签几何；重新生成 `docs/qa/generated/error-code-inventory.json`。
+
+**验证状态**：Windows 主机无法编译 Swift；已完成错误编号清单生成与差异检查，下一轮 iOS CI 负责 Swift 编译、回归测试及打包。

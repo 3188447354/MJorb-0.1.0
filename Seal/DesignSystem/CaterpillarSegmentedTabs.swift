@@ -15,7 +15,9 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     var spacing: CGFloat = 16
     var indicatorHeight: CGFloat = 3
 
-    private static let labelSpacing: CGFloat = 8
+    // Generic SwiftUI views cannot declare static stored properties.  Keep this
+    // as an instance constant so the tab geometry remains compile-compatible.
+    private let labelSpacing: CGFloat = 8
     @ScaledMetric(relativeTo: .body) private var labelHeight: CGFloat = 24
     @ScaledMetric(relativeTo: .body) private var controlHeight: CGFloat = 35
     @ScaledMetric(relativeTo: .body) private var labelFontSize: CGFloat = 17
@@ -27,7 +29,7 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
             let totalSpacing = CGFloat(itemCount - 1) * spacing
             let tabWidth = max(0, (proxy.size.width - totalSpacing) / CGFloat(itemCount))
 
-            VStack(spacing: Self.labelSpacing) {
+            VStack(spacing: labelSpacing) {
                 HStack(spacing: spacing) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         tab(item, index: index, width: tabWidth)
