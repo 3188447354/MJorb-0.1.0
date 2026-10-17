@@ -49,7 +49,7 @@ struct AddAccountView: View {
                         secondaryButton: .cancel(Text("取消"))
                     )
                 }
-                Alert(title: Text(failure.title), message: Text(failure.userMessage), dismissButton: .default(Text(failure.recovery)))
+                return Alert(title: Text(failure.title), message: Text(failure.userMessage), dismissButton: .default(Text(failure.recovery)))
             }
         }
         .sealScreenBackground()
