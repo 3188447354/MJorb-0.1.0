@@ -3312,7 +3312,7 @@ def violations(load=read):
     # 只校验下载域名不够：同一仓库、同一合法域名下的资产仍可被替换。
     # 必须把「API 元数据声称的版本」与「IPA 内真实版本」交叉校验。
     # 必须查比较逻辑本身：只查「函数存在/被调用」会被 return true 骗过去（变异检查当场抓到）。
-    check("Version.compare(advertised, ipaVersion) == .orderedSame" in update_checker
+    check("Version.compareIfValid(advertised, ipaVersion) == .orderedSame" in update_checker
           and "UpdateChecker.advertisedVersion(" in load("Seal/Features/UpdateNoticeView.swift"),
           "Update: the installed IPA version must be cross-checked against the advertised tag")
 
@@ -3620,9 +3620,8 @@ def violations(load=read):
     check("AppFileStore.streamingSHA256(url: localURL)" in update_view
           and "UpdateChecker.expectedSHA256(from: checksumText)" in update_view
           and "UpdateChecker.hashMatches(expected: expected, actual: actual)" in update_view
-          # 2026-10-04 文案优化："更新包"→"下载的文件"（用户更易懂），安全语义不变
-          and 'phase = .failed("下载的文件缺少安全校验信息，已中止安装")' in update_view
-          and 'phase = .failed("下载的文件安全校验未通过，已中止安装")' in update_view,
+          and "let checksumURL = notice.sha256DownloadURL else" in update_view
+          and "phase = .failed(.verification)" in update_view,
           "R107②: 更新下载流程必须下载校验和、算本地哈希并比对，缺失/不符都 fail closed ✗ —— "
           "否则「同一合法域名下资产被调包」无法察觉")
     file_store = load("Seal/Infrastructure/Storage/AppFileStore.swift")
@@ -4050,8 +4049,8 @@ def violations(load=read):
           "Sacrifice: only SideStore-compatible iOS Development certificates may be offered")
     apps_vm = load("Seal/Features/Apps/AppsViewModel.swift")
     check("func confirmCertificateSacrificeAndRetry(serialNumber: String)" in apps_vm
-          and 'failure.code == "SEAL-CERT-204e"' in apps_vm,
-          "Sacrifice: ViewModel selected-certificate action must be gated on the 204e failure")
+          and '["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code)' in apps_vm,
+          "Sacrifice: ViewModel selected-certificate action must be gated on certificate-limit failures")
     check("resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)" in apps_vm,
           "Sacrifice: affected installed apps must be re-signed after the retry succeeds")
     progress_view = load("Seal/Features/Apps/SigningProgressView.swift")
@@ -4349,9 +4348,7 @@ def violations(load=read):
 
     # R65: 扩展签名拓扑与用户选择必须一致。
     #
-    # 普通 IPA（即使含扩展）默认先尝试共享主描述文件，控制免费账号名额。
-    # Seal 与 LiveContainer 固定独立；任何扩展的实际能力超出主 App 时，必须在
-    # 门户写入前停止并明确列出阻塞扩展，只有用户选择独立签名才能继续。
+    # 普通 IPA 默认共享，只有能力不兼容的扩展单独申请描述文件。
     strategy_source = strip_comments(load("Seal/Core/Signing/AppExtensionProfileStrategy.swift"))
     check("isSeal || isLiveContainer ? .independentProfiles : .sharedMainProfile" in strategy_source,
           "R65①: 默认策略必须是普通 IPA 共享，Seal 与 LiveContainer 独立 ✗")
@@ -4373,15 +4370,15 @@ def violations(load=read):
 
     portal_source = strip_comments(load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift"))
     check("let portalMappings = resolvedExtensionProfileStrategy.portalMappings(" in portal_source
-          and "AppExtensionProfileStrategy.sharedProfileBlocker(" in portal_source
-          and 'code: "SEAL-PROFILE-366"' in portal_source,
-          "R65⑤: 共享被扩展能力阻塞时必须在门户写入前报 SEAL-PROFILE-366 ✗")
+          and "AppExtensionProfileStrategy.independentBundleIdentifiers(" in portal_source
+          and "let independentExtensionBundleIdentifiers = detectedIndependentBundleIdentifiers" in portal_source,
+          "R65⑤: 只有不兼容扩展才单独申请 App ID ✗")
     check("expectedBundleID: extensionProfileStrategy.expectedProfileBundleID(" in portal_source
-          and "if profilePreparation.extensionProfileStrategy == .sharedMainProfile" in portal_source,
-          "R65⑥: 共享描述文件必须同时用于嵌入校验和重签目标 ✗")
+          and "profilePreparation.independentExtensionBundleIdentifiers.contains($0) == false" in portal_source,
+          "R65⑥: 混合描述文件必须同时用于嵌入校验和重签目标 ✗")
     check("let renewalStrategy = app.extensionProfileStrategy ?? .independentProfiles" in portal_source
-          and "let expectedProfileCount = resolvedRenewalStrategy == .sharedMainProfile" in portal_source,
-          "R65⑦: 续签必须沿用已记录策略，并正确处理一份共享描述文件 ✗")
+          and "let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count" in portal_source,
+          "R65⑦: 续签必须沿用已记录策略及实际描述文件数量 ✗")
     check("func binding(forBundle bundleIdentifier: String)" in portal_source
           and "return profileBindings[mappedMainBundleID]" in portal_source
           and "return profileBindings[bundleIdentifier]" in portal_source,
@@ -4396,11 +4393,11 @@ def violations(load=read):
           "R65⑲: 能力请求必须过滤非 Apple feature，并映射 App Group 标识 ✗")
 
     renewal_policy_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift"))
-    check("case .none:\n            return true" in renewal_policy_source
-          and "case .sharedMainProfile:" in renewal_policy_source
-          and "extensionProfileUUID.caseInsensitiveCompare(mainProfileUUID)" in renewal_policy_source
-          and "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame" in renewal_policy_source,
-          "R65⑧: 共享模式只有完整记录同一主描述文件时才可快速续签，旧记录不得猜测策略 ✗")
+    check("guard let recorded = app.extensionProfileStrategy else { return true }" in renewal_policy_source
+          and "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) == .orderedSame" in renewal_policy_source
+          and "if recorded == .sharedMainProfile && independent { return true }" in renewal_policy_source
+          and "if recorded == .independentProfiles && !independent { return true }" in renewal_policy_source,
+          "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑 ✗")
 
     record_updater_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift"))
     check("SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key)" in record_updater_source,
@@ -4409,15 +4406,14 @@ def violations(load=read):
     coordinator_source = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
     sheet_source = strip_comments(load("Seal/Features/Apps/AppSigningSheet.swift"))
     check("app.extensionProfileStrategy = result.extensionProfileStrategy" in coordinator_source
-          and "selectedExtensionProfileStrategy = .independentProfiles" in sheet_source
-          and 'failure.code == "SEAL-PROFILE-366"' in sheet_source,
-          "R65⑩: 独立签名必须经用户明确确认，并将实际策略落回记录 ✗")
+          and "independentExtensionBundleIdentifiers" in portal_source,
+          "R65⑩: 实际扩展分配策略必须落回签名记录 ✗")
     action_title_body = section_or_empty(
         sheet_source,
         "private func primaryActionTitle(for presentation: AppOperationPresentation) -> String {",
         "\n    private var drawerTitle"
     )
-    check("return resolvedSelectedAccountID == nil ? \"去添加 Apple ID\" : presentation.primaryAction" in action_title_body,
+    check('return presentation.primaryAction' in action_title_body,
           "Swift compile: primaryActionTitle 必须显式 return String ✗")
 
     strategy_tests = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
@@ -6042,9 +6038,14 @@ def violations(load=read):
         and r112_add_app_id_success_end > r112_add_app_id_success_start
         else ""
     )
+    r112_recovery_block = section_or_empty(
+        r91_portal_code,
+        "} catch ALTAppleAPIError.bundleIdentifierUnavailable {",
+        "guard let found = refreshed.first(where: {",
+    )
 
     check("invalidateAppIDsCache(forTeamIdentifier: team.identifier)" in r112_add_app_id_success_block
-          and "bypassCache: true" in r91_portal_code
+          and "bypassCache: true" in r112_recovery_block
           and "func isPortalReadCacheFresh(" in r91_portal_code,
           "R112③b: 缓存的**安全网**缺一不可 ✗ —— "
           "`addAppID` 成功后必须失效对应 Team 的 App ID 列表缓存"
@@ -7089,7 +7090,7 @@ def main():
          "guard candidates.isEmpty == false else { return nil }",
          "Update: an ambiguous set of IPA assets"),
         ("Seal/Infrastructure/UpdateChecker.swift",
-         "Version.compare(advertised, ipaVersion) == .orderedSame",
+         "Version.compareIfValid(advertised, ipaVersion) == .orderedSame",
          "true",
          "Update: the installed IPA version must be cross-checked"),
         ("Seal/Core/Notifications/NotificationPreferences.swift",
@@ -7521,28 +7522,8 @@ def main():
         ("Seal/Infrastructure/Accounts/AppleAccountClient.swift",
          "            if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {\n"
          "                throw AppleAuthenticationDiagnosis.twoFactorFailure(for: error)\n"
-         "            }\n"
-         "            if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {\n"
-         "                throw AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(\n"
-         "                    underlying: error,\n"
-         "                    operation: .validateAccount\n"
-         "                )\n"
-         "            }\n"
-         "            if AppleServiceFailurePolicy.isRateLimited(error) {\n"
-         "                throw AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)\n"
          "            }\n",
-         "            if AppleServiceFailurePolicy.isRateLimited(error) {\n"
-         "                throw AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)\n"
-         "            }\n"
-         "            if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {\n"
-         "                throw AppleServiceFailurePolicy.temporaryAuthenticationRejectionFailure(\n"
-         "                    underlying: error,\n"
-         "                    operation: .validateAccount\n"
-         "                )\n"
-         "            }\n"
-         "            if AppleAuthenticationDiagnosis.isTwoFactorRequired(error) {\n"
-         "                throw AppleAuthenticationDiagnosis.twoFactorFailure(for: error)\n"
-         "            }\n",
+         "",
          "R13: AppleAccountClient.validate must check two-factor before"),
         # 分支留着、但自己手写一份泛化提示（`make` 那条）：
         # 看起来「有分支」，实际又回到了「核对 Apple ID 与密码」。
@@ -8676,29 +8657,25 @@ def main():
          "return mappings",
          "R65②: 共享策略只创建主 App ID"),
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "        case .none:\n            return true",
-         "        case .none:\n            return false",
-         "R65⑧: 共享模式只有完整记录同一主描述文件时才可快速续签"),
+         "guard let recorded = app.extensionProfileStrategy else { return true }",
+         "guard let recorded = app.extensionProfileStrategy else { return nil }",
+         "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑"),
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) == .orderedSame",
-         "targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame",
-         "R65⑧: 共享模式只有完整记录同一主描述文件时才可快速续签"),
+         "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) == .orderedSame",
+         "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) != .orderedSame",
+         "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑"),
         ("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift",
          "SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key)",
          "SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.value.bundleIdentifier)",
          "R65⑨: 共享描述文件续签后仍必须为每个实际目标保留独立记录键"),
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         'code: "SEAL-PROFILE-366"',
-         'code: "SEAL-PROFILE-000"',
-         "R65⑤: 共享被扩展能力阻塞时必须在门户写入前报 SEAL-PROFILE-366"),
-        ("Seal/Features/Apps/AppSigningSheet.swift",
-         'failure.code == "SEAL-PROFILE-366"',
-         'failure.code == "SEAL-PROFILE-000"',
-         "R65⑩: 独立签名必须经用户明确确认，并将实际策略落回记录"),
-        ("Seal/Features/Apps/AppSigningSheet.swift",
-         "selectedExtensionProfileStrategy = .independentProfiles",
-         "selectedExtensionProfileStrategy = .sharedMainProfile",
-         "R65⑩: 独立签名必须经用户明确确认，并将实际策略落回记录"),
+         "AppExtensionProfileStrategy.independentBundleIdentifiers(",
+         "Set<String>() /* no independent extensions */",
+         "R65⑤: 只有不兼容扩展才单独申请 App ID"),
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         "let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count",
+         "let expectedProfileCount = 1",
+         "R65⑦: 续签必须沿用已记录策略及实际描述文件数量"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "app.extensionProfileStrategy = result.extensionProfileStrategy",
          "app.extensionProfileStrategy = nil",
@@ -8712,8 +8689,8 @@ def main():
          "func sharedProfileBlockerLegacy()",
          "R65⑪: 必须覆盖默认策略、共享阻塞和共享描述文件的能力降级范围"),
         ("Seal/Features/Apps/AppSigningSheet.swift",
-         "        return resolvedSelectedAccountID == nil ? \"去添加 Apple ID\" : presentation.primaryAction",
-         "        resolvedSelectedAccountID == nil ? \"去添加 Apple ID\" : presentation.primaryAction",
+         "        return presentation.primaryAction",
+         "        presentation.primaryAction",
          "Swift compile: primaryActionTitle 必须显式 return String"),
         # ── R68：续签的账号判据只能有一份，且必须识别悬空引用（2026-09-24 构建 34 真机）──
         # ①a 单项续签退回「直接采用记录里的 UUID」⇒ 悬空引用原样进签名链路 ✓ 报红。

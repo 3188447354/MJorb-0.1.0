@@ -223,13 +223,14 @@ struct UpdateNoticeView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-            if let progress {
-                ProgressView(value: progress)
-                    .tint(Color.sealAccent)
-            } else {
-                ProgressView()
-                    .tint(Color.sealAccent)
+            Group {
+                if let progress {
+                    ProgressView(value: progress)
+                } else {
+                    ProgressView()
+                }
             }
+            .tint(Color.sealAccent)
             .padding(.top, 22)
         }
         .padding(.top, 12)
