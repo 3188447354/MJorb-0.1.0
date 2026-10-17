@@ -1,6 +1,6 @@
 name: iOS Release Fast
 
-# 快速发布档：Release 编译 + 打包 + 发布到 Seal-Releases。
+# 快速发布档：Release 编译 + 打包 + 发布到 MJorb-0.1.0。
 # 与完整 ios.yml 的区别：跳过模拟器 UI 回归与 signer-tests 测试门，
 # 用于「只改了 Swift 业务逻辑、没动 Rust 桥/签名器」的小版本快速出包。
 # 大改动（签名器、RustBridge、安装链路）仍须走完整 iOS workflow。
@@ -173,7 +173,7 @@ jobs:
 
       - name: Publish GitHub Release via gh
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           INPUT_TAG: ${{ inputs.release_tag }}
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
@@ -201,9 +201,7 @@ jobs:
             | sed -e '/^---[[:space:]]*$/d' -e 's/[[:space:]]*$//' | cat -s)"
           ARGS=(--title "Seal $TAG" --notes "$NOTES")
           if [ "$PRERELEASE" = "true" ]; then ARGS+=(--prerelease); fi
-          # 跨仓库发布不传 --target：源仓库 SHA 在 Seal-Releases 不存在，
-          # 传了会 422（target_commitish invalid），默认指向目标仓库 main。
-          gh release create "$TAG" "${ARGS[@]}" --repo sunuannian1/Seal-Releases \
+          gh release create "$TAG" "${ARGS[@]}" --repo 3188447354/MJorb-0.1.0 \
             release/Seal_*.ipa \
             release/Seal_*.ipa.sha256 \
             release/Seal-Info.plist

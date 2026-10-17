@@ -10480,9 +10480,9 @@ def main():
         # ① 把同步调用**挪到** `gh release create` 之前（注入一份）⇒ 会同步到上一版，R111① 报红。
         #    ⚠️ 只「删掉」同步步骤的话 ①–⑤ 会一起红，测不出 ① 自己的判别力 ⇒ 用「挪位」形态。
         (".github/workflows/ios-release.yml",
-         '          gh release create "$TAG" "${ARGS[@]}" --repo sunuannian1/Seal-Releases \\',
+         '          gh release create "$TAG" "${ARGS[@]}" --repo 3188447354/MJorb-0.1.0 \\',
          '          SITE_SYNC_URL="https://ios.sealsign.eu.cc/api/update.php?action=sync"\n'
-         '          gh release create "$TAG" "${ARGS[@]}" --repo sunuannian1/Seal-Releases \\',
+         '          gh release create "$TAG" "${ARGS[@]}" --repo 3188447354/MJorb-0.1.0 \\',
          "R111①:"),
         # ② 同步接口路径写错（`action` 不是 `sync`）⇒ 接口不存在、官网永不刷新，R111② 报红。
         (".github/workflows/ios-release.yml",

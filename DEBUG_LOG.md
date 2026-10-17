@@ -34,6 +34,15 @@
 
 ---
 
+## 2026-10-17 Release 目标切换到 MJorb-0.1.0
+
+- **现象**：CI 工作流仍向旧的 `Seal-Releases` 仓库发布，Seal 内置更新检查也读取旧仓库。
+- **修复**：将完整与快速 Release 工作流目标切换到 `3188447354/MJorb-0.1.0`，改用该仓库的 `GITHUB_TOKEN`；更新检查同步读取新仓库；更新守卫的变异锚点。旧仓库的历史 Release 不迁移、不修改。
+- **涉及文件**：`.github/workflows/ios.yml`、`.github/workflows/ios-release.yml`、`Seal/Infrastructure/UpdateChecker.swift`、`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：待 `git diff --check` 与公开仓库完整 CI；Windows 无 Swift 编译环境。Release 仍仅由手动工作流触发，不会因 push 自动创建。
+
+---
+
 ## 2026-10-17 配对实时活动在应用被终止后无法按本地计时结束
 
 - **现象**：Seal 切去系统设置后被挂起或从后台强制结束，配对码实时活动可能不会在本地设定的 3 分钟到期时立即消失。
