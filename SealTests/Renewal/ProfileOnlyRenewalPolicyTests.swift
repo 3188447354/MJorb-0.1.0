@@ -198,7 +198,7 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func missingExtensionTargetRequiresTheExistingFullResignRoute() {
+    func missingExtensionTargetRequiresProfileIntegrityMigration() {
         var app = makeEligibleApp()
         app.signingTargets.removeAll {
             $0.bundleIdentifier == "com.example.demo.TEAM123456.share"
@@ -206,7 +206,7 @@ struct ProfileOnlyRenewalPolicyTests {
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.missingTargetRecord)
+                == .requiresFullResign(.extensionProfileIntegrityMigration)
         )
     }
 
