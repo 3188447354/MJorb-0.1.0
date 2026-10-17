@@ -7977,7 +7977,7 @@ def main():
          "R31: `sign()` 不能把 SEAL-AUTH-107 无差别替换成「去重新验证」"),
         # 去掉 Phase 1 的入口留痕：`fetchAppIDs` 一失败，日志里就看不出走到哪一步。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         '            "App ID 阶段开始：\\(resolvedExtensionProfileStrategy == .sharedMainProfile ? "共享主描述文件" : "独立扩展描述文件")，"',
+         'App ID 阶段开始：',
          "",
          "R31: Phase 1 的入口必须先留痕"),
         # 去掉证书列表失败的原因与耗时：又只剩「暂不可用」，查不出是限流还是超时。
@@ -8679,7 +8679,7 @@ def main():
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "app.extensionProfileStrategy = result.extensionProfileStrategy",
          "app.extensionProfileStrategy = nil",
-         "R65⑩: 独立签名必须经用户明确确认，并将实际策略落回记录"),
+         "R65⑩: 实际扩展分配策略必须落回签名记录"),
         ("SealTests/Signing/AppExtensionProfileStrategyTests.swift",
          "func ordinaryAppWithExtensionsUsesTheSharedDefault()",
          "func ordinaryAppWithExtensionsUsesTheLegacyDefault()",
