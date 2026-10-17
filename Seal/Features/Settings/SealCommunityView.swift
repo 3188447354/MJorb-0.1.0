@@ -238,11 +238,7 @@ struct SealCommunityView: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(16)
-            .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-            }
+            .sealContentCard(.standard)
         }
         .buttonStyle(.plain)
     }

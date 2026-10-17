@@ -153,7 +153,7 @@ struct AppDetailView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private func detailRow(_ title: String, _ value: String, valueColor: Color = Color.sealTextSecondary) -> some View {

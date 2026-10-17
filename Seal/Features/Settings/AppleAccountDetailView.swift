@@ -187,7 +187,7 @@ private struct AppleAccountLoadedAppListView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 }
 
@@ -234,7 +234,7 @@ private struct AppleAccountLoadingCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 }
 
@@ -258,7 +258,7 @@ private struct AppleAccountFailureCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 }
 
@@ -283,7 +283,7 @@ private struct AppleAccountEmptyCard: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 }
 

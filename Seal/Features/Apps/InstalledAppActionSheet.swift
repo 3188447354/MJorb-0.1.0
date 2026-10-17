@@ -73,7 +73,7 @@ struct InstalledAppActionSheet: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
     }
 
     private func metadataRow(

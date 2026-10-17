@@ -2409,7 +2409,9 @@ final class SettingsViewModel: ObservableObject {
     /// 仅在配对凭证已经导入成功后调用。
     private func markPairingPaired() {
         if pairingUsesNotifications {
-            Task { await PairingCodeNotification.markPaired() }
+            // 通知回退只承担「把真实六码带到系统设置上方」的职责；
+            // 成功不再替换成第二条通知，避免用户收到重复的配对结果。
+            Task { await PairingCodeNotification.clear() }
         } else {
             pairingLiveActivity.markPaired()
         }
@@ -2417,7 +2419,8 @@ final class SettingsViewModel: ObservableObject {
 
     private func markPairingFailed() {
         if pairingUsesNotifications {
-            Task { await PairingCodeNotification.markFailed() }
+            // 失败后清掉失效六码；用户回到 Seal 后由页面展示具体原因。
+            Task { await PairingCodeNotification.clear() }
         } else {
             pairingLiveActivity.markFailed()
         }

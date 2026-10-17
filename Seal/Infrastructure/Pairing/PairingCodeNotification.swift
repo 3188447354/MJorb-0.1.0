@@ -18,7 +18,7 @@ import UserNotifications
 enum PairingCodeNotification {
 
     /// 同一条通知反复替换，避免码变了在通知中心堆一列。
-    private static let identifier = "seal.pairing.code"
+    static let identifier = "seal.pairing.code"
 
     /// 请求通知权限。只在确定要走通知路径时调用。
     static func requestAuthorizationIfNeeded() async -> Bool {
@@ -41,16 +41,6 @@ enum PairingCodeNotification {
         await post(title: "配对码 \(code)", body: "在系统设置中核对此配对码")
     }
 
-    /// 配对完成后替换成完成状态。只有凭证已成功导入后才调用。
-    static func markPaired() async {
-        await post(title: "配对完成", body: "点按返回 Seal")
-    }
-
-    /// 配对失败时隐藏旧码，避免用户继续使用已经失效的号码。
-    static func markFailed() async {
-        await post(title: "配对未完成", body: "返回 Seal 查看原因")
-    }
-
     /// 流程结束时清掉残留通知（回到 App 前台时也该清）。
     static func clear() async {
         let center = UNUserNotificationCenter.current()
@@ -63,11 +53,36 @@ enum PairingCodeNotification {
         content.title = title
         content.body = body
         content.sound = nil
+        content.userInfo = ["seal.notification.route": "pairing"]
         // 立刻送达；`nil` trigger 表示马上投递。
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         let center = UNUserNotificationCenter.current()
         // 先撤掉旧的同 id 通知，保证「替换」而不是「排队」。
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
         try? await center.add(request)
+    }
+}
+
+/// 配对码回退通知的点击路由。
+///
+/// `UNUserNotificationCenterDelegate` 可能在 SwiftUI 视图树出现前收到点击回调，
+/// 因此先记下待打开请求；RootTabView 出现后消费它，避免冷启动时丢路由或直接操作未挂载的导航栈。
+@MainActor
+enum PairingCodeNotificationRoute {
+    static let opened = Notification.Name("sealPairingCodeNotificationOpened")
+    private static var openRequested = false
+
+    nonisolated static func shouldOpenPairing(requestIdentifier: String) -> Bool {
+        requestIdentifier == PairingCodeNotification.identifier
+    }
+
+    static func requestOpen() {
+        openRequested = true
+        NotificationCenter.default.post(name: opened, object: nil)
+    }
+
+    static func consumeOpenRequest() -> Bool {
+        defer { openRequested = false }
+        return openRequested
     }
 }

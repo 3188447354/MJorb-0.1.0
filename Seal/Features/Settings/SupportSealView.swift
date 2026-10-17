@@ -65,11 +65,7 @@ struct SupportSealView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-        }
+        .sealContentCard(.standard)
     }
 
     private func supportRow(

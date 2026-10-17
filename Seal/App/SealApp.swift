@@ -1,5 +1,4 @@
 import SwiftUI
-import UserNotifications
 
 @main
 @MainActor
@@ -30,22 +29,6 @@ struct SealApp: App {
         container.migrateKeychainAccessibilityIfNeeded()
     }
 
-    /// 首次启动时直接调系统原生权限框（只弹一次）。
-    /// 测试环境下跳过：单元测试 host 启动时弹框会导致测试崩溃，
-    /// UI 测试时弹框也会干扰用例（需 interruption handler 处理）。
-    private nonisolated func requestNotificationPermissionIfNeeded() {
-        #if DEBUG
-        if NSClassFromString("XCTestCase") != nil { return }
-        #endif
-        let key = "SealNotificationPermissionRequested"
-        guard UserDefaults.standard.bool(forKey: key) == false else { return }
-        UserDefaults.standard.set(true, forKey: key)
-        Task {
-            _ = try? await UNUserNotificationCenter.current()
-                .requestAuthorization(options: [.alert, .sound, .badge])
-        }
-    }
-
     @State private var agreementAccepted = !needsAgreementOnboarding()
 
     var body: some Scene {
@@ -65,16 +48,6 @@ struct SealApp: App {
                         AgreementOnboardingView(
                             onAgreed: {
                                 agreementAccepted = true
-                                // 协议确认后先显示主界面，再请求系统权限，避免两个弹层竞争。
-                                //
-                                // 这个延时必须**大于** `LocalNetworkPermissionPrimer` 的
-                                // 探针超时 + 静默期（2 + 6 秒）：本地网络的系统弹窗由
-                                // `RootTabView.task` 触发，只有等它被点掉之后才轮到通知权限，
-                                // 否则两个弹窗会同时出现、互相打架。用户已授权过本地网络时
-                                // 那段等待会直接跳过，这里只是上限。
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 9.0) {
-                                    requestNotificationPermissionIfNeeded()
-                                }
                             },
                             onDeclined: { /* 留在协议页，用户必须同意才能使用 */ }
                         )

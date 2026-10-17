@@ -125,7 +125,7 @@ struct CertificatesRootView: View {
             .buttonStyle(.plain)
         }
         .padding(18)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private var activeAccountSubtitle: String {
@@ -149,7 +149,7 @@ struct CertificatesRootView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(28)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private var accountsList: some View {
@@ -162,7 +162,7 @@ struct CertificatesRootView: View {
             }
         }
         .padding(.horizontal, 16)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private func accountRow(_ account: AppleAccountRecord) -> some View {

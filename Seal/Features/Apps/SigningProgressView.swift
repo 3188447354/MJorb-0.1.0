@@ -142,11 +142,7 @@ struct SigningProgressView: View {
             stageProgressSection(stage)
         }
         .padding(14)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
     }
 
     /// 底部阶段轨道：五格。五格本体在 `SigningStageTrack`（批量抽屉共用同一个视图）。
@@ -374,11 +370,7 @@ struct SigningProgressView: View {
             runtimeRow("Bundle ID", runtimeBundleIdentifier(session))
         }
         .padding(.horizontal, 14)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
     }
 
     private func runtimeRow(_ title: String, _ value: String) -> some View {

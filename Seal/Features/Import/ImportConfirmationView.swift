@@ -236,11 +236,7 @@ struct ImportConfirmationView: View {
             }
         }
         .padding(.horizontal, 16)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
         .sheet(isPresented: $isIconActionsPresented) {
             AppIconSelectionSheet { action in
                 isIconActionsPresented = false
@@ -335,11 +331,7 @@ struct ImportConfirmationView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
     }
 
     @ViewBuilder private var appIcon: some View {

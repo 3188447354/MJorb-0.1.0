@@ -62,13 +62,13 @@ struct AddAccountView: View {
                 Text("用于个人 IPA 签名。账号密码只保存在这台手机上。")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             }
-            .frame(maxWidth: .infinity).padding(24).glassSurface(cornerRadius: 24)
+            .frame(maxWidth: .infinity).padding(24).sealContentCard(.prominent)
             VStack(spacing: 0) {
                 TextField("Apple ID", text: $email).textContentType(.username).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled().padding(.vertical, 15)
                 Divider()
                 SecureField("密码", text: $password).textContentType(.password).padding(.vertical, 15)
             }
-            .padding(.horizontal, 16).glassSurface(cornerRadius: 24)
+            .padding(.horizontal, 16).sealContentCard(.prominent)
             Button {
                 startAuthentication()
             } label: {

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// 协议版本号：文档有实质更新时 +1，触发用户重新同意。
 enum AgreementVersion {
-    static let current = 1
+    static let current = 2
     static let storageKey = "seal.agreedAgreementVersion"
 }
 

@@ -158,7 +158,7 @@ struct SigningCertificateSettingsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     @ViewBuilder
@@ -193,7 +193,7 @@ struct SigningCertificateSettingsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
-                .glassSurface(cornerRadius: 24)
+                .sealContentCard(.prominent)
             )
         }
         let presentation = viewModel.selfManagement
@@ -238,7 +238,7 @@ struct SigningCertificateSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .glassSurface(cornerRadius: 24))
+        .sealContentCard(.prominent))
     }
 
     private var certificateLoadingCard: some View {
@@ -253,7 +253,7 @@ struct SigningCertificateSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     /// 单个证书卡片：本机在用证书（如有）在上，账号下其余证书（可撤销）合并展示。
@@ -268,7 +268,7 @@ struct SigningCertificateSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private func localCertificateSection(account: AppleAccountRecord) -> some View {
@@ -656,7 +656,7 @@ struct SigningCertificateSettingsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {

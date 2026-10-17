@@ -74,11 +74,7 @@ struct StorageMaintenanceView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(28)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-        }
+        .sealContentCard(.prominent)
     }
 
     private var usageCard: some View {
@@ -96,11 +92,7 @@ struct StorageMaintenanceView: View {
             usageRow("多余文件", viewModel.storageUsage.orphaned)
         }
         .padding(.horizontal, 16)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-        }
+        .sealContentCard(.standard)
     }
 
     private var actionCard: some View {
@@ -132,7 +124,7 @@ struct StorageMaintenanceView: View {
             .foregroundStyle(Color.sealTextSecondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .glassSurface(cornerRadius: 16)
+            .sealContentCard(.compact)
     }
 
     private func usageRow(_ title: String, _ value: Int64) -> some View {

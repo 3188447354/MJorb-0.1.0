@@ -6,7 +6,7 @@ import WidgetKit
 struct PairingLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PairingActivityAttributes.self) { context in
-            lockScreen(context.state, deviceName: context.attributes.deviceName)
+            lockScreen(context.state)
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
                 .widgetURL(PairingDeepLink.url)
@@ -22,10 +22,10 @@ struct PairingLiveActivityWidget: Widget {
                     .foregroundStyle(.white)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    trailing(for: context.state)
+                    status(for: context.state)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 5) {
+                    VStack(spacing: context.state.stage == .code ? 6 : 0) {
                         if context.state.stage == .code {
                             Text(grouped(context.state.code))
                                 .font(.system(size: 30, weight: .bold, design: .monospaced))
@@ -36,9 +36,12 @@ struct PairingLiveActivityWidget: Widget {
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.78))
                             .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .foregroundStyle(.white)
-                    .padding(.top, context.state.stage == .code ? 2 : 8)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, context.state.stage == .code ? 2 : 12)
+                    .padding(.horizontal, 8)
                 }
             } compactLeading: {
                 sealMark
@@ -60,22 +63,43 @@ struct PairingLiveActivityWidget: Widget {
     }
 
     @ViewBuilder
-    private func trailing(for state: PairingActivityAttributes.ContentState) -> some View {
-        switch state.stage {
-        case .code:
-            Text(grouped(state.code))
-                .font(.system(size: 22, weight: .bold, design: .monospaced))
-                .monospacedDigit()
-                .tracking(1.5)
-                .foregroundStyle(.white)
+    private func status(for state: PairingActivityAttributes.ContentState) -> some View {
+        HStack(spacing: 4) {
+            statusIcon(for: state.stage)
+            Text(statusText(for: state.stage))
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(statusColor(for: state.stage))
+    }
+
+    @ViewBuilder
+    private func statusIcon(for stage: PairingActivityAttributes.Stage) -> some View {
+        switch stage {
+        case .preparing, .code:
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 7, height: 7)
         case .paired:
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.red)
-        case .preparing:
-            ProgressView().tint(.white)
+        }
+    }
+
+    private func statusText(for stage: PairingActivityAttributes.Stage) -> String {
+        switch stage {
+        case .preparing: return "准备配对"
+        case .code: return "等待配对"
+        case .paired: return "配对完成"
+        case .failed: return "配对未完成"
+        }
+    }
+
+    private func statusColor(for stage: PairingActivityAttributes.Stage) -> Color {
+        switch stage {
+        case .preparing, .code: return .blue
+        case .paired: return .green
+        case .failed: return .red
         }
     }
 
@@ -88,25 +112,25 @@ struct PairingLiveActivityWidget: Widget {
                 .monospacedDigit()
                 .foregroundStyle(.white)
         case .paired:
-            Image(systemName: "checkmark")
-                .font(.caption.weight(.bold))
+            Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .failed:
-            Image(systemName: "exclamationmark")
-                .font(.caption.weight(.bold))
+            Image(systemName: "exclamationmark.circle.fill")
                 .foregroundStyle(.red)
         case .preparing:
-            EmptyView()
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 7, height: 7)
         }
     }
 
-    private func lockScreen(_ state: PairingActivityAttributes.ContentState, deviceName: String) -> some View {
+    private func lockScreen(_ state: PairingActivityAttributes.ContentState) -> some View {
         VStack(spacing: 10) {
             HStack(spacing: 7) {
                 sealMark
                 Text(state.title).font(.headline)
                 Spacer()
-                statusIcon(for: state.stage)
+                status(for: state)
             }
             if state.stage == .code {
                 Text(grouped(state.code))
@@ -118,24 +142,10 @@ struct PairingLiveActivityWidget: Widget {
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.8))
                 .multilineTextAlignment(.center)
-            if state.stage == .code {
-                Text(deviceName)
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.52))
-                    .lineLimit(1)
-            }
+                .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(.white)
         .padding(18)
-    }
-
-    @ViewBuilder
-    private func statusIcon(for stage: PairingActivityAttributes.Stage) -> some View {
-        if stage == .paired {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        } else if stage == .failed {
-            Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-        }
     }
 
     private func tint(for stage: PairingActivityAttributes.Stage) -> Color {

@@ -262,11 +262,7 @@ struct SettingsRootView: View {
             }
             .frame(minHeight: 56)
             .padding(.horizontal, 16)
-            .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-            }
+            .sealContentCard(.standard)
         }
         .buttonStyle(.plain)
     }
@@ -298,11 +294,7 @@ struct SettingsRootView: View {
                 .padding(.leading, 8)
             VStack(spacing: 0, content: content)
                 .padding(.horizontal, 16)
-                .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-                }
+                .sealContentCard(.standard)
         }
     }
 
@@ -461,11 +453,7 @@ private struct AppearanceThemeSheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
     }
 
     private var accentCard: some View {
@@ -476,11 +464,7 @@ private struct AppearanceThemeSheet: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
     }
 
     private var appearanceSegment: some View {

@@ -6,13 +6,13 @@ import Foundation
 enum AgreementMetadata {
     /// 隐私政策
     enum Privacy {
-        static let effectiveDate = "2026.10.07"
+        static let effectiveDate = "2026.10.17"
         static let title = "隐私政策"
     }
 
     /// 用户协议
     enum Terms {
-        static let effectiveDate = "2026.10.07"
+        static let effectiveDate = "2026.10.17"
         static let title = "用户协议"
     }
 }

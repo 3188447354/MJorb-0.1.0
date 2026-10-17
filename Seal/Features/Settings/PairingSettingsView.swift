@@ -130,7 +130,7 @@ struct PairingSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
         .accessibilityElement(children: .combine)
     }
 
@@ -199,7 +199,7 @@ struct PairingSettingsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private var phonePairingProgress: some View {
@@ -238,7 +238,7 @@ struct PairingSettingsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
     }
 
     private func phoneDetailRow(_ title: String, _ value: String) -> some View {
@@ -270,7 +270,7 @@ struct PairingSettingsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 18)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
     }
 
     @ViewBuilder
@@ -378,7 +378,7 @@ struct PairingSettingsView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(28)
-        .glassSurface(cornerRadius: 24)
+        .sealContentCard(.prominent)
     }
 
     private func details(_ pairing: PairingRecord) -> some View {
@@ -391,7 +391,7 @@ struct PairingSettingsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
     }
 
     private var acquisitionGuide: some View {
@@ -409,7 +409,7 @@ struct PairingSettingsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
     }
 
     private var actions: some View {

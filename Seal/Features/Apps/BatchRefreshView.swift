@@ -46,7 +46,7 @@ struct BatchRefreshView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
-            .glassSurface(cornerRadius: 18)
+            .sealContentCard(.standard)
         case .running:
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline) {
@@ -67,7 +67,7 @@ struct BatchRefreshView: View {
                 installWaitBlock
             }
             .padding(16)
-            .glassSurface(cornerRadius: 18)
+            .sealContentCard(.standard)
         case .preparingSealUpdate:
             VStack(alignment: .leading, spacing: 8) {
                 Text("其他 App 已完成")
@@ -77,7 +77,7 @@ struct BatchRefreshView: View {
                     .foregroundStyle(Color.sealAccent)
             }
             .padding(16)
-            .glassSurface(cornerRadius: 18)
+            .sealContentCard(.standard)
         case .completed(let result):
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.failed == 0 ? "全部处理完成" : "部分 App 续签失败")
@@ -87,7 +87,7 @@ struct BatchRefreshView: View {
                     .foregroundStyle(Color.sealTextSecondary)
             }
             .padding(16)
-            .glassSurface(cornerRadius: 18)
+            .sealContentCard(.standard)
         case .failed(let failure):
             VStack(alignment: .leading, spacing: 8) {
                 Text(failure.title)
@@ -99,7 +99,7 @@ struct BatchRefreshView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
-            .glassSurface(cornerRadius: 18)
+            .sealContentCard(.standard)
         }
     }
 
@@ -158,7 +158,7 @@ struct BatchRefreshView: View {
             .frame(maxHeight: 220)
         }
         .padding(16)
-        .glassSurface(cornerRadius: 18)
+        .sealContentCard(.standard)
     }
 
     /// 队列行：App 图标 + 名称 + 状态文字 + 右侧状态图标。

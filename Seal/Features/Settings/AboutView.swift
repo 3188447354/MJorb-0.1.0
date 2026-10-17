@@ -70,11 +70,7 @@ struct AboutView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
         .padding(.horizontal, 20)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-        }
+        .sealContentCard(.prominent)
     }
 
     private var updateSection: some View {
@@ -141,11 +137,7 @@ struct AboutView: View {
                 .padding(.leading, 8)
             VStack(spacing: 0, content: content)
                 .padding(.horizontal, 16)
-                .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
-                }
+                .sealContentCard(.standard)
         }
     }
 

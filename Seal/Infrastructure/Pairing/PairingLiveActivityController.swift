@@ -61,7 +61,7 @@ final class PairingLiveActivityController {
     /// 不依赖 Seal 继续在前台或后台运行。
     func markPaired() {
         endWithResult(
-            state: .init(stage: .paired, code: "", title: "配对完成", detail: "已连接到 Seal"),
+            state: .init(stage: .paired, code: "", title: "Seal", detail: "点击返回 Seal"),
             lifetime: Self.completionLifetime
         )
     }
@@ -69,7 +69,7 @@ final class PairingLiveActivityController {
     /// 失败态不保留旧配对码；同样由系统在短暂提示后结束活动。
     func markFailed() {
         endWithResult(
-            state: .init(stage: .failed, code: "", title: "配对未完成", detail: "返回 Seal 查看原因"),
+            state: .init(stage: .failed, code: "", title: "Seal", detail: "返回 Seal 查看原因"),
             lifetime: Self.failureLifetime
         )
     }
@@ -126,10 +126,10 @@ final class PairingLiveActivityController {
         stage: .preparing,
         code: "",
         title: "Seal",
-        detail: "正在准备配对"
+        detail: "设置 → 隐私与安全性 → 开发者模式 → 与 Seal 配对"
     )
 
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
-        .init(stage: .code, code: code, title: "Seal 配对码", detail: "在系统设置中核对并确认")
+        .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口中输入此码")
     }
 }

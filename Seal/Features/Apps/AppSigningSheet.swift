@@ -267,11 +267,7 @@ struct AppSigningSheet: View {
             summaryRow(title: "扩展", value: extensionSummary)
         }
         .padding(.horizontal, 14)
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.72), lineWidth: 0.8)
-        }
+        .sealContentCard(.compact)
     }
 
     private func bundleIDRow(

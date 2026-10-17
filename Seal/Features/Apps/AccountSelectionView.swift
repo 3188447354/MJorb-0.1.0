@@ -39,7 +39,7 @@ struct AccountSelectionView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .glassSurface(cornerRadius: 16)
+                .sealContentCard(.compact)
             }
             .padding(.bottom, 12)
         } footer: {

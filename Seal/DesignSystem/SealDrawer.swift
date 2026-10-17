@@ -39,10 +39,10 @@ struct SealDrawer<Content: View, Footer: View>: View {
                     .padding(.top, 10)
                 if let title {
                     Text(title)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.title3.weight(.bold))
                         .foregroundStyle(.primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 22)
+                        .padding(.horizontal, SealLayout.drawerHorizontalInset)
                 }
             }
             .padding(.bottom, title == nil ? 10 : 14)
@@ -50,7 +50,7 @@ struct SealDrawer<Content: View, Footer: View>: View {
             ScrollView {
                 content()
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 22)
+                    .padding(.horizontal, SealLayout.drawerHorizontalInset)
                     .padding(.vertical, 2)
             }
             .scrollDismissesKeyboard(.interactively)
@@ -61,7 +61,7 @@ struct SealDrawer<Content: View, Footer: View>: View {
                     Divider()
                         .overlay(Color.sealHairline.opacity(0.65))
                     footer()
-                        .padding(.horizontal, 22)
+                        .padding(.horizontal, SealLayout.drawerHorizontalInset)
                         .padding(.top, 2)
                         .padding(.bottom, 10)
                 }
@@ -71,7 +71,7 @@ struct SealDrawer<Content: View, Footer: View>: View {
         .background(SealBackdrop(level: level).ignoresSafeArea())
         .presentationDragIndicator(.hidden)
         .compatibleClearPresentationBackground()
-        .compatiblePresentationCornerRadius(29)
+        .compatiblePresentationCornerRadius(SealLayout.drawerCornerRadius)
     }
 }
 
