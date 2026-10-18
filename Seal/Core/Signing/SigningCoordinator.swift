@@ -709,9 +709,8 @@ actor SigningCoordinator {
                       let refreshedSecret = try await keychain.load(accountID: accountID) else {
                     if case .blockedByInUseKeylessCerts(let appNames, let deviceOnlyCount) = cleanupOutcome {
                         if policy(for: app).allowsRevocationPrompt == false {
-                            // 自管理应用续签绝不弹「选择证书并撤销」：撤销会让正在
-                            // 使用的证书失效，重签安装后立刻打不开（2026-09-14 真机）。
-                            // 新策略下前置清理已直接撤非本机证书，本分支基本不会走到。
+                            // 自动清理回退不弹通用候选列表；Seal 自签失败有独立入口，
+                            // 会定位当前 Seal 证书并在撤销前二次确认。
                             throw failure
                         }
                         throw Self.inUseKeylessCertificatesFailure(

@@ -19,8 +19,8 @@ protocol RenewalPolicy: Sendable {
     /// 由安装校验或启动结算推进到 `.installed`。
     func statusAfterSigning(originalState: AppState) -> SignedArtifactStatus
 
-    /// 是否允许打开证书选择与撤销确认。Seal 永远不允许
-    /// （撤销运行中 Seal 正在用的证书会导致变砖，2026-09-14 真机）。
+    /// 自动清理未完成时，是否允许回退到通用的在用证书选择流程。
+    /// Seal 的明确自签恢复入口单独定位当前证书，并在撤销前二次确认。
     var allowsRevocationPrompt: Bool { get }
 
     /// 是否豁免 Bundle ID 冲突去重。Seal 自身更新是覆盖安装，豁免。

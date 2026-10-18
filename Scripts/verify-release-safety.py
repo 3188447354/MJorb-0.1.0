@@ -3956,7 +3956,7 @@ def violations(load=read):
           and "runningIdentity?.isComplete == true" in settings_vm,
           "Seal self-protection: settings paths must read the actual CMS signer identity")
     # 证书候选读取必须核验运行中 Seal 的真实 CMS 身份。
-    revoke_keyless = section(coord, "func certificateSacrificeCandidates(accountID: UUID)",
+    revoke_keyless = section(coord, "func certificateSacrificeCandidates(",
                              "func revokeKeylessCertificateAfterConfirmation(")
     check("SelfAppMetadata.current()?.installedIdentity" in revoke_keyless
           and "SEAL-CERT-230" in revoke_keyless,
@@ -4026,17 +4026,16 @@ def violations(load=read):
     # 用户确认盘活（SEAL-CERT-204e）：在用的无钥匙证书绝不静默撤，必须逐张选择并确认。
     check("if case .blockedByInUseKeylessCerts" in cleanup_retry,
           "204e must surface when keyless certificates are still in use")
-    # Seal 自身续签绝不撤自己的证书（会立刻打不开，2026-09-14 真机踩到）。两道护栏：
-    # ① 命中「在用的无钥匙证书」时不抛 204e，回退原错误；② 候选列表排除 Seal 的真实签名证书。
-    # 规矩盒子化后：① 由 `RenewalPolicy.allowsRevocationPrompt` 表达（自管理应用为 false）。
+    # Seal 自签的显式恢复流程允许撤销 Seal 当前证书，但只限用户触发并二次确认；
+    # 自动清理仍保护 Seal 当前证书，避免后台静默撤销。
     check("if case .blockedByInUseKeylessCerts" in cleanup_retry
           and ("if app.isSeal {" in cleanup_retry
                or "allowsRevocationPrompt == false" in cleanup_retry),
-          "Seal self-renewal must never surface 204e (revoke makes Seal unlaunchable)")
-    check("sealProtectedSerials" in coord and "sealProtectedSerials.contains" in coord
-          and "runningIdentity.targets.map" in coord,
-          "Sacrifice: candidate picker must protect all actual Seal signing targets")
-    check("func certificateSacrificeCandidates(accountID: UUID)" in coord
+          "Auto-cleanup fallback for Seal must not show the generic 204e picker")
+    check("allowSealSigner" in coord and "isCurrentSealSigner" in coord
+          and "mainTarget.signerSerialNumber" in coord,
+          "Sacrifice: explicit Seal self-sign recovery must identify and allow its actual signer")
+    check("func certificateSacrificeCandidates(" in coord
           and "func revokeKeylessCertificateAfterConfirmation(" in coord,
           "Sacrifice: coordinator must expose fresh candidate listing and single-certificate revoke")
     check("SEAL-CERT-204e" in coord and "SEAL-CERT-204f" in coord,
@@ -4044,10 +4043,13 @@ def violations(load=read):
     check("CertificateCleanupPolicy.sacrificeCandidates(" in coord,
           "Sacrifice: candidates must come from the shared policy")
     check("CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: certificate.certificateName)" in coord
+          and 'normalized.contains("apple development")' in cleanup_policy
           and 'normalized.contains("ios development")' in cleanup_policy
           and 'normalized.contains("iphone developer")' in cleanup_policy,
-          "Sacrifice: only SideStore-compatible iOS Development certificates may be offered")
+          "Sacrifice: Apple Development and legacy iOS Development certificates may be offered")
     apps_vm = load("Seal/Features/Apps/AppsViewModel.swift")
+    check("allowSealSigner: session.app.isSeal" in apps_vm,
+          "Sacrifice: only explicit self-sign recovery may include Seal's signer")
     check("func confirmCertificateSacrificeAndRetry(serialNumber: String)" in apps_vm
           and "CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code)" in apps_vm,
           "Sacrifice: ViewModel selected-certificate action must be gated on certificate-limit failures")
@@ -4056,6 +4058,8 @@ def violations(load=read):
     progress_view = load("Seal/Features/Apps/SigningProgressView.swift")
     picker_view = load("Seal/Features/Apps/CertificateSacrificePickerView.swift")
     certificate_policy = load("Seal/Core/Signing/CertificateRequestFailurePolicy.swift")
+    check("session.app.isSeal ? candidates.filter { $0.isCurrentSealSigner } : candidates" in picker_view,
+          "Sacrifice: Seal self-sign must target its current certificate, not unrelated team certificates")
     check('"SEAL-CERT-204b"' in certificate_policy
           and "sacrificeSelectionEligibleCodes" in certificate_policy
           and '"撤销并继续签名"' in progress_view
