@@ -398,14 +398,14 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     #[test]
-    fn cancellation_token_is_shared_with_the_running_host() {
+    fn cancellation_token_is_shared_with_the_running_host() -> Result<(), &'static str> {
         let token = create_cancel_token();
         let flag = cancel_tokens()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&token)
             .cloned()
-            .expect("new cancellation token is registered");
+            .ok_or("new cancellation token is registered")?;
 
         assert!(!flag.load(Ordering::Acquire));
         cancel_host(token);
@@ -416,5 +416,6 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .contains_key(&token));
+        Ok(())
     }
 }

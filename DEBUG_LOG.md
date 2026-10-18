@@ -1,3 +1,9 @@
+## 2026-10-19 05:21:05 导入编译与 RustBridge 源码检查修复
+
+- **证据**：CI #42 签名器测试及完整 release safety 检查通过；iOS 编译因 ImportWorkflow.swift 第 103 行调用以右花括号收尾而级联报错；RustBridge 源码审计命中配对取消单测的 expect。
+- **修复**：调用收尾改为右圆括号；existing 已在前文 guard 解包，移除重复的可选绑定并按 String 读取版本和构建号；配对单测通过 Result 和 ? 返回失败，仍保留令牌共享、取消、释放断言。
+- **验证与版本**：ImportWorkflow 的快速语法解析通过；iOS 类型检查及完整回归仍交 CI；版本递增为 0.1.20。
+
 ## 2026-10-19 04:57:48 手机配对接口与 CI 自检修复
 
 - **证据**：CI #41 的 iOS 回归编译报告 Minimuxer.swift 缺少 cancellationToken 参数。

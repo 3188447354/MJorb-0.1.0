@@ -100,7 +100,7 @@ actor ImportWorkflow {
             for: parsed,
             in: records,
             runningSealBundleIdentifier: runningSealBundleIdentifier
-        }
+        )
         let existing = existingSeal ?? ImportReplacementPolicy.installedReplacementCandidate(
             for: parsed,
             in: records
@@ -109,7 +109,7 @@ actor ImportWorkflow {
             return .newApp
         }
 
-        let oldVersion = (existing.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let oldVersion = existing.version.trimmingCharacters(in: .whitespacesAndNewlines)
         let newVersion = (parsed.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard Version.compareIfValid(newVersion, newVersion) != nil else {
             return .unreadableVersion
@@ -145,7 +145,7 @@ actor ImportWorkflow {
             return .downgrade(oldVersion: oldVersion, newVersion: newVersion)
         } else {
             // 营销版本相同：比构建号
-            let oldBuild = existing.buildNumber ?? ""
+            let oldBuild = existing.buildNumber
             let newBuild = parsed.buildNumber ?? ""
             let buildComparison = Self.compareBuildNumbers(newBuild, oldBuild)
             if buildComparison > 0 {
@@ -153,8 +153,7 @@ actor ImportWorkflow {
             } else if buildComparison < 0 {
                 return .buildDowngrade(oldBuild: oldBuild, newBuild: newBuild, version: newVersion)
             }
-            guard let existing,
-                  (try? await fileStore.exists(relativePath: existing.ipaRelativePath)) == true else {
+            guard (try? await fileStore.exists(relativePath: existing.ipaRelativePath)) == true else {
                 return .sameVersionRecovery(version: newVersion)
             }
             return .alreadyLatest(version: newVersion)
