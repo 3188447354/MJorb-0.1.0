@@ -1,3 +1,10 @@
+## 2026-10-19 05:35:55 迟到安装回调 Result 类型修复
+
+- **证据**：CI #43 的 Swift 编译在 HardTimeout、BlockingCall、InstallChannel、MinimuxerInstallChannel 和 SigningCoordinator 报 String 不遵循 Error。
+- **根因**：Result 的 Failure 泛型必须实现 Error，不能直接使用 String；回调从通用超时层贯穿安装结算，导致同根因多处编译失败。
+- **修复**：共用 HardTimeout.LateCompletionError，显式遵循 Error、Sendable、CustomStringConvertible；两处错误归一化保留原字符串；所有回调签名及 HardTimeoutTests 同步。
+- **版本与验证**：版本递增为 0.1.21；仅修类型契约，超时、取消、迟到成功/失败的结算流程保持现有实现，待 CI 编译和回归。
+
 ## 2026-10-19 05:21:05 导入编译与 RustBridge 源码检查修复
 
 - **证据**：CI #42 签名器测试及完整 release safety 检查通过；iOS 编译因 ImportWorkflow.swift 第 103 行调用以右花括号收尾而级联报错；RustBridge 源码审计命中配对取消单测的 expect。

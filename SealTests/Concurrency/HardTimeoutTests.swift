@@ -219,7 +219,7 @@ private actor LateCompletionProbe {
     private(set) var value: Int?
     private(set) var completionCount = 0
 
-    func record(_ result: Result<Int, String>) {
+    func record(_ result: Result<Int, HardTimeout.LateCompletionError>) {
         completionCount += 1
         if case .success(let value) = result { self.value = value }
     }

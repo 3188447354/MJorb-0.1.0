@@ -2458,7 +2458,7 @@ actor SigningCoordinator {
         attemptID: UUID,
         bundleIdentifier: String,
         expirationDate: Date,
-        result: Result<Void, String>
+        result: Result<Void, HardTimeout.LateCompletionError>
     ) async {
         guard var app = try? await appStore.fetchAll().first(where: { $0.id == appID }),
               app.pendingSignedSnapshot?.installAttemptID == attemptID else {

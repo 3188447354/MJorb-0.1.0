@@ -40,7 +40,7 @@ protocol InstallChannel: Actor {
         bundleID: String,
         isSelfReplacement: Bool,
         onProgress: @escaping @Sendable (Double) async -> Void,
-        onLateCompletion: @escaping @Sendable (Result<Void, String>) async -> Void
+        onLateCompletion: @escaping @Sendable (Result<Void, HardTimeout.LateCompletionError>) async -> Void
     ) async throws
     func verifyInstalled(bundleID: String) async throws
 }
@@ -102,7 +102,7 @@ extension InstallChannel {
         bundleID: String,
         isSelfReplacement: Bool,
         onProgress: @escaping @Sendable (Double) async -> Void,
-        onLateCompletion: @escaping @Sendable (Result<Void, String>) async -> Void
+        onLateCompletion: @escaping @Sendable (Result<Void, HardTimeout.LateCompletionError>) async -> Void
     ) async throws {
         try await install(
             ipaData: ipaData,

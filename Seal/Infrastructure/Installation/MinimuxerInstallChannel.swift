@@ -902,7 +902,7 @@ actor MinimuxerInstallChannel: InstallChannel {
     private func offThread<T: Sendable>(
         seconds: Double,
         cancelsWorkOnTimeout: Bool = true,
-        onLateCompletion: (@Sendable (Result<T, String>) async -> Void)? = nil,
+        onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)? = nil,
         _ work: @Sendable @escaping () throws -> T
     ) async -> Result<T, Error>? {
         await BlockingCall.bounded(
@@ -1339,7 +1339,7 @@ actor MinimuxerInstallChannel: InstallChannel {
         bundleID: String,
         isSelfReplacement: Bool,
         onProgress: @escaping @Sendable (Double) async -> Void,
-        onLateCompletion: @escaping @Sendable (Result<Void, String>) async -> Void
+        onLateCompletion: @escaping @Sendable (Result<Void, HardTimeout.LateCompletionError>) async -> Void
     ) async throws {
         #if !targetEnvironment(simulator)
         try await requireReady()

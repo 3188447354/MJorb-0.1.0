@@ -10,6 +10,10 @@ import Foundation
 /// 这里改用非结构化任务：超时先到就直接返回或抛出，输掉竞速的任务被“遗弃”在后台
 /// 自行结束，其结果被安全丢弃（continuation 只允许 resume 一次，由锁保证）。
 enum HardTimeout {
+    struct LateCompletionError: Error, Sendable, CustomStringConvertible {
+        let description: String
+    }
+
     struct TimeoutError: Error, LocalizedError, Sendable {
         let seconds: TimeInterval
 
@@ -21,7 +25,7 @@ enum HardTimeout {
     static func run<T: Sendable>(
         seconds: TimeInterval,
         cancelsWorkOnTimeout: Bool = true,
-        onLateCompletion: (@Sendable (Result<T, String>) async -> Void)? = nil,
+        onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)? = nil,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
         let state = RaceState<T>(onLateCompletion: onLateCompletion)
@@ -47,12 +51,12 @@ enum HardTimeout {
         private var timer: Task<Void, Never>?
         private var work: Task<Void, Never>?
         private var cancelsWorkOnTimeout = true
-        private let onLateCompletion: (@Sendable (Result<T, String>) async -> Void)?
+        private let onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)?
         /// 「谁先落地谁赢」：超时、工作完成、父任务取消三方竞速，
         /// 也用来处理 `onCancel` 早于 `store` 的时序（任务建立前就已被取消）。
         private var settled = false
 
-        init(onLateCompletion: (@Sendable (Result<T, String>) async -> Void)?) {
+        init(onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)?) {
             self.onLateCompletion = onLateCompletion
         }
 
@@ -125,7 +129,7 @@ enum HardTimeout {
         private func finish(_ result: Result<T, Error>, source: CompletionSource) {
             lock.lock()
             guard settled == false else {
-                let lateCompletion: (@Sendable (Result<T, String>) async -> Void)?
+                let lateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)?
                 if case .work = source {
                     lateCompletion = onLateCompletion
                 } else {
@@ -133,10 +137,10 @@ enum HardTimeout {
                 }
                 lock.unlock()
                 if let lateCompletion {
-                    let lateResult: Result<T, String>
+                    let lateResult: Result<T, HardTimeout.LateCompletionError>
                     switch result {
                     case .success(let value): lateResult = .success(value)
-                    case .failure(let error): lateResult = .failure(String(describing: error))
+                    case .failure(let error): lateResult = .failure(.init(description: String(describing: error)))
                     }
                     Task { await lateCompletion(lateResult) }
                 }

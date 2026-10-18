@@ -37,7 +37,7 @@ enum BlockingCall {
     static func bounded<T: Sendable>(
         seconds: Double,
         cancelsWorkOnTimeout: Bool = true,
-        onLateCompletion: (@Sendable (Result<T, String>) async -> Void)? = nil,
+        onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)? = nil,
         _ work: @Sendable @escaping () throws -> T
     ) async -> Result<T, Error>? {
         do {
@@ -50,7 +50,7 @@ enum BlockingCall {
                     case .success(let outcome):
                         switch outcome.result {
                         case .success(let value): await onLateCompletion(.success(value))
-                        case .failure(let error): await onLateCompletion(.failure(String(describing: error)))
+                        case .failure(let error): await onLateCompletion(.failure(.init(description: String(describing: error))))
                         }
                     case .failure(let error): await onLateCompletion(.failure(error))
                     }
