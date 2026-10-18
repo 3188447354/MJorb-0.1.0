@@ -1,3 +1,9 @@
+## 2026-10-19 07:31:36 CI #50 共享权限比较 guard 缺少退出语句
+
+- **证据**：swift-regression 定位 AppExtensionProfileStrategy.swift:142，guard else 记录不兼容权限后未退出当前循环迭代。
+- **修复**：补 continue，保留该扩展的完整不兼容权限集合并继续比较后续权限；不把权限不兼容当作共享成功。
+- **检查与版本**：定向扫描 Seal Swift 中 guard else 分支未发现另一个无退出语句的同类项；0.1.28，编译及回归仍以 CI 为准。
+
 ## 2026-10-19 07:16:27 CI #49 遗留灵动岛清理的隔离边界
 
 - **证据**：swift-regression 定位 PairingLiveActivityController.swift:31，主线程隔离的 Activity 对象传给非隔离异步 end 接口被 Swift 6 拒绝。

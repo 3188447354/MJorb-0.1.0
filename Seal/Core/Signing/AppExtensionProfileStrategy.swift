@@ -139,6 +139,7 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
                 for (key, value) in values {
                     guard let mainValue = mainValues[key], mainValue.permits(value) else {
                         incompatible.insert(key)
+                        continue
                     }
                 }
                 guard incompatible.isEmpty == false else { return nil }
