@@ -17,7 +17,7 @@ struct SelfReplacementPolicyTests {
         ReconcileCase(candidateMatches: true, oldMatches: false, readable: true, expected: .settle),
         ReconcileCase(candidateMatches: false, oldMatches: true, readable: true, expected: .closeAsNotInstalled),
         ReconcileCase(candidateMatches: false, oldMatches: false, readable: true, expected: .requireRecovery(reason: "当前 Seal 与安装前身份、候选身份都不一致")),
-        ReconcileCase(candidateMatches: false, oldMatches: false, readable: false, expected: .requireRecovery(reason: "无法确认当前 Seal 主程序或扩展的真实签名者"))
+        ReconcileCase(candidateMatches: false, oldMatches: false, readable: false, expected: .requireRecovery(reason: "无法完整读取当前 Seal 主程序和扩展身份"))
     ])
     func reconciliationNeverRequestsAutomaticInstall(testCase: ReconcileCase) {
         #expect(SelfReplacementPolicy.reconcile(testCase.input) == testCase.expected)

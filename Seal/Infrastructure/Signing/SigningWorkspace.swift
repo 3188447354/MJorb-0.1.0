@@ -63,7 +63,7 @@ struct SigningWorkspace: Sendable {
             url: ipaURL,
             accessMode: .read,
             pathEncoding: .utf8
-        ), Self.hasDeclaredMainExecutable(in: utf8Archive) {
+        ), Self.hasDeclaredMainExecutable(in: utf8Archive, pathEncoding: .utf8) {
             archive = utf8Archive
             pathEncoding = .utf8
         } else if Self.hasDeclaredMainExecutable(in: defaultArchive) {
@@ -492,10 +492,18 @@ struct SigningWorkspace: Sendable {
         return identifier
     }
 
-    private static func hasDeclaredMainExecutable(in archive: Archive) -> Bool {
+    private static func hasDeclaredMainExecutable(
+        in archive: Archive,
+        pathEncoding: String.Encoding? = nil
+    ) -> Bool {
         let entries = Array(archive)
+        func path(for entry: Entry) -> String {
+            guard let pathEncoding else { return entry.path }
+            return entry.path(using: pathEncoding)
+        }
+
         let infoEntries = entries.filter { entry in
-            let components = entry.path.split(separator: "/")
+            let components = path(for: entry).split(separator: "/")
             return components.count == 3
                 && components[0] == "Payload"
                 && components[1].hasSuffix(".app")
@@ -522,10 +530,10 @@ struct SigningWorkspace: Sendable {
             return false
         }
 
-        let appRoot = infoEntry.path.split(separator: "/").dropLast().joined(separator: "/")
+        let appRoot = path(for: infoEntry).split(separator: "/").dropLast().joined(separator: "/")
         let executablePath = "\(appRoot)/\(executable)"
         return entries.contains {
-            $0.path == executablePath && $0.type == .file && $0.uncompressedSize > 0
+            path(for: $0) == executablePath && $0.type == .file && $0.uncompressedSize > 0
         }
     }
 
