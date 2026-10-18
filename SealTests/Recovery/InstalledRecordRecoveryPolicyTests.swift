@@ -336,6 +336,7 @@ struct InstalledRecordRecoveryPolicyTests {
             accountID: nil
         )
         #expect(record != nil)
+        #expect(record?.needsIPAImport == true)
         guard let record else { return }
         #expect(record.signedIPARelativePath == nil)
         #expect(record.signedIPASHA256 == nil)

@@ -1,3 +1,11 @@
+## 2026-10-19 04:57:48 手机配对接口与 CI 自检修复
+
+- **证据**：CI #41 的 iOS 回归编译报告 Minimuxer.swift 缺少 cancellationToken 参数。
+- **根因**：RustBridge 和 Seal 的调用端已接入取消令牌，中间的 Minimuxer 封装未同步；Seal 还通过不存在的 Minimuxer.RustIdevice 路径引用底层接口。
+- **修复**：Minimuxer 显式接收并转交 cancellationToken，公开现有取消令牌操作及错误类型；PhonePairingHost 统一通过 Minimuxer 封装调用。
+- **CI 自检**：#41 剩余三项变异检查未捕获错误，根因是跨函数或跨构造器搜索被其它正确分支满足；改为定位 desiredFeatureKeys 并分别验证两个恢复构造器。旧恢复构造器同步补 needsIPAImport 状态及断言。
+- **版本与验证**：版本递增至 0.1.19；上轮签名器测试已通过，本次接口变更待 CI 编译与真机配对验证。
+
 ## 2026-10-19 04:37:29 CI 失败修复与守卫同步
 
 - **问题**：CI 的 iOS 编译在 `SideSign/AppBundle.swift` 因 `Any` 不满足 Swift 6 `Sendable` 失败；release safety 检查和变异样例仍引用旧实现，另有 AppRecord 参数顺序问题。

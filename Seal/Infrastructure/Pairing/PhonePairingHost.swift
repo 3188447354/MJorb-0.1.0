@@ -40,7 +40,7 @@ final class PhonePairingHost: NSObject {
 
         let runID = UUID()
         activeRunID = runID
-        let cancellationToken = Minimuxer.RustIdevice.makePhonePairingCancellationToken()
+        let cancellationToken = Minimuxer.makePhonePairingCancellationToken()
         guard cancellationToken != 0 else {
             activeRunID = nil
             onEvent(.failed("无法启动配对任务。"))
@@ -76,11 +76,11 @@ final class PhonePairingHost: NSObject {
                 DispatchQueue.main.async { [weak self] in
                     self?.finish(.completed(outputURL), runID: runID)
                 }
-            } catch Minimuxer.RustIdevice.PhonePairingHostError.cancelled {
+            } catch Minimuxer.PhonePairingHostError.cancelled {
                 DispatchQueue.main.async { [weak self] in
                     self?.finish(.cancelled, runID: runID)
                 }
-            } catch Minimuxer.RustIdevice.PhonePairingHostError.timedOut {
+            } catch Minimuxer.PhonePairingHostError.timedOut {
                 DispatchQueue.main.async { [weak self] in
                     self?.finish(.failed("配对等待超时，请重新开始。"), runID: runID)
                 }
@@ -96,7 +96,7 @@ final class PhonePairingHost: NSObject {
         guard let cancellationToken else { return }
         service?.stop()
         service = nil
-        Minimuxer.RustIdevice.cancelPhonePairingHost(token: cancellationToken)
+        Minimuxer.cancelPhonePairingHost(token: cancellationToken)
     }
 
     private func advertise(

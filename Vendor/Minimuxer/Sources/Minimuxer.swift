@@ -41,12 +41,23 @@ public struct Minimuxer {
         public let hostAltIRKHex: String
     }
 
+    public typealias PhonePairingHostError = RustIdevice.PhonePairingHostError
+
+    public static func makePhonePairingCancellationToken() -> UInt64 {
+        RustIdevice.makePhonePairingCancellationToken()
+    }
+
+    public static func cancelPhonePairingHost(token: UInt64) {
+        RustIdevice.cancelPhonePairingHost(token: token)
+    }
+
     /// Runs the iOS Remote Pairing host on the caller's background thread.
     /// Callbacks are synchronous and should hand UI work back to the main actor.
     public static func runPhonePairingHost(
         name: String,
         model: String,
         outputPath: String,
+        cancellationToken: UInt64,
         hostAltIRKHex: String,
         onReady: @escaping (PhonePairingAdvertisement) -> Void,
         onPIN: @escaping (String) -> Void
@@ -55,6 +66,7 @@ public struct Minimuxer {
             name: name,
             model: model,
             outputPath: outputPath,
+            cancellationToken: cancellationToken,
             hostAltIRKHex: hostAltIRKHex,
             onReady: { advertisement in
                 onReady(PhonePairingAdvertisement(

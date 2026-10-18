@@ -542,6 +542,7 @@ enum InstalledRecordRecoveryPolicy {
             signedArtifactStatus: nil,
             preferredBundleIdentifier: draft.bundleIdentifier,
             preferredDisplayName: nil,
+            needsIPAImport: true,
             isSeal: false,
             isPinned: false,
             importedAt: now,

@@ -2170,8 +2170,13 @@ def violations(load=read):
           and "func desiredFeatureKeys(mapped: String) -> Set<String>" in portal_source,
           "R34: 取证诊断必须把「远端 features 与本次要设置一致」的**个数**算出来 —— "
           "只说「features 非空」判断不了能不能跳过 updateFeatures")
-    check("guard let application = applications[mapped]," in portal_source
-          and "let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return [] }" in portal_source,
+    desired_feature_keys = section_or_empty(
+        portal_source,
+        "func desiredFeatureKeys(mapped: String) -> Set<String> {",
+        "var desiredKeysByMapped:",
+    )
+    check("guard let application = applications[mapped]," in desired_feature_keys
+          and "let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return [] }" in desired_feature_keys,
           "R34: desiredFeatureKeys 必须用 mapped ID 查 applications（original 恒 nil，取证空转）")
     # ⚠️ 还**必须报出值类型**：判据「键集相等 ⇒ 值也相等」只在**所有值都是布尔开关**时成立。
     # 若某个能力的值是列表（App Group / Associated Domains 之类），键集相等**不代表**值相等，
@@ -4933,10 +4938,17 @@ def violations(load=read):
         "static func drafts(\n        profiles:",
         "static func drafts(\n        installedApplications:",
     )
-    r80_scan_record = section_or_empty(
-        r80_policy,
-        "static func makeRecord(\n        from draft: InstalledAppDraft,",
-        "static func normalizedTeamIdentifier(",
+    r80_scan_records = (
+        section_or_empty(
+            r80_policy,
+            "static func makeRecord(\n        from draft: InstalledAppDraft,",
+            "static func originalBundleIdentifier(",
+        ),
+        section_or_empty(
+            r80_policy,
+            "static func makeRecord(\n        from draft: Draft,",
+            "static func normalizedTeamIdentifier(",
+        ),
     )
     check("guard raw.isEmpty == false else { continue }" in r80_policy
           and "context.knownTeamIdentifiers.contains(team)" in r80_policy
@@ -4954,13 +4966,13 @@ def violations(load=read):
           "再造一条会得到「两条都叫 Seal」）")
     check("ProfileReclaimPolicy.isExtensionBundleID(" not in r80_policy,
           "Scan/extension: 不得按 Bundle ID 前缀猜扩展；交由设备安装查询确认")
-    check("signedIPARelativePath: nil" in r80_scan_record
-          and "signedIPASHA256: nil" in r80_scan_record
-          and "signedArtifactStatus: nil" in r80_scan_record
-          and "signingTargets: []," in r80_scan_record,
+    check(all(all(token in record for token in (
+              "signedIPARelativePath: nil", "signedIPASHA256: nil",
+              "signedArtifactStatus: nil", "signingTargets: [],",
+          )) for record in r80_scan_records),
           "Scan/identity: 扫回记录不得带任何「已签名产物」痕迹 —— 它从来没有过本地 IPA，"
           "填了会让下游拿一个不存在的文件去签名/安装")
-    check("            certificateSerialNumber: nil," in r80_scan_record,
+    check(all("            certificateSerialNumber: nil," in record for record in r80_scan_records),
           "Scan/certificate: 扫回记录不得填证书序列号 —— 描述文件里的 DeveloperCertificates 是"
           "**授权列表**、不是实际签名者；填了会让证书轮换把它排进「自动重签」（必然失败），"
           "并让撤销证书的确认弹窗承诺一件做不到的事")
