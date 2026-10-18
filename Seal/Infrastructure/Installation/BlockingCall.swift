@@ -36,10 +36,26 @@ enum BlockingCall {
     ///   调用方必须把 `nil` 当成「不知道」，**不能**当成「否」（判据的错法方向决定安全）。
     static func bounded<T: Sendable>(
         seconds: Double,
+        cancelsWorkOnTimeout: Bool = true,
+        onLateCompletion: (@Sendable (Result<T, String>) async -> Void)? = nil,
         _ work: @Sendable @escaping () throws -> T
     ) async -> Result<T, Error>? {
         do {
-            let outcome: Outcome<T> = try await HardTimeout.run(seconds: seconds) {
+            let outcome: Outcome<T> = try await HardTimeout.run(
+                seconds: seconds,
+                cancelsWorkOnTimeout: cancelsWorkOnTimeout,
+                onLateCompletion: { result in
+                    guard let onLateCompletion else { return }
+                    switch result {
+                    case .success(let outcome):
+                        switch outcome.result {
+                        case .success(let value): await onLateCompletion(.success(value))
+                        case .failure(let error): await onLateCompletion(.failure(String(describing: error)))
+                        }
+                    case .failure(let error): await onLateCompletion(.failure(error))
+                    }
+                }
+            ) {
                 Outcome(result: Result(catching: work))
             }
             return outcome.result

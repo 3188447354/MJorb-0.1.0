@@ -13,6 +13,13 @@ struct InstalledAppActionSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 appHeader
                 signingSummaryCard
+                if app.needsIPAImport {
+                    Text("本机没有保存原始 IPA。需要重新签名时，请先导入该应用的 IPA。")
+                        .font(.footnote)
+                        .foregroundStyle(Color.sealTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                }
                 if let note = AppSigningPresentationHelpers.pendingUpdateNote(
                     for: app,
                     runningVersion: Version.current
@@ -30,13 +37,23 @@ struct InstalledAppActionSheet: View {
             .padding(.bottom, 12)
         } footer: {
             VStack(spacing: 10) {
-                Button(AppSigningPresentationHelpers.renewNowAction) {
-                    dismiss()
-                    onRenew()
+                if app.needsIPAImport == false || viewModel.canRenewProfileOnlyWithoutIPA(app) {
+                    Button(AppSigningPresentationHelpers.renewNowAction) {
+                        dismiss()
+                        onRenew()
+                    }
+                    .sealPrimaryAction(cornerRadius: 14)
                 }
-                .sealPrimaryAction(cornerRadius: 14)
-
-
+                if app.needsIPAImport {
+                    Button("导入 IPA") {
+                        dismiss()
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(250))
+                            viewModel.presentImporter()
+                        }
+                    }
+                    .sealOutlineAction(cornerRadius: 14)
+                }
             }
         }
     }
@@ -50,7 +67,7 @@ struct InstalledAppActionSheet: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
-                Text("v\(app.version) · \(app.size.sealFormattedByteCount)")
+                Text(app.needsIPAImport ? "v\(app.version) · 设备已安装" : "v\(app.version) · \(app.size.sealFormattedByteCount)")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Color.sealTextSecondary)
                     .lineLimit(1)

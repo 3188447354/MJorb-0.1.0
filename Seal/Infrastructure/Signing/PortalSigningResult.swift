@@ -11,6 +11,7 @@ struct PortalSigningResult: Sendable {
     let deviceIdentifier: String
     let teamID: String
     let profileBindings: [String: ProvisioningProfileBinding]
+    let applicationIdentifiers: [String: String]
     let extensionProfileStrategy: AppExtensionProfileStrategy
     let droppedExtensionBundleIdentifiers: [String]
 }

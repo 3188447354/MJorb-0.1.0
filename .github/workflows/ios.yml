@@ -18,6 +18,8 @@ on:
     branches-ignore: [main]
     paths:
       - "Seal/**"
+      - "Shared/**"
+      - "SealLiveActivity/**"
       - "SealTests/**"
       - "SealUITests/**"
       # AltSign is compiled into Seal. Changes here must run the same full

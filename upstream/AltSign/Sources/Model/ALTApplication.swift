@@ -55,6 +55,31 @@ public final class ALTApplication: NSObject {
         loadEntitlementsString()
     }
 
+    /// Reads bundle entitlements without converting Mach-O or plist errors into an empty set.
+    /// An unsigned binary may legitimately return an empty string from LdidBridge.
+    public func readEntitlements() throws -> [ALTEntitlement: any Sendable] {
+        let string = try LdidBridge.entitlements(at: fileURL)
+        guard string.isEmpty == false else { return [:] }
+        guard let data = string.data(using: .utf8) else {
+            throw NSError(
+                domain: "ALTApplicationEntitlements",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Entitlements are not valid UTF-8"]
+            )
+        }
+        let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        guard let plist = object as? [String: Any] else {
+            throw NSError(
+                domain: "ALTApplicationEntitlements",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Entitlements plist is not a dictionary"]
+            )
+        }
+        return plist.reduce(into: [ALTEntitlement: any Sendable]()) { result, pair in
+            result[ALTEntitlement(rawValue: pair.key)] = pair.value
+        }
+    }
+
     public let fileURL: URL
     public let bundle: Bundle
 

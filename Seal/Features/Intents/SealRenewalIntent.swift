@@ -11,6 +11,7 @@ enum SealRenewalIntentOutcome: Sendable {
     case started
     /// 界面尚未装配完（后台唤起的极早期），或本地存储初始化失败。
     case notReady
+    case busy
 }
 
 /// 「续签全部应用」——**不打开 App** 的那条入口。
@@ -42,14 +43,19 @@ struct RefreshAllAppsIntent: AppIntent {
             // 续签任务还没跑到第一次网络往返就停了（后台没有界面，用户看不到）。
             // 2026-10-07: 只用静音音频保活，定位保活退役（续签 4-12 秒，音频足够）。
             container.backgroundKeepAlive.start()
-            container.appsViewModel.refreshAllFromBackgroundTrigger()
-            return .started
+            switch container.appsViewModel.refreshAllFromBackgroundTrigger() {
+            case .accepted: return .accepted
+            case .busy: return .busy
+            case .notReady: return .notReady
+            }
         }
         switch outcome {
-        case .started:
-            return .result(dialog: "已在后台开始续签全部应用。")
+        case .accepted:
+            return .result(dialog: "已接收后台续签请求，正在准备设备连接。")
         case .notReady:
             return .result(dialog: "Seal 还没准备好，请先打开 Seal 再试一次。")
+        case .busy:
+            return .result(dialog: "已有操作正在使用设备，请等它完成后再试。")
         }
     }
 }

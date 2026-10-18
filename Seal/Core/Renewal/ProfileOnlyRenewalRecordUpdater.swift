@@ -54,7 +54,15 @@ enum ProfileOnlyRenewalRecordUpdater {
         // 9 条记录会**全部塌成主 App 一条** ⇒ 缓存与安装前校验逐项匹配失配 ✗。
         // ⇒ 显式传 `signedBundleIdentifier`，profile 元数据仍取自共享的那一份。
         let newSigningTargets = resolvedBindings
-            .map { SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key) }
+            .map { bundleIdentifier, binding in
+                SigningTargetRecord(
+                    binding: binding,
+                    signedBundleIdentifier: bundleIdentifier,
+                    applicationIdentifier: app.signingTargets.first(where: {
+                        $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+                    })?.applicationIdentifier
+                )
+            }
             .sorted { $0.bundleIdentifier < $1.bundleIdentifier }
         var extensionSnapshots: [PendingSignedSnapshot.PendingExtensionSnapshot] = []
         for ext in app.extensions {

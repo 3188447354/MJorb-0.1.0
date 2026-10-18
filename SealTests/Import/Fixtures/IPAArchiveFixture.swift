@@ -54,23 +54,25 @@ enum IPAArchiveFixture {
                 if app.malformedInfo {
                     infoData = Data("not a property list".utf8)
                 } else {
-                    var info: [String: Any] = [
+                    let info: [String: Any] = [
                         "CFBundleDisplayName": app.name,
                         "CFBundleIdentifier": app.bundleIdentifier,
                         "CFBundleShortVersionString": app.version,
                         "CFBundleVersion": app.buildNumber,
+                        "CFBundleExecutable": app.name,
                         "CFBundleIcons": [
                             "CFBundlePrimaryIcon": [
                                 "CFBundleIconFiles": ["AppIcon60x60"]
                             ]
                         ]
                     ]
-                    if includeMobileProvision {
-                        info["CFBundleExecutable"] = app.name
-                    }
                     infoData = try propertyListData(info)
                 }
                 try add(infoData, path: "\(appRoot)/Info.plist", to: archive)
+            }
+
+            if includeInfo && app.malformedInfo == false {
+                try add(Data(repeating: 0, count: 32), path: "\(appRoot)/\(app.name)", to: archive)
             }
 
             if includeIcon {

@@ -343,6 +343,61 @@ struct SelfAppRegistrarTests {
         #expect(updated.provisioningProfileExpirationDate == newExpiry)
     }
 
+    @Test
+    func sameVersionLaunchDoesNotReplaceRenewedExtensionProfileWithEmbeddedOldProfile() async throws {
+        let fixture = try makeSealFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let renewedExpiry = Date(timeIntervalSince1970: 1_750_000_000)
+        var record = makeSealRecord(
+            fixture,
+            expiry: renewedExpiry,
+            profileUUID: "RENEWED-MAIN",
+            profileName: "Seal Renewed"
+        )
+        record.extensions = [
+            AppExtensionRecord(
+                name: "SealLiveActivity",
+                originalBundleIdentifier: "com.mjorb.seal.LiveActivity",
+                mappedBundleIdentifier: "com.mjorb.seal.LiveActivity",
+                provisioningProfileUUID: "RENEWED-EXTENSION",
+                provisioningProfileName: "Seal Extension Renewed",
+                provisioningProfileExpirationDate: renewedExpiry,
+                certificateSerialNumber: "NEW-CERT"
+            )
+        ]
+        try await fixture.appStore.save(record)
+
+        let embeddedExtension = AppExtensionRecord(
+            name: "SealLiveActivity",
+            originalBundleIdentifier: "com.mjorb.seal.LiveActivity",
+            mappedBundleIdentifier: "com.mjorb.seal.LiveActivity",
+            provisioningProfileUUID: "EMBEDDED-OLD",
+            provisioningProfileName: "Seal Extension Old",
+            provisioningProfileExpirationDate: Date(timeIntervalSince1970: 1_700_000_000),
+            certificateSerialNumber: "OLD-CERT"
+        )
+        let metadata = SelfAppMetadata(
+            bundleURL: fixture.currentBundle,
+            bundleIdentifier: "com.mjorb.seal",
+            originalBundleIdentifier: "com.mjorb.seal",
+            name: "Seal",
+            version: "1.0",
+            buildNumber: "1",
+            iconData: nil,
+            expirationDate: renewedExpiry,
+            signingTeamIdentifier: nil,
+            signingApplicationIdentifier: nil,
+            extensionRecords: [embeddedExtension]
+        )
+
+        try await makeRegistrar(fixture, metadata: metadata).ensureRegistered()
+
+        let updated = try #require(try await fixture.appStore.fetchAll().first)
+        #expect(updated.extensions.first?.provisioningProfileUUID == "RENEWED-EXTENSION")
+        #expect(updated.extensions.first?.provisioningProfileExpirationDate == renewedExpiry)
+        #expect(updated.extensions.first?.certificateSerialNumber == "NEW-CERT")
+    }
+
     /// R07 回归：自更新安装失败（或进程在安装中被系统杀掉）时，记录里那份
     /// 「安装前乐观写入」的新有效期必须被纠正回**运行中旧包**的真实有效期，
     /// 否则 UI 会显示设备上并不存在的到期日，用户直到应用被吊销都收不到提醒。

@@ -12,6 +12,7 @@ struct UpdateNoticeView: View {
 
     @State private var phase: DownloadPhase = .available
     @State private var downloadTask: Task<Void, Never>?
+    @State private var downloadGeneration = UUID()
 
     private enum DownloadFailure: Equatable {
         case download
@@ -69,6 +70,7 @@ struct UpdateNoticeView: View {
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phase)
         .onDisappear {
+            downloadGeneration = UUID()
             downloadTask?.cancel()
             downloadTask = nil
         }
@@ -320,6 +322,8 @@ struct UpdateNoticeView: View {
             return
         }
 
+        let generation = UUID()
+        downloadGeneration = generation
         phase = .downloading(0, nil)
         downloadTask = Task {
             let localURL: URL
@@ -327,16 +331,24 @@ struct UpdateNoticeView: View {
                 localURL = try await UpdateIPADownloader.shared.download(
                         from: ipaURL,
                         onProgress: { @MainActor received, total in
+                            guard downloadGeneration == generation else { return }
                             phase = .downloading(received, total)
                         }
                     )
             } catch is CancellationError {
+                guard downloadGeneration == generation else { return }
                 phase = .available
                 downloadTask = nil
                 return
             } catch {
+                guard downloadGeneration == generation else { return }
                 phase = .failed(Self.isStorageFull(error) ? .storage : .download)
                 downloadTask = nil
+                return
+            }
+
+            guard downloadGeneration == generation else {
+                UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
                 return
             }
 
@@ -346,6 +358,7 @@ struct UpdateNoticeView: View {
                 guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version),
                       let checksumURL = notice.sha256DownloadURL else {
                     try? FileManager.default.removeItem(at: localURL)
+                    guard downloadGeneration == generation else { return }
                     phase = .failed(.verification)
                     downloadTask = nil
                     return
@@ -356,6 +369,7 @@ struct UpdateNoticeView: View {
                     let (data, response) = try await URLSession.shared.data(from: checksumURL)
                     guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                         try? FileManager.default.removeItem(at: localURL)
+                        guard downloadGeneration == generation else { return }
                         phase = .failed(.download)
                         downloadTask = nil
                         return
@@ -365,6 +379,7 @@ struct UpdateNoticeView: View {
                     throw CancellationError()
                 } catch {
                     try? FileManager.default.removeItem(at: localURL)
+                    guard downloadGeneration == generation else { return }
                     phase = .failed(.download)
                     downloadTask = nil
                     return
@@ -373,28 +388,43 @@ struct UpdateNoticeView: View {
                       let expected = UpdateChecker.expectedSHA256(from: checksumText),
                       UpdateChecker.hashMatches(expected: expected, actual: actual) else {
                     try? FileManager.default.removeItem(at: localURL)
+                    guard downloadGeneration == generation else { return }
                     phase = .failed(.verification)
                     downloadTask = nil
                     return
                 }
 
+                guard downloadGeneration == generation else {
+                    UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
+                    return
+                }
                 phase = .ready
                 try await Task.sleep(nanoseconds: 800_000_000)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, downloadGeneration == generation else {
+                    UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
+                    return
+                }
+                downloadGeneration = UUID()
+                downloadTask = nil
                 onInstall(localURL)
             } catch is CancellationError {
                 try? FileManager.default.removeItem(at: localURL)
+                guard downloadGeneration == generation else { return }
                 phase = .available
             } catch {
                 try? FileManager.default.removeItem(at: localURL)
+                guard downloadGeneration == generation else { return }
                 phase = .failed(.verification)
             }
-            downloadTask = nil
+            if downloadGeneration == generation {
+                downloadTask = nil
+            }
         }
     }
 
     @MainActor
     private func cancelDownload() {
+        downloadGeneration = UUID()
         downloadTask?.cancel()
         downloadTask = nil
         phase = .available

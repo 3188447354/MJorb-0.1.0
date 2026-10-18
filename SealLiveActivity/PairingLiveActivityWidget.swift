@@ -12,21 +12,23 @@ struct PairingLiveActivityWidget: Widget {
                 .widgetURL(PairingDeepLink.url)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 9) {
-                        HStack(spacing: 6) {
-                            sealMark
-                            Text(context.state.title)
-                                .font(.caption2.weight(.semibold))
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            status(for: context.state)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-
-                        pairingDetails(context.state, codeSize: 30)
+                DynamicIslandExpandedRegion(.leading) {
+                    HStack(spacing: 7) {
+                        sealMark
+                        Text(context.state.title)
+                            .font(.caption2.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
+                    .foregroundStyle(.white)
+                }
+
+                DynamicIslandExpandedRegion(.trailing) {
+                    status(for: context.state)
+                }
+
+                DynamicIslandExpandedRegion(.bottom) {
+                    pairingDetails(context.state, codeSize: 30)
                 }
             } compactLeading: {
                 sealMark

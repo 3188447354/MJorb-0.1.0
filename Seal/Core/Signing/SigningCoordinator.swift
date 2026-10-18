@@ -138,6 +138,7 @@ actor SigningCoordinator {
     private let portal: ApplePortalSigningService
     private let logStore: SealLogStore?
     private let selfReplacement: (any SelfReplacing)?
+    private let certificateRecoveryJournal: CertificateRecoveryJournalStore?
 
     init(
         appStore: any AppStore,
@@ -147,7 +148,8 @@ actor SigningCoordinator {
         installChannel: any InstallChannel,
         portal: ApplePortalSigningService = ApplePortalSigningService(),
         logStore: SealLogStore? = nil,
-        selfReplacement: (any SelfReplacing)? = nil
+        selfReplacement: (any SelfReplacing)? = nil,
+        certificateRecoveryJournal: CertificateRecoveryJournalStore? = nil
     ) {
         self.appStore = appStore
         self.accountRepository = accountRepository
@@ -157,6 +159,7 @@ actor SigningCoordinator {
         self.portal = portal
         self.logStore = logStore
         self.selfReplacement = selfReplacement
+        self.certificateRecoveryJournal = certificateRecoveryJournal
     }
 
     /// 设备通道**瞬时失败**后、下一次尝试之前，把通道恢复成「可以重新建会话」的状态。
@@ -300,7 +303,8 @@ actor SigningCoordinator {
         // 阶段内部**可数**的完成量（第 i / N 个 Bundle ID、第 i / N 份描述文件）。
         // 界面据此决定环上要不要给百分比：有出处才给数字，没有就转弧不报数
         //（2026-09-19 设计讨论 —— 既不用假预估骗人，也不让界面全程静止）。
-        onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void = { _ in }
+        onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void = { _ in },
+        isCertificateRecoveryRun: Bool = false
     ) async throws -> AppRecord {
         try? await logStore?.append(
             category: .system,
@@ -314,22 +318,6 @@ actor SigningCoordinator {
                 code: "SEAL-SIGN-404"
             )
         }
-        // 设备端扫回重建的记录**没有本地原始 IPA**（记录是从设备端 profile 反推的，
-        // 那个文件从来没有存在过）。这类记录只能看、不能重签 —— 必须在这里明确拒绝，
-        // 而不是让下游 `Data(contentsOf:)` 抛一个泛化的「找不到文件」，
-        // 那会让用户以为是 Seal 坏了（`importWarnings` 里写的是同一句话）。
-        if app.isSeal == false,
-           app.state == .installed,
-           app.hasSignedArtifact == false,
-           app.signedArtifactStatus == nil,
-           (try? await fileStore.exists(relativePath: app.ipaRelativePath)) == false {
-            throw Self.failure(
-                reason: "「\(app.displayName)」是 Seal 从设备端扫回重建的记录，本地没有它的原始 IPA，无法重签或续签。",
-                recovery: "重新导入该应用的 IPA 后再签名；扫回记录只用于查看安装状态与有效期",
-                code: "SEAL-RECOVER-002"
-            )
-        }
-
         // 一次读全，两个用途：① 找本次要签的账号；② 给「绑定账号是否悬空」这条判据提供
         // **现存账号集合**（`SigningCertificateSelectionPolicy`，理由见 SEAL-AUTH-111 的注释）。
         let knownAccounts = try await accountRepository.fetchAll()
@@ -352,6 +340,24 @@ actor SigningCoordinator {
                 recovery: "重新验证 Apple ID",
                 code: "SEAL-AUTH-105a"
             )
+        }
+        let previouslyRevokedSerials: [String]
+        if isCertificateRecoveryRun {
+            previouslyRevokedSerials = []
+        } else if let certificateRecoveryJournal {
+            do {
+                previouslyRevokedSerials = try await certificateRecoveryJournal
+                    .revokedSerialNumbers(for: accountID)
+            } catch {
+                throw Self.failure(
+                    title: "证书恢复记录无法读取",
+                    reason: "本机保存的证书恢复记录无法读取，为避免漏掉受影响应用，本次签名已停止。",
+                    recovery: "保留当前数据，重新启动 Seal 后重试；如仍失败请导出日志",
+                    code: "SEAL-CERT-240a"
+                )
+            }
+        } else {
+            previouslyRevokedSerials = []
         }
         try await validateAccountSession(
             account: account,
@@ -637,9 +643,35 @@ actor SigningCoordinator {
                 )
             }
 
+            // 缺少本地 IPA 只阻断需要重签的路径，不能先于 profile-only 资格检查。
+            // 外部签名工具装入的应用可能没有 Seal 的 IPA 文件，但若本地仍有完整、匹配的
+            // 签名身份与描述文件目标，profile-only 续签不需要读取 IPA。
+            if app.isSeal == false,
+               app.state == .installed,
+               app.hasSignedArtifact == false,
+               app.signedArtifactStatus == nil,
+               (try? await fileStore.exists(relativePath: app.ipaRelativePath)) == false {
+                throw Self.failure(
+                    reason: "「\(app.displayName)」没有可用于完整重签的本地 IPA。",
+                    recovery: "导入该应用的 IPA 后再完整重签；如需仅更新描述文件，请先恢复有效的签名身份记录。",
+                    code: "SEAL-RECOVER-002"
+                )
+            }
+
             let originalURL = try await fileStore.fileURL(
                 relativePath: app.ipaRelativePath
             )
+            if installAfterSigning,
+               let modelIdentifier = IPADeviceCompatibility.currentModelIdentifier() {
+                let compatibility = try IPAParserService().compatibilityMetadata(url: originalURL)
+                if let failure = IPADeviceCompatibility.failure(
+                    metadata: compatibility,
+                    modelIdentifier: modelIdentifier,
+                    operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersion
+                ) {
+                    throw failure
+                }
+            }
             let preferredIconData: Data?
             if let preferredIconPath = app.preferredIconRelativePath {
                 preferredIconData = try? await fileStore.read(relativePath: preferredIconPath)
@@ -651,10 +683,10 @@ actor SigningCoordinator {
             // 撤销失败都返回非 .cleaned，这里静默跳过（下方 reactive 撞 204 兜底仍在），
             // 绝不因本次前置清理新增失败面。
             var signSelectedSerial = effectiveCertificateSerialNumber
-            if case .cleaned = (try? await autoCleanOrphanCertificatesIfPossible(
+            if case .cleaned = try await autoCleanOrphanCertificatesIfPossible(
                 account: account,
                 secret: secret
-            )) ?? .unavailable {
+            ) {
                 // 清理可能连带清掉「绑定还在但本机无私钥」的旧身份，重读 secret 对齐；
                 // 首次 sign 不再传可能已失效的选中序列号，走「复用剩余本机证书或新建」。
                 if let refreshedSecret = try? await keychain.load(accountID: accountID) {
@@ -684,12 +716,16 @@ actor SigningCoordinator {
                         )
                     },
                     persistRevokedSigningMaterial: { updatedSecret, revokedSerials in
+                        await certificateRotationState.record(revokedSerials)
+                        try await self.recordCertificateRevocations(
+                            revokedSerials,
+                            accountID: accountID
+                        )
                         try await self.persistRevokedSigningMaterial(
                             updatedSecret,
                             revokedSerials: revokedSerials,
                             accountID: accountID
                         )
-                        await certificateRotationState.record(revokedSerials)
                     },
                     progress: { stage in
                         await progress(SigningStageUpdate(stage: stage, subject: signingSubject))
@@ -744,12 +780,16 @@ actor SigningCoordinator {
                         )
                     },
                     persistRevokedSigningMaterial: { updatedSecret, revokedSerials in
+                        await certificateRotationState.record(revokedSerials)
+                        try await self.recordCertificateRevocations(
+                            revokedSerials,
+                            accountID: accountID
+                        )
                         try await self.persistRevokedSigningMaterial(
                             updatedSecret,
                             revokedSerials: revokedSerials,
                             accountID: accountID
                         )
-                        await certificateRotationState.record(revokedSerials)
                     },
                     progress: { stage in
                         await progress(SigningStageUpdate(stage: stage, subject: signingSubject))
@@ -808,7 +848,8 @@ actor SigningCoordinator {
             try await appStore.save(app)
             didPersistNewSignedArtifact = true
 
-            let rotationRevokedSerials = await certificateRotationState.snapshot()
+            let locallyRevokedSerials = await certificateRotationState.snapshot()
+            let rotationRevokedSerials = Array(Set(locallyRevokedSerials + previouslyRevokedSerials)).sorted()
             if app.isSeal, rotationRevokedSerials.isEmpty == false {
                 recoveredAffectedAppIDs.formUnion(
                     await resignAppsAffectedByCertificateRotation(
@@ -816,7 +857,8 @@ actor SigningCoordinator {
                         accountID: accountID,
                         excludingAppID: appID,
                         includeSeal: false,
-                        progress: progress
+                        progress: progress,
+                        isCertificateRecoveryRun: true
                     )
                 )
             }
@@ -851,8 +893,17 @@ actor SigningCoordinator {
                         accountID: accountID,
                         excludingAppID: appID,
                         includeSeal: true,
-                        progress: progress
+                        progress: progress,
+                        isCertificateRecoveryRun: true
                     )
+                )
+            }
+            if isCertificateRecoveryRun == false, rotationRevokedSerials.isEmpty == false {
+                await finishCertificateRecoveryIfComplete(
+                    revokedSerials: rotationRevokedSerials,
+                    accountID: accountID,
+                    appID: appID,
+                    alreadyRecovered: recoveredAffectedAppIDs
                 )
             }
             // 自更新的接管确认由下次启动核对运行包完成；不在这里撤销旧证书。
@@ -1384,6 +1435,7 @@ actor SigningCoordinator {
                 )
             }
         }
+        try await recordCertificateRevocations([candidate.certificate.serialNumber], accountID: accountID)
         await clearUnusableCertificateBinding(account: account, secret: secret)
         let apps = (try? await appStore.fetchAll()) ?? []
         let affected = CertificateRevocationImpact.affectedApps(
@@ -1495,6 +1547,10 @@ actor SigningCoordinator {
                 account: account,
                 secret: secret
             )) != nil {
+                try await recordCertificateRevocations(
+                    [certificate.serialNumber],
+                    accountID: account.id
+                )
                 revokedSerials.append(certificate.serialNumber)
             }
         }
@@ -1725,6 +1781,32 @@ actor SigningCoordinator {
         await logStore?.flush()
     }
 
+    private func recordCertificateRevocations(_ serialNumbers: [String], accountID: UUID) async throws {
+        guard let certificateRecoveryJournal else { return }
+        do {
+            try await certificateRecoveryJournal.record(
+                accountID: accountID,
+                revokedSerialNumbers: serialNumbers
+            )
+        } catch {
+            try? await logStore?.append(
+                category: .renewal,
+                level: .error,
+                message: "证书已撤销，但受影响应用的恢复记录未能持久保存：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                code: "SEAL-CERT-240a"
+            )
+            await logStore?.flush()
+            throw error
+        }
+        try? await logStore?.append(
+            category: .renewal,
+            level: .warning,
+            message: "证书恢复任务已保存：账号 \(accountID.uuidString.prefix(8))，涉及 \(serialNumbers.count) 张证书；下次签名成功后继续恢复受影响应用",
+            code: "SEAL-CERT-240"
+        )
+        await logStore?.flush()
+    }
+
     /// 受旧证书影响的已安装应用（**纯函数**，便于单测）。
     ///
     /// 🔴 **刻意不按 `accountID` 过滤**（2026-09-24，用户拍板）。
@@ -1793,7 +1875,8 @@ actor SigningCoordinator {
         accountID: UUID,
         excludingAppID: UUID,
         includeSeal: Bool,
-        progress: @escaping @Sendable (SigningStageUpdate) async -> Void
+        progress: @escaping @Sendable (SigningStageUpdate) async -> Void,
+        isCertificateRecoveryRun: Bool = false
     ) async -> Set<UUID> {
         guard let apps = try? await appStore.fetchAll() else { return [] }
         let affected = Self.appsAffectedByCertificateRotation(
@@ -1818,7 +1901,8 @@ actor SigningCoordinator {
                     forceResign: true,
                     bypassFreeAccountDeviceLimit: true,
                     progress: progress,
-                    broadcastsInstallStage: true
+                    broadcastsInstallStage: true,
+                    isCertificateRecoveryRun: true
                 )
                 recovered.insert(candidate.id)
                 try? await logStore?.append(
@@ -1834,6 +1918,43 @@ actor SigningCoordinator {
             }
         }
         return recovered
+    }
+
+    private func finishCertificateRecoveryIfComplete(
+        revokedSerials: [String],
+        accountID: UUID,
+        appID: UUID,
+        alreadyRecovered: Set<UUID>
+    ) async {
+        guard let certificateRecoveryJournal else { return }
+        let pending = await pendingRotationRecovery(
+            revokedSerials: revokedSerials,
+            appID: appID,
+            alreadyRecovered: alreadyRecovered
+        )
+        guard pending.isEmpty else {
+            try? await logStore?.append(
+                category: .renewal,
+                level: .warning,
+                message: "证书恢复任务仍有 \(pending.count) 个应用未完成；已保留记录，下一次签名成功后继续：\(pending.prefix(4).map(\.name).joined(separator: "、"))",
+                code: "SEAL-CERT-240"
+            )
+            return
+        }
+        do {
+            try await certificateRecoveryJournal.clear(accountID: accountID)
+            try? await logStore?.append(
+                category: .renewal,
+                message: "证书恢复任务已全部完成并清除持久记录"
+            )
+        } catch {
+            try? await logStore?.append(
+                category: .renewal,
+                level: .error,
+                message: "证书恢复已完成，但本机任务记录未能清除：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                code: "SEAL-CERT-240a"
+            )
+        }
     }
 
     /// 本轮撤销后**仍未恢复**的受影响应用（空 = 没有撤销、或受影响的应用都恢复完了）。
@@ -1930,7 +2051,8 @@ actor SigningCoordinator {
             .map { bundleIdentifier, binding in
                 SigningTargetRecord(
                     binding: binding,
-                    signedBundleIdentifier: bundleIdentifier
+                    signedBundleIdentifier: bundleIdentifier,
+                    applicationIdentifier: result.applicationIdentifiers[bundleIdentifier]
                 )
             }
             .sorted { $0.bundleIdentifier < $1.bundleIdentifier }
@@ -2210,6 +2332,33 @@ actor SigningCoordinator {
             }
         }
 
+        let installAttemptID = UUID()
+        if updated.pendingSignedSnapshot == nil {
+            updated.pendingSignedSnapshot = PendingSignedSnapshot(
+                expiryDate: updated.expiryDate,
+                provisioningProfileUUID: updated.provisioningProfileUUID,
+                provisioningProfileName: updated.provisioningProfileName,
+                provisioningProfileCreationDate: updated.provisioningProfileCreationDate,
+                provisioningProfileExpirationDate: updated.provisioningProfileExpirationDate,
+                certificateSerialNumber: updated.certificateSerialNumber,
+                signingTargets: updated.signingTargets,
+                extensionSnapshots: updated.extensions.compactMap { appExtension in
+                    guard let bundleIdentifier = appExtension.mappedBundleIdentifier else { return nil }
+                    return PendingSignedSnapshot.PendingExtensionSnapshot(
+                        bundleIdentifier: bundleIdentifier,
+                        provisioningProfileUUID: appExtension.provisioningProfileUUID,
+                        provisioningProfileName: appExtension.provisioningProfileName,
+                        provisioningProfileExpirationDate: appExtension.provisioningProfileExpirationDate,
+                        certificateSerialNumber: appExtension.certificateSerialNumber
+                    )
+                }
+            )
+        }
+        updated.pendingSignedSnapshot?.installAttemptID = installAttemptID
+        updated.pendingSignedSnapshot?.wasInstalledBeforeAttempt =
+            app.belongsInInstalledList || app.replacesInstalledAppID != nil
+        try await appStore.save(updated)
+
         do {
             try await updateState(appID: app.id, stage: .pushing)
             await progress(SigningStageUpdate(stage: .pushing, app: app))
@@ -2222,7 +2371,16 @@ actor SigningCoordinator {
                     broadcastsInstallStage: broadcastsInstallStage,
                     progress: progress,
                     onInstallProgress: onInstallProgress
-                )
+                ),
+                onLateCompletion: { [weak self] result in
+                    await self?.settleLateInstall(
+                        appID: app.id,
+                        attemptID: installAttemptID,
+                        bundleIdentifier: effectiveBundleID,
+                        expirationDate: expirationDate,
+                        result: result
+                    )
+                }
             )
 
             try await updateState(appID: app.id, stage: .verifying)
@@ -2262,9 +2420,27 @@ actor SigningCoordinator {
             // An existing Bundle ID may belong to the previous signing generation.
             // Never convert an installation/verification/persistence failure into success
             // using lookup alone, and never clean profiles on this failure path.
-            // 两阶段提交：安装/校验失败时丢弃 pending 草稿，顶层保持旧的已确认值。
-            updated.discardPendingSnapshot()
-            try? await appStore.save(updated)
+            let installMayStillBeRunning = error is CancellationError
+                || (error as? ImportFailure)?.code == "SEAL-INSTALL-702t"
+            if installMayStillBeRunning {
+                // 超时或取消只结束 Swift 侧等待；底层同步安装仍可能完成。保留 attemptID，
+                // 迟到结果会核验设备并结算；期间重复安装由 Minimuxer 的 native command gate 拦住。
+                if var current = try? await appStore.fetchAll().first(where: { $0.id == app.id }),
+                   current.pendingSignedSnapshot?.installAttemptID == installAttemptID {
+                    current.state = current.pendingSignedSnapshot?.wasInstalledBeforeAttempt == true
+                        ? .installed : .signed
+                    current.signedArtifactStatus = .awaitingVerification
+                    if let failure = error as? ImportFailure {
+                        current.lastInstallFailureCode = failure.code
+                        current.lastInstallFailureReason = failure.reason
+                    }
+                    try? await appStore.save(current)
+                }
+            } else {
+                // 明确失败的命令不会迟到结算；丢弃草稿，顶层保持上次已确认的设备身份。
+                updated.discardPendingSnapshot()
+                try? await appStore.save(updated)
+            }
             if error is CancellationError { throw CancellationError() }
             // Preserve the original rejection instead of replacing it with a connection error.
             if let importFailure = error as? ImportFailure {
@@ -2277,6 +2453,81 @@ actor SigningCoordinator {
                 code: "SEAL-INSTALL-702b"
             )
             throw await installDiagnosticsAppended(base, signedPath: signedPath)
+        }
+    }
+
+    private func settleLateInstall(
+        appID: UUID,
+        attemptID: UUID,
+        bundleIdentifier: String,
+        expirationDate: Date,
+        result: Result<Void, String>
+    ) async {
+        guard var app = try? await appStore.fetchAll().first(where: { $0.id == appID }),
+              app.pendingSignedSnapshot?.installAttemptID == attemptID else {
+            try? await logStore?.append(
+                category: .installation,
+                level: .warning,
+                message: "忽略已过期安装尝试的迟到结果：\(bundleIdentifier)，attempt=\(attemptID.uuidString.prefix(8))"
+            )
+            return
+        }
+
+        do {
+            switch result {
+            case .success:
+                try await installChannel.verifyInstalled(bundleID: bundleIdentifier)
+            case .failure(let detail):
+                throw Self.failure(
+                    reason: "设备端安装命令最终失败：\(detail)",
+                    recovery: "检查设备连接后重新安装",
+                    code: "SEAL-INSTALL-702b"
+                )
+            }
+
+            app.state = .installed
+            app.signedArtifactStatus = .installed
+            app.lastInstallFailureCode = nil
+            app.lastInstallFailureReason = nil
+            app.hasPendingSelfUpdateSource = false
+            if let pending = app.pendingUpdateSourceFingerprint {
+                app.installedFingerprint = pending
+            }
+            app.pendingUpdateSourceFingerprint = nil
+            SignedArtifactSnapshot.advanceInstalled(
+                of: &app,
+                bundleIdentifier: bundleIdentifier,
+                expiryDate: expirationDate
+            )
+            app.lastInstalledAt = Date()
+            if let replacedID = app.replacesInstalledAppID {
+                app.replacesInstalledAppID = nil
+                try await appStore.commitInstalledReplacement(app, replacing: replacedID)
+            } else {
+                try await appStore.save(app)
+            }
+            try? await logStore?.append(
+                category: .installation,
+                level: .info,
+                message: "安装命令迟到完成且设备核验通过：\(app.name)（\(bundleIdentifier)）"
+            )
+        } catch {
+            guard var current = try? await appStore.fetchAll().first(where: { $0.id == appID }),
+                  current.pendingSignedSnapshot?.installAttemptID == attemptID else { return }
+            let wasInstalled = current.pendingSignedSnapshot?.wasInstalledBeforeAttempt == true
+            current.state = wasInstalled ? .installed : .signed
+            current.signedArtifactStatus = .installFailed
+            current.lastInstallFailureCode = (error as? ImportFailure)?.code ?? "SEAL-INSTALL-707b"
+            current.lastInstallFailureReason = (error as? ImportFailure)?.reason
+                ?? "安装命令已返回，但设备暂时无法确认安装结果。"
+            current.discardPendingSnapshot()
+            try? await appStore.save(current)
+            try? await logStore?.append(
+                category: .installation,
+                level: .error,
+                message: "安装命令迟到结果未能结算为成功：\(bundleIdentifier)，\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                code: current.lastInstallFailureCode
+            )
         }
     }
 

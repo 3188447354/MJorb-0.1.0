@@ -144,6 +144,7 @@ final class SettingsViewModel: ObservableObject {
     @Published private(set) var accountPhase: AccountPhase = .idle
     @Published private(set) var diagnosticState: DiagnosticState = .idle
     @Published private(set) var phonePairingState: PhonePairingState = .idle
+    @Published private(set) var isCancellingPhonePairing = false
     @Published private(set) var installDiagnostics: InstallChannelDiagnostics = .empty
     @Published private(set) var logs: [SealLogEntry] = []
     @Published private(set) var signingHistory: [SigningHistoryRecord] = []
@@ -189,6 +190,7 @@ final class SettingsViewModel: ObservableObject {
     private let signingPreferenceStore: SigningPreferenceStore?
     private let operationCoordinator: OperationCoordinator?
     private let selfReplacementStore: SelfReplacementTransactionStore?
+    private let certificateRecoveryJournal: CertificateRecoveryJournalStore?
     private var phonePairingHost: PhonePairingHost?
     private var phonePairingLease: OperationCoordinator.Lease?
     /// 把配对码镜像到灵动岛 / 锁屏。见 `PairingLiveActivityController` 的注释。
@@ -218,6 +220,7 @@ final class SettingsViewModel: ObservableObject {
         signingPreferenceStore: SigningPreferenceStore,
         operationCoordinator: OperationCoordinator? = nil,
         selfReplacementStore: SelfReplacementTransactionStore? = nil,
+        certificateRecoveryJournal: CertificateRecoveryJournalStore? = nil,
         pairingTunnelProbe: any VPNOnDemandActivating = LocalDevVPNOnDemandActivator()
     ) {
         self.accountRepository = accountRepository
@@ -238,6 +241,7 @@ final class SettingsViewModel: ObservableObject {
         self.signingPreferenceStore = signingPreferenceStore
         self.operationCoordinator = operationCoordinator
         self.selfReplacementStore = selfReplacementStore
+        self.certificateRecoveryJournal = certificateRecoveryJournal
         notificationsEnabled = notificationPreferences.isEnabled
         reminderHours = notificationPreferences.leadHours
         // 续签完成后刷新提醒状态，避免显示旧日期需手动开关才更新
@@ -247,6 +251,7 @@ final class SettingsViewModel: ObservableObject {
             name: .sealRenewalCompleted,
             object: nil
         )
+        Task { await pairingLiveActivity.endOrphanedActivities() }
     }
 
     init(startupFailure: ImportFailure) {
@@ -268,6 +273,7 @@ final class SettingsViewModel: ObservableObject {
         signingPreferenceStore = nil
         operationCoordinator = nil
         selfReplacementStore = nil
+        certificateRecoveryJournal = nil
         alertFailure = startupFailure
     }
 
@@ -290,6 +296,7 @@ final class SettingsViewModel: ObservableObject {
         signingPreferenceStore = nil
         operationCoordinator = nil
         selfReplacementStore = nil
+        certificateRecoveryJournal = nil
         hasLoaded = true
     }
 
@@ -602,6 +609,36 @@ final class SettingsViewModel: ObservableObject {
         }
     }
 
+    private func persistCertificateRecovery(
+        serialNumbers: [String],
+        accountID: UUID
+    ) async -> Bool {
+        guard let certificateRecoveryJournal else { return true }
+        do {
+            try await certificateRecoveryJournal.record(
+                accountID: accountID,
+                revokedSerialNumbers: serialNumbers
+            )
+            try? await logStore?.append(
+                category: .renewal,
+                level: .warning,
+                message: "证书撤销后的应用恢复任务已保存：账号 \(accountID.uuidString.prefix(8))，涉及 \(serialNumbers.count) 张证书",
+                code: "SEAL-CERT-240"
+            )
+            await logStore?.flush()
+            return true
+        } catch {
+            try? await logStore?.append(
+                category: .renewal,
+                level: .error,
+                message: "证书已撤销，但受影响应用的恢复记录未能持久保存：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                code: "SEAL-CERT-240a"
+            )
+            await logStore?.flush()
+            return false
+        }
+    }
+
     func revokeCertificate(
         serialNumber: String,
         for account: AppleAccountRecord
@@ -620,6 +657,8 @@ final class SettingsViewModel: ObservableObject {
         isCertificateOperationRunning = true
         defer { isCertificateOperationRunning = false }
 
+        var remoteRevocationConfirmed = false
+        var recoveryJournalSaved = true
         do {
             guard let originalSecret = try await keychain.load(accountID: account.id) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
@@ -660,6 +699,12 @@ final class SettingsViewModel: ObservableObject {
                 account: account,
                 secret: originalSecret
             )
+            remoteRevocationConfirmed = true
+            recoveryJournalSaved = await persistCertificateRecovery(
+                serialNumbers: [serialNumber],
+                accountID: account.id
+            )
+            dismissCertificate(serialNumber: serialNumber, accountID: account.id, persistent: true)
 
             // 真实永久删除：撤销成功后，本机 keychain 中该序列号的 P12 材料一并移除
             // （含非本机在用的孤儿证书）；账号记录若正绑定该证书，则清空其序列号。
@@ -675,8 +720,6 @@ final class SettingsViewModel: ObservableObject {
             try await accountRepository.save(clearedAccount)
             replaceDisplayedAccount(clearedAccount)
 
-            // 撤销成功：持久化 dismissal，Apple 列表延迟也带不回来。
-            dismissCertificate(serialNumber: serialNumber, accountID: account.id, persistent: true)
             certificateHealthStatuses[account.id] = await localCertificateHealthStatus(
                 account: clearedAccount,
                 portalState: .unknown
@@ -692,22 +735,38 @@ final class SettingsViewModel: ObservableObject {
             // 用户下拉刷新时过滤掉，不会重现。
             logs = (try? await logStore?.entries()) ?? logs
             await refreshLogExportText()
+            if recoveryJournalSaved == false {
+                alertFailure = Self.failure(
+                    title: "证书已撤销，恢复记录未保存",
+                    reason: "Apple 已撤销证书，但 Seal 未能保存受影响应用的恢复记录。",
+                    recovery: "检查设备存储空间后，重新签名受影响的应用",
+                    code: "SEAL-CERT-240a"
+                )
+            }
         } catch let failure as ImportFailure {
             await load(force: true)
             // 撤销失败不立即回读：失败时证书状态未变，回读只会把原样带回来。
             // 用户手动下拉刷新时再对账。
-            // 用户点了撤销就是想让它消失，先从内存移除；Apple 侧若仍在，下次刷新会回来。
-            dismissCertificate(serialNumber: serialNumber, accountID: account.id, persistent: false)
-            alertFailure = failure
+            alertFailure = remoteRevocationConfirmed
+                ? Self.failure(
+                    title: "证书已撤销，本机清理未完成",
+                    reason: "Apple 已撤销证书，但 Seal 未能完成本机证书材料清理。\n\(failure.reason)",
+                    recovery: "重新同步证书状态，再检查受影响的应用",
+                    code: "SEAL-CERT-240b"
+                )
+                : failure
         } catch {
             await load(force: true)
-            // 同上：失败不立即回读。用户意图明确，先从内存移除；下次刷新若还在会回来。
-            dismissCertificate(serialNumber: serialNumber, accountID: account.id, persistent: false)
+            // 同上：撤销未确认成功时保留列表事实，用户可稍后手动同步。
             alertFailure = Self.failure(
-                title: "证书撤销失败",
-                reason: "Apple 服务器未能撤销指定证书。可能原因：网络不稳定、或该证书已被撤销。",
-                recovery: "检查网络后重试；如持续失败请在「我的」中重新同步证书状态",
-                code: "SEAL-CERT-216"
+                title: remoteRevocationConfirmed ? "证书已撤销，本机清理未完成" : "证书撤销失败",
+                reason: remoteRevocationConfirmed
+                    ? "Apple 已撤销证书，但 Seal 未能完成本机证书材料清理。\(error.localizedDescription)"
+                    : "Apple 服务器未能撤销指定证书。可能原因：网络不稳定、或该证书已被撤销。",
+                recovery: remoteRevocationConfirmed
+                    ? "重新同步证书状态，再检查受影响的应用"
+                    : "检查网络后重试；如持续失败请在「我的」中重新同步证书状态",
+                code: remoteRevocationConfirmed ? "SEAL-CERT-240b" : "SEAL-CERT-216"
             )
         }
     }
@@ -733,6 +792,8 @@ final class SettingsViewModel: ObservableObject {
         isCertificateOperationRunning = true
         defer { isCertificateOperationRunning = false }
 
+        var remoteRevocationConfirmed = false
+        var recoveryJournalSaved = true
         do {
             guard let originalSecret = try await keychain.load(accountID: account.id) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
@@ -789,9 +850,30 @@ final class SettingsViewModel: ObservableObject {
                 account: account,
                 secret: originalSecret
             )
+            remoteRevocationConfirmed = true
             invalidateCertificateInventoryRefresh(for: account.id)
-            // 撤销成功：持久化 dismissal，避免 Apple 列表延迟导致旧证书重现。
+            recoveryJournalSaved = await persistCertificateRecovery(
+                serialNumbers: [serialNumber],
+                accountID: account.id
+            )
             dismissCertificate(serialNumber: serialNumber, accountID: account.id, persistent: true)
+
+            // Apple 确认撤销后立即清除对应私钥，不等待 Portal 清单传播。
+            var clearedSecret = originalSecret
+            clearedSecret.removeStoredCertificateMaterial(serialNumber: serialNumber)
+            var clearedAccount = account
+            let normalizedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(serialNumber)
+            if SigningCertificateSelectionPolicy.normalizedSerialNumber(account.certificateSerialNumber ?? "")
+                == normalizedSerial {
+                clearedAccount.certificateSerialNumber = nil
+            }
+            if SigningCertificateSelectionPolicy.normalizedSerialNumber(account.selectedCertificateSerialNumber ?? "")
+                == normalizedSerial {
+                clearedAccount.selectedCertificateSerialNumber = nil
+            }
+            try await keychain.save(clearedSecret, for: account.id)
+            try await accountRepository.save(clearedAccount)
+            replaceDisplayedAccount(clearedAccount)
 
             // 撤销成功后重新拉清单确认出现空位，才创建 B；确认不了空位就不创建，
             // 避免在仍旧满员的账号上再撞一次确定性 3022/7460。
@@ -811,18 +893,6 @@ final class SettingsViewModel: ObservableObject {
                     recovery: "稍后重新同步证书再试",
                     code: "SEAL-CERT-231"
                 )
-            }
-
-            var clearedSecret = originalSecret
-            var clearedAccount = account
-            if originalSecret.certificateSerialNumber?.caseInsensitiveCompare(serialNumber) == .orderedSame {
-                clearedSecret.certificateP12 = nil
-                clearedSecret.certificateSerialNumber = nil
-                clearedSecret.certificateMachineIdentifier = nil
-                clearedAccount.certificateSerialNumber = nil
-                clearedAccount.selectedCertificateSerialNumber = nil
-                try await keychain.save(clearedSecret, for: account.id)
-                try await accountRepository.save(clearedAccount)
             }
 
             let material = try await applePortalCertificateService.createLocalCertificate(
@@ -847,18 +917,37 @@ final class SettingsViewModel: ObservableObject {
             )
             logs = (try? await logStore?.entries()) ?? logs
             await refreshLogExportText()
+            if recoveryJournalSaved == false {
+                alertFailure = Self.failure(
+                    title: "新证书已创建，恢复记录未保存",
+                    reason: "旧证书已撤销且本机证书已更新，但 Seal 未能保存受影响应用的恢复记录。",
+                    recovery: "检查设备存储空间后，重新签名受影响的应用",
+                    code: "SEAL-CERT-240a"
+                )
+            }
         } catch let failure as ImportFailure {
             await load(force: true)
             await refreshCertificateInventory(for: account, force: true)
-            alertFailure = failure
+            alertFailure = remoteRevocationConfirmed
+                ? Self.failure(
+                    title: "旧证书已撤销，证书更新未完成",
+                    reason: "Apple 已撤销旧证书；Seal 未完成后续本机证书更新。\n\(failure.reason)",
+                    recovery: "重新同步证书状态后重试创建本机证书",
+                    code: "SEAL-CERT-240b"
+                )
+                : failure
         } catch {
             await load(force: true)
             await refreshCertificateInventory(for: account, force: true)
             alertFailure = Self.failure(
-                title: "无法完成证书处理",
-                reason: "已按你的选择处理证书，但 Apple 或本机保存环节没有返回明确的失败原因。",
-                recovery: "重新同步证书后确认当前状态",
-                code: "SEAL-CERT-212"
+                title: remoteRevocationConfirmed ? "旧证书已撤销，证书更新未完成" : "无法完成证书处理",
+                reason: remoteRevocationConfirmed
+                    ? "Apple 已撤销旧证书；Seal 未完成后续本机证书更新。\(error.localizedDescription)"
+                    : "已按你的选择处理证书，但 Apple 或本机保存环节没有返回明确的失败原因。",
+                recovery: remoteRevocationConfirmed
+                    ? "重新同步证书状态后重试创建本机证书"
+                    : "重新同步证书后确认当前状态",
+                code: remoteRevocationConfirmed ? "SEAL-CERT-240b" : "SEAL-CERT-212"
             )
         }
     }
@@ -1053,6 +1142,7 @@ final class SettingsViewModel: ObservableObject {
 
             var revokedSerials: [String] = []
             var failedSerials: [String] = []
+            var recoveryJournalFailures = 0
             for certificate in targets {
                 do {
                     try await applePortalCertificateService.revokeCertificate(
@@ -1062,6 +1152,17 @@ final class SettingsViewModel: ObservableObject {
                     )
                     invalidateCertificateInventoryRefresh(for: account.id)
                     revokedSerials.append(certificate.serialNumber)
+                    if await persistCertificateRecovery(
+                        serialNumbers: [certificate.serialNumber],
+                        accountID: account.id
+                    ) == false {
+                        recoveryJournalFailures += 1
+                    }
+                    dismissCertificate(
+                        serialNumber: certificate.serialNumber,
+                        accountID: account.id,
+                        persistent: true
+                    )
                 } catch {
                     // 单张失败不中断：其余候选继续撤，名额尽量释放；失败明细进最终结果。
                     failedSerials.append(certificate.serialNumber)
@@ -1087,16 +1188,21 @@ final class SettingsViewModel: ObservableObject {
             // 让新建后的 persistCreatedCertificate 落到干净状态。
             var workingSecret = secret
             var workingAccount = account
-            if let current = secret.certificateSerialNumber,
-               revokedSerials.contains(where: {
-                   SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
-                       == SigningCertificateSelectionPolicy.normalizedSerialNumber(current)
-               }) {
-                workingSecret.certificateP12 = nil
-                workingSecret.certificateSerialNumber = nil
-                workingSecret.certificateMachineIdentifier = nil
+            for serialNumber in revokedSerials {
+                workingSecret.removeStoredCertificateMaterial(serialNumber: serialNumber)
+            }
+            let revokedSet = Set(revokedSerials.map {
+                SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
+            })
+            if let current = workingAccount.certificateSerialNumber,
+               revokedSet.contains(SigningCertificateSelectionPolicy.normalizedSerialNumber(current)) {
                 workingAccount.certificateSerialNumber = nil
+            }
+            if let selected = workingAccount.selectedCertificateSerialNumber,
+               revokedSet.contains(SigningCertificateSelectionPolicy.normalizedSerialNumber(selected)) {
                 workingAccount.selectedCertificateSerialNumber = nil
+            }
+            if revokedSerials.isEmpty == false {
                 try await keychain.save(workingSecret, for: account.id)
                 try await accountRepository.save(workingAccount)
             }
@@ -1134,11 +1240,17 @@ final class SettingsViewModel: ObservableObject {
             logs = (try? await logStore?.entries()) ?? logs
             await refreshLogExportText()
 
-            if failedSerials.isEmpty == false {
+            if failedSerials.isEmpty == false || recoveryJournalFailures > 0 {
+                let failureDetails = [
+                    failedSerials.isEmpty ? nil : "有 \(failedSerials.count) 张旧证书撤销失败（序列号末尾 \(failedSerials.map { "…" + SigningCertificateSelectionPolicy.normalizedSerialNumber($0).suffix(6) }.joined(separator: "、"))），仍占用 Apple 侧名额。",
+                    recoveryJournalFailures == 0 ? nil : "有 \(recoveryJournalFailures) 张已撤销证书的应用恢复记录未能保存。"
+                ].compactMap { $0 }.joined(separator: " ")
                 alertFailure = Self.failure(
                     title: "清理部分完成",
-                    reason: "新证书已创建并绑定；但有 \(failedSerials.count) 张旧证书撤销失败（序列号末尾 \(failedSerials.map { "…" + SigningCertificateSelectionPolicy.normalizedSerialNumber($0).suffix(6) }.joined(separator: "、"))），仍占用 Apple 侧名额。",
-                    recovery: "稍后在证书列表中逐张重试撤销",
+                    reason: "新证书已创建并绑定。\(failureDetails)",
+                    recovery: recoveryJournalFailures > 0
+                        ? "检查设备存储空间后，手动重新签名受影响的应用；撤销失败的证书可稍后重试"
+                        : "稍后在证书列表中逐张重试撤销",
                     code: "SEAL-CERT-218a"
                 )
             }
@@ -2348,6 +2460,7 @@ final class SettingsViewModel: ObservableObject {
         }
 
         phonePairingLease = operationLease
+        isCancellingPhonePairing = false
         let host = PhonePairingHost()
         phonePairingHost = host
         // 用户主动开始配对时先预创建 Live Activity。系统设置会把 App 放到后台，
@@ -2402,14 +2515,27 @@ final class SettingsViewModel: ObservableObject {
             phonePairingHost = nil
             // 系统确认不等于 Seal 已拿到可用凭证；导入成功后才展示「配对完成」。
             Task { await finishPhonePairing(at: fileURL) }
+        case .cancelled:
+            phonePairingHost = nil
+            isCancellingPhonePairing = false
+            phonePairingState = .idle
+            finishPairingPresentation()
+            releasePhonePairingLease()
         case let .failed(message):
             phonePairingHost = nil
+            isCancellingPhonePairing = false
             markPairingFailed()
             let failure = Self.phonePairingHostFailure(message: message)
             phonePairingState = .failed(failure)
             alertFailure = failure
             releasePhonePairingLease()
         }
+    }
+
+    func cancelPhonePairing() {
+        guard let phonePairingHost, isCancellingPhonePairing == false else { return }
+        isCancellingPhonePairing = true
+        phonePairingHost.cancel()
     }
 
     /// 配对码到达后才显示真实六码。预创建失败或活动已被系统移除时，才回退到通知。
@@ -2538,6 +2664,14 @@ final class SettingsViewModel: ObservableObject {
 
     private static func phonePairingHostFailure(message: String) -> ImportFailure {
         let normalized = message.lowercased()
+        if message.contains("配对等待超时") {
+            return failure(
+                title: "配对等待超时",
+                reason: "未能在 3 分钟内完成系统配对确认。",
+                recovery: "重新开始设备配对",
+                code: "SEAL-PAIR-218"
+            )
+        }
         if normalized.contains("permission") || normalized.contains("network") {
             return failure(
                 title: "未允许本地网络",

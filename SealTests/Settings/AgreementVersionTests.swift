@@ -21,6 +21,11 @@ final class AgreementVersionTests: XCTestCase {
         XCTAssertFalse(needsAgreementOnboarding())
     }
 
+    func testPreviouslyAgreedVersionTwoDoesNotPromptAfterDisplayVersionReturnsToOne() {
+        UserDefaults.standard.set(2, forKey: AgreementVersion.storageKey)
+        XCTAssertFalse(needsAgreementOnboarding())
+    }
+
     /// 同意的是旧版本 → 需要重新同意
     func testNeedsOnboardingWhenVersionUpgraded() {
         UserDefaults.standard.set(AgreementVersion.current - 1, forKey: AgreementVersion.storageKey)

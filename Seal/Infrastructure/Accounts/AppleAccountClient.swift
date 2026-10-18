@@ -252,6 +252,76 @@ final class AppleAccountClient {
         )
     }
 
+    private func authenticateWithRecovery(
+        email: String,
+        password: String,
+        initialAnisetteData: ALTAnisetteData,
+        verificationCode: @escaping @MainActor @Sendable () async -> String?
+    ) async throws -> AuthObjects {
+        var anisetteData: ALTAnisetteData? = initialAnisetteData
+        var pendingSIM: String?
+        var shouldResetADI = false
+        var resyncCount = 0
+        var adiResetCount = 0
+        var serviceRetryCount = 0
+
+        while true {
+            do {
+                try Task.checkCancellation()
+                if shouldResetADI {
+                    await anisetteProvider.resetProvisioning()
+                    shouldResetADI = false
+                    anisetteData = nil
+                }
+                if let sim = pendingSIM {
+                    anisetteData = try await anisetteProvider.resync(sim: sim)
+                    pendingSIM = nil
+                    await trace("SIM resync 完成，重发 SRP")
+                } else if anisetteData == nil {
+                    anisetteData = try await anisetteProvider.fetchForAuthentication()
+                    await trace("认证恢复后已重新取得 anisette 一次性凭据")
+                }
+
+                guard let anisetteData else {
+                    throw AppleServiceFailurePolicy.rateLimitedFailure()
+                }
+                return try await authenticate(
+                    email: email,
+                    password: password,
+                    anisetteData: anisetteData,
+                    verificationCode: verificationCode
+                ).value
+            } catch {
+                if let sim = Self.resyncSIM(from: error), resyncCount == 0 {
+                    resyncCount += 1
+                    pendingSIM = sim
+                    await trace("SRP 要求 SIM 同步，安排一次 resync 后继续认证", level: .warning)
+                    continue
+                }
+                if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error), adiResetCount == 0 {
+                    adiResetCount += 1
+                    shouldResetADI = true
+                    await trace("SRP 收到 -80045；仅重建远程 ADI，不清除本地 identifier，然后继续有界认证", level: .warning)
+                    continue
+                }
+                if AppleServiceFailurePolicy.isRateLimited(error),
+                   serviceRetryCount < Self.serviceUnavailableBackoffSeconds.count {
+                    let delay = Self.serviceUnavailableBackoffSeconds[serviceRetryCount]
+                    serviceRetryCount += 1
+                    await trace(
+                        "Apple 返回 503，第 \(serviceRetryCount)/\(Self.serviceUnavailableBackoffSeconds.count) 次退避 \(Int(delay)) 秒后重试",
+                        level: .warning
+                    )
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    try Task.checkCancellation()
+                    if pendingSIM == nil { anisetteData = nil }
+                    continue
+                }
+                throw error
+            }
+        }
+    }
+
     private func authenticateOnce(
         email: String,
         password: String,
@@ -290,113 +360,12 @@ final class AppleAccountClient {
                   date                 = \(Self.iso8601.string(from: anisetteData.date))
                   deviceDescription    = \(anisetteData.deviceDescription)
                 """)
-            let auth: AuthObjects
-            do {
-                await trace("发起 GrandSlam SRP 登录")
-                auth = try await self.authenticate(email: email, password: password, anisetteData: anisetteData, verificationCode: verificationCode).value
-                await trace("SRP 登录成功，进入 team 查询")
-            } catch {
-                let detail = Self.describeError(error)
-
-                if let sim = Self.resyncSIM(from: error) {
-                    // Apple 要求 anisette 重新同步（Status.hsc == 434，附 SIM）。
-                    await trace("SRP 登录要求 SIM 同步（sim 长度=\(sim.count)），resync 后重试一次", level: .warning)
-                    let resyncedAnisetteData = try await anisetteProvider.resync(sim: sim)
-                    await trace("resync 完成，重发 SRP")
-                    auth = try await self.authenticate(email: email, password: password, anisetteData: resyncedAnisetteData, verificationCode: verificationCode).value
-                    await trace("resync 后 SRP 登录成功")
-                } else if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error) {
-                    // ── -80045：自动作废 ADI、重新 provisioning，再重试一次 ──────────
-                    //
-                    // -80045 是「Apple 暂时拒绝了登录请求」，而请求形态已逐条对齐
-                    // isideload：cpd 六字段一致（bootstrap / icscrec / loc / pbe /
-                    // prkgen / svct，加三个 anisette 头）、请求头一致（Content-Type /
-                    // Accept / X-Mme-Client-Info / User-Agent / X-Xcode-Version /
-                    // X-Apple-App-Info / Connection: close）、声明身份一致（实测 10 台
-                    // 公共 anisette 服务器都返回 <MacBookPro13,2> <macOS;13.1;22C65>
-                    // … com.apple.akd，Seal 原样使用）。
-                    //
-                    // 剩下的变量只有本地那份缓存的 ADI：日志一直显示
-                    // 「ADI 命中：已有 ADI 的身份戳与本次声明身份一致，复用」，
-                    // 也就是从不重新 provisioning；而 isideload 在 -45061 时会重签。
-                    // 若那份 ADI 坏了、或它对应的标识曾被 Apple 标记过，-80045 就能解释
-                    // 得通，也能解释为什么与账号无关（爱思用同一账号能过，因为它完全不
-                    // 用这份 ADI）。
-                    //
-                    // **只清 remoteStore（ADI），绝不动 identityStore（identifier）**：
-                    // identifier 与 authToken 绑定，清它会让所有已登录 ID 掉线并触发
-                    // 2FA —— 源码注释明确记载过该路径"曾造成严重回归"。
-                    // resetProvisioning 恰好只删 remoteStore，所以直接复用。
-                    //
-                    // 只重试一次：这既不是限流（不该连打），也不保证可恢复；
-                    // 重试仍失败就把错误抛出，交由上层按 SEAL-AUTH-80045 呈现。
-                    //
-                    // ⚠️ 文案不再写「无 SIM 同步指令」：能走到这里说明
-                    // `resyncSIM` 已判过「没有 SIM」，而 503 已被上一条分支拦下 ⇒
-                    // 这里的成因就是 -80045 本身，写别的会把排障引偏。
-                    await trace("SRP 登录失败：-80045（Apple 暂时拒绝）：\(detail)", level: .error)
-                    await trace("检测到 -80045：作废远程 ADI 并重新 provisioning，随后重试一次", level: .warning)
-                    await anisetteProvider.resetProvisioning()
-                    let reprovisioned = try await anisetteProvider.fetchForAuthentication()
-                    await trace("ADI 已重签，声明身份=\(reprovisioned.deviceDescription)，重发 SRP")
-                    auth = try await self.authenticate(
-                        email: email,
-                        password: password,
-                        anisetteData: reprovisioned,
-                        verificationCode: verificationCode
-                    ).value
-                    await trace("ADI 重签后 SRP 登录成功")
-                } else if AppleServiceFailurePolicy.isRateLimited(error) {
-                    // ── 503：Apple 服务端暂时不可用，退避后重试 ──────────────────
-                    //
-                    // 真机实测（2026-10-16，build 75）：整条 SRP 链已经全通 ——
-                    // `o=init` → `hsc=434` + `X-Apple-I-MD-DATA` → resync 成功 →
-                    // `o=init`/`o=complete` 双双 `ec=0` → 2FA 输入通过 →
-                    // `o=apptokens` 也**成功过一次**（`ec=0, hsc=200`）。
-                    // 随后同一步 `o=apptokens` 开始返回 **HTTP 503 的 HTML 页**：
-                    //   <html><head><title>503 Service Temporarily Unavailable</title>…
-                    //
-                    // 这是 Apple 的**服务端**状态，不是请求形态问题：
-                    // 同一次进程里同样的载荷刚刚成功过，客户端没有任何东西变了。
-                    // 所以这里**绝不能**走 -80045 那条「作废 ADI 重新 provisioning」——
-                    // 那改的是 anisette 环境，治不了服务端 503，只会每次失败都白签一份 ADI。
-                    //
-                    // 503 的语义就是「稍后再试」，所以退避后重发同一个请求。
-                    //
-                    // ⚠️ 用**多档递增**退避，而不是只等一次（2026-10-16 按真机反馈改）：
-                    // 用户反馈「登上的概率很小」，而每次失败都逼他手动重试，
-                    // 手动重试又会加深 Apple 的限流 —— 那是正反馈，越试越糟。
-                    // 让这一层自己把短暂抖动吃掉，用户才不必反复点。
-                    //
-                    // 每一次重试都必须是**完整的一次登录，并重新取 anisette headers**：
-                    // SRP 会话是一次性的，A2k/c 不能复用；同样，X-Apple-I-MD 是服务端
-                    // 按时间签发的一次性数据。此前这里只重建 SRP，却反复使用第一次
-                    // fetchForAuthentication() 拿到的 MD，503 后很容易再次撞到同一台
-                    // Apple 边缘或过期凭据，用户只能手动反复点“添加账号”。
-                    auth = try await Self.retryingServiceUnavailable(
-                        attempts: Self.serviceUnavailableBackoffSeconds.count,
-                        onRetry: { attempt, delay in
-                            await self.trace("Apple 返回 503（服务暂时不可用），第 \(attempt)/\(Self.serviceUnavailableBackoffSeconds.count) 次退避 \(Int(delay)) 秒后重试", level: .warning)
-                        },
-                        operation: {
-                            let retryAnisetteData = try await self.anisetteProvider.fetchForAuthentication()
-                            await self.trace("503 重试：已重新取得 anisette 一次性凭据，声明身份=\(retryAnisetteData.deviceDescription)")
-                            return try await self.authenticate(
-                                email: email,
-                                password: password,
-                                anisetteData: retryAnisetteData,
-                                verificationCode: verificationCode
-                            ).value
-                        }
-                    )
-                    await trace("503 退避后 SRP 登录成功")
-                } else {
-                    // 到这里的错误与「SIM 同步」无关（503 已在上一条分支拦下），
-                    // 所以文案不能再说「无 SIM 同步指令」—— 那会把排障引向错误的方向。
-                    await trace("SRP 登录失败：\(detail)", level: .error)
-                    throw error
-                }
-            }
+            let auth = try await authenticateWithRecovery(
+                email: email,
+                password: password,
+                initialAnisetteData: anisetteData,
+                verificationCode: verificationCode
+            )
             try Task.checkCancellation()
             stage = .teamLookup
             let teams = try await self.directAppleRequest("取开发者团队") {

@@ -29,6 +29,31 @@ struct ProfileOnlyTaintGate {
     }
 }
 
+/// Keeps the device-operation lease until a non-cancellable native profile call really returns.
+struct ProfileOnlyOperationLease {
+    private(set) var nativeOperationInFlight = false
+    private(set) var holdBusyUntilCompletion = false
+
+    mutating func beginNativeOperation() {
+        nativeOperationInFlight = true
+    }
+
+    /// Returns true when the late completion must release the installer actor's busy lease.
+    mutating func nativeOperationCompleted() -> Bool {
+        nativeOperationInFlight = false
+        let shouldReleaseBusy = holdBusyUntilCompletion
+        holdBusyUntilCompletion = false
+        return shouldReleaseBusy
+    }
+
+    /// Returns true when a timed-out caller must keep the busy lease until native completion.
+    mutating func timedOut() -> Bool {
+        guard nativeOperationInFlight else { return false }
+        holdBusyUntilCompletion = true
+        return true
+    }
+}
+
 /// Serializes profile injection for the entire process. `misagent` uses a
 /// process-wide device transport, so two app renewals must never install a
 /// profile concurrently.
@@ -37,15 +62,10 @@ actor ProfileOnlyProvisioningProfileInstaller {
 
     private var isBusy = false
     private var taint = ProfileOnlyTaintGate()
+    private var operationLease = ProfileOnlyOperationLease()
     /// 门户请求期间预热的 profile 服务任务。写入会加入同一任务，避免 `dumpProfiles`
     /// 与真实注入并发使用 misagent。
     private var inFlightPreparation: Task<Void, Error>?
-    /// 设备注入的串行排队尾（2026-10-04 并行续签）。
-    ///
-    /// `misagent` 是进程级传输，多项续签的注入必须串行。旧实现用 `isBusy` 抛
-    /// `SEAL-PROFILE-351` 直接失败；并行后多项会同时到达 ⇒ 改为排队等待。
-    /// 实现是标准 async mutex：每项把前一项的完成当门闩，挂到队尾。
-    private var injectTail: Task<Void, Never>?
     /// misagent 保活心跳任务（2026-10-04 通道优化）。
     ///
     /// `misagent` 空闲一段时间后会变冷，下次注入要重新建服务连接（~数秒）。
@@ -63,8 +83,13 @@ actor ProfileOnlyProvisioningProfileInstaller {
         guard keepaliveTask == nil else { return }
         keepaliveTask = Task { [weak self] in
             while true {
-                try? await Task.sleep(nanoseconds: Self.keepaliveIntervalNanoseconds)
+                do {
+                    try await Task.sleep(nanoseconds: Self.keepaliveIntervalNanoseconds)
+                } catch {
+                    return
+                }
                 guard let self else { return }
+                guard Task.isCancelled == false else { return }
                 // 保活只是轻量预热：失败不抛、不标记污染、不干扰注入。
                 try? await self.prewarmProfileService(using: channel)
             }
@@ -99,6 +124,10 @@ actor ProfileOnlyProvisioningProfileInstaller {
     /// （调用方明明已重置通道）。真正的注入失败仍由 `installAndVerify` 自己标记。
     func prewarmProfileService(using channel: any InstallChannel) async throws {
         guard isBusy == false else { return }
+        isBusy = true
+        defer {
+            if operationLease.holdBusyUntilCompletion == false { isBusy = false }
+        }
         try await ensureProfileService(using: channel, markTaintOnFailure: false)
     }
 
@@ -109,17 +138,17 @@ actor ProfileOnlyProvisioningProfileInstaller {
         // 污染自愈时留痕（`SEAL-PROFILE-355`），由调用方传入日志闭包。
         onTaintHealed: @Sendable () async -> Void = {}
     ) async throws {
-        // ── 串行排队（2026-10-04）──
-        // 旧行为：`isBusy` 为真直接抛 `SEAL-PROFILE-351`。
-        // 并行续签后多项的 Portal 准备会同时完成、同时到达注入 ⇒ 排队等待轮到自己，
-        // 而不是让第二项直接失败。`misagent` 仍是同一时间只有一项在写。
-        let predecessor = injectTail
-        let gate = Task<Void, Never> { _ = await predecessor?.value }
-        injectTail = gate
-        await gate.value
+        // Actor 在 await 处可重入，因此仅把「等待前驱」放入 task tail 不够：
+        // 前驱一入场，后继的门闩也会完成。这里持有 isBusy 直到所有设备操作与读回结束。
+        while isBusy {
+            try Task.checkCancellation()
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
         try Task.checkCancellation()
         isBusy = true
-        defer { isBusy = false }
+        defer {
+            if operationLease.holdBusyUntilCompletion == false { isBusy = false }
+        }
 
         // ── 拿锁后自愈污染（2026-10-04）──
         // 「消费 + 重置 + 注入」在串行临界区里原子完成（R93② 钉住）：
@@ -143,17 +172,23 @@ actor ProfileOnlyProvisioningProfileInstaller {
         // ── 批量读回核验（性能优化）：全部注入完后一次 dump + 全量解析，
         // 逐份核验，避免每份各做一次秒级 dump（2026-10-04）。
         let results: [Bool?]
+        operationLease.beginNativeOperation()
         do {
             results = try await HardTimeout.run(
                 seconds: 30,
-                cancelsWorkOnTimeout: false
+                cancelsWorkOnTimeout: false,
+                onLateCompletion: { [weak self] _ in
+                    await self?.nativeProfileOperationDidComplete()
+                }
             ) {
                 await DeviceProfileInspector.containsProfiles(
                     matching: materials.map(\.binding),
                     certificateSerialNumber: certificateSerialNumber
                 )
             }
+            releaseBusyAfterNativeCompletionIfNeeded()
         } catch {
+            _ = operationLease.timedOut()
             taint.markTainted()
             throw failure(
                 reason: "设备端读取本轮注入的描述文件超过 30 秒未完成。",
@@ -177,7 +212,18 @@ actor ProfileOnlyProvisioningProfileInstaller {
                 return
             }
 
-            let task = Task<Void, Error> { try await channel.prepareProfileService() }
+            operationLease.beginNativeOperation()
+            let task = Task<Void, Error> { [weak self] in
+                do {
+                    try await channel.prepareProfileService(onLateCompletion: { [weak self] in
+                        await self?.nativeProfileOperationDidComplete()
+                    })
+                    await self?.nativeProfileOperationDidComplete()
+                } catch {
+                    await self?.nativeProfileOperationDidFail(error)
+                    throw error
+                }
+            }
             inFlightPreparation = task
             defer { inFlightPreparation = nil }
             try await task.value
@@ -204,16 +250,25 @@ actor ProfileOnlyProvisioningProfileInstaller {
         var recoveredConnection = false
 
         while true {
-            let injection = await BlockingCall.bounded(seconds: 30) {
+            operationLease.beginNativeOperation()
+            let injection = await BlockingCall.bounded(
+                seconds: 30,
+                cancelsWorkOnTimeout: false,
+                onLateCompletion: { [weak self] _ in
+                    await self?.nativeProfileOperationDidComplete()
+                }
+            ) {
                 try Minimuxer.installProvisioningProfile(profile: material.data)
             }
             guard let injection else {
+                _ = operationLease.timedOut()
                 taint.markTainted()
                 throw failure(
                     reason: "注入 \(material.binding.bundleIdentifier) 的描述文件超过 30 秒未返回。",
                     code: "SEAL-PROFILE-352"
                 )
             }
+            releaseBusyAfterNativeCompletionIfNeeded()
 
             do {
                 try injection.get()
@@ -225,8 +280,29 @@ actor ProfileOnlyProvisioningProfileInstaller {
                 }
                 recoveredConnection = true
                 await channel.invalidateProfileServiceConnection()
-                try await channel.prepareProfileService()
+                try await ensureProfileService(using: channel)
             }
+        }
+    }
+
+    private func nativeProfileOperationDidComplete() {
+        if operationLease.nativeOperationCompleted() {
+            isBusy = false
+        }
+    }
+
+    private func nativeProfileOperationDidFail(_ error: Error) {
+        if let failure = error as? ImportFailure,
+           DeviceChannelTransientPolicy.profileOperationTimeoutCodes.contains(failure.code) {
+            _ = operationLease.timedOut()
+        } else if operationLease.nativeOperationCompleted() {
+            isBusy = false
+        }
+    }
+
+    private func releaseBusyAfterNativeCompletionIfNeeded() {
+        if operationLease.nativeOperationCompleted() {
+            isBusy = false
         }
     }
 

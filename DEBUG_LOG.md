@@ -1,3 +1,24 @@
+## 2026-10-19 02:33:44 全面审计代码修复批次
+
+- **范围**：按 `D:\Seal_Develop\Research\Audits\Seal-0.1.15-20261018\run-1\REPORT-updated.md` 逐项处理 F01–F32；V01–V08 保留为需要真机、Apple 账号或系统测量的验证项，不伪称已通过。
+- **签名与证书**：证书撤销恢复任务先持久化；扩展共享按权限键和值判定；Mach-O/权限解析失败明确报错；Apple 拒绝必要能力时停止签名；不再静默删目标。
+- **安装、续签与恢复**：确定性设备不兼容错误只尝试一次；显式可判定时在申请 Apple 资源前拦截；profile-only 注入/读回维持设备临界区；安装超时保留 attempt 并核对迟到结果；自替换超时进入有限恢复。
+- **账号、配对与页面**：认证恢复改为有界组合；配对 listener 可取消并在启动时清理孤儿活动；扩展/已签名 App 身份展示和同版本恢复按真实记录处理。
+- **灵动岛资源与排版**：展开态品牌/状态改用系统 leading/trailing 区，配对正文使用 bottom 区；IPA 守卫要求 Live Activity 扩展含 `Assets.car`，避免资源目录未打包仍交付。
+- **存储、更新与其他**：更新任务按 generation 隔离；下载源与导入事务关联；数据库及签名 IPA 备份可启动恢复；后台入口返回真实接纳状态；撤销、导出、图标回滚、许可清单与 CI 触发路径已逐项处理。
+- **本次补缺**：SideSign 真正执行签名时改用 throwing entitlement reader，非法 plist 不再退化成空权限；增加空权限/有效权限/损坏 plist 单测。
+- **版本**：主 App 与 Live Activity 的 marketing version 同步为 `0.1.17`；构建号保持现状。
+- **验证状态**：错误码索引为 435 个标识符 / 846 次出现；Python 检查共 20 项通过，但本机测试未运行在隔离环境，仅作初步结果。Windows 没有 Xcode，`cargo fmt` 也未安装；Swift/Rust CI、Apple Portal 与动态岛需外部验证。未提交、未推送、未触发 CI。
+
+## 2026-10-18 23:24:01 审计首批修复：安装拒绝分类、恢复材料与 CI 触发
+
+- **现象**：明确的 `DeviceNotSupportedByThinning` 被当作可重试错误；撤销证书失败会从当前列表隐藏证书；CI push 路径漏掉共享模型和 Live Activity；签名包替换及 Core Data 迁移中断可能丢失恢复备份。
+- **根因**：终态错误词表缺少设备不支持的安装变体；失败分支仍调用本地 dismissal；工作流路径未覆盖两个编译目录；迁移备份无条件清理且 `Signed.ipa` 替换没有启动恢复。
+- **修复**：将不支持 thinning 的错误设为终态且显示设备兼容提示；撤销失败保留证书；补齐 CI 路径；迁移后验证 Core Data store，恢复失败保留备份，并在记录恢复阶段恢复/清理 Signed.ipa 事务残留。
+- **涉及文件**：`.github/workflows/ios.yml`、`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Infrastructure/Persistence/CoreDataAppStore.swift`、`Seal/Infrastructure/Storage/AppFileStore.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、对应 `SealTests`、`project.yml`、`RELEASE_NOTES.md`。
+- **版本**：`0.1.16`，主 App 与 Live Activity target 同步。
+- **验证**：新增终态分类与两种 Signed.ipa 中断恢复测试，并扩展 Core Data 迁移成功清理检查；`git diff --check` 通过。Windows 无法编译 Swift，CI 与真机验证待执行。
+
 ## 2026-10-18 18:28:39 Seal 自身详情缺少扩展记录
 
 - **现象**：签名安装 Seal 后打开应用详情，扩展区域显示为空。

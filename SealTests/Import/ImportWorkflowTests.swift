@@ -831,6 +831,77 @@ extension ImportWorkflowTests {
 }
 
 private extension ImportWorkflowTests {
+    @Test
+    func versionCheckUsesInstalledReplacementInsteadOfNewerPendingCopy() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let pending = AppRecord(
+            originalBundleIdentifier: "com.example.demo",
+            name: "Demo",
+            version: "9.0",
+            buildNumber: "99",
+            size: 1,
+            state: .imported,
+            ipaRelativePath: "Apps/pending/Original.ipa",
+            importedAt: Date(timeIntervalSince1970: 300)
+        )
+        let installedID = UUID()
+        let installedPath = "Apps/\(installedID.uuidString)/Original.ipa"
+        let installed = AppRecord(
+            id: installedID,
+            originalBundleIdentifier: "com.example.demo",
+            name: "Demo",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .installed,
+            ipaRelativePath: installedPath,
+            importedAt: Date(timeIntervalSince1970: 100)
+        )
+        let installedIPA = environment.documents.appending(path: installedPath)
+        try FileManager.default.createDirectory(
+            at: installedIPA.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("installed source".utf8).write(to: installedIPA)
+        try await environment.appStore.save(pending)
+        try await environment.appStore.save(installed)
+
+        let source = try IPAArchiveFixture.make()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let workflow = makeWorkflow(environment: environment)
+        await workflow.prepare(sourceURL: source)
+
+        let draft = try requireDraft(await workflow.state)
+        #expect(draft.versionCheck == .upgrade(oldVersion: "1.0", newVersion: "1.2.3"))
+    }
+
+    @Test
+    func sameVersionCanBeReimportedWhenInstalledRecordLostItsOriginalIPA() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let installedID = UUID()
+        try await environment.appStore.save(AppRecord(
+            id: installedID,
+            originalBundleIdentifier: "com.example.demo",
+            name: "Demo",
+            version: "1.2.3",
+            buildNumber: "45",
+            size: 1,
+            state: .installed,
+            ipaRelativePath: "Apps/\(installedID.uuidString)/Original.ipa",
+            importedAt: Date(timeIntervalSince1970: 100)
+        ))
+
+        let source = try IPAArchiveFixture.make()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let workflow = makeWorkflow(environment: environment)
+        await workflow.prepare(sourceURL: source)
+
+        let draft = try requireDraft(await workflow.state)
+        #expect(draft.versionCheck == .sameVersionRecovery(version: "1.2.3"))
+    }
+
     /// 与 `FailOnceAppStore` 的区别：可以先**预置**已安装记录、再武装失败。
     /// 覆盖更新的重试用例需要「记录已在库里 + 第一次保存失败」这个组合。
     actor ArmedFailOnceAppStore: AppStore {

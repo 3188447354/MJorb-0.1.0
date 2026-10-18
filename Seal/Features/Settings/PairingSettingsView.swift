@@ -68,8 +68,17 @@ struct PairingSettingsView: View {
             document: pairingExportDocument,
             contentType: PairingExportDocument.contentType,
             defaultFilename: "Seal-Pairing.mobiledevicepairing"
-        ) { _ in
+        ) { result in
             pairingExportDocument = nil
+            if case .failure(let error) = result,
+               (error as NSError).code != NSUserCancelledError {
+                viewModel.alertFailure = ImportFailure(
+                    title: "无法导出配对文件",
+                    reason: "文件没有保存成功：\(error.localizedDescription)",
+                    recovery: "请更换保存位置后重试",
+                    code: "SEAL-PAIR-306"
+                )
+            }
         }
         .confirmationDialog(
             "导出设备配对凭据？",
@@ -307,7 +316,13 @@ struct PairingSettingsView: View {
                 Task { await viewModel.startPhonePairing() }
             }
             .sealPrimaryAction(cornerRadius: 12)
-        case .requestingLocalNetwork, .waitingForSystemConfirmation, .showingCode, .validating:
+        case .requestingLocalNetwork, .waitingForSystemConfirmation, .showingCode:
+            Button(viewModel.isCancellingPhonePairing ? "正在取消…" : "取消配对") {
+                viewModel.cancelPhonePairing()
+            }
+            .sealOutlineAction(cornerRadius: 12)
+            .disabled(viewModel.isCancellingPhonePairing)
+        case .validating:
             Button(phonePresentation.actionTitle) {}
                 .sealPrimaryAction(cornerRadius: 12)
                 .disabled(true)

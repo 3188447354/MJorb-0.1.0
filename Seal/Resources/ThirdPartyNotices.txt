@@ -1,8 +1,12 @@
-Seal includes the following distributed open-source components.
+Seal includes the following distributed open-source components. This list reflects
+the source components currently declared by the project; verify the exact shipped
+binary set and license texts for each release.
 
 AltSign
 https://github.com/sunuannian1/AltSign
-License status must be confirmed before a public release.
+License: no license file was present at the pinned source revision; distribution
+rights must be confirmed before public release. This notice does not determine
+or replace the upstream license.
 
 SideSign
 https://github.com/SideStore/SideSign
@@ -16,9 +20,9 @@ Minimuxer
 https://github.com/SideStore/minimuxer
 AGPL-3.0.
 
-DeviceSupport
-https://github.com/SideStore/DeviceSupport
-Contains libimobiledevice and libplist (GPL-2.0), plus
+libimobiledevice
+https://github.com/libimobiledevice/libimobiledevice
+Includes libplist (GPL-2.0), plus
 libimobiledevice-glue and libusbmuxd (LGPL-2.1).
 
 ZIPFoundation
@@ -27,4 +31,28 @@ MIT.
 
 swift-crypto
 https://github.com/apple/swift-crypto
+Apache-2.0.
+
+CodeSignKit
+https://github.com/mahee96/CodeSignKit
+AGPL-3.0.
+
+GSACryptoKit
+https://github.com/mahee96/GSACryptoKit
+AGPL-3.0.
+
+libdeflate
+https://github.com/SideStore/libdeflate
+MIT.
+
+Unicorn Engine
+https://github.com/unicorn-engine/unicorn
+GPL-2.0.
+
+OpenSSL
+https://github.com/krzyzanowskim/OpenSSL
+Apache-2.0.
+
+swift-asn1
+https://github.com/apple/swift-asn1
 Apache-2.0.

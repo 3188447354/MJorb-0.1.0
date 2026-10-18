@@ -11,6 +11,7 @@ final class PhonePairingHost: NSObject {
         case waitingForSystemConfirmation
         case showingCode(String)
         case completed(URL)
+        case cancelled
         case failed(String)
     }
 
@@ -23,6 +24,7 @@ final class PhonePairingHost: NSObject {
     private var service: NetService?
     private var activeRunID: UUID?
     private var eventHandler: ((Event) -> Void)?
+    private var cancellationToken: UInt64?
 
     var isRunning: Bool { activeRunID != nil }
 
@@ -38,6 +40,13 @@ final class PhonePairingHost: NSObject {
 
         let runID = UUID()
         activeRunID = runID
+        let cancellationToken = Minimuxer.RustIdevice.makePhonePairingCancellationToken()
+        guard cancellationToken != 0 else {
+            activeRunID = nil
+            onEvent(.failed("无法启动配对任务。"))
+            return
+        }
+        self.cancellationToken = cancellationToken
         eventHandler = onEvent
         onEvent(.requestingLocalNetwork)
 
@@ -49,6 +58,7 @@ final class PhonePairingHost: NSObject {
                     name: Self.hostName,
                     model: Self.hostModel,
                     outputPath: outputPath,
+                    cancellationToken: cancellationToken,
                     hostAltIRKHex: storedAltIRK,
                     onReady: { advertisement in
                         DispatchQueue.main.async { [weak self] in
@@ -66,12 +76,27 @@ final class PhonePairingHost: NSObject {
                 DispatchQueue.main.async { [weak self] in
                     self?.finish(.completed(outputURL), runID: runID)
                 }
+            } catch Minimuxer.RustIdevice.PhonePairingHostError.cancelled {
+                DispatchQueue.main.async { [weak self] in
+                    self?.finish(.cancelled, runID: runID)
+                }
+            } catch Minimuxer.RustIdevice.PhonePairingHostError.timedOut {
+                DispatchQueue.main.async { [weak self] in
+                    self?.finish(.failed("配对等待超时，请重新开始。"), runID: runID)
+                }
             } catch {
                 DispatchQueue.main.async { [weak self] in
                     self?.finish(.failed(error.localizedDescription), runID: runID)
                 }
             }
         }
+    }
+
+    func cancel() {
+        guard let cancellationToken else { return }
+        service?.stop()
+        service = nil
+        Minimuxer.RustIdevice.cancelPhonePairingHost(token: cancellationToken)
     }
 
     private func advertise(
@@ -98,6 +123,7 @@ final class PhonePairingHost: NSObject {
         service?.stop()
         service = nil
         activeRunID = nil
+        cancellationToken = nil
         emit(event, for: runID)
         eventHandler = nil
     }
@@ -109,7 +135,7 @@ final class PhonePairingHost: NSObject {
 
     private func isTerminal(_ event: Event) -> Bool {
         switch event {
-        case .completed, .failed:
+        case .completed, .cancelled, .failed:
             return true
         case .requestingLocalNetwork, .waitingForSystemConfirmation, .showingCode:
             return false

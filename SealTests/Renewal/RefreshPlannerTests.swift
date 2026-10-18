@@ -75,6 +75,60 @@ struct RefreshPlannerTests {
     }
 
     @Test
+    func recoveredInstalledAppWithoutSourceIPAIsReportedAsNeedsAction() {
+        var app = app(name: "Recovered", expiry: nil, accountID: UUID())
+        app.needsIPAImport = true
+
+        let queue = RefreshPlanner().makeQueue(apps: [app])
+
+        #expect(queue.count == 1)
+        #expect(queue.first?.state == .requiresAction)
+        #expect(queue.first?.accountID == nil)
+        #expect(queue.first?.requiresActionReason?.contains("导入 IPA") == true)
+    }
+
+    @Test("完整签名身份可只续描述文件时，不因缺少源 IPA 而拦截")
+    func recoveredAppWithCompleteProfileOnlyIdentityRemainsRunnableWithoutIPA() {
+        let account = AppleAccountRecord(
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "TEAM000001",
+            teamName: "Team",
+            lastVerifiedAt: Date()
+        )
+        let bundleID = "com.example.recovered"
+        let profileUUID = "PROFILE-0001"
+        let expiration = Date(timeIntervalSince1970: 2_100_000_000)
+        var recovered = app(name: "Recovered", expiry: expiration, accountID: account.id)
+        recovered.needsIPAImport = true
+        recovered.signingTeamID = account.teamID
+        recovered.mappedBundleIdentifier = bundleID
+        recovered.certificateSerialNumber = "ABC123"
+        recovered.signedDeviceIdentifier = "DEVICE-1"
+        recovered.provisioningProfileUUID = profileUUID
+        recovered.signingTargets = [SigningTargetRecord(
+            bundleIdentifier: bundleID,
+            profileUUID: profileUUID,
+            profileName: "Profile",
+            profileCreationDate: nil,
+            profileExpirationDate: expiration,
+            teamIdentifier: account.teamID,
+            certificateSerialNumbers: ["ABC123"],
+            deviceIdentifiers: ["DEVICE-1"]
+        )]
+
+        let decision = ProfileOnlyRenewalPolicy.evaluate(app: recovered)
+        #expect(decision == .eligible(targetBundleIdentifiers: [bundleID]))
+
+        let queue = RefreshPlanner().makeQueue(apps: [recovered], accounts: [account])
+
+        #expect(queue.count == 1)
+        #expect(queue.first?.appID == recovered.id)
+        #expect(queue.first?.state != .requiresAction)
+        #expect(queue.first?.accountID == account.id)
+    }
+
+    @Test
     func includesPreviouslyInstalledAppsDuringRenewal() {
         var app = app(
             name: "Interrupted",

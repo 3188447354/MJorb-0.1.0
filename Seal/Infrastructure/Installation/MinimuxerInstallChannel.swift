@@ -1,6 +1,25 @@
 import Foundation
 @preconcurrency import Minimuxer
 
+/// `stageAndInstall` has no cancellation API. Keep one native install command in flight
+/// process-wide even when its Swift waiter times out or is cancelled; the semaphore is
+/// released only when the synchronous native call actually returns.
+private let nativeInstallCommandGate = DispatchSemaphore(value: 1)
+
+private func installCommandAlreadyRunningFailure() -> ImportFailure {
+    ImportFailure(
+        title: "上一次安装仍在进行中",
+        reason: "设备端上一条安装命令尚未返回，本次没有重复下发。",
+        recovery: "等待设备完成安装后刷新列表，再决定是否重试",
+        code: "SEAL-INSTALL-738",
+        condition: .installationStillRunning,
+        action: .checkInstallationResult,
+        retryDisposition: .waitForInFlightWork,
+        operation: .install,
+        origin: .installer
+    )
+}
+
 /// 自替换安装的「单飞」闸门。
 ///
 /// 2026-09-16 真机日志（Seal-log(8)）显示：`19:43:50` 提交了一笔自替换安装，
@@ -51,6 +70,11 @@ private func installIPAUsingActivePairingTransport(
     ipaData: Data,
     progress: @escaping @Sendable (Double) -> Void
 ) throws {
+    guard nativeInstallCommandGate.wait(timeout: .now()) == .success else {
+        throw installCommandAlreadyRunningFailure()
+    }
+    defer { nativeInstallCommandGate.signal() }
+
     switch pairingInstallTransport(isRemotePairing: Minimuxer.isRemotePairing) {
     case .remotePairing:
         try Minimuxer.stageAndInstall(bundleId: bundleID, ipaBytes: ipaData, progress: progress)
@@ -377,6 +401,10 @@ actor MinimuxerInstallChannel: InstallChannel {
     }
 
     func prepareProfileService() async throws {
+        try await prepareProfileService(onLateCompletion: {})
+    }
+
+    func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws {
         if let lastHealthyProfileServiceAt,
            ProfileServiceLeasePolicy.requiresProbe(
                lastHealthyAt: lastHealthyProfileServiceAt,
@@ -388,7 +416,9 @@ actor MinimuxerInstallChannel: InstallChannel {
             return try await inFlightProfileServicePreparation.value
         }
 
-        let task = Task<Void, Error> { try await self.prepareProfileServiceOnce() }
+        let task = Task<Void, Error> {
+            try await self.prepareProfileServiceOnce(onLateCompletion: onLateCompletion)
+        }
         inFlightProfileServicePreparation = task
         defer { inFlightProfileServicePreparation = nil }
         try await task.value
@@ -398,12 +428,16 @@ actor MinimuxerInstallChannel: InstallChannel {
     ///
     /// 第一次失败时只废弃 Rust RSD 缓存并立即重建，不清配对/provider 状态，也不把
     /// 8 秒外层退避浪费在已经确认失效的旧会话上。第二次失败才交给既有重试策略。
-    private func prepareProfileServiceOnce() async throws {
+    private func prepareProfileServiceOnce(
+        onLateCompletion: @escaping @Sendable () async -> Void
+    ) async throws {
         _ = try await start()
         var hasRebuilt = false
 
         while true {
-            switch await DeviceProfileInspector.probeProfileService() {
+            switch await DeviceProfileInspector.probeProfileService(
+                onLateCompletion: onLateCompletion
+            ) {
             case .ready:
                 lastHealthyProfileServiceAt = Date()
                 return
@@ -867,9 +901,16 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// （「同一条规则两份实现」已经踩过五次）。
     private func offThread<T: Sendable>(
         seconds: Double,
+        cancelsWorkOnTimeout: Bool = true,
+        onLateCompletion: (@Sendable (Result<T, String>) async -> Void)? = nil,
         _ work: @Sendable @escaping () throws -> T
     ) async -> Result<T, Error>? {
-        await BlockingCall.bounded(seconds: seconds, work)
+        await BlockingCall.bounded(
+            seconds: seconds,
+            cancelsWorkOnTimeout: cancelsWorkOnTimeout,
+            onLateCompletion: onLateCompletion,
+            work
+        )
     }
 
     // MARK: - 安装等待预算与日志
@@ -961,6 +1002,8 @@ actor MinimuxerInstallChannel: InstallChannel {
     static func isTerminalInstallError(_ detail: String) -> Bool {
         let lower = detail.lowercased()
         if isDeviceStorageExhaustion(detail)
+            || lower.contains("devicenotsupportedbythinning")
+            || lower.contains("device not supported by thinning")
             || lower.contains("integrity")
             || lower.contains("could not be verified")
             || lower.contains("cannot be verified")
@@ -1282,6 +1325,22 @@ actor MinimuxerInstallChannel: InstallChannel {
         isSelfReplacement: Bool,
         onProgress: @escaping @Sendable (Double) async -> Void
     ) async throws {
+        try await install(
+            ipaData: ipaData,
+            bundleID: bundleID,
+            isSelfReplacement: isSelfReplacement,
+            onProgress: onProgress,
+            onLateCompletion: { _ in }
+        )
+    }
+
+    func install(
+        ipaData: Data,
+        bundleID: String,
+        isSelfReplacement: Bool,
+        onProgress: @escaping @Sendable (Double) async -> Void,
+        onLateCompletion: @escaping @Sendable (Result<Void, String>) async -> Void
+    ) async throws {
         #if !targetEnvironment(simulator)
         try await requireReady()
         let ipaMB = Double(ipaData.count) / 1_000_000
@@ -1334,7 +1393,11 @@ actor MinimuxerInstallChannel: InstallChannel {
                     // （2026-09-17 真机卡了 9 分多钟，导出的日志里一行都没有）。
                     let heartbeat = beginInstallHeartbeat("安装", budget: mergedTimeout)
                     defer { heartbeat.cancel() }
-                    let outcome = await offThread(seconds: mergedTimeout) {
+                    let outcome = await offThread(
+                        seconds: mergedTimeout,
+                        cancelsWorkOnTimeout: false,
+                        onLateCompletion: onLateCompletion
+                    ) {
                         try installIPAUsingActivePairingTransport(
                             bundleID: bundleID,
                             ipaData: ipaData,
@@ -1649,6 +1712,22 @@ actor MinimuxerInstallChannel: InstallChannel {
 
         // 确定性失败优先于连接类判断；错误文本里往往同时含 "device"（如
         // "No space left on device"），必须先识别具体根因，否则会被误判成"设备断开"。
+
+        // 系统明确表示该设备没有可安装的 thinning 变体时，重传不会改变结果。
+        if lower.contains("devicenotsupportedbythinning")
+            || lower.contains("device not supported by thinning") {
+            return ImportFailure(
+                title: "此应用不兼容当前设备",
+                reason: "Apple 安装服务未找到适用于这台设备的应用变体。\(detail)",
+                recovery: "获取支持当前设备型号与 iOS 版本的 IPA 后重试",
+                code: "SEAL-INSTALL-702u",
+                condition: .unexpected,
+                action: .copyDiagnostics,
+                retryDisposition: .none,
+                operation: .install,
+                origin: .installer
+            )
+        }
 
         // 1) 存储空间不足（installd copyfile 阶段的内核 errno 28 / ENOSPC）
         if Self.isDeviceStorageExhaustion(detail) {
@@ -1982,8 +2061,8 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// 91 秒内两次提交，所以这里宁可拒绝，也不制造并发安装。
     private static let selfReplacementAlreadyRunningFailure = ImportFailure(
         title: "上一次安装仍在进行中",
-        reason: "Seal 的自替换安装还在进行中，本次已跳过，以免同一个应用上出现两次并发安装（会导致安装失败或应用损坏）。同步安装调用没有取消机制，请完全退出并重新打开 Seal 后再试。",
-        recovery: "重新启动 Seal 后再试",
+        reason: "设备端上一条安装命令尚未返回，本次没有重复下发。",
+        recovery: "等待设备完成安装后刷新列表，再决定是否重试",
         code: "SEAL-INSTALL-738",
         condition: .installationStillRunning,
         action: .restartSeal,

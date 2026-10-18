@@ -142,6 +142,18 @@ enum DismissedInstalledRecordTombstones {
 /// 抽成纯函数是因为它的错法**不崩、不编译失败，只在真机上多造或少造记录** ——
 /// 只能靠单测 + 守卫断言钉住。
 enum InstalledRecordRecoveryPolicy {
+    struct InstalledAppDraft: Equatable, Sendable {
+        let bundleIdentifier: String
+        let teamIdentifier: String?
+        let profileUUID: String?
+        let profileName: String?
+        let profileCreationDate: Date?
+        let profileExpirationDate: Date?
+        let displayName: String
+        let version: String
+        let buildNumber: String
+    }
+
     /// 一条待重建记录的草稿。
     struct Draft: Equatable, Sendable {
         let bundleIdentifier: String
@@ -201,7 +213,7 @@ enum InstalledRecordRecoveryPolicy {
     /// 扫回记录的统一标识，写进 `importWarnings` —— 签名页会把 `importWarnings`
     /// 列出来，所以这是用户能看见的那一句；守卫也按它断言。
     static let recoveryWarning =
-        "此记录由设备端扫回重建：本地没有它的原始 IPA，无法重签或续签；如需续签请重新导入该应用的 IPA。"
+        "此记录由设备端扫回重建，本机没有该应用的原始 IPA；需要重新签名时，请先导入该应用的 IPA。"
 
     static func normalizedBundleIdentifier(_ value: String) -> String {
         // 「Bundle ID 怎么归一化」只有一处实现（`ProfileReclaimPolicy`），不在这里再抄一遍。
@@ -325,6 +337,110 @@ enum InstalledRecordRecoveryPolicy {
         return drafts.sorted {
             $0.bundleIdentifier.lowercased() < $1.bundleIdentifier.lowercased()
         }
+    }
+
+    /// Rebuilds records from the actual user-app inventory. InstallationProxy's
+    /// ProfileValidated flag is the sideload signal; profile data is attached only
+    /// when one unambiguous device profile covers the app.
+    static func drafts(
+        installedApplications: [DeviceInstalledApplicationSummary],
+        profiles: [DeviceProvisioningProfileSummary],
+        context: Context
+    ) -> [InstalledAppDraft] {
+        var seen = Set<String>()
+        return installedApplications.compactMap { application in
+            let bundleID = application.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalized = normalizedBundleIdentifier(bundleID)
+            guard application.profileValidated == true,
+                  normalized.isEmpty == false,
+                  seen.insert(normalized).inserted,
+                  context.knownBundleIdentifiers.contains(normalized) == false,
+                  context.dismissedBundleIdentifiers.contains(normalized) == false else {
+                return nil
+            }
+
+            let matchingProfiles = profiles.filter {
+                profile($0, covers: bundleID)
+            }
+            let matchedProfile = matchingProfiles.count == 1 ? matchingProfiles.first : nil
+            let isSeal = isSealBundleIdentifier(
+                bundleID,
+                canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier,
+                teamIdentifier: nil
+            ) || matchingProfiles.contains {
+                isSealBundleIdentifier(
+                    bundleID,
+                    canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier,
+                    teamIdentifier: $0.teamIdentifier
+                )
+            }
+            guard isSeal == false else { return nil }
+
+            let profileTeam = matchedProfile.flatMap { normalizedTeamIdentifier($0.teamIdentifier) }
+            return InstalledAppDraft(
+                bundleIdentifier: bundleID,
+                teamIdentifier: profileTeam,
+                profileUUID: matchedProfile?.uuid,
+                profileName: matchedProfile?.name,
+                profileCreationDate: matchedProfile?.creationDate,
+                profileExpirationDate: matchedProfile?.expirationDate,
+                displayName: application.displayName.isEmpty ? bundleID : application.displayName,
+                version: application.shortVersion,
+                buildNumber: application.buildNumber
+            )
+        }.sorted { $0.bundleIdentifier.localizedCaseInsensitiveCompare($1.bundleIdentifier) == .orderedAscending }
+    }
+
+    private static func profile(_ profile: DeviceProvisioningProfileSummary, covers bundleIdentifier: String) -> Bool {
+        let pattern = normalizedBundleIdentifier(profile.bundleIdentifier)
+        let target = normalizedBundleIdentifier(bundleIdentifier)
+        guard pattern.isEmpty == false else { return false }
+        if pattern == target { return true }
+        guard pattern.hasSuffix(".*") else { return false }
+        let prefix = String(pattern.dropLast())
+        return target.hasPrefix(prefix) && target.count > prefix.count
+    }
+
+    static func makeRecord(
+        from draft: InstalledAppDraft,
+        accountID: UUID?,
+        id: UUID = UUID(),
+        now: Date = Date()
+    ) -> AppRecord {
+        AppRecord(
+            id: id,
+            originalBundleIdentifier: draft.bundleIdentifier,
+            mappedBundleIdentifier: draft.bundleIdentifier,
+            name: draft.displayName,
+            version: draft.version,
+            buildNumber: draft.buildNumber,
+            size: 0,
+            iconRelativePath: nil,
+            state: .installed,
+            expiryDate: draft.profileExpirationDate,
+            accountID: accountID,
+            signingTeamID: draft.teamIdentifier,
+            certificateSerialNumber: nil,
+            signedDeviceIdentifier: nil,
+            provisioningProfileUUID: draft.profileUUID,
+            provisioningProfileName: draft.profileName,
+            provisioningProfileCreationDate: draft.profileCreationDate,
+            provisioningProfileExpirationDate: draft.profileExpirationDate,
+            lastInstalledAt: nil,
+            signingTargets: [],
+            ipaRelativePath: "Apps/\(id.uuidString)/Original.ipa",
+            signedIPARelativePath: nil,
+            signedIPASHA256: nil,
+            signedArtifactStatus: nil,
+            preferredBundleIdentifier: draft.bundleIdentifier,
+            needsIPAImport: true,
+            preferredDisplayName: nil,
+            isSeal: false,
+            isPinned: false,
+            importedAt: now,
+            extensions: [],
+            importWarnings: [recoveryWarning]
+        )
     }
 
     /// Team 后缀 `<原始>.<team>` 和旧 Seal 格式 `<原始>.seal.<team>` 还原为原始 ID；

@@ -303,8 +303,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
             && provisioningProfileExpirationDate != nil
     }
 
-    /// 已记录或用户明确选择的策略优先。普通 IPA 默认共享；Seal 与 LiveContainer 默认独立。
-    /// 普通 IPA 的扩展若有不兼容能力，只为该扩展单独申请 profile。
+    /// 已记录或用户明确选择的策略优先；默认共享，能力不兼容的扩展单独申请 profile。
     var effectiveExtensionProfileStrategy: AppExtensionProfileStrategy {
         if let extensionProfileStrategy {
             return extensionProfileStrategy

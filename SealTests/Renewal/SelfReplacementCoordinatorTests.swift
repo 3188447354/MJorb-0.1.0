@@ -120,6 +120,26 @@ struct SelfReplacementCoordinatorTests {
         #expect(pending.phase == .recoveryRequired)
         #expect(pending.failureCode == "当前 Seal 与安装前身份、候选身份都不一致")
     }
+
+    @Test
+    func installThatNeverReturnedUsesClaimTimeForBoundedRecovery() {
+        let now = Date()
+        var transaction = SelfReplacementTransaction.fixture(
+            ipaSHA256: "0"
+        )
+        transaction.submission = .init(
+            id: UUID(),
+            claimedAt: now.addingTimeInterval(-10),
+            returnedAt: nil,
+            transportResult: nil
+        )
+
+        #expect(SelfReplacementCoordinator.isWithinReplacementGrace(transaction, now: now))
+        #expect(SelfReplacementCoordinator.isWithinReplacementGrace(
+            transaction,
+            now: now.addingTimeInterval(SelfReplacementCoordinator.replacementGraceSeconds + 1)
+        ) == false)
+    }
 }
 
 private actor CountingInstallChannel: InstallChannel {

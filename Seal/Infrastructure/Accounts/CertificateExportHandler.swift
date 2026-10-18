@@ -135,7 +135,11 @@ final class CertificateExportHandler {
             return
         }
 
-        await UIApplication.shared.open(callbackURL)
+        let opened = await UIApplication.shared.open(callbackURL)
+        guard opened else {
+            showToast("没有打开接收证书的应用，请先安装并启用 LiveContainer", in: viewController)
+            return
+        }
     }
 
     /// 与上游 `CertificateManager.activeSigningCertificateBase64Encoded` 同一套字符集：

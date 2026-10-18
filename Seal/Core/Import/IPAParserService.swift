@@ -35,6 +35,44 @@ struct IPAParserService: Sendable {
         }
     }
 
+    func compatibilityMetadata(url: URL) throws -> IPADeviceCompatibilityMetadata {
+        let archive: Archive
+        do {
+            archive = try Archive(url: url, accessMode: .read)
+        } catch {
+            throw failure(
+                title: "无法检查 IPA 兼容性",
+                reason: "文件无法作为 IPA（ZIP）打开。",
+                recovery: "重新导入 IPA 后重试",
+                code: "SEAL-IPA-106"
+            )
+        }
+        let appInfoEntries = archive.filter { entry in
+            let components = entry.path.split(separator: "/")
+            return components.count == 3
+                && components[0] == "Payload"
+                && components[1].hasSuffix(".app")
+                && components[2] == "Info.plist"
+        }
+        guard appInfoEntries.count == 1, let appInfoEntry = appInfoEntries.first else {
+            throw failure(
+                title: "无法检查 IPA 兼容性",
+                reason: "IPA 中的主应用信息缺失或不唯一。",
+                recovery: "重新导入完整 IPA 后重试",
+                code: "SEAL-IPA-101"
+            )
+        }
+        let info = try propertyList(
+            from: appInfoEntry,
+            in: archive,
+            maximumSize: limits.maximumMetadataSize
+        )
+        return IPADeviceCompatibilityMetadata(
+            supportedDevices: info["UISupportedDevices"] as? [String],
+            minimumOSVersion: info["MinimumOSVersion"] as? String
+        )
+    }
+
     private func parse(archive: Archive, sourceURL: URL) throws -> ParsedIPA {
         let entries = Array(archive)
         try validate(entries: entries)
@@ -138,8 +176,9 @@ struct IPAParserService: Sendable {
             entries: entries,
             archive: archive
         )
-        let importWarnings = detectImportWarnings(
+        let importWarnings = try detectImportWarnings(
             appRoot: appRoot,
+            mainInfo: info,
             entries: entries,
             archive: archive
         )
@@ -389,23 +428,24 @@ struct IPAParserService: Sendable {
     /// 预检 IPA 中可能导致签名失败的问题，返回用户可读的警告
     private func detectImportWarnings(
         appRoot: String,
+        mainInfo: [String: Any],
         entries: [Entry],
         archive: Archive
-    ) -> [String] {
+    ) throws -> [String] {
         var warnings: [String] = []
 
         // 检测加密 IPA（App Store 下载的加密 IPA 无法签名）
-        if isEncryptedBinary(appRoot: appRoot, entries: entries, archive: archive) {
+        if try isEncryptedBinary(appRoot: appRoot, mainInfo: mainInfo, entries: entries, archive: archive) {
             warnings.append("主二进制已加密（App Store 版本），需要砸壳后才能签名")
         }
 
-        // 检测 Watch app（免费账号不支持）
-        let hasWatchApp = entries.contains { entry in
+        // Watch / App Clip 当前不由 Seal 签名器处理；签名阶段会在申请 Apple 资源前明确停止，绝不静默删掉组件。
+        let hasUnsupportedPlatformTarget = entries.contains { entry in
             entry.path.hasPrefix("\(appRoot)/Watch/")
-                && entry.path.hasSuffix(".app/Info.plist")
+                || entry.path.hasPrefix("\(appRoot)/AppClips/")
         }
-        if hasWatchApp {
-            warnings.append("包含 Apple Watch 应用，免费账号签名时会自动移除 Watch 部分")
+        if hasUnsupportedPlatformTarget {
+            warnings.append("IPA 包含 Watch 或 App Clip 组件，Seal 当前不会删除这些组件；签名会在申请 Apple 资源前停止")
         }
 
         // 检测包内证书文件（可疑，可能导致签名问题）
@@ -448,18 +488,33 @@ struct IPAParserService: Sendable {
     /// 解析 Mach-O 格式，检查 LC_ENCRYPTION_INFO_64 的 cryptid
     private func isEncryptedBinary(
         appRoot: String,
+        mainInfo: [String: Any],
         entries: [Entry],
         archive: Archive
-    ) -> Bool {
-        // 主二进制文件名 = app 目录名（去掉 .app 后缀）
-        let appDirName = URL(filePath: appRoot).lastPathComponent
-        let binaryName = appDirName.replacingOccurrences(of: ".app", with: "")
+    ) throws -> Bool {
+        guard let binaryName = mainInfo["CFBundleExecutable"] as? String,
+              binaryName.isEmpty == false,
+              binaryName.contains("/") == false,
+              binaryName != ".",
+              binaryName != ".." else {
+            throw failure(
+                title: "无法读取 IPA 主程序",
+                reason: "主应用 Info.plist 缺少有效的 CFBundleExecutable，无法检查二进制是否加密。",
+                recovery: "选择其他 IPA",
+                code: "SEAL-IPA-102b"
+            )
+        }
         let binaryPath = "\(appRoot)/\(binaryName)"
 
         guard let binaryEntry = entries.first(where: {
             $0.type == .file && $0.path == binaryPath
         }) else {
-            return false
+            throw failure(
+                title: "无法读取 IPA 主程序",
+                reason: "Info.plist 指定的主程序 \(binaryName) 不存在于应用包中，无法检查签名状态。",
+                recovery: "选择完整且未损坏的 IPA",
+                code: "SEAL-IPA-102b"
+            )
         }
 
         // 读取二进制前 4KB（足够解析 Mach-O 头部和加载命令）
@@ -479,10 +534,22 @@ struct IPAParserService: Sendable {
         } catch EarlyExit.done {
             // 已拿到足够数据，继续判定
         } catch {
-            return false
+            throw failure(
+                title: "无法读取 IPA 主程序",
+                reason: "无法读取主程序 \(binaryName) 的 Mach-O 头，不能确认它是否加密。",
+                recovery: "重新获取 IPA 后重试",
+                code: "SEAL-IPA-102b"
+            )
         }
 
-        guard binaryData.count >= 32 else { return false }
+        guard binaryData.count >= 32 else {
+            throw failure(
+                title: "IPA 主程序无效",
+                reason: "主程序 \(binaryName) 太短，无法读取有效的 Mach-O 头。",
+                recovery: "选择完整且未损坏的 IPA",
+                code: "SEAL-IPA-102b"
+            )
+        }
         return Self.isEncryptedMachOHeader(binaryData)
     }
 

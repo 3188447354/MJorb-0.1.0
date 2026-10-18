@@ -438,6 +438,44 @@ pub async fn lookup_app_rppairing(bundle_id: String) -> Result<Option<String>, I
     Ok(apps.contains_key(&bundle_id).then_some(bundle_id))
 }
 
+pub struct UserInstalledApplication {
+    pub bundle_identifier: String,
+    pub display_name: String,
+    pub short_version: String,
+    pub build_number: String,
+    pub profile_validated: Option<bool>,
+}
+
+/// Enumerates user-installed apps through InstallationProxy. Seal joins this list
+/// with device provisioning profiles before presenting an app as sideloaded.
+pub async fn list_user_apps_rppairing() -> Result<Vec<UserInstalledApplication>, IdeviceError> {
+    let mut client = connect_to_rsd_services::<InstallationProxyClient>().await?;
+    let apps = client.get_apps(Some("User"), None).await?;
+    Ok(apps
+        .into_iter()
+        .map(|(bundle_identifier, value)| {
+            let dictionary = value.as_dictionary();
+            let string = |key: &str| {
+                dictionary
+                    .and_then(|values| values.get(key))
+                    .and_then(plist::Value::as_string)
+                    .map(ToOwned::to_owned)
+            };
+            UserInstalledApplication {
+                bundle_identifier: bundle_identifier.clone(),
+                display_name: string("CFBundleDisplayName")
+                    .or_else(|| string("CFBundleName"))
+                    .unwrap_or_else(|| bundle_identifier.clone()),
+                short_version: string("CFBundleShortVersionString").unwrap_or_default(),
+                build_number: string("CFBundleVersion").unwrap_or_default(),
+                profile_validated: dictionary
+                    .and_then(|values| values.get("ProfileValidated"))
+                    .and_then(plist::Value::as_boolean),
+            }
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

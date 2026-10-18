@@ -87,6 +87,29 @@ struct HardTimeoutTests {
         #expect(probe.wasCancelled == false, "cancelsWorkOnTimeout: false 时工作不得被取消")
     }
 
+    @Test
+    func lateCompletionIsDeliveredOnlyAfterTheWaiterTimesOut() async {
+        let probe = LateCompletionProbe()
+        do {
+            _ = try await HardTimeout.run(
+                seconds: 0.05,
+                cancelsWorkOnTimeout: false,
+                onLateCompletion: { result in await probe.record(result) }
+            ) {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                return 42
+            }
+            Issue.record("期望 TimeoutError")
+        } catch is HardTimeout.TimeoutError {
+            // 等待者按预算返回，底层工作继续运行。
+        } catch {
+            Issue.record("期望 TimeoutError，实际抛出 \(error)")
+        }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        #expect(await probe.value == 42, "超时后完成的结果必须送达结算回调")
+        #expect(await probe.completionCount == 1, "迟到结果只允许交付一次")
+    }
+
     /// 父任务取消必须**立即**解除挂起。
     ///
     /// 此前 `run` 只有裸 `withCheckedThrowingContinuation`、没有 cancellation handler：
@@ -189,5 +212,15 @@ private final class CancellationProbe: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return cancelled
+    }
+}
+
+private actor LateCompletionProbe {
+    private(set) var value: Int?
+    private(set) var completionCount = 0
+
+    func record(_ result: Result<Int, String>) {
+        completionCount += 1
+        if case .success(let value) = result { self.value = value }
     }
 }

@@ -24,11 +24,17 @@ struct DeviceProfileInspector: Sendable {
     /// RemotePairing 下的 `dumpProfiles` 与 `installProvisioningProfile` 都通过 Rust 的
     /// `connect_to_rsd_services::<MisagentClient>()`。因此这里是实际写入服务的无副作用预热，
     /// 而不是仅凭 UDID/TCP 推断通道可用。
-    static func probeProfileService() async -> ProfileServiceProbeOutcome {
+    static func probeProfileService(
+        onLateCompletion: @escaping @Sendable () async -> Void = {}
+    ) async -> ProfileServiceProbeOutcome {
         let fileManager = FileManager.default
         let workingDir = fileManager.temporaryDirectory
             .appendingPathComponent("seal-profile-probe-\(UUID().uuidString)", isDirectory: true)
-        let outcome = await BlockingCall.bounded(seconds: 8) {
+        let outcome = await BlockingCall.bounded(
+            seconds: 8,
+            cancelsWorkOnTimeout: false,
+            onLateCompletion: { _ in await onLateCompletion() }
+        ) {
             _ = try Provision.dumpProfiles(docsPath: workingDir.path)
         }
         // 只有 FFI 确认结束后才能删目录。超时时底层仍可能写入，提前删除会让

@@ -3,6 +3,12 @@ import Foundation
 import UIKit
 @preconcurrency import Minimuxer
 
+enum BackgroundRenewalAdmission: Equatable, Sendable {
+    case accepted
+    case busy(String)
+    case notReady
+}
+
 @MainActor
 final class AppsViewModel: ObservableObject {
     enum Phase: Equatable {
@@ -165,11 +171,11 @@ final class AppsViewModel: ObservableObject {
     /// `refreshAll()` 是所有批量续签唯一入口。后台快捷指令只通过这个瞬态标记
     /// 告知入口不要展示 sheet，绝不绕过它的单飞/队列保护。
     private var backgroundBatchPresentationRequested = false
+    private var backgroundTriggerAdmissionPending = false
     /// 后台批次只持久化结果；用户回到 Seal 后再恢复为结果抽屉。
     private var isBackgroundBatchRefresh = false
     /// 用户选定证书并确认后，因证书被撤而失效、待自动重签的已装 App。
     /// 仅本次签名重试成功后才会消费；重试失败时清空并提示手动续签。
-    private var certificateSacrificeResignQueue: [UUID] = []
     /// 证书轮换**子流程**自己的阶段簿记 —— 它**不写进父会话**（判据见
     /// `SigningStageAttribution`），所以父会话的 `InstallStageTimeline` 不能给它当闸门。
     ///
@@ -395,6 +401,15 @@ final class AppsViewModel: ObservableObject {
 
     func presentOperation(for app: AppRecord) {
         selectedOperationApp = app
+    }
+
+    /// No source IPA is needed when the persisted signing identity is complete enough for a
+    /// profile-only renewal and its certificate private key is still available locally.
+    func canRenewProfileOnlyWithoutIPA(_ app: AppRecord) -> Bool {
+        guard app.needsIPAImport,
+              case .eligible = ProfileOnlyRenewalPolicy.evaluate(app: app),
+              localCertificateAvailability(for: app) == .ready else { return false }
+        return true
     }
 
     func dismissOperation() {
@@ -1152,7 +1167,7 @@ final class AppsViewModel: ObservableObject {
     }
 
     /// 应用内更新下载完成后导入 Seal 自身 IPA，成功后自动打开签名抽屉覆盖安装。
-    /// 返回 true 表示 IPA 已成功入库（记录已提交）；失败时保留下载源供用户重试。
+    /// 返回 true 表示 IPA 已进入受管理导入流程（等待确认或已完成）；失败时保留下载源供用户重试。
     @discardableResult
     func importSelfUpdateFile(_ url: URL) async -> Bool {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 导入自更新文件: \(url.lastPathComponent)")
@@ -1191,10 +1206,13 @@ final class AppsViewModel: ObservableObject {
         phase = .preparing
         await workflow.prepare(sourceURL: url)
         await consumeWorkflowState()
-        if case .completed = await workflow.state {
+        switch await workflow.state {
+        case .awaitingConfirmation, .completed:
+            // prepare 已把下载源转入 AppFileStore 的导入事务；RootTabView 可以清理 Downloads 副本。
             return true
+        case .idle, .preparing, .committing, .failed:
+            return false
         }
-        return false
     }
 
     func confirmImport() async {
@@ -1786,9 +1804,6 @@ final class AppsViewModel: ObservableObject {
                     category: .signing,
                     message: "用户确认撤销 \(result.revokedSerials.count) 张无钥匙证书，继续本次签名"
                 )
-                certificateSacrificeResignQueue = result.affectedInstalledApps
-                    .map(\.id)
-                    .filter { $0 != session.app.id }
                 retrySession = session
             } catch is CancellationError {
                 signingSession = nil
@@ -1802,33 +1817,6 @@ final class AppsViewModel: ObservableObject {
             }
         }
     }
-
-    /// 证书撤销流程收尾：本次签名**成功**关闭进度页后，自动批量重签因撤销而失效的
-    /// 其余已装 App（复用续签队列，覆盖安装不新增设备槽位）；重试未成功则清空队列，
-    /// 留日志引导手动续签。
-    private func resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: Bool) {
-        let queue = certificateSacrificeResignQueue
-        certificateSacrificeResignQueue = []
-        guard queue.isEmpty == false else { return }
-        guard signingSucceeded else {
-            Task { [weak self] in
-                try? await self?.logStore?.append(
-                    category: .signing,
-                    level: .warning,
-                    message: "签名重试未成功，\(queue.count) 个因证书撤销而失效的应用请稍后手动续签"
-                )
-            }
-            return
-        }
-        Task { [weak self] in
-            try? await self?.logStore?.append(
-                category: .signing,
-                message: "本次签名已完成，开始自动重签 \(queue.count) 个因证书撤销而失效的应用"
-            )
-        }
-        startBatchRefresh(appIDs: queue)
-    }
-
 
     /// 取消当前签名 / 续签（运行中抽屉的「取消」）。软取消，语义同 `cancelBatchRefresh`：
     /// 界面立即关闭、后续步骤停止，但**已经下发到设备的那次安装不会被中断**，
@@ -1856,15 +1844,10 @@ final class AppsViewModel: ObservableObject {
     func dismissSigningResult() {
         guard let signingSession else { return }
         if case .running = signingSession.status { return }
-        var signingSucceeded = false
-        if case .succeeded = signingSession.status { signingSucceeded = true }
         self.signingSession = nil
         selectedOperationApp = nil
         // 结果已在 runSigning 结束时作为 RenewalRoundSummary 写入；关闭抽屉只是 UI
         // 清理，不能再制造一条旧格式结果日志，否则单独续签会显示两次结果。
-        // 进度页关闭后再发起批量重签：两个 sheet 同挂 AppsRootView，
-        // 同时弹出会导致批量续签页被盖住。
-        resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)
     }
 
     @discardableResult
@@ -1948,6 +1931,23 @@ final class AppsViewModel: ObservableObject {
             return false
         }
         defer { releaseOperation(operationLease) }
+        let previousIconData: Data?
+        do {
+            if let previousPath = app.preferredIconRelativePath,
+               try await fileStore.exists(relativePath: previousPath) {
+                previousIconData = try await fileStore.read(relativePath: previousPath)
+            } else {
+                previousIconData = nil
+            }
+        } catch {
+            alertFailure = ImportFailure(
+                title: "无法读取现有图标",
+                reason: "Seal 无法先保存当前图标的恢复副本，因此没有更改图标。",
+                recovery: "检查应用存储空间后重试",
+                code: "SEAL-CUSTOM-005"
+            )
+            return false
+        }
         do {
             var updated = app
             if let data {
@@ -1973,6 +1973,21 @@ final class AppsViewModel: ObservableObject {
             await load(force: true)
             return true
         } catch {
+            // 文件先写、记录后存。记录保存失败时补回旧文件状态，避免显示失败但磁盘图标已换。
+            do {
+                if let previousIconData {
+                    _ = try await fileStore.storePreferredIcon(data: previousIconData, appID: app.id)
+                } else {
+                    try await fileStore.removePreferredIcon(appID: app.id)
+                }
+            } catch {
+                try? await logStore?.append(
+                    category: .system,
+                    level: .error,
+                    message: "回滚自定义图标失败：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                    code: "SEAL-CUSTOM-004"
+                )
+            }
             alertFailure = ImportFailure(
                 title: "无法保存 App 图标",
                 reason: "图标文件没能写入本机存储，可能是存储空间不足。请清理一些空间后，重新选择图标。",
@@ -2181,7 +2196,12 @@ final class AppsViewModel: ObservableObject {
     /// 而同一构建、几分钟前的前台续签 2/2 成功。
     /// ⇒ 点火前改用**强判据**：`installChannel.start()` 会走完整个诊断
     /// （reset + RSD 握手 + 轮询；已就绪时 900 秒缓存秒回、失败熔断 60 秒、单飞合并并发启动）。
-    func refreshAllFromBackgroundTrigger() {
+    func refreshAllFromBackgroundTrigger() -> BackgroundRenewalAdmission {
+        guard renewalCoordinator != nil else { return .notReady }
+        guard hasActiveSigningWork == false else {
+            return .busy(activeOperationDescription)
+        }
+        backgroundTriggerAdmissionPending = true
         Task { [weak self] in
             guard let self else { return }
             try? try? await self.logStore?.append(
@@ -2190,6 +2210,7 @@ final class AppsViewModel: ObservableObject {
                 code: "SEAL-BACKGROUND-006"
             )
             await self.awaitDeviceChannelBeforeBackgroundRenewal()
+            self.backgroundTriggerAdmissionPending = false
             // 🔴 **让位**（2026-09-27）：已有签名/续签在跑时**不重复点火**。
             //
             // 两种情形都要让：
@@ -2227,6 +2248,7 @@ final class AppsViewModel: ObservableObject {
             self.backgroundBatchPresentationRequested = true
             self.refreshAll()
         }
+        return .accepted
     }
 
     /// 是否已有签名/续签（或任何占用设备通道的操作）在跑。
@@ -2243,7 +2265,9 @@ final class AppsViewModel: ObservableObject {
     /// ⚠️ **与 `hasActiveRenewalWork` 的区别是「那项操作会不会把应用续完」**：
     /// 让位通知只发给后者为假的情况（见 `refreshAllFromBackgroundTrigger`）。
     private var hasActiveSigningWork: Bool {
-        hasActiveRenewalWork || operationCoordinator?.activeLease != nil
+        backgroundTriggerAdmissionPending
+            || hasActiveRenewalWork
+            || operationCoordinator?.activeLease != nil
     }
 
     /// 是否有**签名 / 续签**正在跑（即「那一轮本身会把应用续完」）。
@@ -2397,6 +2421,10 @@ final class AppsViewModel: ObservableObject {
         appIDs: [UUID]? = nil,
         presentsSheet: Bool = true
     ) {
+        guard backgroundTriggerAdmissionPending == false || backgroundTriggerRequested else {
+            alertFailure = Self.operationInProgressFailure(blockedBy: "后台续签请求正在确认设备状态")
+            return
+        }
         guard renewalCoordinator != nil else { return }
         guard batchRefreshTask == nil,
               signingTask == nil else {
@@ -3734,6 +3762,7 @@ final class AppsViewModel: ObservableObject {
         _ kind: OperationCoordinator.Kind,
         appID: UUID? = nil
     ) async -> OperationCoordinator.Lease? {
+        guard backgroundTriggerAdmissionPending == false else { return nil }
         guard let operationCoordinator else {
             return .uncoordinated(kind, appID: appID)
         }

@@ -73,6 +73,9 @@ struct AppContainer {
 
             let appStore = try Self.makeAppStore(in: sealDirectory)
             let fileStore = try AppFileStore.live()
+            let certificateRecoveryJournal = CertificateRecoveryJournalStore(
+                fileURL: sealDirectory.appending(path: "CertificateRecoveryJournal.json")
+            )
             let accountRepository = ProtectedAccountRepository(
                 fileURL: sealDirectory.appending(path: AppConfiguration.Paths.accountsFile)
             )
@@ -156,7 +159,8 @@ struct AppContainer {
                     logStore: logStore
                 ),
                 logStore: logStore,
-                selfReplacement: selfReplacement
+                selfReplacement: selfReplacement,
+                certificateRecoveryJournal: certificateRecoveryJournal
             )
             let refreshQueueStore = RefreshQueueStore(
                 fileURL: sealDirectory.appending(path: AppConfiguration.Paths.refreshQueueFile)
@@ -271,7 +275,8 @@ struct AppContainer {
                     anisetteEnvironment: anisetteProvider,
                     signingPreferenceStore: signingPreferenceStore,
                     operationCoordinator: operationCoordinator,
-                    selfReplacementStore: transactionStore
+                    selfReplacementStore: transactionStore,
+                    certificateRecoveryJournal: certificateRecoveryJournal
                 ),
                 certificateExportHandler: certificateExportHandler,
                 backgroundKeepAlive: {

@@ -338,56 +338,40 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
     let appIdentifier: String
     let name: String
     let bundleIdentifier: String
-    let expiryDate: Date
+    let expiryDate: Date?
 
     init(snapshot: ApplePortalAppIDSnapshot, accountID: UUID, relatedApps: [AppRecord]) {
         id = snapshot.id
-        appIdentifier = snapshot.identifier
-        name = AppleAccountAppNamePolicy.name(
+        appIdentifier = AppleAccountAppNamePolicy.applicationIdentifier(
+            for: snapshot.bundleIdentifier,
+            accountID: accountID,
+            relatedApps: relatedApps
+        )
+        name = AppleAccountAppNamePolicy.displayName(
             for: snapshot.bundleIdentifier,
             accountID: accountID,
             relatedApps: relatedApps
         )
         bundleIdentifier = snapshot.bundleIdentifier
-
-        let normalizedBundleIdentifier = snapshot.bundleIdentifier.lowercased()
-        let portalExpiry = snapshot.appIDExpirationDate ?? .distantPast
-
-        // 本地最新有效期需同时覆盖主应用与各插件扩展：
-        // 续签会刷新插件自己的描述文件（独立 App ID），但 userIdentityKeys 只含主应用 ID，
-        // 仅凭它匹配会漏掉扩展，导致「已签名 App」页的插件到期日停留在旧值。
-        let localExpiries = relatedApps
-            .filter { $0.accountID == Optional(accountID) }
-            .flatMap { app -> [Date] in
-                var dates: [Date] = []
-                if app.userIdentityKeys.contains(normalizedBundleIdentifier) {
-                    if let main = app.provisioningProfileExpirationDate ?? app.expiryDate {
-                        dates.append(main)
-                    }
-                }
-                for ext in app.extensions {
-                    let extKey = (ext.mappedBundleIdentifier ?? ext.originalBundleIdentifier)
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased()
-                    if extKey == normalizedBundleIdentifier,
-                       let date = ext.provisioningProfileExpirationDate {
-                        dates.append(date)
-                    }
-                }
-                return dates
-            }
-        let latestLocalExpiry = localExpiries.max()
-
-        expiryDate = max(portalExpiry, latestLocalExpiry ?? .distantPast)
+        expiryDate = AppleAccountAppNamePolicy.expirationDate(
+            for: snapshot.bundleIdentifier,
+            snapshot: snapshot,
+            accountID: accountID,
+            relatedApps: relatedApps
+        )
     }
 
     var expirationText: String {
-        SealSettingsDateFormatter.string(from: expiryDate)
+        expiryDate.map(SealSettingsDateFormatter.string(from:)) ?? "未记录"
     }
 }
 
 enum AppleAccountAppNamePolicy {
     static func name(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
+        displayName(for: bundleIdentifier, accountID: accountID, relatedApps: relatedApps)
+    }
+
+    static func displayName(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
         let target = normalize(bundleIdentifier)
         guard target.isEmpty == false else { return "App 名称未记录" }
 
@@ -402,7 +386,57 @@ enum AppleAccountAppNamePolicy {
             return identifiers.contains { normalize($0) == target }
         }
         let appName = matchingApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return appName.isEmpty ? "App 名称未记录" : appName
+        guard appName.isEmpty == false, let matchingApp else { return "App 名称未记录" }
+        let isExtension = matchingApp.extensions.contains { ext in
+            normalize(ext.originalBundleIdentifier) == target
+                || normalize(ext.mappedBundleIdentifier ?? "") == target
+        }
+        return isExtension ? "\(appName) · 扩展" : appName
+    }
+
+    static func applicationIdentifier(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
+        let target = normalize(bundleIdentifier)
+        guard let applicationIdentifier = relatedApps
+            .filter({ $0.accountID == accountID })
+            .lazy
+            .flatMap(\.signingTargets)
+            .first(where: { normalize($0.bundleIdentifier) == target })?
+            .applicationIdentifier,
+              let value = applicationIdentifier,
+              value.isEmpty == false,
+              value.contains("*") == false else {
+            return "未记录"
+        }
+        return value
+    }
+
+    static func expirationDate(
+        for bundleIdentifier: String,
+        snapshot: ApplePortalAppIDSnapshot,
+        accountID: UUID,
+        relatedApps: [AppRecord]
+    ) -> Date? {
+        let target = normalize(bundleIdentifier)
+        if let exactTarget = relatedApps
+            .filter({ $0.accountID == accountID })
+            .lazy
+            .flatMap(\.signingTargets)
+            .first(where: { normalize($0.bundleIdentifier) == target }) {
+            return exactTarget.profileExpirationDate
+        }
+
+        for app in relatedApps where app.accountID == accountID {
+            if normalize(app.mappedBundleIdentifier ?? "") == target
+                || normalize(app.originalBundleIdentifier) == target {
+                return app.provisioningProfileExpirationDate ?? app.expiryDate
+            }
+            if let ext = app.extensions.first(where: {
+                normalize($0.mappedBundleIdentifier ?? $0.originalBundleIdentifier) == target
+            }), let expiry = ext.provisioningProfileExpirationDate {
+                return expiry
+            }
+        }
+        return snapshot.provisioningProfileExpirationDate
     }
 
     private static func normalize(_ value: String) -> String {

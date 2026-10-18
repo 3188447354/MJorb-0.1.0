@@ -24,6 +24,15 @@ struct RefreshPlanner: Sendable {
                 priority(for: lhs, now: now) < priority(for: rhs, now: now)
             }
             .map { app -> RefreshQueueItem in
+                if app.needsIPAImport,
+                   case .requiresFullResign = ProfileOnlyRenewalPolicy.evaluate(app: app) {
+                    return RefreshQueueItem(
+                        appID: app.id,
+                        accountID: nil,
+                        state: .requiresAction,
+                        requiresActionReason: "\(app.displayName) 已在设备上，但缺少仅更新描述文件所需的签名记录，且本机没有原始 IPA；请先导入 IPA，再重新签名。"
+                    )
+                }
                 // 与单项续签、`beginSigning` **共用同一份判据**（`RenewalAccountResolver`）：
                 // 记录里的 `accountID` 可能是**悬空引用**（删过 Apple ID 再重新添加之后），
                 // 旧写法 `app.accountID ?? fallbackAccountID` 会把它原样带进队列 ⇒

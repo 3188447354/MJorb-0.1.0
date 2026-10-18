@@ -1,6 +1,14 @@
 import Foundation
 @preconcurrency import Minimuxer
 
+struct DeviceInstalledApplicationSummary: Equatable, Sendable {
+    let bundleIdentifier: String
+    let displayName: String
+    let shortVersion: String
+    let buildNumber: String
+    let profileValidated: Bool?
+}
+
 /// 设备端扫回的**注入点**。
 ///
 /// ## 为什么必须是注入，不能直接调静态方法
@@ -19,6 +27,10 @@ protocol InstalledAppScanning: Sendable {
     /// `nil` = **无法核验**（未连接设备 / 隧道不可用 / dump 或解析失败）。
     func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]?
 
+    /// 设备端实际安装且系统标记为已验证描述文件的用户应用。
+    /// `nil` 表示设备清单无法读取；空数组表示已成功读取但没有匹配应用。
+    func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]?
+
     /// 阳性对照 ＋ 逐条设备核验，**先问完再动手**。
     /// `nil` = 通道不可信（**一条记录都不许建**）。
     func scanConfirmedInstalledBundleIdentifiers(
@@ -27,10 +39,14 @@ protocol InstalledAppScanning: Sendable {
     ) async -> Set<String>?
 }
 
-/// 设备端「Seal 签名痕迹」的只读扫描：枚举全部描述文件 → 摘要，再做设备核验。
+extension InstalledAppScanning {
+    func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+}
+
+/// 设备端「已验证侧载应用」的只读扫描：读取描述文件和安装代理的用户应用清单。
 ///
 /// 与 `DeviceProfileInspector` / `DeviceProfileCleaner` 共用同一条 misagent dump 通道，
-/// 但**绝不删除任何文件**、也**不落任何状态**。
+/// 并通过 InstallationProxy 读取已安装应用；**绝不删除任何文件**、也**不落任何状态**。
 ///
 /// ⚠️ 两个入口都是同步阻塞 FFI（`Provision.dumpProfiles` / `Minimuxer.isAppInstalled`），
 /// 在一条已死的 RSD 缓存会话上**不报错、只阻塞到操作系统放弃** ⇒ 必须有界。
@@ -41,6 +57,10 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
 
     func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? {
         await Self.profileSummaries()
+    }
+
+    func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+        await Self.validatedUserApplications()
     }
 
     func scanConfirmedInstalledBundleIdentifiers(
@@ -65,6 +85,25 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
         }
         guard let outcome, case .success(let summaries) = outcome else { return nil }
         return summaries
+    }
+
+    static func validatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+        let outcome = await BlockingCall.bounded(
+            seconds: BlockingCall.queryTimeoutSeconds
+        ) {
+            try Minimuxer.installedApplications()
+        }
+        guard let outcome, case .success(let applications) = outcome else { return nil }
+        return applications.compactMap { application in
+            guard application.profileValidated == true else { return nil }
+            return DeviceInstalledApplicationSummary(
+                bundleIdentifier: application.bundleIdentifier,
+                displayName: application.displayName,
+                shortVersion: application.shortVersion,
+                buildNumber: application.buildNumber,
+                profileValidated: application.profileValidated
+            )
+        }
     }
 
     /// 阳性对照 ＋ 逐条设备核验，**先问完再动手**。

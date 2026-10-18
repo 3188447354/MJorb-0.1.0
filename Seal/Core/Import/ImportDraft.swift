@@ -8,6 +8,8 @@ enum VersionCheckResult: Equatable, Sendable {
     case upgrade(oldVersion: String, newVersion: String)
     /// 同版本同内容：已是最新，阻止导入
     case alreadyLatest(version: String)
+    /// 同版本但原始 IPA 已丢失：允许用户重新导入以恢复可管理的源文件
+    case sameVersionRecovery(version: String)
     /// 低版本：降级警告，需要用户二次确认
     case downgrade(oldVersion: String, newVersion: String)
     /// 同营销版本但构建号更高：视为升级（例如 v0.1.0 build 68 → build 69）

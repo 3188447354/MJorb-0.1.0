@@ -508,6 +508,8 @@ actor SelfAppRegistrar {
 
         var updated = existing
         var changed = false
+        let candidateIsOffDevice = candidateConfirmedNotInstalled
+            || (existing.hasPendingSelfUpdateSource && existing.version != metadata.version)
 
         if existing.signingTeamID != resolvedTeamID {
             updated.signingTeamID = resolvedTeamID
@@ -521,7 +523,8 @@ actor SelfAppRegistrar {
         if let extensionRecords = metadata.extensionRecords {
             let reconciledExtensions = SelfAppRegistrar.reconcileExtensionRecords(
                 extensionRecords,
-                preservingIDsFrom: existing.extensions
+                preservingIDsFrom: existing.extensions,
+                adoptingRuntimeProfileIdentity: candidateIsOffDevice
             )
             if updated.extensions != reconciledExtensions {
                 updated.extensions = reconciledExtensions
@@ -542,9 +545,6 @@ actor SelfAppRegistrar {
         // 否则 pending 是有效的新真相，转正。
         // 这替代了旧的 `versionMismatch` 守卫：profile-only 续签后设备有新 profile
         // 但运行包内嵌旧 profile，非回滚时不再用旧值回盖新记录。
-        let candidateIsOffDevice = candidateConfirmedNotInstalled
-            || (existing.hasPendingSelfUpdateSource && existing.version != metadata.version)
-
         // 把运行包里读到的 profile 身份收进记录（就地），返回是否真的改动过。
         func adoptRunningBundleProfileIdentity() -> Bool {
             var adopted = false
@@ -645,7 +645,8 @@ actor SelfAppRegistrar {
 
     private static func reconcileExtensionRecords(
         _ runtimeExtensions: [AppExtensionRecord],
-        preservingIDsFrom existingExtensions: [AppExtensionRecord]
+        preservingIDsFrom existingExtensions: [AppExtensionRecord],
+        adoptingRuntimeProfileIdentity: Bool = false
     ) -> [AppExtensionRecord] {
         runtimeExtensions.map { runtime in
             let runtimeBundleID = (runtime.mappedBundleIdentifier ?? runtime.originalBundleIdentifier).lowercased()
@@ -659,10 +660,14 @@ actor SelfAppRegistrar {
                 originalBundleIdentifier: existing.originalBundleIdentifier,
                 mappedBundleIdentifier: runtime.mappedBundleIdentifier,
                 kind: runtime.kind,
-                provisioningProfileUUID: runtime.provisioningProfileUUID,
-                provisioningProfileName: runtime.provisioningProfileName,
-                provisioningProfileExpirationDate: runtime.provisioningProfileExpirationDate,
-                certificateSerialNumber: runtime.certificateSerialNumber
+                provisioningProfileUUID: adoptingRuntimeProfileIdentity
+                    ? runtime.provisioningProfileUUID : existing.provisioningProfileUUID ?? runtime.provisioningProfileUUID,
+                provisioningProfileName: adoptingRuntimeProfileIdentity
+                    ? runtime.provisioningProfileName : existing.provisioningProfileName ?? runtime.provisioningProfileName,
+                provisioningProfileExpirationDate: adoptingRuntimeProfileIdentity
+                    ? runtime.provisioningProfileExpirationDate : existing.provisioningProfileExpirationDate ?? runtime.provisioningProfileExpirationDate,
+                certificateSerialNumber: adoptingRuntimeProfileIdentity
+                    ? runtime.certificateSerialNumber : existing.certificateSerialNumber ?? runtime.certificateSerialNumber
             )
         }
     }

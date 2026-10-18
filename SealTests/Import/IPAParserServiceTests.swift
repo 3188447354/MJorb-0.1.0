@@ -47,6 +47,33 @@ struct IPAParserServiceTests {
     }
 
     @Test
+    func locatesMainExecutableFromInfoPlistInsteadOfAppFolderName() throws {
+        let url = try IPAArchiveFixture.make(apps: [
+            .init(directoryName: "ContainerName.app", name: "ActualExecutable")
+        ])
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let result = try IPAParserService().parse(url: url)
+
+        #expect(result.name == "ActualExecutable")
+        #expect(result.importWarnings.contains("主二进制已加密（App Store 版本），需要砸壳后才能签名") == false)
+    }
+
+    @Test
+    func warnsWhenIPAContainsAWatchTargetInsteadOfClaimingItWillBeRemoved() throws {
+        let url = try IPAArchiveFixture.make(extraEntries: [
+            ("Payload/Demo.app/Watch/WatchApp.app/Info.plist", Data())
+        ])
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+
+        let result = try IPAParserService().parse(url: url)
+
+        #expect(result.importWarnings.contains(
+            "IPA 包含 Watch 或 App Clip 组件，Seal 当前不会删除这些组件；签名会在申请 Apple 资源前停止"
+        ))
+    }
+
+    @Test
     func rejectsArchiveWithoutAppInfo() throws {
         let url = try IPAArchiveFixture.make(includeInfo: false)
         defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }

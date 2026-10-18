@@ -1274,6 +1274,21 @@ actor ApplePortalSigningService {
                     code: "SEAL-PROFILE-317a"
                 )
             }
+            let applicationIdentifiers = try signingWorkspace.signedBundleTargets(in: prepared).reduce(into: [String: String]()) {
+                result, target in
+                guard let application = ALTApplication(fileURL: target.bundleURL),
+                      let identifier = try application.readEntitlements()[ALTCapabilities.applicationIdentifier] as? String,
+                      identifier.isEmpty == false,
+                      identifier.contains("*") == false else {
+                    throw Self.failure(
+                        title: "签名身份校验失败",
+                        reason: "无法从签名后的 \(target.bundleIdentifier) 读取完整 App ID，已停止生成签名包。",
+                        recovery: "重新签名；若持续发生，请导出日志并反馈。",
+                        code: "SEAL-SIGN-413"
+                    )
+                }
+                result[target.bundleIdentifier] = identifier
+            }
             for (signedBundleID, binding) in profileBindings.sorted(by: { $0.key < $1.key }) {
                 let serials = binding.certificateSerialNumbers.map {
                     "…" + SigningCertificateSelectionPolicy.normalizedSerialNumber($0).suffix(8)
@@ -1310,6 +1325,7 @@ actor ApplePortalSigningService {
                 deviceIdentifier: deviceIdentifier,
                 teamID: team.identifier,
                 profileBindings: profileBindings,
+                applicationIdentifiers: applicationIdentifiers,
                 extensionProfileStrategy: profilePreparation.extensionProfileStrategy,
                 droppedExtensionBundleIdentifiers:
                     profilePreparation.droppedExtensionBundleIdentifiers
@@ -2251,11 +2267,30 @@ actor ApplePortalSigningService {
         // ── entitlements 缓存（性能优化 2026-10-04）：`ALTApplication.entitlements`
         // 底层是 `LdidBridge.entitlements(at:)`（Mach-O 解析），本函数内 4 处调用，
         // 这里一次取全缓存，后续透传，省重复解析。
+        let missingApplications = Set(mappings.values).subtracting(applications.keys)
+        guard missingApplications.isEmpty else {
+            throw Self.failure(
+                title: "无法读取应用组件",
+                reason: "IPA 中缺少这些签名目标：\(missingApplications.sorted().joined(separator: "、"))。Seal 已在申请 App ID 前停止。",
+                recovery: "重新导入完整 IPA 后重试",
+                code: "SEAL-ENTITLEMENT-404"
+            )
+        }
         var cachedEntitlementsByBundleID: [String: [ALTEntitlement: any Sendable]] = [:]
         for (bundleID, application) in applications {
-            cachedEntitlementsByBundleID[bundleID] = application.entitlements
+            do {
+                cachedEntitlementsByBundleID[bundleID] = try application.readEntitlements()
+            } catch {
+                throw Self.failure(
+                    title: "无法读取应用权限",
+                    reason: "无法解析 \(bundleID) 的 Mach-O 权限声明：\(ErrorDiagnosticFormatter.diagnostic(for: error))。为避免错误共享或丢失能力，Seal 已在申请 App ID 前停止签名。",
+                    recovery: "重新获取 IPA 后重试",
+                    code: "SEAL-ENTITLEMENT-404"
+                )
+            }
         }
         var entitlementsByBundleID: [String: Set<String>] = [:]
+        var entitlementValuesByBundleID: [String: [String: ProvisioningEntitlementValue]] = [:]
         // ⚠️ **期望集合取 `mappings.values`（映射后 Bundle ID），不是 `applications` 的键。**
         // 两者应一致（`ALTApplication` 是在 `SigningWorkspace` 改写 bundle ID **之后**加载的），
         // 但下面那个 `guard ... else { continue }` 会**静默跳过**读不到的 bundle ——
@@ -2264,12 +2299,25 @@ actor ApplePortalSigningService {
         // 把期望集合显式传下去，让 `sharedProfileBlocker` 能对「缺键」fail closed。
         let expectedBundleIdentifiers = Array(mappings.values)
         for mappedBundleID in expectedBundleIdentifiers {
-            guard let application = applications[mappedBundleID] else { continue }
-            let rawKeys = Set((cachedEntitlementsByBundleID[mappedBundleID] ?? application.entitlements)
-                .keys
-                .map(\.rawValue))
+            guard let rawEntitlements = cachedEntitlementsByBundleID[mappedBundleID] else { continue }
+            let rawKeys = Set(rawEntitlements.keys.map(\.rawValue))
             entitlementsByBundleID[mappedBundleID] =
                 AppExtensionProfileStrategy.profileTopologyEntitlements(from: rawKeys)
+            var values: [String: ProvisioningEntitlementValue] = [:]
+            for (entitlement, value) in rawEntitlements
+                where AppExtensionProfileStrategy.profileTopologyEntitlements(from: [entitlement.rawValue])
+                    .contains(entitlement.rawValue) {
+                guard let converted = ProvisioningEntitlementValue.make(from: value) else {
+                    throw Self.failure(
+                        title: "应用权限无法解析",
+                        reason: "\(mappedBundleID) 的权限 \(entitlement.rawValue) 包含无法比较的值类型，无法确认扩展能否共享主描述文件。",
+                        recovery: "检查 IPA 权限后重试",
+                        code: "SEAL-ENTITLEMENT-403"
+                    )
+                }
+                values[entitlement.rawValue] = converted
+            }
+            entitlementValuesByBundleID[mappedBundleID] = values
         }
         let detectedIndependentBundleIdentifiers: Set<String>
         if extensionProfileStrategy == .independentProfiles {
@@ -2280,6 +2328,7 @@ actor ApplePortalSigningService {
             detectedIndependentBundleIdentifiers = AppExtensionProfileStrategy.independentBundleIdentifiers(
                 mainBundleID: mappedMainBundleID,
                 entitlementsByBundleID: entitlementsByBundleID,
+                entitlementValuesByBundleID: entitlementValuesByBundleID,
                 expectedBundleIdentifiers: expectedBundleIdentifiers
             )
         }
@@ -2297,6 +2346,7 @@ actor ApplePortalSigningService {
             let blockers = AppExtensionProfileStrategy.sharedProfileBlockers(
                 mainBundleID: mappedMainBundleID,
                 entitlementsByBundleID: entitlementsByBundleID,
+                entitlementValuesByBundleID: entitlementValuesByBundleID,
                 expectedBundleIdentifiers: expectedBundleIdentifiers
             )
             let details = blockers.map { blocker in
@@ -2397,12 +2447,13 @@ actor ApplePortalSigningService {
         // ② features 诊断恒报「本次 []」（远端 ["TEAM000011"] vs 本次 [] 就是它）；
         // ③ 「跳过冗余 updateFeatures」优化永远不可能命中。
         func desiredFeatureKeys(mapped: String) -> Set<String> {
-            guard let application = applications[mapped] else { return [] }
+            guard let application = applications[mapped],
+                  let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return [] }
             return Set(
                 filteredAppIDEntitlements(
                     from: application,
                     team: team,
-                    cachedEntitlements: cachedEntitlementsByBundleID[mapped]
+                    cachedEntitlements: cachedEntitlements
                 )
                     .keys
                     .compactMap { ALTFeature(entitlement: $0) }
@@ -2419,12 +2470,13 @@ actor ApplePortalSigningService {
         // 跳过会**静默丢掉那个能力** ⇒ 那时这条优化就**不能做**。
         // 只报**类型名**（`Bool` / `Array<String>`…），不报值 —— 类型名不含任何凭据。
         func desiredFeatureTypeSummary(mapped: String) -> String? {
-            guard let application = applications[mapped] else { return nil }
+            guard let application = applications[mapped],
+                  let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return nil }
             var pairs: [(String, String)] = []
             for (entitlement, value) in filteredAppIDEntitlements(
                 from: application,
                 team: team,
-                cachedEntitlements: cachedEntitlementsByBundleID[mapped]
+                cachedEntitlements: cachedEntitlements
             ) {
                 guard let feature = ALTFeature(entitlement: entitlement) else { continue }
                 pairs.append((String(describing: feature), String(describing: type(of: value))))
@@ -2570,91 +2622,51 @@ actor ApplePortalSigningService {
                 // ⚠️ 同上：`applications` 的键是 **mapped** ID（workspace 已改写 Info.plist），
                 // 历史 bug 用 original ID 查 ⇒ 恒 nil ⇒ 整段 entitlements 处理被跳过、
                 // 签出的包不带任何能力（App Group、关联域名等全部丢失）。
-                if let application = applications[mappedBundleID] {
-                    // 扩展 features 更新失败时降级为空 features 重试，主 App 失败则直接报错
-                    do {
-                        // ⚠️ **`updateFeatures` 也必须过退避重试**（2026-09-17 补）。
-                        //
-                        // 它是 Phase 1 里每个 bundle ID 的**第二次**门户写入（第一次是 addAppID），
-                        // 所以抖音这种 9 扩展 App 一次签名要连发 **9 次** —— 与 addAppID 同等密集，
-                        // 却一直没有退避重试。漏掉它有两种后果，而且**都不报错**：
-                        // ① 主 App 的 updateFeatures 撞上 1100 ⇒ 落到下面那句
-                        //    `guard mappedBundleID != mappedMainBundleID else { throw error }`
-                        //    ⇒ **整个签名失败**，用户看到的只是「Apple ID 失效」；
-                        // ② 扩展的 updateFeatures 撞上 1100 ⇒ 走降级分支把 entitlements **清空**继续签
-                        //    ⇒ 签名「成功」，但扩展在真机上缺权限（静默降级比失败更难查）。
-                        // 退避重试把这两种「把限流当成事实」的结局变回「等一会儿就好了」。
-                        let updated: (appID: ALTAppID, downgradedToEmptyEntitlements: Bool) =
-                            try await withSessionRecovery("更新应用能力 \(mappedBundleID)") {
-                                try await updateFeatures(
-                                    appID: appID,
-                                    application: application,
-                                    team: team,
-                                    session: session
-                                )
-                            }
-                        appID = updated.appID
-                        if updated.downgradedToEmptyEntitlements {
-                            // Apple 拒了这组能力并按空能力重发（见 updateFeatures 返回值说明）：
-                            // 描述文件里不会有它们，请求集必须同步清空，否则事后
-                            // validateEntitlements 必报 SEAL-ENTITLEMENT-401「权限缺失」。
-                            // ⚠️ **清空的范围要跟着「描述文件」走，不是跟着「bundle」走**
-                            // （2026-09-24 真机，构建 30，LiveContainer 连续两次 401 的根因）。
-                            // 共享主描述文件模式下门户**只为主 App** 提交能力，而签出的
-                            // **每个扩展嵌入的都是这一份** ⇒ 主 App 被降级 = 那份描述文件对
-                            // **所有** bundle 都不再授予任何能力。原实现只清 `mappedBundleID`
-                            // 自己 ⇒ 扩展的请求集还留着 ⇒ 签后逐 bundle 校验拿「扩展的请求集」
-                            // 去对「什么都不授予的主描述文件」⇒ 必报 SEAL-ENTITLEMENT-401，
-                            // 把一个**本来能装的包**拦下 ✗（抖音没事，是因为它的扩展不依赖被拒的能力）。
-                            // 判据抽成纯函数（带单测）：`AppExtensionProfileStrategy.affectedBundles`。
-                            let affectedBundleIDs = AppExtensionProfileStrategy.affectedBundles(
-                                whenDowngrading: mappedBundleID,
-                                strategy: resolvedExtensionProfileStrategy,
-                                mappedMainBundleID: mappedMainBundleID,
-                                mappedBundleIdentifiers: Array(mappings.values),
-                                independentBundleIdentifiers: independentExtensionBundleIdentifiers
-                            )
-                            for affectedBundleID in affectedBundleIDs {
-                                requestedEntitlements[affectedBundleID] = [:]
-                            }
-                            // ⚠️ **降级必须留痕**（2026-09-24 真机，构建 29）：这里原本**没有任何日志** ✗
-                            // ⇒ 真机上只看到「权限缺失 SEAL-ENTITLEMENT-401」，看不出根因是
-                            // 「Apple 先拒了能力、Seal 自己降级成空」。而且共享主描述文件模式下
-                            // **只有主 App 走 updateFeatures** ⇒ 降级只清了主 App 的请求集，
-                            // 扩展的请求集还留着 ⇒ 签后逐 bundle 校验必红（LiveContainer 的
-                            // LiveProcess 就是这么连续失败的）。
-                            await diagnostic(
-                                "签名：\(mappedBundleID) 的能力被 Apple 拒（3001）⇒ 本轮该描述文件不授予任何能力；"
-                                    + "已一并清空 \(affectedBundleIDs.count) 个共享它的目标的请求集"
-                                    + "（\(affectedBundleIDs.joined(separator: "、"))）"
-                                    + (affectedBundleIDs.count > 1
-                                        ? "。⚠️ 共享主描述文件模式下**这些 bundle 嵌入的是同一份**："
-                                            + "谁请求了被拒的那几条能力，本轮就拿不到（Apple 未授予）；"
-                                            + "签出的包仍是自洽的（描述文件没有的能力不会写进 Mach-O）"
-                                        : "")
-                            )
-                        }
-                        // 免费账号与付费账号同样分配 App Group（对齐 SideStore 上游：`Feature.freeFeatures`
-                        // 含 `.appGroups`，`updateAppGroups` 对免费账号无条件执行）。
-                        // ⚠️ 但若上面 updateFeatures 已按空能力降级（3001），App Group 的 feature
-                        // 开关并未真正启用 —— 此时再调 assign 端点会被 Apple 1200 拒
-                        //（"Application Group feature should be enabled before associating"）、
-                        // 且 1200 不归「参数无效」降级分支管 ⇒ 直接跳过分配，跟着上面把请求集清空即可。
-                        if updated.downgradedToEmptyEntitlements == false {
-                            try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
-                                try await assignAppGroups(
-                                    appID: appID,
-                                    application: application,
-                                    team: team,
-                                    session: session
-                                )
-                            }
-                        }
-                    } catch {
-                        // 完整 IPA 的任一扩展无法完成 App ID / capability / App Group
-                        // 准备时，不能把它清空后继续产出一个表面成功的包。
-                        throw ApplePortalSigningFailure.make(stage: .appID, error: error)
+                guard let application = applications[mappedBundleID],
+                      let cachedEntitlements = cachedEntitlementsByBundleID[mappedBundleID] else {
+                    throw Self.failure(
+                        title: "无法读取应用权限",
+                        reason: "无法读取签名目标 \(mappedBundleID) 的完整权限声明；Seal 已停止签名。",
+                        recovery: "重新获取 IPA 后重试",
+                        code: "SEAL-ENTITLEMENT-404"
+                    )
+                }
+                do {
+                    // ⚠️ **`updateFeatures` 也必须过退避重试**（2026-09-17 补）。
+                    //
+                    // 它是 Phase 1 里每个 bundle ID 的**第二次**门户写入（第一次是 addAppID），
+                    // 所以抖音这种 9 扩展 App 一次签名要连发 **9 次** —— 与 addAppID 同等密集，
+                    // 却一直没有退避重试。漏掉它有两种后果，而且**都不报错**：
+                    // ① 主 App 的 updateFeatures 撞上 1100 ⇒ 落到下面那句
+                    //    `guard mappedBundleID != mappedMainBundleID else { throw error }`
+                    //    ⇒ **整个签名失败**，用户看到的只是「Apple ID 失效」；
+                    // ② 扩展的 updateFeatures 撞上 1100 ⇒ 走降级分支把 entitlements **清空**继续签
+                    //    ⇒ 签名「成功」，但扩展在真机上缺权限（静默降级比失败更难查）。
+                    // 退避重试把这两种「把限流当成事实」的结局变回「等一会儿就好了」。
+                    appID = try await withSessionRecovery("更新应用能力 \(mappedBundleID)") {
+                        try await updateFeatures(
+                            appID: appID,
+                            application: application,
+                            cachedEntitlements: cachedEntitlements,
+                            team: team,
+                            session: session
+                        )
                     }
+                    // 免费账号与付费账号同样分配 App Group（对齐 SideStore 上游：`Feature.freeFeatures`
+                    // 含 `.appGroups`，`updateAppGroups` 对免费账号无条件执行）。
+                    try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
+                        try await assignAppGroups(
+                            appID: appID,
+                            application: application,
+                            cachedEntitlements: cachedEntitlements,
+                            team: team,
+                            session: session
+                        )
+                    }
+                } catch {
+                    // 完整 IPA 的任一扩展无法完成 App ID / capability / App Group
+                    // 准备时，不能把它清空后继续产出一个表面成功的包。
+                    throw ApplePortalSigningFailure.make(stage: .appID, error: error)
                 }
                 preparedAppIDs.append((originalBundleID, mappedBundleID, appID))
                 // 真实信号：Bundle ID 是按个数推进的（抖音 = 主 App + 8 扩展 = 9 个）。
@@ -2996,19 +3008,18 @@ actor ApplePortalSigningService {
     }
 
 
-    /// - Returns: `downgradedToEmptyEntitlements` 为 true 表示 Apple 拒了这组能力（3001）、
-    ///   已按**空能力**重发成功。调用方必须同步把 `requestedEntitlements` 清空 ——
-    ///   描述文件里不会有这些能力，事后 `validateEntitlements` 用「本次请求集」对账，
-    ///   不清空就必报 SEAL-ENTITLEMENT-401「权限缺失」。
+    /// 只有 Apple 接受本次能力配置时才返回；能力更新失败会停止签名，不生成缺少权限的成功产物。
     private func updateFeatures(
         appID: ALTAppID,
         application: ALTApplication,
+        cachedEntitlements: [ALTEntitlement: any Sendable],
         team: ALTTeam,
         session: ALTAppleAPISession
-    ) async throws -> (appID: ALTAppID, downgradedToEmptyEntitlements: Bool) {
+    ) async throws -> ALTAppID {
         let filteredEntitlements = filteredAppIDEntitlements(
             from: application,
-            team: team
+            team: team,
+            cachedEntitlements: cachedEntitlements
         )
         // 对齐 SideStore `updateFeatures`：updateAppId 只发 feature 开关（"true"/"false"），
         // 绝不把 entitlements 值（app-groups 数组、increased-memory-limit 等）一起打包进去。
@@ -3045,14 +3056,15 @@ actor ApplePortalSigningService {
             targetFeatureValues: targetFeatureValues
         ) else {
             await diagnostic("签名：\(appID.bundleIdentifier) 的 App ID 能力已满足本次请求，跳过重复更新")
-            return (appID, false)
+            return appID
         }
 
         guard let updated = appID.copy() as? ALTAppID else {
             throw Self.failure(
                 title: "无法签名",
                 reason: "应用能力更新失败：Apple 返回的 App ID 无法复制，未能写入新的应用能力（如 App Groups、推送等权限）。",
-                recovery: "检查网络后重试；如持续失败请重新导入 IPA",                code: "SEAL-PROFILE-304"
+                recovery: "检查网络后重试；如持续失败请重新导入 IPA",
+                code: "SEAL-PROFILE-304"
             )
         }
         updated.features = features
@@ -3060,11 +3072,9 @@ actor ApplePortalSigningService {
         // 这正是免费账号 3001 的根因（见上方注释）。App Group 由 `APG3427HIY` 开关启用，
         // 具体 group 的绑定由 `assignAppGroups` 单独走 assign 端点完成。
         do {
-            return (try await submitUpdatedAppID(updated, team: team, session: session), false)
+            return try await submitUpdatedAppID(updated, team: team, session: session)
         } catch {
-            guard Self.isInvalidAppIDParameterError(error),
-                  team.type == .free,
-                  let fallback = appID.copy() as? ALTAppID else {
+            guard Self.isInvalidAppIDParameterError(error), team.type == .free else {
                 throw error
             }
             // ⚠️ **必须报出「被拒的是哪些能力」**（2026-09-24，构建 30 真机）。
@@ -3078,23 +3088,24 @@ actor ApplePortalSigningService {
             // ⚠️ 只报**能力名**（`rawValue`），不报值 —— 值里可能含 App Group 之类的标识。
             // ⚠️ 这条只说「拒了什么」；「影响了哪些 bundle」由调用点的诊断说，两条不重复。
             let rejectedEntitlementNames = filteredEntitlements.keys.map { $0.rawValue }.sorted()
+            let names = rejectedEntitlementNames.isEmpty ? "（空能力集）" : rejectedEntitlementNames.joined(separator: "、")
             await diagnostic(
-                "签名：Apple 判定 \(appID.bundleIdentifier) 的能力参数无效（3001），将按空能力重发。"
-                    + "本次提交的能力："
-                    + (rejectedEntitlementNames.isEmpty
-                        ? "（空）"
-                        : rejectedEntitlementNames.joined(separator: "、"))
+                "签名停止：Apple 拒绝 \(appID.bundleIdentifier) 的能力配置（3001）；"
+                    + "没有清空权限后伪装成功。涉及能力：\(names)"
             )
-            fallback.features = [:]
-            fallback.entitlements = [:]
-            return (try await submitUpdatedAppID(fallback, team: team, session: session), true)
+            throw Self.failure(
+                title: "Apple 拒绝应用能力",
+                reason: "Apple 拒绝了 \(appID.bundleIdentifier) 的能力配置（3001）。Seal 没有移除这些权限继续签名。涉及能力：\(names)。\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                recovery: "检查 IPA 所需能力与 Apple ID 支持范围后重试",
+                code: "SEAL-PROFILE-304"
+            )
         }
     }
 
     private func filteredAppIDEntitlements(
         from application: ALTApplication,
         team: ALTTeam,
-        cachedEntitlements: [ALTEntitlement: any Sendable]? = nil
+        cachedEntitlements: [ALTEntitlement: any Sendable]
     ) -> [ALTEntitlement: any Sendable] {
         let signerManagedEntitlements: Set<String> = [
             "application-identifier",
@@ -3103,10 +3114,8 @@ actor ApplePortalSigningService {
             "get-task-allow"
         ]
         var filtered: [ALTEntitlement: any Sendable] = [:]
-        // ── entitlements 复用（性能优化 2026-10-04）：`application.entitlements`
-        // 底层是 `LdidBridge.entitlements(at:)`（Mach-O 解析），调用方已缓存时直接复用。
-        let sourceEntitlements = cachedEntitlements ?? application.entitlements
-        for (entitlement, value) in sourceEntitlements {
+        // 权限已在门户资源申请前用 throwing reader 完整读取；不能在这里退回静默空字典。
+        for (entitlement, value) in cachedEntitlements {
             if signerManagedEntitlements.contains(entitlement.rawValue) {
                 continue
             }
@@ -3196,11 +3205,20 @@ actor ApplePortalSigningService {
     private func assignAppGroups(
         appID: ALTAppID,
         application: ALTApplication,
+        cachedEntitlements: [ALTEntitlement: any Sendable],
         team: ALTTeam,
         session: ALTAppleAPISession
     ) async throws {
-        guard let originalGroups = application.entitlements[.appGroups] as? [String],
-              originalGroups.isEmpty == false else { return }
+        guard let appGroupsValue = cachedEntitlements[.appGroups] else { return }
+        guard let originalGroups = appGroupsValue as? [String] else {
+            throw Self.failure(
+                title: "应用组权限格式无效",
+                reason: "无法读取 \(application.bundleIdentifier) 的 App Groups 声明，Seal 已停止签名。",
+                recovery: "重新获取 IPA 后重试",
+                code: "SEAL-ENTITLEMENT-403"
+            )
+        }
+        guard originalGroups.isEmpty == false else { return }
         // App Group 操作通过 actor 串行化；批量签名为串行循环，无并发创建风险
         // 2026-10-10：映射后按默认字符串序排序，保证同一集合永远得到同一顺序。
         // 背景：原包 entitlement 里 app-groups 数组的顺序是任意的（不同构建可能不同，

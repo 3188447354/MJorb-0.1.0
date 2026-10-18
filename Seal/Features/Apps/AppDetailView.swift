@@ -13,17 +13,35 @@ struct AppDetailView: View {
                 SealDrawer(title: "应用详情") {
                     VStack(alignment: .leading, spacing: 18) {
                         header(app)
+                        if app.needsIPAImport {
+                            Text("此应用由设备扫描恢复，本机没有保存原始 IPA。需要重新签名时，请先导入该应用的 IPA。")
+                                .font(.footnote)
+                                .foregroundStyle(Color.sealTextSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                         infoCard(app)
                     }
                     .padding(.bottom, 8)
                 } footer: {
                     if app.belongsInInstalledList {
                         VStack(spacing: 10) {
-                            Button(AppSigningPresentationHelpers.renewNowAction) {
-                                dismiss()
-                                Task { await viewModel.beginRenewalDirectly(for: app) }
+                            if app.needsIPAImport == false || viewModel.canRenewProfileOnlyWithoutIPA(app) {
+                                Button(AppSigningPresentationHelpers.renewNowAction) {
+                                    dismiss()
+                                    Task { await viewModel.beginRenewalDirectly(for: app) }
+                                }
+                                .sealPrimaryAction(cornerRadius: 14)
                             }
-                            .sealPrimaryAction(cornerRadius: 14)
+                            if app.needsIPAImport {
+                                Button("导入 IPA") {
+                                    dismiss()
+                                    Task { @MainActor in
+                                        try? await Task.sleep(for: .milliseconds(250))
+                                        viewModel.presentImporter()
+                                    }
+                                }
+                                .sealOutlineAction(cornerRadius: 14)
+                            }
                         }
                     } else {
                         Button("关闭") { dismiss() }
@@ -65,7 +83,7 @@ struct AppDetailView: View {
                     .font(.title2.weight(.semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
-                Text("v\(app.version) · \(app.size.sealFormattedByteCount)")
+                Text(app.needsIPAImport ? "v\(app.version) · 设备已安装" : "v\(app.version) · \(app.size.sealFormattedByteCount)")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Color.sealTextSecondary)
                     .lineLimit(1)
@@ -75,9 +93,23 @@ struct AppDetailView: View {
         }
     }
 
+    private func installedStateText(_ app: AppRecord) -> String {
+        guard app.belongsInInstalledList else { return app.state.title }
+        if app.needsIPAImport { return "已安装·待导入 IPA" }
+        if app.pendingSignedSnapshot?.installAttemptID != nil {
+            return "安装结果待确认"
+        }
+        switch app.signedArtifactStatus {
+        case .awaitingVerification: return "安装结果待确认"
+        case .installFailed: return "最近一次安装失败"
+        case .deviceUnavailable: return "设备不可用"
+        default: return "已安装"
+        }
+    }
+
     private func infoCard(_ app: AppRecord) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            detailRow("当前状态", app.belongsInInstalledList ? "已安装" : app.state.title)
+            detailRow("当前状态", installedStateText(app))
             Divider()
             detailRow("签名账户", accountName(app))
             Divider()
@@ -98,9 +130,9 @@ struct AppDetailView: View {
             Divider()
             detailRow("团队 ID", app.signingTeamID ?? "未记录")
             Divider()
-            identifierDetailRow("App ID", signedBundleIdentifier(app), highlightSeal: true)
+            identifierDetailRow("App ID", applicationIdentifier(app), highlightSeal: false)
             Divider()
-            identifierDetailRow("Bundle ID", app.originalBundleIdentifier, highlightSeal: false)
+            identifierDetailRow("Bundle ID", signedBundleIdentifier(app), highlightSeal: false)
             Divider()
             profileDetailRow(app)
             Divider()
@@ -138,8 +170,8 @@ struct AppDetailView: View {
                         Divider()
                         detailRow(
                             "扩展·\(extensionRecord.name)",
-                            extensionExpiryText(extensionRecord),
-                            valueColor: extensionExpiryColor(extensionRecord)
+                            extensionExpiryText(extensionRecord, app: app),
+                            valueColor: extensionExpiryColor(extensionRecord, app: app)
                         )
                     }
                 }
@@ -313,9 +345,25 @@ struct AppDetailView: View {
     }
 
     private func signedBundleIdentifier(_ app: AppRecord) -> String {
-        app.mappedBundleIdentifier
+        if let target = mainSigningTarget(app) { return target.bundleIdentifier }
+        return app.mappedBundleIdentifier
             ?? app.preferredBundleIdentifier
             ?? (app.belongsInInstalledList ? "未记录" : app.originalBundleIdentifier)
+    }
+
+    private func applicationIdentifier(_ app: AppRecord) -> String {
+        mainSigningTarget(app)?.applicationIdentifier ?? "未记录"
+    }
+
+    private func mainSigningTarget(_ app: AppRecord) -> SigningTargetRecord? {
+        let bundleIdentifiers = [app.mappedBundleIdentifier, app.preferredBundleIdentifier]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { $0.isEmpty == false }
+        return app.signingTargets.first { target in
+            bundleIdentifiers.contains {
+                $0.caseInsensitiveCompare(target.bundleIdentifier) == .orderedSame
+            }
+        }
     }
 
     private func profileStatus(_ app: AppRecord) -> ProfileDisplayStatus {
@@ -332,12 +380,17 @@ struct AppDetailView: View {
     }
 
     private func expiryDateText(_ app: AppRecord) -> String {
-        guard let date = AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
+        guard let date = mainSigningTarget(app)?.profileExpirationDate
+                ?? AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
         return SealSettingsDateFormatter.string(from: date)
     }
 
-    private func extensionExpiryText(_ record: AppExtensionRecord) -> String {
-        guard let date = record.provisioningProfileExpirationDate else { return "未签名" }
+    private func extensionExpiryText(_ record: AppExtensionRecord, app: AppRecord) -> String {
+        let bundleIdentifier = record.mappedBundleIdentifier ?? record.originalBundleIdentifier
+        let date = app.signingTargets.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        })?.profileExpirationDate ?? record.provisioningProfileExpirationDate
+        guard let date else { return "未签名" }
         return SealSettingsDateFormatter.string(from: date)
     }
 
@@ -352,8 +405,12 @@ struct AppDetailView: View {
         }
     }
 
-    private func extensionExpiryColor(_ record: AppExtensionRecord) -> Color {
-        guard let date = record.provisioningProfileExpirationDate else { return .sealTextSecondary }
+    private func extensionExpiryColor(_ record: AppExtensionRecord, app: AppRecord) -> Color {
+        let bundleIdentifier = record.mappedBundleIdentifier ?? record.originalBundleIdentifier
+        let date = app.signingTargets.first(where: {
+            $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+        })?.profileExpirationDate ?? record.provisioningProfileExpirationDate
+        guard let date else { return .sealTextSecondary }
         let remaining = date.timeIntervalSinceNow
         if remaining < 0 { return .sealDanger }
         if remaining < 2 * 24 * 3600 { return .sealWarning }

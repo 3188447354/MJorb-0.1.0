@@ -96,14 +96,15 @@ actor ImportWorkflow {
             return .newApp
         }
         // 找同 Bundle ID 的已存在记录（包括 Seal 自更新）
-        let existing = Self.existingSealRecord(
+        let existingSeal = Self.existingSealRecord(
             for: parsed,
             in: records,
             runningSealBundleIdentifier: runningSealBundleIdentifier
-        ) ?? records.first { record in
-            record.isSeal == false
-                && record.originalBundleIdentifier == parsed.bundleIdentifier
         }
+        let existing = existingSeal ?? ImportReplacementPolicy.installedReplacementCandidate(
+            for: parsed,
+            in: records
+        )
         guard let existing else {
             return .newApp
         }
@@ -151,6 +152,10 @@ actor ImportWorkflow {
                 return .buildUpgrade(oldBuild: oldBuild, newBuild: newBuild, version: newVersion)
             } else if buildComparison < 0 {
                 return .buildDowngrade(oldBuild: oldBuild, newBuild: newBuild, version: newVersion)
+            }
+            guard let existing,
+                  (try? await fileStore.exists(relativePath: existing.ipaRelativePath)) == true else {
+                return .sameVersionRecovery(version: newVersion)
             }
             return .alreadyLatest(version: newVersion)
         }

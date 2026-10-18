@@ -126,7 +126,7 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
             )
             verboseLog("[SideSign] Original profile entitlements: \(filteredEntitlements)")
 
-            let applicationEntitlements = app.entitlements
+            let applicationEntitlements = try app.readEntitlements()
 
             for (key, _) in filteredEntitlements {
                 if let applicationValue = applicationEntitlements[key] {

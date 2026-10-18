@@ -204,6 +204,73 @@ struct AppFileStoreTests {
     }
 
     @Test
+    func recoversOldSignedIPAWhenReplacementWasInterrupted() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = AppFileStore(
+            documentsDirectory: fixture.documents,
+            cacheDirectory: fixture.cache
+        )
+        let appDirectory = fixture.documents.appending(path: "Apps/recovery", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let backup = appDirectory.appending(path: ".Signed.backup-transaction.ipa")
+        let pending = appDirectory.appending(path: ".Signed.pending-transaction.ipa")
+        let destination = appDirectory.appending(path: "Signed.ipa")
+        try Data("old signed ipa".utf8).write(to: backup)
+        try Data("new pending ipa".utf8).write(to: pending)
+
+        try await store.recoverSignedIPAReplacementArtifacts()
+
+        #expect(try Data(contentsOf: destination) == Data("old signed ipa".utf8))
+        #expect(FileManager.default.fileExists(atPath: backup.path) == false)
+        #expect(FileManager.default.fileExists(atPath: pending.path) == false)
+    }
+
+    @Test
+    func keepsCommittedSignedIPAAndCleansReplacementBackups() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = AppFileStore(
+            documentsDirectory: fixture.documents,
+            cacheDirectory: fixture.cache
+        )
+        let appDirectory = fixture.documents.appending(path: "Apps/committed", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let backup = appDirectory.appending(path: ".Signed.backup-transaction.ipa")
+        let pending = appDirectory.appending(path: ".Signed.pending-transaction.ipa")
+        let destination = appDirectory.appending(path: "Signed.ipa")
+        try Data("old signed ipa".utf8).write(to: backup)
+        try Data("new signed ipa".utf8).write(to: destination)
+        try Data("stale pending ipa".utf8).write(to: pending)
+
+        try await store.recoverSignedIPAReplacementArtifacts()
+
+        #expect(try Data(contentsOf: destination) == Data("new signed ipa".utf8))
+        #expect(FileManager.default.fileExists(atPath: backup.path) == false)
+        #expect(FileManager.default.fileExists(atPath: pending.path) == false)
+    }
+
+    @Test
+    func promotesSolePendingSignedIPAWhenNoOldPackageExisted() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = AppFileStore(
+            documentsDirectory: fixture.documents,
+            cacheDirectory: fixture.cache
+        )
+        let appDirectory = fixture.documents.appending(path: "Apps/first-sign", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: appDirectory, withIntermediateDirectories: true)
+        let pending = appDirectory.appending(path: ".Signed.pending-transaction.ipa")
+        let destination = appDirectory.appending(path: "Signed.ipa")
+        try Data("signed ipa".utf8).write(to: pending)
+
+        try await store.recoverSignedIPAReplacementArtifacts()
+
+        #expect(try Data(contentsOf: destination) == Data("signed ipa".utf8))
+        #expect(FileManager.default.fileExists(atPath: pending.path) == false)
+    }
+
+    @Test
     func clearingTemporaryFilesNeverDeletesCommittedOriginalIPAOrIcon() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

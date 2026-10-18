@@ -11,6 +11,8 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
     let teamIdentifier: String
     let certificateSerialNumbers: [String]
     let deviceIdentifiers: [String]
+    /// 从签名后 Mach-O 的实际 application-identifier entitlement 读取；profile 的授权值可能是通配符，不能代替它。
+    let applicationIdentifier: String?
     /// 该目标被**实授**的完整 entitlements（键 + 值，`ProvisioningEntitlementValue`）。
     ///
     /// 字段从 `ProvisioningProfileBinding.entitlements` 落盘（首签与 profile-only 续签两条路径都写）。
@@ -29,13 +31,15 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
     init(binding: ProvisioningProfileBinding) {
         self.init(
             binding: binding,
-            signedBundleIdentifier: binding.bundleIdentifier
+            signedBundleIdentifier: binding.bundleIdentifier,
+            applicationIdentifier: nil
         )
     }
 
     init(
         binding: ProvisioningProfileBinding,
-        signedBundleIdentifier: String
+        signedBundleIdentifier: String,
+        applicationIdentifier: String? = nil
     ) {
         // 共享主描述文件时，profile 内的 application-identifier 属于主 App；
         // 记录的 target 则必须保留实际被重签的扩展 Bundle ID，供缓存和安装前校验逐项匹配。
@@ -48,6 +52,7 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
         certificateSerialNumbers = binding.certificateSerialNumbers
         deviceIdentifiers = binding.deviceIdentifiers
         entitlements = binding.entitlements
+        self.applicationIdentifier = applicationIdentifier
     }
 
     init(
@@ -59,7 +64,8 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
         teamIdentifier: String,
         certificateSerialNumbers: [String],
         deviceIdentifiers: [String],
-        entitlements: [String: ProvisioningEntitlementValue] = [:]
+        entitlements: [String: ProvisioningEntitlementValue] = [:],
+        applicationIdentifier: String? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.profileUUID = profileUUID
@@ -70,6 +76,7 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
         self.certificateSerialNumbers = certificateSerialNumbers
         self.deviceIdentifiers = deviceIdentifiers
         self.entitlements = entitlements
+        self.applicationIdentifier = applicationIdentifier
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -82,6 +89,7 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
         case certificateSerialNumbers
         case deviceIdentifiers
         case entitlements
+        case applicationIdentifier
     }
 
     init(from decoder: Decoder) throws {
@@ -98,6 +106,7 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
             [String: ProvisioningEntitlementValue].self,
             forKey: .entitlements
         ) ?? [:]
+        applicationIdentifier = try container.decodeIfPresent(String.self, forKey: .applicationIdentifier)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -111,5 +120,6 @@ struct SigningTargetRecord: Codable, Equatable, Identifiable, Sendable {
         try container.encode(certificateSerialNumbers, forKey: .certificateSerialNumbers)
         try container.encode(deviceIdentifiers, forKey: .deviceIdentifiers)
         try container.encode(entitlements, forKey: .entitlements)
+        try container.encodeIfPresent(applicationIdentifier, forKey: .applicationIdentifier)
     }
 }

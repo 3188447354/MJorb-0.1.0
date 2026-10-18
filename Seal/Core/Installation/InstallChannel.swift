@@ -21,6 +21,8 @@ protocol InstallChannel: Actor {
     /// 确认当前 RemotePairing 会话不仅能读取 UDID，也能连接描述文件使用的 misagent 服务。
     /// 成功后实现可在短时健康租约内复用结果；此方法不读取结果内容来决定续签资格。
     func prepareProfileService() async throws
+    /// Lets a serialized renewal caller release its device lease after a timed-out native probe returns.
+    func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws
     /// 只废弃 Rust 的 RSD 会话缓存，保留当前配对文件与 provider 选择。
     /// 用于 profile 服务出现瞬时失败后的立即自愈，避免全量 reset 配对状态。
     func invalidateProfileServiceConnection() async
@@ -32,6 +34,13 @@ protocol InstallChannel: Actor {
         bundleID: String,
         isSelfReplacement: Bool,
         onProgress: @escaping @Sendable (Double) async -> Void
+    ) async throws
+    func install(
+        ipaData: Data,
+        bundleID: String,
+        isSelfReplacement: Bool,
+        onProgress: @escaping @Sendable (Double) async -> Void,
+        onLateCompletion: @escaping @Sendable (Result<Void, String>) async -> Void
     ) async throws
     func verifyInstalled(bundleID: String) async throws
 }
@@ -65,6 +74,10 @@ extension InstallChannel {
         _ = try await start()
     }
 
+    func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws {
+        try await prepareProfileService()
+    }
+
     func invalidateProfileServiceConnection() async {}
 
     /// 带进度回调用法的默认实现：忽略进度，直接转发到无进度版本。
@@ -81,6 +94,21 @@ extension InstallChannel {
             ipaData: ipaData,
             bundleID: bundleID,
             isSelfReplacement: isSelfReplacement
+        )
+    }
+
+    func install(
+        ipaData: Data,
+        bundleID: String,
+        isSelfReplacement: Bool,
+        onProgress: @escaping @Sendable (Double) async -> Void,
+        onLateCompletion: @escaping @Sendable (Result<Void, String>) async -> Void
+    ) async throws {
+        try await install(
+            ipaData: ipaData,
+            bundleID: bundleID,
+            isSelfReplacement: isSelfReplacement,
+            onProgress: onProgress
         )
     }
 }

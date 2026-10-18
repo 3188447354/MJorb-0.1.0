@@ -56,18 +56,12 @@ struct AppExtensionProfileStrategyTests {
         )
     }
 
-    /// 默认策略是**共享**（2026-10-16 改）。
-    ///
-    /// 原断言编码的是「`isSeal || hasExtensions` ⇒ 独立」，那是在一次 LiveProcess 真机回归
-    /// 之后加的保守兜底；它把「扩展能力 ⊄ 主 App 能力」这个可精确判定的条件放大成了
-    /// 「含扩展就独立」，代价是免费账号每装一个带扩展的包多消耗 N 个 App ID
-    /// （实测记录：共享模式下 9 个 bundle 只占 1 个 App ID 且签名安装成功）。
-    /// 精确判定改由 `resolvedForSigning` + `sharedProfileBlocker` 承担。
+    /// 默认共享，只有实际能力检查不兼容的扩展才单独申请描述文件。
     @Test
-    func onlySealAndLiveContainerUseIndependentProfilesByDefault() {
+    func appsUseCapabilityBasedSharingByDefault() {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .independentProfiles)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .sharedMainProfile)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .sharedMainProfile)
     }
 
     /// 含扩展的普通 App 现在**默认共享**；是否真的共享由 `sharedProfileBlocker` 在拿到
@@ -107,7 +101,7 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func liveContainerAlwaysUsesIndependentProfilesByDefault() {
+    func liveContainerUsesSharedDefaultWhenItsCapabilitiesAllowIt() {
         let app = AppRecord(
             originalBundleIdentifier: "com.kdt.livecontainer",
             name: "LiveContainer",
@@ -119,7 +113,7 @@ struct AppExtensionProfileStrategyTests {
             importedAt: .now
         )
 
-        #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
+        #expect(app.effectiveExtensionProfileStrategy == .sharedMainProfile)
     }
 
     /// 已记录的独立策略应保持独立。
@@ -359,6 +353,50 @@ struct AppExtensionProfileStrategyTests {
                 expectedBundleIdentifiers: [mappedMain, mappedShare, mappedWidget]
             ) == .selectiveProfiles
         )
+    }
+
+    @Test
+    func requiresAnIndependentProfileWhenSharedEntitlementValueDoesNotCoverExtension() {
+        let sharedKey = "com.apple.security.application-groups"
+        let independent = AppExtensionProfileStrategy.independentBundleIdentifiers(
+            mainBundleID: mappedMain,
+            entitlementsByBundleID: [
+                mappedMain: [sharedKey],
+                mappedShare: [sharedKey]
+            ],
+            entitlementValuesByBundleID: [
+                mappedMain: [sharedKey: .array([.string("group.main")])],
+                mappedShare: [sharedKey: .array([.string("group.extension")])]
+            ],
+            expectedBundleIdentifiers: [mappedMain, mappedShare]
+        )
+
+        #expect(independent == [mappedShare])
+    }
+
+    @Test
+    func allowsAnExtensionToShareWhenItsEntitlementValuesAreCoveredByMain() {
+        let sharedKey = "com.apple.security.application-groups"
+        let independent = AppExtensionProfileStrategy.independentBundleIdentifiers(
+            mainBundleID: mappedMain,
+            entitlementsByBundleID: [
+                mappedMain: [sharedKey],
+                mappedShare: [sharedKey]
+            ],
+            entitlementValuesByBundleID: [
+                mappedMain: [sharedKey: .array([.string("group.main"), .string("group.extension")])],
+                mappedShare: [sharedKey: .array([.string("group.extension")])]
+            ],
+            expectedBundleIdentifiers: [mappedMain, mappedShare]
+        )
+
+        #expect(independent.isEmpty)
+    }
+
+    @Test
+    func defaultsSealAndLiveContainerToCapabilityBasedSharing() {
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .sharedMainProfile)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .sharedMainProfile)
     }
 
     @Test

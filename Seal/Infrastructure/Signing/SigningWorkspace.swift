@@ -25,7 +25,7 @@ struct SigningWorkspace: Sendable {
         ///     `PlugIns/` 下的 `.appex`（上游 `ALTApplication.swift`）——
         ///     归一化把根目录的 `.framework` / `.dylib` 挪进 `Frameworks/`，
         ///     **不在** `.appex` 的枚举面里 ⇒ 跳不跳它，扩展集合都一样 ✓；
-        ///  ③ 剩下的步骤（`removeUnsupportedBundles` / `removeMissingAppExtensionReferences` /
+        ///  ③ 剩下的步骤（`rejectUnsupportedBundles` /
         ///     残留清理 / 空目录清理）**两种用途都要做** —— 它们会改变扩展集合，
         ///     跳过就会让「申请到的描述文件」与「记录里的目标集合」对不上 ✗。
         case layoutOnly
@@ -142,11 +142,9 @@ struct SigningWorkspace: Sendable {
                 try replacePrimaryAppIcon(at: appURL, imageData: preferredIconData)
             }
 
-            // 自动移除免费账号不支持的内容：Watch App、App Clip
-            // 参照 SideStore/AltStore 官方逻辑，这些内容免费账号无法签名
-            try removeUnsupportedBundles(in: appURL)
-            // 对齐 SideStore：清理 SC_Info/Manifest.plist 中指向已删除扩展的引用
-            try removeMissingAppExtensionReferences(in: appURL)
+            if purpose == .signing {
+                try rejectUnsupportedBundles(in: appURL)
+            }
 
             // 清理 ESign 等其它签名工具留下的注入脚本/标记残留（容错，不阻断签名）。
             removeThirdPartyInjectionArtifacts(in: appURL)
@@ -703,68 +701,6 @@ struct SigningWorkspace: Sendable {
         try updated.write(to: infoURL, options: .atomic)
     }
 
-    // MARK: - SC_Info / Manifest.plist cleanup (对齐 SideStore)
-
-    /// 移除 SC_Info/Manifest.plist 中指向已被删除扩展的引用。
-    /// DRM 正版 IPA 的 SC_Info/Manifest.plist 会列出所有扩展，若扩展被删除而 Manifest 未更新，
-    /// installd 校验时会报 MissingBundle 或安装失败。
-    private func removeMissingAppExtensionReferences(in appURL: URL) throws {
-        let scInfoURL = appURL.appendingPathComponent("SC_Info")
-        guard FileManager.default.fileExists(atPath: scInfoURL.path) else { return }
-
-        let manifestURL = scInfoURL.appendingPathComponent("Manifest.plist")
-        guard FileManager.default.fileExists(atPath: manifestURL.path) else { return }
-
-        let data = try Data(contentsOf: manifestURL)
-        var format = PropertyListSerialization.PropertyListFormat.binary
-        let value = try PropertyListSerialization.propertyList(
-            from: data,
-            options: [.mutableContainersAndLeaves],
-            format: &format
-        )
-        guard var manifest = value as? [String: Any] else { return }
-
-        let pluginsURL = appURL.appendingPathComponent("PlugIns")
-        var changed = false
-
-        // SinfOptions: [SinfID: [BundlePath: ...]]
-        if var sinfOptions = manifest["SinfOptions"] as? [String: Any] {
-            for (key, entry) in sinfOptions {
-                guard let dict = entry as? [String: Any],
-                      let bundlePath = dict["BundlePath"] as? String else { continue }
-                let appexName = (bundlePath as NSString).lastPathComponent
-                let appexURL = pluginsURL.appendingPathComponent(appexName)
-                if FileManager.default.fileExists(atPath: appexURL.path) == false {
-                    sinfOptions.removeValue(forKey: key)
-                    changed = true
-                }
-            }
-            manifest["SinfOptions"] = sinfOptions
-        }
-
-        // SinfIDs 数组形式
-        if var sinfIDs = manifest["SinfIDs"] as? [[String: Any]] {
-            sinfIDs.removeAll { entry in
-                guard let bundlePath = entry["BundlePath"] as? String else { return false }
-                let appexName = (bundlePath as NSString).lastPathComponent
-                let appexURL = pluginsURL.appendingPathComponent(appexName)
-                let missing = FileManager.default.fileExists(atPath: appexURL.path) == false
-                if missing { changed = true }
-                return missing
-            }
-            manifest["SinfIDs"] = sinfIDs
-        }
-
-        if changed {
-            let updated = try PropertyListSerialization.data(
-                fromPropertyList: manifest,
-                format: format,
-                options: 0
-            )
-            try updated.write(to: manifestURL, options: .atomic)
-        }
-    }
-
     // MARK: - Exported UTIs (对齐 SideStore)
 
     /// 给重签后的 App 添加自定义 UTI，用于 Seal 检测已安装应用。
@@ -812,26 +748,20 @@ struct SigningWorkspace: Sendable {
         }
     }
 
-    /// 自动移除免费账号不支持的内容：Watch App、App Clip
-    /// 参照 SideStore/AltStore 官方逻辑
-    private func removeUnsupportedBundles(in appURL: URL) throws {
+    /// 不静默删除签名器不支持的子目标，防止产出功能不完整的 IPA。
+    private func rejectUnsupportedBundles(in appURL: URL) throws {
         let fileManager = FileManager.default
+        var unsupportedTargets: [String] = []
 
-        // 移除 Watch App（免费账号不支持 Watch 签名）
-        let watchURL = appURL.appendingPathComponent("Watch")
-        if fileManager.fileExists(atPath: watchURL.path) {
-            try fileManager.removeItem(at: watchURL)
+        for directory in ["Watch", "AppClips"] {
+            let targetURL = appURL.appendingPathComponent(directory)
+            if fileManager.fileExists(atPath: targetURL.path) {
+                unsupportedTargets.append(directory)
+            }
         }
 
-        // 移除 App Clip（免费账号不支持 App Clip）
-        let appClipsURL = appURL.appendingPathComponent("AppClips")
-        if fileManager.fileExists(atPath: appClipsURL.path) {
-            try fileManager.removeItem(at: appClipsURL)
-        }
-
-        // 移除 PlugIns 中的 App Clip 和 WatchKit 扩展（arm64_32 32-bit，rork-sign 不支持）
-        if let plugInsURL = appURL.appendingPathComponent("PlugIns") as URL?,
-           fileManager.fileExists(atPath: plugInsURL.path) {
+        let plugInsURL = appURL.appendingPathComponent("PlugIns")
+        if fileManager.fileExists(atPath: plugInsURL.path) {
             let appexContents = try fileManager.contentsOfDirectory(
                 at: plugInsURL,
                 includingPropertiesForKeys: [.isDirectoryKey],
@@ -847,9 +777,16 @@ struct SigningWorkspace: Sendable {
                    ) as? [String: Any],
                    let extensionPoint = info["NSExtensionPointIdentifier"] as? String,
                    extensionPoint == "com.apple.app-clip" || extensionPoint == "com.apple.watchkit" {
-                    try fileManager.removeItem(at: appexURL)
+                    unsupportedTargets.append(appexURL.lastPathComponent)
                 }
             }
+        }
+
+        guard unsupportedTargets.isEmpty else {
+            throw Self.signingFailure(
+                reason: "IPA 包含当前签名流程尚不支持的 Watch 或 App Clip 目标：\(unsupportedTargets.sorted().joined(separator: "、"))。Seal 没有删除这些组件，也没有生成不完整的签名包。",
+                code: "SEAL-SIGN-401"
+            )
         }
     }
 

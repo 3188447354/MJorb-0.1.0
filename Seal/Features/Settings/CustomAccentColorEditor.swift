@@ -17,6 +17,7 @@ struct CustomAccentColorEditor: View {
     @State private var originalAccentRawValue: String
     @State private var previewTask: Task<Void, Never>?
     @State private var pendingPreviewHex: String?
+    @State private var lastProgrammaticHex: String?
 
     init(
         customHex: Binding<String>,
@@ -119,7 +120,7 @@ struct CustomAccentColorEditor: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [.red, Color(red: 1, green: 0, blue: 0.5), .blue, .cyan, .green, .yellow, .red],
+                        colors: [.red, .yellow, .green, .cyan, .blue, Color(red: 1, green: 0, blue: 0.5), .red],
                         startPoint: .leading,
                         endPoint: .trailing
                     )
@@ -152,8 +153,16 @@ struct CustomAccentColorEditor: View {
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .onChange(of: hexInput) { value in
+                    if value == lastProgrammaticHex {
+                        lastProgrammaticHex = nil
+                        return
+                    }
                     guard let incoming = HSBAColor(hex: value) else { return }
-                    color = incoming
+                    var selected = incoming
+                    if selected.saturation == 0 {
+                        selected.hue = color.hue
+                    }
+                    color = selected
                     applyPreview(value)
                 }
                 .accessibilityLabel("十六进制颜色")
@@ -170,8 +179,12 @@ struct CustomAccentColorEditor: View {
     /// 每次滑块变化都更新全局主题；RootTabView 的主题 ID 会刷新主界面，
     /// 取色器由 RootTabView 外层呈现，因此刷新不会打断当前手势。
     private func synchronizeHex() {
-        hexInput = color.hex
-        applyPreview(hexInput)
+        let value = color.hex
+        if hexInput != value {
+            lastProgrammaticHex = value
+            hexInput = value
+        }
+        applyPreview(value)
     }
 
     private func applyPreview(_ value: String) {

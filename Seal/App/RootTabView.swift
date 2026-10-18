@@ -206,8 +206,10 @@ struct RootTabView: View {
     private func installSelfUpdate(_ localURL: URL) {
         selection = .apps
         Task {
-            let imported = await appsViewModel.importSelfUpdateFile(localURL)
-            if imported {
+            let staged = await appsViewModel.importSelfUpdateFile(localURL)
+            // 只有导入器确认更新包已进入受管理事务后才删除下载副本；失败时保留原文件，
+            // 用户可以直接重试，不会因一次临时错误丢掉已下载的 IPA。
+            if staged {
                 UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
             }
         }

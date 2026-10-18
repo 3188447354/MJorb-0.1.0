@@ -244,14 +244,17 @@ actor SelfReplacementCoordinator: SelfReplacing {
 
     /// 是否仍处于「传输已返回、installd 还在替换」的宽限期内。
     ///
-    /// 没有 `returnedAt`（例如传输根本没返回就重启）⇒ **不在**宽限期内：
-    /// 那种情况本来就该走失败路径，不该被宽限期掩盖。
+    /// 没有 `returnedAt` 时以提交认领时间为锚点，避免进程在传输返回前被系统结束后
+    /// 永久挂起；超过同一有限宽限期仍按未安装结算。
     static func isWithinReplacementGrace(
         _ transaction: SelfReplacementTransaction,
         now: Date
     ) -> Bool {
-        guard let returnedAt = transaction.submission?.returnedAt else { return false }
-        return now.timeIntervalSince(returnedAt) < replacementGraceSeconds
+        guard let submission = transaction.submission else { return false }
+        // App 可能在安装调用返回前被系统杀掉。claimedAt 也必须走有限宽限期；
+        // 绝不能把「没有 returnedAt」当成永久等待。
+        let graceAnchor = submission.returnedAt ?? submission.claimedAt
+        return now.timeIntervalSince(graceAnchor) < replacementGraceSeconds
     }
 
     /// 结算：重读当前运行身份，只有它仍与候选身份完全一致才把事务推进到

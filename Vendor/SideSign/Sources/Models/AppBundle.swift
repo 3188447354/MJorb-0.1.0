@@ -42,6 +42,37 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
         loadEntitlements()
     }
 
+    /// Reads signing entitlements without treating Mach-O or plist failures as an empty set.
+    public func readEntitlements() throws -> [String: any Sendable] {
+        try Self.readEntitlements(from: MachOParser.entitlements(at: fileURL))
+    }
+
+    static func readEntitlements(from string: String) throws -> [String: any Sendable] {
+        guard string.isEmpty == false else { return [:] }
+        guard let data = string.data(using: .utf8) else {
+            throw NSError(
+                domain: "SideSign.AppBundle.Entitlements",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Entitlements are not valid UTF-8"]
+            )
+        }
+        let object = try PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+              )
+        guard let plist = object as? [String: Any] else {
+            throw NSError(
+                domain: "SideSign.AppBundle.Entitlements",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Entitlements are not a valid property-list dictionary"]
+            )
+        }
+        return plist.reduce(into: [String: any Sendable]()) { result, pair in
+            result[pair.key] = pair.value
+        }
+    }
+
     public var infoPlistURL: URL {
         InfoPlistParser.resolveInfoPlistURL(for: fileURL)
     }

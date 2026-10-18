@@ -136,9 +136,10 @@ struct ImportedAppRow: View {
                 .background(Color.orange, in: RoundedRectangle(cornerRadius: 8))
         } else if app.belongsInInstalledList {
             let validity = AppOperationPresentation(app: app).validity
-            Text(validity?.text ?? "已安装")
+            let installFeedback = installedInstallFeedback
+            Text(installFeedback?.title ?? validity?.text ?? "已安装")
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(color(for: validity?.tone))
+                .foregroundStyle(installFeedback?.color ?? color(for: validity?.tone))
                 .frame(minWidth: 70, alignment: .trailing)
         } else if app.belongsInSignedList {
             Text(pendingInstallStatus)
@@ -207,6 +208,18 @@ struct ImportedAppRow: View {
         case .installFailed: .sealDanger
         case .deviceUnavailable: .sealWarning
         default: .sealTextSecondary
+        }
+    }
+
+    private var installedInstallFeedback: (title: String, color: Color)? {
+        if app.pendingSignedSnapshot?.installAttemptID != nil {
+            return ("安装结果待确认", .sealWarning)
+        }
+        switch app.signedArtifactStatus {
+        case .awaitingVerification: ("安装结果待确认", .sealWarning)
+        case .installFailed: ("安装失败", .sealDanger)
+        case .deviceUnavailable: ("设备不可用", .sealWarning)
+        default: nil
         }
     }
 

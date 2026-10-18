@@ -2,7 +2,8 @@ import SwiftUI
 
 /// 协议版本号：文档有实质更新时 +1，触发用户重新同意。
 enum AgreementVersion {
-    static let current = 2
+    // 展示与同意门禁保持协议版本 1；已同意 2 的用户不会因此重新弹窗。
+    static let current = 1
     static let storageKey = "seal.agreedAgreementVersion"
 }
 

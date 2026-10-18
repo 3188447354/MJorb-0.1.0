@@ -52,4 +52,41 @@ struct AppleAccountAppNamePolicyTests {
 
         #expect(name == "App 名称未记录")
     }
+
+    @Test
+    func showsTheApplicationIdentifierReadFromTheSignedTarget() {
+        let accountID = UUID()
+        let expirationDate = Date(timeIntervalSince1970: 1_900_000_000)
+        let signingTarget = SigningTargetRecord(
+            bundleIdentifier: "com.example.song.TEAMID",
+            profileUUID: "profile-id",
+            profileName: "Development",
+            profileCreationDate: nil,
+            profileExpirationDate: expirationDate,
+            teamIdentifier: "TEAMID",
+            certificateSerialNumbers: [],
+            deviceIdentifiers: [],
+            entitlements: ["application-identifier": .string("PREFIX.*")],
+            applicationIdentifier: "ACTUALPREFIX.com.example.song.TEAMID"
+        )
+        let app = AppRecord(
+            originalBundleIdentifier: "com.example.song",
+            mappedBundleIdentifier: "com.example.song.TEAMID",
+            name: "歌一刀",
+            version: "2.5.0",
+            buildNumber: "25",
+            size: 1,
+            state: .installed,
+            accountID: accountID,
+            signingTargets: [signingTarget],
+            ipaRelativePath: "Apps/song/Original.ipa",
+            importedAt: Date()
+        )
+
+        #expect(AppleAccountAppNamePolicy.applicationIdentifier(
+            for: "com.example.song.TEAMID",
+            accountID: accountID,
+            relatedApps: [app]
+        ) == "ACTUALPREFIX.com.example.song.TEAMID")
+    }
 }

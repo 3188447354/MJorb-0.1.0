@@ -52,6 +52,10 @@ if grep -q '^Payload/Seal\.app/PlugIns/' <<<"$entries"; then
     echo "SealLiveActivity.appex is present but contains no executable" >&2
     exit 1
   fi
+  if ! grep -Fxq "Payload/Seal.app/PlugIns/SealLiveActivity.appex/Assets.car" <<<"$entries"; then
+    echo "SealLiveActivity.appex is missing its compiled asset catalog" >&2
+    exit 1
+  fi
 fi
 if grep -Eqi '\.(p12|mobileprovision)$|PairingFile\.plist$|Auth\.json$' <<<"$entries"; then
   echo "Sensitive signing material found in IPA" >&2

@@ -124,7 +124,15 @@ actor AppRecordRecovery {
             dismissedBundleIdentifiers: DismissedInstalledRecordTombstones.all(),
             sealCanonicalBundleIdentifier: BundleIDPolicy.canonicalSealBundleIdentifier()
         )
-        let drafts = InstalledRecordRecoveryPolicy.drafts(profiles: profiles, context: context)
+        guard let installedApplications = await deviceScanner.scanValidatedUserApplications() else {
+            summary.stage = "skipped-app-list-unavailable"
+            return summary
+        }
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: installedApplications,
+            profiles: profiles,
+            context: context
+        )
         summary.candidates = drafts.count
         summary.samples = drafts.prefix(3).map(\.bundleIdentifier)
         // 候选为空 ⇒ **一次设备查询都不发**（常见情况：记录齐全，只多花一次 dump）。
@@ -132,28 +140,11 @@ actor AppRecordRecovery {
             summary.stage = "skipped-no-candidates"
             return summary
         }
-        // 阳性对照 + 逐条核验，**先问完再动手**。
-        guard let confirmed = await deviceScanner.scanConfirmedInstalledBundleIdentifiers(
-            candidates: drafts.map(\.bundleIdentifier),
-            positiveControl: Bundle.main.bundleIdentifier
-        ) else {
-            summary.stage = "skipped-channel-unavailable"
-            return summary
-        }
         for draft in drafts {
-            let accountID = accounts.first {
-                $0.teamID.caseInsensitiveCompare(draft.teamIdentifier) == .orderedSame
-            }?.id
-            guard let record = InstalledRecordRecoveryPolicy.makeRecord(
-                from: draft,
-                installedOnDevice: confirmed.contains(
-                    InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(draft.bundleIdentifier)
-                ),
-                accountID: accountID
-            ) else {
-                summary.notInstalled += 1
-                continue
+            let accountID = draft.teamIdentifier.flatMap { teamID in
+                accounts.first { $0.teamID.caseInsensitiveCompare(teamID) == .orderedSame }?.id
             }
+            let record = InstalledRecordRecoveryPolicy.makeRecord(from: draft, accountID: accountID)
             do {
                 try await appStore.save(record)
                 summary.recovered += 1
@@ -168,6 +159,7 @@ actor AppRecordRecovery {
     }
 
     private func recoverPendingFileTransactions() async throws {
+        try await fileStore.recoverSignedIPAReplacementArtifacts()
         let transactions = try await fileStore.pendingImportTransactions()
         guard transactions.isEmpty == false else { return }
 

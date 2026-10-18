@@ -21,9 +21,10 @@ enum HardTimeout {
     static func run<T: Sendable>(
         seconds: TimeInterval,
         cancelsWorkOnTimeout: Bool = true,
+        onLateCompletion: (@Sendable (Result<T, String>) async -> Void)? = nil,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let state = RaceState<T>()
+        let state = RaceState<T>(onLateCompletion: onLateCompletion)
         // 父任务取消必须**立刻**解除挂起：只靠超时或工作自己结束来恢复的话，
         // 「取消一次大包上传」会把 OperationCoordinator 的全局单槽占住好几分钟
         // （调用方的 `defer releaseOperation` 根本走不到）。
@@ -46,9 +47,14 @@ enum HardTimeout {
         private var timer: Task<Void, Never>?
         private var work: Task<Void, Never>?
         private var cancelsWorkOnTimeout = true
+        private let onLateCompletion: (@Sendable (Result<T, String>) async -> Void)?
         /// 「谁先落地谁赢」：超时、工作完成、父任务取消三方竞速，
         /// 也用来处理 `onCancel` 早于 `store` 的时序（任务建立前就已被取消）。
         private var settled = false
+
+        init(onLateCompletion: (@Sendable (Result<T, String>) async -> Void)?) {
+            self.onLateCompletion = onLateCompletion
+        }
 
         func store(_ continuation: CheckedContinuation<T, Error>) {
             lock.lock()
@@ -79,17 +85,20 @@ enum HardTimeout {
                 } catch {
                     return // 工作先完成时定时器已被取消
                 }
-                self?.finish(.failure(TimeoutError(seconds: seconds)))
+                self?.finish(.failure(TimeoutError(seconds: seconds)), source: .timeout)
             }
             timer = task
-            let workTask = Task.detached(priority: .userInitiated) { [weak self] in
+            // Strongly retain the race state until the non-cancellable native call ends.
+            // Otherwise the waiter can return on timeout, release `state`, and silently lose
+            // the late result callback that must settle an installation attempt.
+            let workTask = Task.detached(priority: .userInitiated) { [self] in
                 let result: Result<T, Error>
                 do {
                     result = .success(try await operation())
                 } catch {
                     result = .failure(error)
                 }
-                self?.finish(result)
+                finish(result, source: .work)
             }
             work = workTask
             lock.unlock()
@@ -104,13 +113,33 @@ enum HardTimeout {
             timer = nil
             lock.unlock()
             timerToCancel?.cancel()
-            finish(.failure(CancellationError()))
+            finish(.failure(CancellationError()), source: .parentCancellation)
         }
 
-        private func finish(_ result: Result<T, Error>) {
+        private enum CompletionSource {
+            case work
+            case timeout
+            case parentCancellation
+        }
+
+        private func finish(_ result: Result<T, Error>, source: CompletionSource) {
             lock.lock()
             guard settled == false else {
+                let lateCompletion: (@Sendable (Result<T, String>) async -> Void)?
+                if case .work = source {
+                    lateCompletion = onLateCompletion
+                } else {
+                    lateCompletion = nil
+                }
                 lock.unlock()
+                if let lateCompletion {
+                    let lateResult: Result<T, String>
+                    switch result {
+                    case .success(let value): lateResult = .success(value)
+                    case .failure(let error): lateResult = .failure(String(describing: error))
+                    }
+                    Task { await lateCompletion(lateResult) }
+                }
                 return
             }
             settled = true

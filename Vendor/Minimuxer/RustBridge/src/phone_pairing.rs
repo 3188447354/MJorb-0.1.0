@@ -6,13 +6,52 @@
 //! and Developer Mode, not the tunnel.
 
 use std::ffi::{c_char, c_void, CStr, CString};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::ptr;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc, Mutex, OnceLock,
+};
+use std::time::Duration;
 
 use idevice_pairable::remote_pairing::{
     PairableHost, PairableHostInfo, RpPairingFile, RpPairingSocket,
 };
 use tokio::net::TcpListener;
+
+static NEXT_CANCEL_TOKEN: AtomicU64 = AtomicU64::new(1);
+static CANCEL_TOKENS: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn cancel_tokens() -> &'static Mutex<HashMap<u64, Arc<AtomicBool>>> {
+    CANCEL_TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn create_cancel_token() -> u64 {
+    let token = NEXT_CANCEL_TOKEN.fetch_add(1, Ordering::Relaxed);
+    cancel_tokens()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(token, Arc::new(AtomicBool::new(false)));
+    token
+}
+
+pub fn cancel_host(token: u64) {
+    if let Some(cancelled) = cancel_tokens()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&token)
+    {
+        cancelled.store(true, Ordering::Release);
+    }
+}
+
+pub fn free_cancel_token(token: u64) {
+    cancel_tokens()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&token);
+}
 
 fn cstr(value: impl AsRef<str>) -> *mut c_char {
     CString::new(value.as_ref()).map(CString::into_raw).unwrap_or(std::ptr::null_mut())
@@ -81,6 +120,7 @@ pub unsafe fn run_host(
     name: *const c_char,
     model: *const c_char,
     out_path: *const c_char,
+    cancel_token: u64,
     host_alt_irk_hex: *const c_char,
     ready_cb: ReadyCb,
     pin_cb: PinCb,
@@ -91,6 +131,16 @@ pub unsafe fn run_host(
         return 2;
     }
     *out = PairResult::empty();
+
+    let cancelled = cancel_tokens()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&cancel_token)
+        .cloned();
+    let Some(cancelled) = cancelled else {
+        (*out).error = cstr("pairing cancellation token is unavailable");
+        return 4;
+    };
 
     let bind_addr = opt_str(bind_addr, "0.0.0.0");
     let name = opt_str(name, "SideInstaller");
@@ -107,8 +157,18 @@ pub unsafe fn run_host(
         }
     };
 
-    match rt.block_on(run(bind_addr, port, name, model, out_path, saved_alt_irk, cbs)) {
-        Ok(res) => {
+    let outcome = rt.block_on(async {
+        tokio::select! {
+            biased;
+            _ = wait_for_cancellation(cancelled.clone()) => HostRunOutcome::Cancelled,
+            _ = tokio::time::sleep(Duration::from_secs(180)) => HostRunOutcome::TimedOut,
+            result = run(bind_addr, port, name, model, out_path, saved_alt_irk, cbs) => {
+                HostRunOutcome::Finished(result)
+            }
+        }
+    });
+    match outcome {
+        HostRunOutcome::Finished(Ok(res)) => {
             (*out).device_name = cstr(res.name);
             (*out).device_model = cstr(res.model);
             (*out).device_udid = cstr(res.udid);
@@ -116,10 +176,33 @@ pub unsafe fn run_host(
             (*out).host_alt_irk_hex = cstr(res.host_alt_irk_hex);
             0
         }
-        Err(e) => {
+        HostRunOutcome::Finished(Err(e)) => {
             (*out).error = cstr(e);
             1
         }
+        HostRunOutcome::Cancelled => {
+            (*out).error = cstr("phone pairing cancelled");
+            2
+        }
+        HostRunOutcome::TimedOut => {
+            (*out).error = cstr("phone pairing timed out after 180 seconds");
+            3
+        }
+    }
+}
+
+enum HostRunOutcome {
+    Finished(Result<Paired, String>),
+    Cancelled,
+    TimedOut,
+}
+
+async fn wait_for_cancellation(cancelled: Arc<AtomicBool>) {
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -307,4 +390,31 @@ pub unsafe fn result_free(r: *mut PairResult) {
         }
     }
     *r = PairResult::empty();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cancel_host, cancel_tokens, create_cancel_token, free_cancel_token};
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn cancellation_token_is_shared_with_the_running_host() {
+        let token = create_cancel_token();
+        let flag = cancel_tokens()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&token)
+            .cloned()
+            .expect("new cancellation token is registered");
+
+        assert!(!flag.load(Ordering::Acquire));
+        cancel_host(token);
+        assert!(flag.load(Ordering::Acquire));
+
+        free_cancel_token(token);
+        assert!(!cancel_tokens()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&token));
+    }
 }

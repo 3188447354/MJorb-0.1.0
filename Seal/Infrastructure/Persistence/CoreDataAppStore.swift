@@ -187,9 +187,12 @@ actor CoreDataAppStore: AppStore {
         let backupURL = storeURL.deletingLastPathComponent().appending(
             path: "Seal-Migration-Backup-\(migrationID).sqlite"
         )
+        var preserveBackup = false
         defer {
             removeSQLiteStoreFiles(at: temporaryURL)
-            removeSQLiteStoreFiles(at: backupURL)
+            if preserveBackup == false {
+                removeSQLiteStoreFiles(at: backupURL)
+            }
         }
         try copySQLiteStoreFiles(from: storeURL, to: backupURL)
 
@@ -221,15 +224,45 @@ actor CoreDataAppStore: AppStore {
                 sourceOptions: nil,
                 ofType: NSSQLiteStoreType
             )
+            try validateSQLiteStore(at: storeURL, compatibleWith: currentModel)
         } catch {
             let replacementError = error
             do {
                 try restoreSQLiteStoreFiles(from: backupURL, to: storeURL)
             } catch {
+                preserveBackup = true
+                throw AppStoreError.invalidConfiguration
+            }
+            do {
+                try validateSQLiteStore(at: storeURL, compatibleWith: legacyModel)
+            } catch {
+                preserveBackup = true
                 throw AppStoreError.invalidConfiguration
             }
             throw replacementError
         }
+    }
+
+    private static func validateSQLiteStore(
+        at storeURL: URL,
+        compatibleWith model: NSManagedObjectModel
+    ) throws {
+        let metadata = try NSPersistentStoreCoordinator.metadataForPersistentStore(
+            ofType: NSSQLiteStoreType,
+            at: storeURL,
+            options: nil
+        )
+        guard model.isConfiguration(withName: nil, compatibleWithStoreMetadata: metadata) else {
+            throw AppStoreError.invalidConfiguration
+        }
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+        let store = try coordinator.addPersistentStore(
+            ofType: NSSQLiteStoreType,
+            configurationName: nil,
+            at: storeURL,
+            options: [NSReadOnlyPersistentStoreOption: true]
+        )
+        try coordinator.remove(store)
     }
 
     private static func copySQLiteStoreFiles(from source: URL, to destination: URL) throws {

@@ -11,6 +11,10 @@ struct PendingSignedSnapshot: Codable, Equatable, Sendable {
     var certificateSerialNumber: String?
     var signingTargets: [SigningTargetRecord]
     var extensionSnapshots: [PendingExtensionSnapshot]
+    /// 普通安装的本次设备命令标识。仅当 native 安装超时/取消后仍在设备端执行时保留，
+    /// 用于拒绝旧尝试迟到结果覆盖新尝试，并在结果到达后结算。
+    var installAttemptID: UUID? = nil
+    var wasInstalledBeforeAttempt: Bool = false
 
     struct PendingExtensionSnapshot: Codable, Equatable, Sendable {
         var bundleIdentifier: String
@@ -18,6 +22,35 @@ struct PendingSignedSnapshot: Codable, Equatable, Sendable {
         var provisioningProfileName: String?
         var provisioningProfileExpirationDate: Date?
         var certificateSerialNumber: String?
+    }
+}
+
+extension PendingSignedSnapshot {
+    private enum CodingKeys: String, CodingKey {
+        case expiryDate
+        case provisioningProfileUUID
+        case provisioningProfileName
+        case provisioningProfileCreationDate
+        case provisioningProfileExpirationDate
+        case certificateSerialNumber
+        case signingTargets
+        case extensionSnapshots
+        case installAttemptID
+        case wasInstalledBeforeAttempt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        expiryDate = try container.decodeIfPresent(Date.self, forKey: .expiryDate)
+        provisioningProfileUUID = try container.decodeIfPresent(String.self, forKey: .provisioningProfileUUID)
+        provisioningProfileName = try container.decodeIfPresent(String.self, forKey: .provisioningProfileName)
+        provisioningProfileCreationDate = try container.decodeIfPresent(Date.self, forKey: .provisioningProfileCreationDate)
+        provisioningProfileExpirationDate = try container.decodeIfPresent(Date.self, forKey: .provisioningProfileExpirationDate)
+        certificateSerialNumber = try container.decodeIfPresent(String.self, forKey: .certificateSerialNumber)
+        signingTargets = try container.decode([SigningTargetRecord].self, forKey: .signingTargets)
+        extensionSnapshots = try container.decode([PendingExtensionSnapshot].self, forKey: .extensionSnapshots)
+        installAttemptID = try container.decodeIfPresent(UUID.self, forKey: .installAttemptID)
+        wasInstalledBeforeAttempt = try container.decodeIfPresent(Bool.self, forKey: .wasInstalledBeforeAttempt) ?? false
     }
 }
 

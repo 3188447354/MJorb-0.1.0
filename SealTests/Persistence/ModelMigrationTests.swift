@@ -101,6 +101,11 @@ struct ModelMigrationTests {
         #expect(record.signingTeamID == nil)
         #expect(record.signingTargets.isEmpty)
         #expect(record.removedExtensionBundleIdentifiers.isEmpty)
+        let migrationBackups = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.lastPathComponent.hasPrefix("Seal-Migration-Backup-") }
+        #expect(migrationBackups.isEmpty)
     }
 
     @Test

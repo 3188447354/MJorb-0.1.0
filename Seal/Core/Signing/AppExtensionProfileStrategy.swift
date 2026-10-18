@@ -2,7 +2,7 @@ import Foundation
 
 /// 含扩展 IPA 的描述文件分配策略。
 ///
-/// 普通 IPA 默认共享主描述文件；能力不兼容的扩展单独分配。Seal 与 LiveContainer 默认独立。
+/// 默认共享主描述文件；能力不兼容的扩展单独分配。历史签名记录保留原有分配策略。
 ///
 /// 普通 IPA 共享模式下，门户只为主 App 申请一份描述文件；不兼容扩展单独申请，
 /// 兼容扩展继续共享，避免无谓消耗 App ID。
@@ -14,7 +14,7 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
 
     /// 默认策略。
     static func defaultFor(isSeal: Bool, isLiveContainer: Bool) -> Self {
-        isSeal || isLiveContainer ? .independentProfiles : .sharedMainProfile
+        .sharedMainProfile
     }
 
     /// 为「共用主描述文件是否安全」保留 IPA 的真实能力边界。
@@ -94,8 +94,8 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
     /// 取不到就 `continue` **静默跳过** ⇒ 该 bundle 在 `entitlementsByBundleID` 里**根本没有键**。
     /// 上面那个 2 参数版本用 `?? []` 把缺失当空集 ⇒ 差集为空 ⇒ 判「共享安全」。
     ///
-    /// **在默认独立时这无所谓；一旦默认改为共享，它就是把 LiveProcess 那个 401 回归
-    /// 放回来的入口。** 所以签名链路必须用这个版本：读不到扩展能力时**保守走独立**，
+    /// 共享策略下，缺失目标可能把 LiveProcess 那类 401 回归重新引入。
+    /// 所以签名链路必须用这个版本：读不到扩展能力时**保守走独立**，
     /// 多花一个 App ID，也好过签出一个扩展拿不到能力的包。
     static func sharedProfileBlocker(
         mainBundleID: String,
@@ -112,6 +112,7 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
     static func sharedProfileBlockers(
         mainBundleID: String,
         entitlementsByBundleID: [String: Set<String>],
+        entitlementValuesByBundleID: [String: [String: ProvisioningEntitlementValue]] = [:],
         expectedBundleIdentifiers: [String]
     ) -> [SharedProfileBlocker] {
         let mainEntitlements = entitlementsByBundleID[mainBundleID] ?? []
@@ -129,12 +130,19 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
             )
         }
 
+        let mainValues = entitlementValuesByBundleID[mainBundleID] ?? [:]
         let blockers = others
             .compactMap { bundleID -> SharedProfileBlocker? in
                 guard let entitlements = entitlementsByBundleID[bundleID] else { return nil }
-                let extra = entitlements.subtracting(mainEntitlements).sorted()
-                guard extra.isEmpty == false else { return nil }
-                return SharedProfileBlocker(extensionBundleID: bundleID, entitlements: extra)
+                var incompatible = entitlements.subtracting(mainEntitlements)
+                let values = entitlementValuesByBundleID[bundleID] ?? [:]
+                for (key, value) in values {
+                    guard let mainValue = mainValues[key], mainValue.permits(value) else {
+                        incompatible.insert(key)
+                    }
+                }
+                guard incompatible.isEmpty == false else { return nil }
+                return SharedProfileBlocker(extensionBundleID: bundleID, entitlements: incompatible.sorted())
             }
             .sorted { $0.extensionBundleID < $1.extensionBundleID }
         return (unreadableBlockers + blockers).sorted {
@@ -146,13 +154,20 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
     static func independentBundleIdentifiers(
         mainBundleID: String,
         entitlementsByBundleID: [String: Set<String>],
+        entitlementValuesByBundleID: [String: [String: ProvisioningEntitlementValue]] = [:],
         expectedBundleIdentifiers: [String]
     ) -> Set<String> {
         let mainEntitlements = entitlementsByBundleID[mainBundleID] ?? []
         return Set(expectedBundleIdentifiers.filter { bundleID in
             guard bundleID != mainBundleID,
                   let entitlements = entitlementsByBundleID[bundleID] else { return bundleID != mainBundleID }
-            return entitlements.subtracting(mainEntitlements).isEmpty == false
+            guard entitlements.subtracting(mainEntitlements).isEmpty else { return true }
+            let mainValues = entitlementValuesByBundleID[mainBundleID] ?? [:]
+            let values = entitlementValuesByBundleID[bundleID] ?? [:]
+            return values.contains { key, value in
+                guard let mainValue = mainValues[key] else { return true }
+                return mainValue.permits(value) == false
+            }
         })
     }
 

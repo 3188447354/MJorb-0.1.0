@@ -124,6 +124,7 @@ struct InstallChannelDiagnosticClassificationTests {
         "ProfileExpired",
         "device is untrusted",
         "Reached maximum number of installed apps",
+        "InstallApp(DeviceNotSupportedByThinning)",
         "安装失败：设备存储空间不足",
         "已达免费账号设备级应用上限"
     ])

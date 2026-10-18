@@ -413,6 +413,28 @@ pub extern "C" fn rust_bridge_instproxy_lookup(
 }
 
 #[no_mangle]
+pub extern "C" fn rust_bridge_instproxy_lookup_all(
+    client: *mut InstProxyWrapper,
+) -> *mut c_char {
+    let Some(c) = (unsafe { client.as_ref() }) else { return std::ptr::null_mut(); };
+    let options = InstProxyClient::create_return_attributes(
+        vec![("ApplicationType".to_string(), Plist::new_string("User"))],
+        vec![
+            "CFBundleIdentifier".to_string(),
+            "CFBundleDisplayName".to_string(),
+            "CFBundleName".to_string(),
+            "CFBundleShortVersionString".to_string(),
+            "CFBundleVersion".to_string(),
+            "ProfileValidated".to_string(),
+        ],
+    );
+    match c.0.lookup(vec![], Some(options)) {
+        Ok(apps) => to_char(apps.to_string()),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn rust_bridge_instproxy_get_path_for_bundle_identifier(
     client: *mut InstProxyWrapper,
     bundle_id: *const c_char,

@@ -757,6 +757,95 @@ actor AppFileStore {
         }
     }
 
+    /// Completes a Signed.ipa replacement interrupted between moving the old package
+    /// aside and committing the new one. Called during startup record recovery.
+    func recoverSignedIPAReplacementArtifacts() throws {
+        let fileManager = FileManager.default
+        let appsRoot = documentsDirectory.appending(path: "Apps", directoryHint: .isDirectory)
+        guard fileManager.fileExists(atPath: appsRoot.path) else { return }
+
+        let appDirectories = try fileManager.contentsOfDirectory(
+            at: appsRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )
+        for directory in appDirectories {
+            guard (try? directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                continue
+            }
+            let files = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil,
+                options: []
+            )
+            let backups = files.filter {
+                $0.lastPathComponent.hasPrefix(".Signed.backup-")
+                    && $0.pathExtension.caseInsensitiveCompare("ipa") == .orderedSame
+            }
+            let pending = files.filter {
+                $0.lastPathComponent.hasPrefix(".Signed.pending-")
+                    && $0.pathExtension.caseInsensitiveCompare("ipa") == .orderedSame
+            }
+            guard backups.isEmpty == false || pending.isEmpty == false else { continue }
+
+            let destination = directory.appending(path: "Signed.ipa")
+            let destinationExists = fileManager.fileExists(atPath: destination.path)
+            let destinationIsUsable = destinationExists
+                && (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map({ $0 > 0 }) == true
+
+            if destinationIsUsable == false {
+                guard backups.count <= 1 else {
+                    throw Self.signedArtifactRecoveryFailure(
+                        reason: "发现多个旧 Signed.ipa 备份，无法安全判断应恢复哪一份；备份均已保留。"
+                    )
+                }
+                if let backup = backups.first {
+                    if destinationExists {
+                        try fileManager.removeItem(at: destination)
+                    }
+                    do {
+                        try fileManager.moveItem(at: backup, to: destination)
+                    } catch {
+                        throw Self.signedArtifactRecoveryFailure(
+                            reason: "启动恢复旧 Signed.ipa 失败；备份仍保留在应用目录中。"
+                        )
+                    }
+                } else if pending.count == 1, let pendingIPA = pending.first {
+                    if destinationExists {
+                        try fileManager.removeItem(at: destination)
+                    }
+                    do {
+                        try fileManager.moveItem(at: pendingIPA, to: destination)
+                    } catch {
+                        throw Self.signedArtifactRecoveryFailure(
+                            reason: "启动恢复待提交 Signed.ipa 失败；待提交文件仍保留在应用目录中。"
+                        )
+                    }
+                } else if pending.count > 1 {
+                    throw Self.signedArtifactRecoveryFailure(
+                        reason: "发现多个待提交 Signed.ipa，无法安全判断应恢复哪一份；文件均已保留。"
+                    )
+                } else if destinationExists {
+                    throw Self.signedArtifactRecoveryFailure(
+                        reason: "Signed.ipa 文件为空且没有可恢复的备份；原文件已保留，请重新签名。"
+                    )
+                }
+            }
+
+            // Destination is either the committed non-empty package or the restored backup.
+            // Remove hidden transaction files only after that state has been established.
+            for url in backups + pending where fileManager.fileExists(atPath: url.path) {
+                do {
+                    try fileManager.removeItem(at: url)
+                } catch {
+                    throw Self.signedArtifactRecoveryFailure(
+                        reason: "Signed.ipa 已恢复，但清理事务残留失败；下次启动会继续处理。"
+                    )
+                }
+            }
+        }
+    }
+
     func sha256(relativePath: String) throws -> String {
         let url = try fileURL(relativePath: relativePath)
         return try Self.streamingSHA256(url: url)

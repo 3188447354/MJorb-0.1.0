@@ -22,6 +22,16 @@ final class PairingLiveActivityController {
 
     var isEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
+    /// 新进程无法恢复已结束的原生配对监听，因此旧活动不能继续显示为可配对。
+    /// 启动时收回本应用遗留的活动，避免重复岛和过期配对码。
+    func endOrphanedActivities() async {
+        let orphaned = Activity<PairingActivityAttributes>.activities
+            .filter { $0.activityState == .active || $0.activityState == .stale }
+        for activity in orphaned {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
     /// 在用户按下「开始配对」的前台时调用。返回 false 时由调用方走通知回退。
     @discardableResult
     func prepare(deviceName: String) -> Bool {
@@ -80,8 +90,7 @@ final class PairingLiveActivityController {
         return true
     }
 
-    /// 只有凭证已经成功保存后调用。结束请求交给系统在短暂完成态后执行，
-    /// 不依赖 Seal 继续在前台或后台运行。
+    /// 只有凭证已经成功保存后调用。先更新完成态，短暂展示后再结束活动。
     func markPaired() {
         endWithResult(
             stage: .paired,
@@ -90,7 +99,7 @@ final class PairingLiveActivityController {
         )
     }
 
-    /// 失败态不保留旧配对码；同样由系统在短暂提示后结束活动。
+    /// 失败态不保留旧配对码；短暂显示失败提示后结束活动。
     func markFailed() {
         endWithResult(
             stage: .failed,
@@ -139,12 +148,25 @@ final class PairingLiveActivityController {
         guard let activity else { return }
         self.stage = stage
         let dismissalDate = Date().addingTimeInterval(lifetime)
-        scheduleDismiss(at: dismissalDate)
+        dismissTask?.cancel()
+        expiresAt = dismissalDate
         let content = ActivityContent(state: state, staleDate: dismissalDate)
         let previousOperation = activityOperation
+        let activityID = activity.id
+        nonisolated(unsafe) let activityForUpdate = activity
         activityOperation = Task {
             await previousOperation?.value
-            await activity.end(content, dismissalPolicy: .after(dismissalDate))
+            await activityForUpdate.update(content)
+        }
+        dismissTask = Task { [weak self] in
+            let delay = max(0, dismissalDate.timeIntervalSinceNow)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard Task.isCancelled == false else { return }
+            await MainActor.run {
+                guard self?.activity?.id == activityID,
+                      self?.stage == stage else { return }
+                self?.finish()
+            }
         }
     }
 

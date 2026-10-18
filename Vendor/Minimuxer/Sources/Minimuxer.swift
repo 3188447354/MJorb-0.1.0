@@ -7,6 +7,14 @@
 //
 
 import Foundation
+
+public struct InstalledApplicationSummary: Decodable, Sendable {
+    public let bundleIdentifier: String
+    public let displayName: String
+    public let shortVersion: String
+    public let buildNumber: String
+    public let profileValidated: Bool?
+}
 import RustBridge
 #if canImport(Darwin)
 import Darwin
@@ -477,6 +485,42 @@ public struct Minimuxer {
             return nil
         }
         return inst.lookup(appId: bundleId)
+    }
+
+    public static func installedApplications() throws -> [InstalledApplicationSummary] {
+        if Muxer.isrppairing {
+            let json = try RustIdevice.listUserApps()
+            return try JSONDecoder().decode([InstalledApplicationSummary].self, from: Data(json.utf8))
+        }
+        guard let device = try? Device.getFirstDevice(),
+              let inst = RustInstProxy.connect(
+                device: device.internalInstance,
+                label: "seal-installed-app-scan"
+              ),
+              let plistText = inst.lookupAll(),
+              let data = plistText.data(using: .utf8),
+              let value = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+                as? [String: [String: Any]] else {
+            throw NSError(
+                domain: "Minimuxer.InstalledApps",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "无法读取设备已安装应用清单"]
+            )
+        }
+        return value.compactMap { bundleIdentifier, app in
+            guard (app["ApplicationType"] as? String).map({ $0 == "User" || $0 == "Any" }) ?? true else {
+                return nil
+            }
+            return InstalledApplicationSummary(
+                bundleIdentifier: bundleIdentifier,
+                displayName: (app["CFBundleDisplayName"] as? String)
+                    ?? (app["CFBundleName"] as? String)
+                    ?? bundleIdentifier,
+                shortVersion: (app["CFBundleShortVersionString"] as? String) ?? "",
+                buildNumber: (app["CFBundleVersion"] as? String) ?? "",
+                profileValidated: app["ProfileValidated"] as? Bool
+            )
+        }
     }
 
     public static func isAppInstalled(bundleId: String) throws -> Bool {

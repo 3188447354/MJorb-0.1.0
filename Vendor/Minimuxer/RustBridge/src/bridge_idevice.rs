@@ -6,7 +6,7 @@ use crate::idevice_support::rsd::set_rppairing_file;
 use crate::idevice_support::{
     device::{fetch_udid_rppairing, test_device_connection},
     install::{
-        install_ipa_rppairing, lookup_app_rppairing, remove_app_rppairing,
+        install_ipa_rppairing, list_user_apps_rppairing, lookup_app_rppairing, remove_app_rppairing,
         stage_and_install_rppairing, yeet_app_afc_rppairing,
     },
     jit::{debug_app_rppairing, debug_process_rppairing},
@@ -62,6 +62,7 @@ pub unsafe extern "C" fn rust_bridge_phone_pairing_run_host(
     name: *const c_char,
     model: *const c_char,
     out_path: *const c_char,
+    cancel_token: u64,
     host_alt_irk_hex: *const c_char,
     ready_cb: ReadyCb,
     pin_cb: PinCb,
@@ -74,12 +75,28 @@ pub unsafe extern "C" fn rust_bridge_phone_pairing_run_host(
         name,
         model,
         out_path,
+        cancel_token,
         host_alt_irk_hex,
         ready_cb,
         pin_cb,
         ctx,
         result,
     )
+}
+
+#[no_mangle]
+pub extern "C" fn rust_bridge_phone_pairing_cancel_token_create() -> u64 {
+    phone_pairing::create_cancel_token()
+}
+
+#[no_mangle]
+pub extern "C" fn rust_bridge_phone_pairing_cancel(token: u64) {
+    phone_pairing::cancel_host(token);
+}
+
+#[no_mangle]
+pub extern "C" fn rust_bridge_phone_pairing_cancel_token_free(token: u64) {
+    phone_pairing::free_cancel_token(token);
 }
 
 #[no_mangle]
@@ -347,6 +364,40 @@ pub extern "C" fn rust_bridge_idevice_lookup_app(
             }
             Ok(None) => std::ptr::null_mut(),
             Err(err) => crate::ffi_err!(err),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn rust_bridge_idevice_list_user_apps(
+    result_out: *mut *mut c_char,
+) -> *mut IdeviceFfiError {
+    if result_out.is_null() { return invalid_argument_error(); }
+    unsafe { *result_out = std::ptr::null_mut(); }
+    let Some(runtime) = shared_runtime() else { return runtime_error(); };
+    runtime.block_on(async move {
+        match list_user_apps_rppairing().await {
+            Ok(apps) => {
+                let values: Vec<_> = apps.into_iter().map(|app| serde_json::json!({
+                    "bundleIdentifier": app.bundle_identifier,
+                    "displayName": app.display_name,
+                    "shortVersion": app.short_version,
+                    "buildNumber": app.build_number,
+                    "profileValidated": app.profile_validated,
+                })).collect();
+                match serde_json::to_string(&values) {
+                    Ok(json) => {
+                        let pointer = to_char(json);
+                        if pointer.is_null() {
+                            return crate::errors::internal_ffi_error("Unable to encode installed app list");
+                        }
+                        unsafe { *result_out = pointer; }
+                        std::ptr::null_mut()
+                    }
+                    Err(error) => crate::errors::internal_ffi_error(&format!("Unable to serialize installed app list: {error}")),
+                }
+            }
+            Err(error) => crate::ffi_err!(error),
         }
     })
 }

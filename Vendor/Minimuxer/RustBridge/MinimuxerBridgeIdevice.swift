@@ -113,6 +113,11 @@ internal func _rust_bridge_idevice_lookup_app(
 	_ bundleId: UnsafePointer<Int8>?,
 	_ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?
 ) -> UnsafeMutablePointer<RustIdeviceFfiError>?
+
+@_silgen_name("rust_bridge_idevice_list_user_apps")
+internal func _rust_bridge_idevice_list_user_apps(
+    _ resultOut: UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>?
+) -> UnsafeMutablePointer<RustIdeviceFfiError>?
 @_silgen_name("rust_bridge_idevice_debug_app")
 internal func _rust_bridge_idevice_debug_app(
 	_ appId: UnsafePointer<Int8>?
@@ -158,12 +163,22 @@ internal func _rust_bridge_phone_pairing_run_host(
 	_ name: UnsafePointer<CChar>?,
 	_ model: UnsafePointer<CChar>?,
 	_ outputPath: UnsafePointer<CChar>?,
+	_ cancelToken: UInt64,
 	_ hostAltIRKHex: UnsafePointer<CChar>?,
 	_ readyCallback: RustPhonePairingReadyCallback?,
 	_ pinCallback: RustPhonePairingPINCallback?,
 	_ context: UnsafeMutableRawPointer?,
 	_ result: UnsafeMutablePointer<RustPhonePairingResult>?
 ) -> Int32
+
+@_silgen_name("rust_bridge_phone_pairing_cancel_token_create")
+internal func _rust_bridge_phone_pairing_cancel_token_create() -> UInt64
+
+@_silgen_name("rust_bridge_phone_pairing_cancel")
+internal func _rust_bridge_phone_pairing_cancel(_ token: UInt64)
+
+@_silgen_name("rust_bridge_phone_pairing_cancel_token_free")
+internal func _rust_bridge_phone_pairing_cancel_token_free(_ token: UInt64)
 
 @_silgen_name("rust_bridge_phone_pairing_result_free")
 internal func _rust_bridge_phone_pairing_result_free(
@@ -201,6 +216,19 @@ private func rustIdeviceCheckedLength(_ count: Int) throws -> UInt32 {
 
 // MARK: - Swift Wrappers
 public class RustIdevice {
+	public enum PhonePairingHostError: Error, Equatable {
+		case cancelled
+		case timedOut
+	}
+
+	public static func makePhonePairingCancellationToken() -> UInt64 {
+		_rust_bridge_phone_pairing_cancel_token_create()
+	}
+
+	public static func cancelPhonePairingHost(token: UInt64) {
+		_rust_bridge_phone_pairing_cancel(token)
+	}
+
 	public struct PhonePairingAdvertisement: Sendable, Equatable {
 		public let serviceIdentifier: String
 		public let port: UInt16
@@ -257,10 +285,12 @@ public class RustIdevice {
 		name: String,
 		model: String,
 		outputPath: String,
+		cancellationToken: UInt64,
 		hostAltIRKHex: String,
 		onReady: @escaping (PhonePairingAdvertisement) -> Void,
 		onPIN: @escaping (String) -> Void
 	) throws -> PhonePairingResult {
+		defer { _rust_bridge_phone_pairing_cancel_token_free(cancellationToken) }
 		let box = PhonePairingCallbackBox(onReady: onReady, onPIN: onPIN)
 		let context = Unmanaged.passRetained(box).toOpaque()
 		defer { Unmanaged<PhonePairingCallbackBox>.fromOpaque(context).release() }
@@ -286,6 +316,7 @@ public class RustIdevice {
 								name,
 								model,
 								outputPath,
+								cancellationToken,
 								hostAltIRKHex,
 								phonePairingReadyTrampoline,
 								phonePairingPINTrampoline,
@@ -299,6 +330,8 @@ public class RustIdevice {
 		}
 
 		if status != 0 {
+			if status == 2 { throw PhonePairingHostError.cancelled }
+			if status == 3 { throw PhonePairingHostError.timedOut }
 			let message = rawResult.error.map { String(cString: $0) }
 				?? "Remote Pairing host stopped before producing a result."
 			throw NSError(domain: "minimuxer.phone-pairing", code: Int(status), userInfo: [
@@ -499,6 +532,23 @@ public class RustIdevice {
 
 		guard let pointer else {
 			return nil
+		}
+		defer { _rust_bridge_idevice_free_string(pointer) }
+		return String(cString: pointer)
+	}
+
+	public static func listUserApps() throws -> String {
+		var pointer: UnsafeMutablePointer<Int8>?
+		let error = withUnsafeMutablePointer(to: &pointer) {
+			_rust_bridge_idevice_list_user_apps($0)
+		}
+		try rustIdeviceThrowIfNeeded(error)
+		guard let pointer else {
+			throw NSError(
+				domain: "Minimuxer.InstalledApps",
+				code: 1,
+				userInfo: [NSLocalizedDescriptionKey: "设备没有返回已安装应用清单"]
+			)
 		}
 		defer { _rust_bridge_idevice_free_string(pointer) }
 		return String(cString: pointer)

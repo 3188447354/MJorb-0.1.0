@@ -73,6 +73,94 @@ struct InstalledRecordRecoveryPolicyTests {
     // MARK: - 候选筛选
 
     @Test
+    func restoresOnlyValidatedDeviceAppsAndKeepsTheirActualIdentity() throws {
+        let context = makeContext(teams: [])
+        let app = DeviceInstalledApplicationSummary(
+            bundleIdentifier: "com.example.demo.TEAM123456",
+            displayName: "示例应用",
+            shortVersion: "2.4.1",
+            buildNumber: "241",
+            profileValidated: true
+        )
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [app],
+            profiles: [],
+            context: context
+        )
+
+        #expect(drafts.count == 1)
+        #expect(drafts.first?.bundleIdentifier == app.bundleIdentifier)
+        #expect(drafts.first?.displayName == "示例应用")
+        #expect(drafts.first?.teamIdentifier == nil)
+        let record = InstalledRecordRecoveryPolicy.makeRecord(from: try #require(drafts.first), accountID: nil)
+        #expect(record.state == .installed)
+        #expect(record.name == "示例应用")
+        #expect(record.version == "2.4.1")
+        #expect(record.buildNumber == "241")
+        #expect(record.signedIPARelativePath == nil)
+        #expect(record.signingTeamID == nil)
+        #expect(record.needsIPAImport)
+    }
+
+    @Test
+    func ignoresUnvalidatedAppsAndAlreadyKnownOrDismissedApps() {
+        let context = makeContext(
+            known: ["com.example.known"],
+            dismissed: ["com.example.dismissed"],
+            teams: []
+        )
+        let apps = [
+            makeInstalledApp("com.example.store", validated: false),
+            makeInstalledApp("com.example.known"),
+            makeInstalledApp("com.example.dismissed"),
+            makeInstalledApp("com.mjorb.seal")
+        ]
+
+        #expect(InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: apps,
+            profiles: [],
+            context: context
+        ).isEmpty)
+    }
+
+    @Test
+    func attachesProfileOnlyWhenOneProfileUnambiguouslyCoversApp() throws {
+        let context = makeContext(teams: [])
+        let profile = makeProfile(bundleID: "com.example.*", team: "TEAM123456")
+        let app = makeInstalledApp("com.example.demo")
+        let draft = try #require(InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [app],
+            profiles: [profile],
+            context: context
+        ).first)
+        #expect(draft.teamIdentifier == "TEAM123456")
+        #expect(draft.profileUUID == profile.uuid)
+        #expect(draft.profileExpirationDate == profile.expirationDate)
+
+        let ambiguous = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [app],
+            profiles: [profile, makeProfile(bundleID: "com.example.demo", team: "OTHERTEAM1")],
+            context: context
+        )
+        #expect(ambiguous.first?.teamIdentifier == nil)
+        #expect(ambiguous.first?.profileUUID == nil)
+        #expect(ambiguous.first?.profileExpirationDate == nil)
+    }
+
+    private func makeInstalledApp(
+        _ bundleID: String,
+        validated: Bool = true
+    ) -> DeviceInstalledApplicationSummary {
+        DeviceInstalledApplicationSummary(
+            bundleIdentifier: bundleID,
+            displayName: bundleID,
+            shortVersion: "1.0",
+            buildNumber: "1",
+            profileValidated: validated
+        )
+    }
+
+    @Test
     func buildsDraftForUnknownSealSignedProfileOfTrustedTeam() {
         let context = makeContext(teams: ["ABCDE12345"])
         let drafts = InstalledRecordRecoveryPolicy.drafts(
