@@ -4,6 +4,15 @@ import Foundation
 /// Only AltSign's typed certificate quota error authorizes quota recovery.
 /// Invalid CSR errors and unrelated numeric/text matches must not trigger revocation.
 enum CertificateRequestFailurePolicy {
+    /// 这些失败都已经过远端证书清单复核；用户可以打开「撤销并继续签名」链路，
+    /// 但只有明确选择并二次确认后才会真的撤销。
+    static let recoveryEligibleCodes: Set<String> = [
+        "SEAL-CERT-204b",
+        "SEAL-CERT-204e",
+        "SEAL-CERT-204f",
+        "SEAL-CERT-204g"
+    ]
+
     static func isCertificateLimitError(_ error: Error) -> Bool {
         matches(error, expected: ALTAppleAPIError(.tooManyCertificates))
     }

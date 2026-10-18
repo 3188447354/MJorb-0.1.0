@@ -14,6 +14,7 @@ struct CertificateRequestFailurePolicyTests {
         #expect(CertificateRequestFailurePolicy.isCertificateLimitError(equivalent))
         #expect(CertificateRequestFailurePolicy.requestFailure(error: error)?.code == "SEAL-CERT-204b")
         #expect(CertificateRequestFailurePolicy.requestFailure(error: equivalent, limitCode: "SEAL-CERT-204")?.code == "SEAL-CERT-204")
+        #expect(CertificateRequestFailurePolicy.recoveryEligibleCodes.contains("SEAL-CERT-204b"))
     }
 
     @Test

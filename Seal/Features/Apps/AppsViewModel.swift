@@ -1741,7 +1741,7 @@ final class AppsViewModel: ObservableObject {
     func loadCertificateSacrificeCandidates() async throws -> [CertificateSacrificeCandidate] {
         guard let session = signingSession,
               case .failed(let failure) = session.status,
-              ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code),
+              CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code),
               let signingCoordinator else { return [] }
         return try await signingCoordinator.certificateSacrificeCandidates(accountID: session.account.id)
     }
@@ -1750,7 +1750,7 @@ final class AppsViewModel: ObservableObject {
     func confirmCertificateSacrificeAndRetry(serialNumber: String) {
         guard let session = signingSession,
               case .failed(let failure) = session.status,
-              ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code),
+              CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code),
               signingTask == nil,
               batchRefreshTask == nil,
               let signingCoordinator else { return }

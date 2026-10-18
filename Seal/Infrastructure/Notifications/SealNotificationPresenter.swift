@@ -23,15 +23,6 @@ final class SealNotificationPresenter: NSObject, UNUserNotificationCenterDelegat
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        if PairingCodeNotificationRoute.shouldOpenPairing(
-            requestIdentifier: response.notification.request.identifier
-        ) {
-            await MainActor.run {
-                PairingCodeNotificationRoute.requestOpen()
-            }
-            return
-        }
-
         guard BackgroundRenewalNotificationRoute.shouldRequestResultPresentation(
             requestIdentifier: response.notification.request.identifier
         ) else {

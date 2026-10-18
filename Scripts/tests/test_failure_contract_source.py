@@ -390,18 +390,10 @@ class FailureContractSourceTests(unittest.TestCase):
         # An extension is part of the installed product.  A portal error must
         # neither assert the 7-day App ID limit without proof nor surface a
         # contradictory action that silently changes that product.
+        self.assertIn("stage = .appID", portal)
+        self.assertIn("stage = .provisioningProfile", portal)
         self.assertIn(
-            "throw ApplePortalSigningFailure.make(\n"
-            "                        stage: .appID,\n"
-            "                        error: error\n"
-            "                    )",
-            portal,
-        )
-        self.assertIn(
-            "throw ApplePortalSigningFailure.make(\n"
-            "                        stage: .provisioningProfile,\n"
-            "                        error: error\n"
-            "                    )",
+            "throw ApplePortalSigningFailure.make(stage: stage, error: error)",
             portal,
         )
         profile = portal.split("case .provisioningProfile:", 1)[1].split("case .signing:", 1)[0]

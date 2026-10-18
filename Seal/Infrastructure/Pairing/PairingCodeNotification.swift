@@ -1,6 +1,5 @@
 import Foundation
 import UserNotifications
-
 /// 配对码的**通知回退路径**。
 ///
 /// 什么时候会用到它：
@@ -53,36 +52,11 @@ enum PairingCodeNotification {
         content.title = title
         content.body = body
         content.sound = nil
-        content.userInfo = ["seal.notification.route": "pairing"]
         // 立刻送达；`nil` trigger 表示马上投递。
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         let center = UNUserNotificationCenter.current()
         // 先撤掉旧的同 id 通知，保证「替换」而不是「排队」。
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
         try? await center.add(request)
-    }
-}
-
-/// 配对码回退通知的点击路由。
-///
-/// `UNUserNotificationCenterDelegate` 可能在 SwiftUI 视图树出现前收到点击回调，
-/// 因此先记下待打开请求；RootTabView 出现后消费它，避免冷启动时丢路由或直接操作未挂载的导航栈。
-@MainActor
-enum PairingCodeNotificationRoute {
-    static let opened = Notification.Name("sealPairingCodeNotificationOpened")
-    private static var openRequested = false
-
-    nonisolated static func shouldOpenPairing(requestIdentifier: String) -> Bool {
-        requestIdentifier == PairingCodeNotification.identifier
-    }
-
-    static func requestOpen() {
-        openRequested = true
-        NotificationCenter.default.post(name: opened, object: nil)
-    }
-
-    static func consumeOpenRequest() -> Bool {
-        defer { openRequested = false }
-        return openRequested
     }
 }

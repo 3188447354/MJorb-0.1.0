@@ -13,7 +13,7 @@ struct UpdateChecker {
     /// - Parameter force: 手动检查时传 true，忽略已通知记录，有新版本就弹
     func check(force: Bool = false) async -> UpdateCheckResult {
         guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else {
-            return .unavailable
+            return .unavailable(.configuration)
         }
 
         do {
@@ -23,13 +23,16 @@ struct UpdateChecker {
             request.timeoutInterval = 10
 
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                return .unavailable
+            guard let http = response as? HTTPURLResponse else {
+                return .unavailable(.serviceUnavailable)
+            }
+            guard http.statusCode == 200 else {
+                return .unavailable(Self.failure(forHTTPStatus: http.statusCode))
             }
 
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tagName = json["tag_name"] as? String else {
-                return .unavailable
+                return .unavailable(.invalidRelease)
             }
 
             // 本地版本
@@ -38,7 +41,7 @@ struct UpdateChecker {
             // 只有远端版本「严格高于」当前版本才提示更新；
             // 回滚、发布顺序错乱或 tag 异常返回旧版本时静默忽略，避免提示下载旧 IPA。
             guard let versionComparison = Version.compareIfValid(tagName, currentVersion) else {
-                return .unavailable
+                return .unavailable(.invalidRelease)
             }
             if versionComparison != .orderedDescending {
                 return .latest
@@ -80,7 +83,7 @@ struct UpdateChecker {
                 sha256DownloadURL: sha256DownloadURL
             ))
         } catch {
-            return .unavailable
+            return .unavailable(.network)
         }
     }
 
@@ -175,13 +178,51 @@ struct UpdateChecker {
     static func hashMatches(expected: String, actual: String) -> Bool {
         expected.caseInsensitiveCompare(actual) == .orderedSame
     }
+
+    static func failure(forHTTPStatus statusCode: Int) -> UpdateCheckFailure {
+        switch statusCode {
+        case 404: return .noPublishedRelease
+        case 403, 429: return .rateLimited
+        case 500...599: return .serviceUnavailable
+        default: return .serviceUnavailable
+        }
+    }
 }
 
 enum UpdateCheckResult {
-    case unavailable
+    case unavailable(UpdateCheckFailure)
     case latest
     case suppressed
     case available(UpdateNotice)
+}
+
+enum UpdateCheckFailure: Equatable {
+    case configuration
+    case noPublishedRelease
+    case rateLimited
+    case serviceUnavailable
+    case invalidRelease
+    case network
+
+    var statusText: String {
+        switch self {
+        case .noPublishedRelease: return "暂未发布可用更新"
+        case .rateLimited: return "检查次数过多，请稍后重试"
+        case .serviceUnavailable: return "更新服务暂时不可用"
+        case .invalidRelease: return "更新版本信息无效"
+        case .configuration, .network: return "未能获取版本信息"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .noPublishedRelease: return "当前更新仓库还没有可用的正式版本"
+        case .rateLimited: return "GitHub 暂时限制了请求，请过一会再检查"
+        case .serviceUnavailable: return "请检查网络后重试"
+        case .invalidRelease: return "请等待开发者修正发布信息后再试"
+        case .configuration, .network: return "请检查网络后重试"
+        }
+    }
 }
 
 struct UpdateNotice: Identifiable {

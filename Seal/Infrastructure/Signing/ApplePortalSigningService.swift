@@ -1195,6 +1195,7 @@ actor ApplePortalSigningService {
             stage = .appID
             appIDContext = (team, session)
             let profileRequestStartedAt = Date()
+            stage = .provisioningProfile
             let profilePreparation = try await provisioningProfiles(
                 mappings: prepared.bundleIDMappings,
                 originalMainBundleID: app.originalBundleIdentifier,

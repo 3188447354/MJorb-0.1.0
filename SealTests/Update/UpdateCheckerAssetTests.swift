@@ -24,6 +24,14 @@ struct UpdateCheckerAssetTests {
         #expect(UpdateChecker.isTrustedDownloadURL(url) == false)
     }
 
+    @Test
+    func mapsReleaseAPIStatusesToActionableStates() {
+        #expect(UpdateChecker.failure(forHTTPStatus: 404) == .noPublishedRelease)
+        #expect(UpdateChecker.failure(forHTTPStatus: 403) == .rateLimited)
+        #expect(UpdateChecker.failure(forHTTPStatus: 429) == .rateLimited)
+        #expect(UpdateChecker.failure(forHTTPStatus: 503) == .serviceUnavailable)
+    }
+
     /// 核心：即使仓库名硬编码，响应里的直链也必须独立校验 host。
     @Test
     func rejectsForeignHosts() throws {

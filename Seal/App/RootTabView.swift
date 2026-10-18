@@ -61,9 +61,6 @@ struct RootTabView: View {
             openPairingSettings()
         }
         .task {
-            if PairingCodeNotificationRoute.consumeOpenRequest() {
-                openPairingSettings()
-            }
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
             // 更新抽屉只在首屏与本地检查稳定后呈现，避免启动瞬间叠两层流程。
@@ -78,11 +75,6 @@ struct RootTabView: View {
                 ?? .account
             appsViewModel.requestedSettingsRoute = nil
             appsViewModel.shouldOpenSettings = false
-        }
-        .onReceive(NotificationCenter.default.publisher(for: PairingCodeNotificationRoute.opened)) { _ in
-            // 若通知在冷启动时先到，`.task` 会消费；若此时主界面已在，立即打开即可。
-            guard PairingCodeNotificationRoute.consumeOpenRequest() else { return }
-            openPairingSettings()
         }
         .onChange(of: scenePhase) { phase in
             // 进后台停掉 misagent 保活心跳，省电。

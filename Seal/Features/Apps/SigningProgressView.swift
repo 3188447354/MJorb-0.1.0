@@ -414,8 +414,8 @@ struct SigningProgressView: View {
                 .sealPrimaryAction(cornerRadius: 14)
 
         case .failed(let failure):
-            if ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code) {
-                Button(failure.code == "SEAL-CERT-204e" ? "查看证书并继续" : "重新读取证书") {
+            if CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
+                Button("撤销并继续签名") {
                     isCertificatePickerPresented = true
                 }
                 .sealPrimaryAction(cornerRadius: 14)
@@ -673,7 +673,7 @@ struct SigningProgressView: View {
     }
 
     private func performPrimaryRecovery(_ failure: ImportFailure) {
-        if ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code) {
+        if CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
             isCertificatePickerPresented = true
             return
         }
@@ -685,7 +685,7 @@ struct SigningProgressView: View {
         if isNonRetryableFailure(failure) {
             viewModel.dismissSigningResult()
             dismiss()
-        } else if failure.code == "SEAL-CERT-204e" {
+        } else if CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
             isCertificatePickerPresented = true
         } else if failure.code.hasPrefix("SEAL-NET-") {
             viewModel.retrySigning()

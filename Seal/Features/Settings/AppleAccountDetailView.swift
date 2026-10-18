@@ -238,30 +238,34 @@ private struct AppleAccountAppRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(item.name)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(item.bundleIdentifier)
-                .font(.caption)
-                .foregroundStyle(Color.sealTextSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(item.expirationLabel)
-                .font(.caption)
-                .foregroundStyle(Color.sealTextSecondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            accountDetailRow("应用名称", item.name, emphasis: true)
+            accountDetailRow("App ID", item.appIdentifier)
+            accountDetailRow("Bundle ID", item.bundleIdentifier, monospaced: true)
+            accountDetailRow("有效期至", item.expirationText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 14)
+    }
+
+    private func accountDetailRow(
+        _ title: String,
+        _ value: String,
+        emphasis: Bool = false,
+        monospaced: Bool = false
+    ) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(Color.sealTextSecondary)
+            Text(value)
+                .font(monospaced ? .caption.monospaced() : .caption)
+                .fontWeight(emphasis ? .semibold : .regular)
+                .foregroundStyle(emphasis ? Color.primary : Color.sealTextSecondary)
+                .lineLimit(1)
+                .truncationMode(monospaced ? .middle : .tail)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
     }
 }
 
@@ -331,12 +335,14 @@ private struct AppleAccountEmptyCard: View {
 
 private struct AppleAccountAppItem: Identifiable, Equatable {
     let id: String
+    let appIdentifier: String
     let name: String
     let bundleIdentifier: String
     let expiryDate: Date
 
     init(snapshot: ApplePortalAppIDSnapshot, accountID: UUID, relatedApps: [AppRecord]) {
         id = snapshot.id
+        appIdentifier = snapshot.identifier
 
         let trimmedName = snapshot.name.trimmingCharacters(in: .whitespacesAndNewlines)
         name = trimmedName.isEmpty ? "App 名称未记录" : trimmedName
@@ -373,7 +379,7 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
         expiryDate = max(portalExpiry, latestLocalExpiry ?? .distantPast)
     }
 
-    var expirationLabel: String {
-        "有效期至 \(SealSettingsDateFormatter.string(from: expiryDate))"
+    var expirationText: String {
+        SealSettingsDateFormatter.string(from: expiryDate)
     }
 }

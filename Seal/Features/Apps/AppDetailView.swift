@@ -98,15 +98,13 @@ struct AppDetailView: View {
             Divider()
             detailRow("团队 ID", app.signingTeamID ?? "未记录")
             Divider()
-            identifierDetailRow("签名 ID", signedBundleIdentifier(app), highlightSeal: true)
+            identifierDetailRow("App ID", signedBundleIdentifier(app), highlightSeal: true)
             Divider()
-            identifierDetailRow("原始 ID", app.originalBundleIdentifier, highlightSeal: false)
+            identifierDetailRow("Bundle ID", app.originalBundleIdentifier, highlightSeal: false)
             Divider()
             profileDetailRow(app)
             Divider()
-            detailRow("描述文件创建时间", profileCreationDateText(app))
-            Divider()
-            detailRow("描述文件有效期至", expiryDateText(app), valueColor: profileColor(app))
+            detailRow("有效期至", expiryDateText(app), valueColor: profileColor(app))
             Divider()
             if app.extensions.isEmpty {
                 detailRow("扩展", "无")
@@ -335,13 +333,6 @@ struct AppDetailView: View {
 
     private func expiryDateText(_ app: AppRecord) -> String {
         guard let date = AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
-        return SealSettingsDateFormatter.string(from: date)
-    }
-
-    /// 描述文件创建时间：续签后这里应当是「刚刚」，用来核验这次拿到的确实是本轮新生成的
-    /// 完整 7 天描述文件，而不是沿用的旧文件（同版本续签只有创建时间/有效期会变）。
-    private func profileCreationDateText(_ app: AppRecord) -> String {
-        guard let date = AppSigningPresentationHelpers.profileCreationDate(for: app) else { return "未记录" }
         return SealSettingsDateFormatter.string(from: date)
     }
 

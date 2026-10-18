@@ -6,7 +6,7 @@ struct AboutView: View {
         case checking
         case latest
         case available(String)
-        case unavailable
+        case unavailable(UpdateCheckFailure)
     }
 
     private var version: String {
@@ -19,7 +19,7 @@ struct AboutView: View {
     @State private var isCheckingUpdate = false
     @State private var updateStatus: UpdateStatus = .checking
     @State private var presentedUpdate: UpdateNotice?
-    @State private var isUpdateFailurePresented = false
+    @State private var updateFailure: UpdateCheckFailure?
 
     init(onInstall: ((URL) -> Void)? = nil) {
         self.onInstall = onInstall
@@ -57,11 +57,14 @@ struct AboutView: View {
                 )
             }
         }
-        .alert("暂时无法检查更新", isPresented: $isUpdateFailurePresented) {
+        .alert(updateFailure?.statusText ?? "暂时无法检查更新", isPresented: Binding(
+            get: { updateFailure != nil },
+            set: { if !$0 { updateFailure = nil } }
+        )) {
             Button("重试") { checkUpdate() }
             Button("关闭", role: .cancel) {}
         } message: {
-            Text("未能获取版本信息，请检查网络重试")
+            Text(updateFailure?.detail ?? "请检查网络后重试")
         }
     }
 
@@ -198,7 +201,7 @@ struct AboutView: View {
         case .checking: return "正在检查"
         case .latest: return "已是最新版本"
         case .available(let version): return "\(version) 可更新"
-        case .unavailable: return "检查失败"
+        case .unavailable(let failure): return failure.statusText
         }
     }
 
@@ -213,9 +216,9 @@ struct AboutView: View {
         let result = await UpdateChecker.shared.check(force: true)
         let notice: UpdateNotice?
         switch result {
-        case .unavailable:
+        case .unavailable(let failure):
             notice = nil
-            updateStatus = .unavailable
+            updateStatus = .unavailable(failure)
         case .latest, .suppressed:
             notice = nil
             updateStatus = .latest
@@ -226,8 +229,8 @@ struct AboutView: View {
         isCheckingUpdate = false
         if presentUpdate, let notice {
             presentedUpdate = notice
-        } else if presentUpdate, case .unavailable = result {
-            isUpdateFailurePresented = true
+        } else if presentUpdate, case .unavailable(let failure) = result {
+            updateFailure = failure
         }
     }
 
