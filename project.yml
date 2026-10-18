@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 3866)
-Total output lines: 317
-
 name: Seal
 options:
   createIntermediateGroups: true
@@ -119,7 +116,63 @@ targets:
         #    ⚠️ `location` 首次会弹定位权限（用户点「始终允许」后无需再干预）。
         # ⚠️ **仍不加 `fetch`** —— 那是「系统自己找机会刷」那条路（需要
         #    `UIApplicationDelegate.performFetchWithCompletionHandler`），本项目**还没有**
-        #    AppDelegate；声明了却不处理只会让系统白唤醒…866 tokens truncated…图只能住在
+        #    AppDelegate；声明了却不处理只会让系统白唤醒、并让排查时误以为有这条路径。
+        #    要加时**两件事一起做**（声明 ＋ 处理回调）。`processing` 同理（需 BGTaskScheduler）。
+        # ⚠️ `UIBackgroundModes` 是 **Info.plist 键、不是 entitlement** ⇒ 侧载签名拿得到
+        #    （上游 SideStore 自己就是侧载 App，一直用它）。
+        UIBackgroundModes:
+          - audio
+          - location
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.apple.itunes.ipa
+            UTTypeDescription: iOS App Archive
+            UTTypeConformsTo:
+              - public.zip-archive
+              - public.data
+            UTTypeTagSpecification:
+              public.filename-extension:
+                - ipa
+              public.mime-type:
+                - application/octet-stream
+                - application/x-itunes-ipa
+        ITSAppUsesNonExemptEncryption: false
+        NSLocalNetworkUsageDescription: Seal 使用本地网络发布设备配对服务，并连接此设备安装应用。
+        # 后台定位保活（`LocationKeepAliveService`）用。⚠️ 缺 `AlwaysAndWhenInUse` 这一项，
+        # `requestAlwaysAuthorization()` 会直接崩溃（权限描述缺失 = iOS 强制终止）。
+        NSLocationWhenInUseUsageDescription: Seal 需要定位权限在后台保持活跃，以便不打开 App 也能自动续签应用。
+        NSLocationAlwaysAndWhenInUseUsageDescription: Seal 需要「始终允许」定位，在锁屏 / 后台时保持活跃，完成自动续签。
+        # 🔴 浏览 Bonjour 服务**必须**声明服务类型（iOS 14+）。缺了它 `NWBrowser`
+        #    不报错、只是**永远没有结果** —— 端口自愈会静默失效，日志上也看不出来。
+        #    这里只列 `RemotePairingPortDiscovery` 真正会浏览的三个
+        #    （`RemotePairingPortPolicy.serviceTypes`；守卫 R95 钉住两边一致）。
+        NSBonjourServices:
+          - _remotepairing._tcp
+          - _remotepairing-pairable-host._tcp
+          - _remotepairing-manual-pairing._tcp
+        NSPhotoLibraryAddUsageDescription: Seal 需要访问相册以保存赞赏码图片。
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # 配对码镜像到灵动岛 / 锁屏。
+        # 配对码要输进**系统设置**，进设置就得离开 Seal；镜像到灵动岛后输码时一直看得见，
+        # 点一下还能跳回 Seal（`seal://pairing`）。
+        # ⚠️ 缺这个键 ⇒ `Activity.request` 抛错、灵动岛永不出现，且**没有任何日志**。
+        #    它必须与 `targets.Seal.dependencies` 里的 `SealLiveActivity` 同时存在或同时移除。
+        NSSupportsLiveActivities: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal
+        PRODUCT_NAME: Seal
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: 0.1.7
+        CURRENT_PROJECT_VERSION: 3
+        GENERATE_INFOPLIST_FILE: NO
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Seal/Resources/Seal.entitlements
+        # Xcode 16+ Debug 构建默认把代码拆进 <Name>.debug.dylib（预览调试用）。
+        # 侧载分发场景第三方签名工具常漏签根目录 dylib → 白图标+秒闪退。关闭之。
+        ENABLE_DEBUG_DYLIB: NO
+  # 配对码的 Live Activity 界面。**必须**是独立 target：ActivityKit 的视图只能住在
   # widget 扩展里，放进主 App 会编译通过但永远不显示。
   SealLiveActivity:
     type: app-extension
@@ -261,4 +314,3 @@ schemes:
       targets:
         - SealTests
         - SealUITests
-

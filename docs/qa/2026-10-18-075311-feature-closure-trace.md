@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 3423)
-Total output lines: 127
-
 # 2026-10-18 功能闭环追踪
 
 记录生成时间：2026-10-18T07:53:11+08:00；版本号依次更新至 `0.1.2`（09:18:01）、`0.1.3`（09:37:05）、`0.1.4`（09:43:55）、`0.1.5`（09:56:35）和 `0.1.6`（本轮），均为 +08:00。
@@ -25,7 +22,27 @@ Total output lines: 127
 
 ## 证书事实与自签路径
 
-Apple 官方说明开发证书属于个人；开发者账号并非“一 ID 永远一本证书”，个人开发者账户可有两张 iOS Development 证书。当前自签恢复直接定位 Seal 主程序 Mach-O 的真实 CMS 签名者；Seal 的撤销候选只给这张证书，避免撤销了别的证书却没解决自签问题。用户二次确认后撤销并继续创建本机证书、签名和覆…423 tokens truncated…9:36:59+08:00 |
+Apple 官方说明开发证书属于个人；开发者账号并非“一 ID 永远一本证书”，个人开发者账户可有两张 iOS Development 证书。当前自签恢复直接定位 Seal 主程序 Mach-O 的真实 CMS 签名者；Seal 的撤销候选只给这张证书，避免撤销了别的证书却没解决自签问题。用户二次确认后撤销并继续创建本机证书、签名和覆盖安装。Apple 说明撤销证书会使包含该证书的 provisioning profile 失效，因此只保留这次实际撤销所需的确认，不再额外要求用户手动挑选其他证书。参考：[Certificates overview](https://developer.apple.com/help/account/certificates/certificates-overview/)、[Revoke a certificate](https://developer.apple.com/help/account/certificates/revoke-a-certificate/)。
+
+## 实机约束
+
+`Seal-log(23).txt` 显示当前安装包的 `SealLiveActivity.appex` 缺少 `embedded.mobileprovision`。这代表第三方工具没有完整签好扩展；该情况下 iOS 不会加载 Live Activity 扩展。必须使用能为主 App 和 `SealLiveActivity.appex` 都嵌入描述文件并签名的安装方式，源码不能绕过 iOS 的扩展签名验证。
+
+## 验证范围
+
+- 源码差异检查：`git diff --check`
+- 单元测试已覆盖：第三方签名包描述文件缺失时保留真实签名者、清理策略仍保护真实 Seal 签名者、Release API 404 显示最新版，以及其他 HTTP 错误分类。
+- 本地 49 项源码契约测试通过；Swift 编译与 IPA 内容须由本次最新 GitHub Actions run 验证。
+- CI #18 的 `testTwoStageNavigationSupportsHorizontalSwipe` 发现向右滑回待安装页失败；0.1.3 修复后须由下一轮 CI 回归复验。
+
+## 最终文件时间
+
+精确修改时间统一使用工作区文件系统记录的 `Asia/Shanghai` 时区，到秒；删除文件用包含删除的提交时间记录。
+
+| 路径 | 修改时间 |
+| --- | --- |
+| `Seal/Core/Signing/CertificateRequestFailurePolicy.swift` | 2026-10-18T08:21:36+08:00 |
+| `Seal/Features/Apps/AppsRootView.swift` | 2026-10-18T09:36:59+08:00 |
 | `SealUITests/ImportFlowUITests.swift` | 2026-10-18T09:36:59+08:00 |
 | `Seal/Features/Apps/AppsViewModel.swift` | 2026-10-18T07:48:07+08:00 |
 | `Seal/Features/Apps/SigningProgressView.swift` | 2026-10-18T08:21:36+08:00 |
@@ -107,4 +124,3 @@ CI #22 的 Swift 回归发现证书恢复候选的 `recommendedSerialNumber` get
 | `Seal/Features/Apps/CertificateSacrificePickerView.swift` | 2026-10-18T10:29:38+08:00 |
 | `project.yml`（0.1.6 → 0.1.7） | 2026-10-18T10:29:38+08:00 |
 | `RELEASE_NOTES.md`（新增 0.1.7） | 2026-10-18T10:29:38+08:00 |
-
