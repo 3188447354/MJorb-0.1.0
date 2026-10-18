@@ -218,6 +218,12 @@ actor SelfAppRegistrar {
             let installedProfileExpiry = installedMain?.profileExpirationDate
                 ?? metadata.expirationDate
                 ?? existing?.provisioningProfileExpirationDate
+            let installedExtensions = metadata.extensionRecords.map {
+                SelfAppRegistrar.reconcileExtensionRecords(
+                    $0,
+                    preservingIDsFrom: existing?.extensions ?? []
+                )
+            } ?? existing?.extensions ?? []
 
             // 8. 更新记录（复用 ID，不删除重建）
             let record = AppRecord(
@@ -258,7 +264,7 @@ actor SelfAppRegistrar {
                 isSeal: true,
                 isPinned: true,
                 importedAt: existing?.importedAt ?? Date(),
-                extensions: existing?.extensions ?? []
+                extensions: installedExtensions
             )
             try await appStore.save(record)
 
@@ -512,6 +518,17 @@ actor SelfAppRegistrar {
             changed = true
         }
 
+        if let extensionRecords = metadata.extensionRecords {
+            let reconciledExtensions = SelfAppRegistrar.reconcileExtensionRecords(
+                extensionRecords,
+                preservingIDsFrom: existing.extensions
+            )
+            if updated.extensions != reconciledExtensions {
+                updated.extensions = reconciledExtensions
+                changed = true
+            }
+        }
+
         // ── 两阶段确认：pending 的去留由「候选到底在不在设备上」决定 ──
         //
         // ① 调用方**显式声明**候选已确认没落盘（`.closeAsNotInstalled`：启动自替换对账
@@ -624,5 +641,29 @@ actor SelfAppRegistrar {
 
         guard changed else { return }
         try await appStore.save(updated)
+    }
+
+    private static func reconcileExtensionRecords(
+        _ runtimeExtensions: [AppExtensionRecord],
+        preservingIDsFrom existingExtensions: [AppExtensionRecord]
+    ) -> [AppExtensionRecord] {
+        runtimeExtensions.map { runtime in
+            let runtimeBundleID = (runtime.mappedBundleIdentifier ?? runtime.originalBundleIdentifier).lowercased()
+            let existing = existingExtensions.first {
+                ($0.mappedBundleIdentifier ?? $0.originalBundleIdentifier).lowercased() == runtimeBundleID
+            }
+            guard let existing else { return runtime }
+            return AppExtensionRecord(
+                id: existing.id,
+                name: runtime.name,
+                originalBundleIdentifier: existing.originalBundleIdentifier,
+                mappedBundleIdentifier: runtime.mappedBundleIdentifier,
+                kind: runtime.kind,
+                provisioningProfileUUID: runtime.provisioningProfileUUID,
+                provisioningProfileName: runtime.provisioningProfileName,
+                provisioningProfileExpirationDate: runtime.provisioningProfileExpirationDate,
+                certificateSerialNumber: runtime.certificateSerialNumber
+            )
+        }
     }
 }

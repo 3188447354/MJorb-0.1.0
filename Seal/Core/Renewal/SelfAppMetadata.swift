@@ -24,6 +24,8 @@ struct SelfAppMetadata: Sendable {
     /// 主程序和全部扩展的真实 CMS 签名身份。读取失败时本字段为 nil，
     /// 撤销/接管等高风险操作因此关闭，但 Seal 自身记录仍应正常注册。
     var installedIdentity: InstalledIdentity? = nil
+    /// 当前运行包实际包含的扩展；nil 表示无法读取，空数组表示确认没有扩展。
+    var extensionRecords: [AppExtensionRecord]? = nil
 
     /// 轮次级短 TTL 缓存（性能优化 2026-10-04）：每轮续签调 2 次 `current()`，
     /// 每次 = mobileprovision 磁盘读 + CMS 解析 + Mach-O 全解析 + 图标 PNG 解码。
@@ -73,6 +75,10 @@ struct SelfAppMetadata: Sendable {
         // 读取真实 CMS 签名身份；失败时仍创建 SelfAppMetadata，但 installedIdentity 为 nil，
         // 所有撤销和接管操作因此关闭。
         let identity = try? identityReader.read(bundleURL: bundle.bundleURL)
+        let extensionRecords = readExtensionRecords(
+            bundleURL: bundle.bundleURL,
+            installedIdentity: identity
+        )
 
         let result = SelfAppMetadata(
             bundleURL: bundle.bundleURL,
@@ -91,10 +97,72 @@ struct SelfAppMetadata: Sendable {
             provisioningProfileName: profileDetails?.name,
             provisioningProfileCreationDate: profileDetails?.creationDate,
             certificateSerialNumbers: profileDetails?.certificateSerialNumbers ?? [],
-            installedIdentity: identity
+            installedIdentity: identity,
+            extensionRecords: extensionRecords
         )
         cachedMetadata = (result, Date())
         return result
+    }
+
+    static func readExtensionRecords(
+        bundleURL: URL,
+        installedIdentity: InstalledIdentity?
+    ) -> [AppExtensionRecord]? {
+        let pluginsURL = bundleURL.appending(path: "PlugIns", directoryHint: .isDirectory)
+        guard FileManager.default.fileExists(atPath: pluginsURL.path) else { return [] }
+        guard let appexURLs = try? FileManager.default.contentsOfDirectory(
+            at: pluginsURL,
+            includingPropertiesForKeys: nil
+        )
+        .filter({ $0.pathExtension == "appex" })
+        .sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) else {
+            return nil
+        }
+
+        var records: [AppExtensionRecord] = []
+        for appexURL in appexURLs {
+            let infoURL = appexURL.appending(path: "Info.plist")
+            guard let data = try? Data(contentsOf: infoURL, options: .mappedIfSafe),
+                  let propertyList = try? PropertyListSerialization.propertyList(from: data, format: nil),
+                  let info = propertyList as? [String: Any],
+                  let bundleIdentifier = info["CFBundleIdentifier"] as? String,
+                  bundleIdentifier.isEmpty == false else {
+                return nil
+            }
+
+            let target = installedIdentity?.targets.first {
+                $0.kind == .appExtension
+                    && $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
+                    && $0.isComplete
+            }
+            let extensionPoint = (info["NSExtension"] as? [String: Any])?["NSExtensionPointIdentifier"] as? String
+            let name = (info["CFBundleDisplayName"] as? String)
+                ?? (info["CFBundleName"] as? String)
+                ?? appexURL.deletingPathExtension().lastPathComponent
+
+            records.append(
+                AppExtensionRecord(
+                    name: name,
+                    originalBundleIdentifier: (info["SealOriginalBundleIdentifier"] as? String)
+                        ?? bundleIdentifier,
+                    mappedBundleIdentifier: bundleIdentifier,
+                    kind: extensionKind(for: extensionPoint),
+                    provisioningProfileUUID: target?.profileUUID,
+                    provisioningProfileExpirationDate: target?.profileExpirationDate,
+                    certificateSerialNumber: target?.signerSerialNumber
+                )
+            )
+        }
+        return records
+    }
+
+    private static func extensionKind(for pointIdentifier: String?) -> AppExtensionKind {
+        switch pointIdentifier {
+        case "com.apple.share-services": .share
+        case "com.apple.usernotifications.service": .notificationService
+        case "com.apple.widgetkit-extension", "com.apple.widget-extension": .widget
+        default: .unknown
+        }
     }
 
     @MainActor

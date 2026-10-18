@@ -4,6 +4,70 @@ import Testing
 
 struct SelfAppRegistrarTests {
     @Test
+    func readsExtensionsFromTheRunningAppBundle() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "SealExtensionMetadata-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let extensionURL = root.appending(path: "PlugIns/SealLiveActivity.appex", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: extensionURL, withIntermediateDirectories: true)
+        let info: [String: Any] = [
+            "CFBundleIdentifier": "com.mjorb.seal.LiveActivity",
+            "CFBundleName": "SealLiveActivity",
+            "NSExtension": ["NSExtensionPointIdentifier": "com.apple.widgetkit-extension"]
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try data.write(to: extensionURL.appending(path: "Info.plist"))
+
+        let records = try #require(
+            SelfAppMetadata.readExtensionRecords(bundleURL: root, installedIdentity: nil)
+        )
+
+        #expect(records.count == 1)
+        #expect(records[0].name == "SealLiveActivity")
+        #expect(records[0].mappedBundleIdentifier == "com.mjorb.seal.LiveActivity")
+        #expect(records[0].kind == .widget)
+    }
+
+    @Test
+    func sameVersionRegistrationBackfillsRunningExtensions() async throws {
+        let fixture = try makeSealFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        try await fixture.appStore.save(
+            makeSealRecord(
+                fixture,
+                expiry: Date(timeIntervalSince1970: 1_700_000_000),
+                profileUUID: "PROFILE",
+                profileName: "Seal"
+            )
+        )
+        let extensionRecord = AppExtensionRecord(
+            name: "SealLiveActivity",
+            originalBundleIdentifier: "com.mjorb.seal.LiveActivity",
+            mappedBundleIdentifier: "com.mjorb.seal.LiveActivity",
+            kind: .widget
+        )
+        let metadata = SelfAppMetadata(
+            bundleURL: fixture.currentBundle,
+            bundleIdentifier: "com.mjorb.seal",
+            originalBundleIdentifier: "com.mjorb.seal",
+            name: "Seal",
+            version: "1.0",
+            buildNumber: "1",
+            iconData: nil,
+            expirationDate: nil,
+            signingTeamIdentifier: nil,
+            signingApplicationIdentifier: nil,
+            extensionRecords: [extensionRecord]
+        )
+
+        try await makeRegistrar(fixture, metadata: metadata).ensureRegistered()
+
+        let updated = try #require(try await fixture.appStore.fetchAll().first)
+        #expect(updated.extensions.count == 1)
+        #expect(updated.extensions.first?.mappedBundleIdentifier == "com.mjorb.seal.LiveActivity")
+    }
+
+    @Test
     func preservesTheFirstOriginalBundleIdentifierAcrossSelfUpdates() {
         #expect(
             SelfAppBundleIdentity.originalBundleIdentifier(

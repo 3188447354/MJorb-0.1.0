@@ -1,3 +1,12 @@
+## 2026-10-18 18:28:39 Seal 自身详情缺少扩展记录
+
+- **现象**：签名安装 Seal 后打开应用详情，扩展区域显示为空。
+- **根因**：详情页只读 `AppRecord.extensions`；Seal 首次登记只沿用旧记录中的扩展，同版本启动对账也没有从运行包补回扩展。
+- **修复**：读取已安装 Seal 的 `PlugIns/*.appex/Info.plist`，结合运行包签名身份生成扩展记录；首次登记和同版本对账都会写入，保留已有扩展记录 ID 与原始 Bundle ID。
+- **涉及文件**：`Seal/Core/Renewal/SelfAppMetadata.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`SealTests/Renewal/SelfAppRegistrarTests.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **版本**：`0.1.15`，主 App 与 Live Activity target 同步。
+- **验证**：新增运行包扩展读取及同版本补回单测；本机无法编译 Swift，云 CI 和实机显示待验证。
+
 ## 2026-10-18 17:50:48 灵动岛 Seal 图标使用圆角方形
 
 - **改动**：Seal 图标维持 20pt 尺寸和全彩，增加 4pt 连续圆角裁切，外观与应用图标一致。
