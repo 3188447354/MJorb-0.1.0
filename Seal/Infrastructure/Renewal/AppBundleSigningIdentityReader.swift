@@ -165,17 +165,20 @@ struct AppBundleSigningIdentityReader: Sendable {
         ) as? [String: Any]
         let bundleID = try requiredString("CFBundleIdentifier", in: info)
         let executableName = try requiredString("CFBundleExecutable", in: info)
-        let profileData = try Data(contentsOf: bundleURL.appending(path: "embedded.mobileprovision"))
-        let profile = try ProvisioningProfileReader().details(from: profileData)
         let evidence = try inspectExecutable(bundleURL.appending(path: executableName))
         let normalizedEvidenceSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(evidence.serialNumber)
+        guard normalizedEvidenceSerial.isEmpty == false else {
+            throw IdentityReadFailure.signerMissing
+        }
+        guard let profileData = try? Data(contentsOf: bundleURL.appending(path: "embedded.mobileprovision")),
+              let profile = try? ProvisioningProfileReader().details(from: profileData) else {
+            return signerOnlyTarget(kind: kind, bundleID: bundleID, serial: evidence.serialNumber)
+        }
         let signer = profile.developerCertificates.first {
             SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)
                 == normalizedEvidenceSerial
         }
-        guard let signer else {
-            throw IdentityReadFailure.signerNotAuthorizedByProfile
-        }
+        guard let signer else { return signerOnlyTarget(kind: kind, bundleID: bundleID, serial: evidence.serialNumber) }
         return SignedTargetIdentity(
             kind: kind,
             bundleIdentifier: bundleID,
@@ -186,6 +189,24 @@ struct AppBundleSigningIdentityReader: Sendable {
             signerSerialNumber: signer.serialNumber,
             signerCertificateSHA256: signer.sha256Fingerprint,
             status: .complete
+        )
+    }
+
+    private func signerOnlyTarget(
+        kind: SignedTargetIdentity.Kind,
+        bundleID: String,
+        serial: String
+    ) -> SignedTargetIdentity {
+        SignedTargetIdentity(
+            kind: kind,
+            bundleIdentifier: bundleID,
+            teamIdentifier: "",
+            applicationIdentifier: "",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: serial,
+            signerCertificateSHA256: "",
+            status: .signerIdentified
         )
     }
 

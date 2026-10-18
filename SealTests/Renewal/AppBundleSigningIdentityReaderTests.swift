@@ -39,6 +39,23 @@ struct AppBundleSigningIdentityReaderTests {
     }
 
     @Test
+    func preservesActualSignerWhenThirdPartyInstallHasNoReadableProfile() throws {
+        let serial = TestDeveloperCertificate.serialNumberHex(der: TestDeveloperCertificate.certificateADER)
+        let fixture = try IdentityBundleFixture.make(authorizedDERs: [TestDeveloperCertificate.certificateADER])
+        try FileManager.default.removeItem(at: fixture.bundleURL.appending(path: "embedded.mobileprovision"))
+        let reader = AppBundleSigningIdentityReader(
+            inspectExecutable: { _ in
+                .init(serialNumber: serial, cmsValid: false, codeDirectoryValid: false)
+            }
+        )
+
+        let identity = try reader.read(bundleURL: fixture.bundleURL)
+        #expect(identity.mainTarget?.status == .signerIdentified)
+        #expect(identity.mainTarget?.signerSerialNumber == serial)
+        #expect(identity.isComplete == false)
+    }
+
+    @Test
     func inconsistentArchitecturesWhenInspectReturnsDifferentSerials() throws {
         let fixture = try IdentityBundleFixture.make(
             authorizedDERs: [TestDeveloperCertificate.certificateADER]

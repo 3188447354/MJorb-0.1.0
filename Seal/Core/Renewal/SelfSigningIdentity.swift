@@ -2,6 +2,8 @@ import Foundation
 
 enum IdentityReadStatus: String, Codable, Sendable {
     case complete
+    /// CMS 实际签名者可确认，但描述文件缺失或不匹配；只可用于保护签名者证书。
+    case signerIdentified
     case unreadable
     case inconsistentArchitectures
     case signerNotAuthorizedByProfile

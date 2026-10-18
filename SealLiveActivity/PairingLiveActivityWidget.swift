@@ -58,7 +58,7 @@ struct PairingLiveActivityWidget: Widget {
 
     private var sealMark: some View {
         Group {
-            if let image = UIImage(named: "SealBrandIcon") {
+            if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -97,10 +97,10 @@ struct PairingLiveActivityWidget: Widget {
 
     private func statusText(for stage: PairingActivityAttributes.Stage) -> String {
         switch stage {
-        case .preparing: return "准备配对"
-        case .code: return "等待配对"
-        case .paired: return "配对完成"
-        case .failed: return "配对未完成"
+        case .preparing: return "准备中"
+        case .code: return "等待中"
+        case .paired: return "已完成"
+        case .failed: return "未完成"
         }
     }
 

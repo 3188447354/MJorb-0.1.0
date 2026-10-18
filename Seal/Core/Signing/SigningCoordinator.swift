@@ -15,6 +15,7 @@ struct KeylessCertificateSacrificeResult: Sendable {
 struct CertificateSacrificeCandidate: Identifiable, Sendable {
     let certificate: ApplePortalCertificateSnapshot
     let affectedAppCount: Int
+    let isCurrentSealSigner: Bool
 
     var id: String { certificate.serialNumber }
 }
@@ -1234,7 +1235,10 @@ actor SigningCoordinator {
     }
 
     /// 证书选择抽屉的候选只用于展示；展示后仍可能发生变化，因此撤销前必须重新读取 Apple 清单。
-    func certificateSacrificeCandidates(accountID: UUID) async throws -> [CertificateSacrificeCandidate] {
+    func certificateSacrificeCandidates(
+        accountID: UUID,
+        allowSealSigner: Bool = false
+    ) async throws -> [CertificateSacrificeCandidate] {
         guard let account = try await accountRepository.fetchAll().first(where: {
             $0.id == accountID
         }) else {
@@ -1277,8 +1281,9 @@ actor SigningCoordinator {
         let apps = (try? await appStore.fetchAll()) ?? []
         let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
         guard let runningIdentity,
-              runningIdentity.isComplete,
-              runningIdentity.mainTarget?.signerSerialNumber != nil else {
+              let mainTarget = runningIdentity.mainTarget,
+              (mainTarget.status == .complete || mainTarget.status == .signerIdentified),
+              mainTarget.signerSerialNumber.isEmpty == false else {
             let summary = runningIdentity?.readFailureSummary ?? "installedIdentity 读取失败"
             try? await logStore?.append(
                 category: .signing,
@@ -1291,29 +1296,38 @@ actor SigningCoordinator {
                 code: "SEAL-CERT-230"
             )
         }
-        let sealProtectedSerials = Set(
-            runningIdentity.targets.map {
-                SigningCertificateSelectionPolicy.normalizedSerialNumber($0.signerSerialNumber)
-            }
-        )
+        let sealProtectedSerials = [
+            SigningCertificateSelectionPolicy.normalizedSerialNumber(mainTarget.signerSerialNumber)
+        ]
         let protected = candidates.filter {
-            sealProtectedSerials.contains(SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)) == false
+            allowSealSigner
+                || sealProtectedSerials.contains(SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)) == false
         }
         return protected.map { certificate in
             let affected = CertificateRevocationImpact.affectedApps(
                 serialNumber: certificate.serialNumber,
                 apps: apps
             )
-            return CertificateSacrificeCandidate(certificate: certificate, affectedAppCount: affected.count)
+            let isCurrentSealSigner = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
+                == SigningCertificateSelectionPolicy.normalizedSerialNumber(mainTarget.signerSerialNumber)
+            return CertificateSacrificeCandidate(
+                certificate: certificate,
+                affectedAppCount: affected.count,
+                isCurrentSealSigner: isCurrentSealSigner
+            )
         }
     }
 
     /// 用户在列表中选定并二次确认后，只撤销这一张；执行前重拉清单并重新验证候选资格。
     func revokeKeylessCertificateAfterConfirmation(
         accountID: UUID,
-        serialNumber selectedSerialNumber: String
+        serialNumber selectedSerialNumber: String,
+        allowSealSigner: Bool = false
     ) async throws -> KeylessCertificateSacrificeResult {
-        let candidates = try await certificateSacrificeCandidates(accountID: accountID)
+        let candidates = try await certificateSacrificeCandidates(
+            accountID: accountID,
+            allowSealSigner: allowSealSigner
+        )
         let selectedNormalized = SigningCertificateSelectionPolicy.normalizedSerialNumber(selectedSerialNumber)
         guard let candidate = candidates.first(where: {
             SigningCertificateSelectionPolicy.normalizedSerialNumber($0.certificate.serialNumber) == selectedNormalized
@@ -1348,7 +1362,10 @@ actor SigningCoordinator {
             )
             // 请求可能已在 Apple 侧完成，但响应中途丢失。重新读取清单确认状态；
             // 只在所选证书仍存在时报告失败，避免用户重复撤销或卡在额度满状态。
-            guard let refreshedCandidates = try? await certificateSacrificeCandidates(accountID: accountID) else {
+            guard let refreshedCandidates = try? await certificateSacrificeCandidates(
+                accountID: accountID,
+                allowSealSigner: allowSealSigner
+            ) else {
                 throw Self.failure(
                     reason: "Apple 未确认本次撤销结果，当前无法读取最新证书状态。",
                     recovery: "重新读取证书列表后再继续",

@@ -35,7 +35,9 @@ enum CertificateCleanupPolicy {
     static func isIOSDevelopmentCertificate(name: String?) -> Bool {
         guard let name else { return false }
         let normalized = name.lowercased()
-        return normalized.contains("ios development") || normalized.contains("iphone developer")
+        return normalized.contains("apple development")
+            || normalized.contains("ios development")
+            || normalized.contains("iphone developer")
     }
 
     /// 所有来源在比对点归一化。Seal 保护只认主程序的真实 CMS 签名者，
@@ -48,7 +50,7 @@ enum CertificateCleanupPolicy {
         sealActualSignerSerialNumber: String?,
         identityConfidence: IdentityReadStatus
     ) -> CertificateCleanupPlan {
-        guard identityConfidence == .complete,
+        guard identityConfidence == .complete || identityConfidence == .signerIdentified,
               let sealActualSignerSerialNumber,
               SigningCertificateSelectionPolicy.normalizedSerialNumber(sealActualSignerSerialNumber).isEmpty == false
         else {

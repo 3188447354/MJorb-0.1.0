@@ -15,7 +15,15 @@ struct CertificateSacrificePickerView: View {
         candidates.first { $0.id == selectedSerialNumber }
     }
 
+    private var visibleCandidates: [CertificateSacrificeCandidate] {
+        session.app.isSeal ? candidates.filter { $0.isCurrentSealSigner } : candidates
+    }
+
     private var recommendedSerialNumber: String? {
+        if session.app.isSeal,
+           let currentSealSigner = candidates.first(where: { $0.isCurrentSealSigner }) {
+            return currentSealSigner.id
+        }
         candidates.min { lhs, rhs in
             if lhs.affectedAppCount != rhs.affectedAppCount {
                 return lhs.affectedAppCount < rhs.affectedAppCount
@@ -32,6 +40,15 @@ struct CertificateSacrificePickerView: View {
     var body: some View {
         SealDrawer(title: "选择要撤销的证书", showsFooter: true) {
             VStack(alignment: .leading, spacing: 16) {
+                if session.app.isSeal {
+                Text("将优先选中当前 Seal 实际使用的证书。撤销后 Seal 可能暂时无法启动，完成本次签名并覆盖安装即可恢复。")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.sealWarning)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.sealWarning.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
                 Text("请选择一张本机没有对应私钥的开发证书")
                     .font(.system(size: 14))
                     .foregroundStyle(Color.sealTextSecondary)
@@ -65,11 +82,13 @@ struct CertificateSacrificePickerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
                     .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                } else if candidates.isEmpty {
+                } else if visibleCandidates.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("没有可选择的旧证书")
+                        Text(session.app.isSeal ? "未找到当前 Seal 使用的证书" : "没有可选择的旧证书")
                             .font(.system(size: 14, weight: .semibold))
-                        Text("刷新 Apple 证书列表后再试。")
+                        Text(session.app.isSeal
+                            ? "确认当前 Apple ID 与安装 Seal 时使用的账号一致，然后重新读取。"
+                            : "刷新 Apple 证书列表后再试。")
                             .font(.system(size: 13))
                             .foregroundStyle(Color.sealTextSecondary)
                         Button("重新读取") { Task { await loadCandidates() } }
@@ -80,7 +99,7 @@ struct CertificateSacrificePickerView: View {
                     .padding(16)
                     .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 } else {
-                    ForEach(candidates) { candidate in
+                    ForEach(visibleCandidates) { candidate in
                         candidateRow(candidate)
                     }
 
@@ -152,8 +171,16 @@ struct CertificateSacrificePickerView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
+                        if candidate.isCurrentSealSigner {
+                            Text("当前 Seal 证书")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.sealWarning)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.sealWarning.opacity(0.11), in: Capsule())
+                        }
                         if isRecommended {
-                            Text("推荐")
+                            Text(candidate.isCurrentSealSigner ? "优先撤销" : "推荐")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(Color.sealAccent)
                                 .padding(.horizontal, 8)

@@ -917,17 +917,19 @@ final class SettingsViewModel: ObservableObject {
             // 只相信真实 CMS 签名者（installedIdentity），不信描述文件授权列表、不信 DB 记录。
             // 身份读不出来时无法证明任何一张证书不是 Seal 的命，计划整体阻断。
             let runningIdentity = SelfAppMetadata.current()?.installedIdentity
-            guard runningIdentity?.isComplete == true,
-                  let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
+            guard let sealTarget = runningIdentity?.mainTarget,
+                  (sealTarget.status == .complete || sealTarget.status == .signerIdentified),
+                  sealTarget.signerSerialNumber.isEmpty == false else {
                 return CertificateCleanupPlan.blocked(reason: "无法确认当前 Seal 实际使用的证书")
             }
+            let sealActualSigner = sealTarget.signerSerialNumber
             let plan = CertificateCleanupPolicy.makePlan(
                 certificates: inventory.certificates,
                 apps: apps,
                 localUsableSerials: localUsableSerials,
                 deviceReferencedSerials: deviceReferenced,
                 sealActualSignerSerialNumber: sealActualSigner,
-                identityConfidence: .complete
+                identityConfidence: sealTarget.status
             )
             try? await logStore?.append(
                 category: .account,
@@ -1002,8 +1004,9 @@ final class SettingsViewModel: ObservableObject {
             // 执行撤销前必须重新读取一次真实身份：signer 读不出来，或 signer 与生成计划时
             // 相比发生了变化（这段时间内 Seal 被换签），整批撤销停止。
             let runningIdentity = SelfAppMetadata.current()?.installedIdentity
-            guard runningIdentity?.isComplete == true,
-                  let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
+            guard let sealTarget = runningIdentity?.mainTarget,
+                  (sealTarget.status == .complete || sealTarget.status == .signerIdentified),
+                  sealTarget.signerSerialNumber.isEmpty == false else {
                 throw Self.failure(
                     title: "无法撤销证书",
                     reason: "无法确认当前 Seal 实际使用的证书，为安全起见已停止撤销，没有撤销任何证书。",
@@ -1011,6 +1014,7 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-CERT-219b"
                 )
             }
+            let sealActualSigner = sealTarget.signerSerialNumber
             if let planSigner = plan.sealActualSignerSerialNumber,
                SigningCertificateSelectionPolicy.normalizedSerialNumber(planSigner)
                 != SigningCertificateSelectionPolicy.normalizedSerialNumber(sealActualSigner) {
@@ -1028,7 +1032,7 @@ final class SettingsViewModel: ObservableObject {
                 localUsableSerials: localUsableSerials,
                 deviceReferencedSerials: freshDeviceReferenced,
                 sealActualSignerSerialNumber: sealActualSigner,
-                identityConfidence: .complete
+                identityConfidence: sealTarget.status
             )
             let confirmedSerials = Set(plan.revocable.map {
                 SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)

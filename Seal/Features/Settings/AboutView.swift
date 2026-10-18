@@ -17,7 +17,7 @@ struct AboutView: View {
     private let onInstall: ((URL) -> Void)?
 
     @State private var isCheckingUpdate = false
-    @State private var updateStatus: UpdateStatus = .checking
+    @State private var updateStatus: UpdateStatus = .latest
     @State private var presentedUpdate: UpdateNotice?
     @State private var updateFailure: UpdateCheckFailure?
 
@@ -43,7 +43,6 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
-        .task { await refreshUpdateStatus(presentUpdate: false) }
         .overlay {
             if let notice = presentedUpdate {
                 UpdateNoticeView(
@@ -213,7 +212,7 @@ struct AboutView: View {
         guard isCheckingUpdate == false else { return }
         isCheckingUpdate = true
         updateStatus = .checking
-        let result = await UpdateChecker.shared.check(force: true)
+        let result = await UpdateChecker.shared.check(force: presentUpdate)
         let notice: UpdateNotice?
         switch result {
         case .unavailable(let failure):

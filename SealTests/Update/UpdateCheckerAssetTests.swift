@@ -26,7 +26,11 @@ struct UpdateCheckerAssetTests {
 
     @Test
     func mapsReleaseAPIStatusesToActionableStates() {
-        #expect(UpdateChecker.failure(forHTTPStatus: 404) == .noPublishedRelease)
+        if case .latest? = UpdateChecker.result(forHTTPStatus: 404) {
+            #expect(true)
+        } else {
+            Issue.record("A missing latest release should be treated as current")
+        }
         #expect(UpdateChecker.failure(forHTTPStatus: 403) == .rateLimited)
         #expect(UpdateChecker.failure(forHTTPStatus: 429) == .rateLimited)
         #expect(UpdateChecker.failure(forHTTPStatus: 503) == .serviceUnavailable)

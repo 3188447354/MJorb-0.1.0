@@ -23,8 +23,9 @@ struct RootTabView: View {
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
     @State private var updateNotice: UpdateNotice?
-    @State private var lastUpdateCheckAt: Date?
     @State private var updateCheckInProgress = false
+    @AppStorage("update_checker.last_auto_check_at") private var lastAutomaticUpdateCheckAt = 0.0
+    @AppStorage("update_checker.last_auto_check_succeeded") private var lastAutomaticUpdateCheckSucceeded = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -55,7 +56,6 @@ struct RootTabView: View {
         }
         .tint(.sealAccent)
         .preferredColorScheme(SealAppearance(rawValue: appearanceRawValue)?.colorScheme)
-        .id("\(accentRawValue)-\(customAccentHex)")
         .sealScreenBackground()
         .onContinueUserActivity(NSUserActivityTypeLiveActivity) { _ in
             openPairingSettings()
@@ -186,7 +186,9 @@ struct RootTabView: View {
     @MainActor
     private func performUpdateCheck() async {
         guard updateCheckInProgress == false else { return }
-        if let last = lastUpdateCheckAt, Date().timeIntervalSince(last) < 60 {
+        let now = Date().timeIntervalSince1970
+        let interval: TimeInterval = lastAutomaticUpdateCheckSucceeded ? 12 * 60 * 60 : 5 * 60
+        if now - lastAutomaticUpdateCheckAt < interval {
             return
         }
         updateCheckInProgress = true
@@ -195,8 +197,15 @@ struct RootTabView: View {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         guard scenePhase == .active else { return }
-        lastUpdateCheckAt = Date()
-        if case .available(let notice) = await UpdateChecker.shared.check() {
+        let result = await UpdateChecker.shared.check()
+        lastAutomaticUpdateCheckAt = now
+        switch result {
+        case .latest, .suppressed, .available:
+            lastAutomaticUpdateCheckSucceeded = true
+        case .unavailable:
+            lastAutomaticUpdateCheckSucceeded = false
+        }
+        if case .available(let notice) = result {
             updateNotice = notice
         }
     }

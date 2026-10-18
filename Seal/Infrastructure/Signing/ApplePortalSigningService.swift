@@ -1622,8 +1622,11 @@ actor ApplePortalSigningService {
         }
         let sealActualSignerSerials: Set<String>
         let sealSignerConfirmed: Bool
-        if let runningIdentity, runningIdentity.isComplete,
-           let signer = runningIdentity.mainTarget?.signerSerialNumber {
+        if let runningIdentity,
+           let target = runningIdentity.mainTarget,
+           (target.status == .complete || target.status == .signerIdentified),
+           target.signerSerialNumber.isEmpty == false {
+            let signer = target.signerSerialNumber
             sealActualSignerSerials = [signer]
             sealSignerConfirmed = true
         } else {
@@ -1663,6 +1666,9 @@ actor ApplePortalSigningService {
                 persistSigningMaterial: persistSigningMaterial
             )
         } catch let failure as ImportFailure where failure.code == "SEAL-CERT-204b" {
+            // Seal 自身不能在后台静默撤销当前安装包证书；把额度错误交给失败抽屉，
+            // 由用户选择证书并二次确认后再继续自替换。
+            if isSeal { throw failure }
             // 付费团队或 Apple 侧规则变化时，以明确 3022 为触发点执行同一轮换链路。
             let candidates = SigningCertificateMaterialPolicy.rotationCandidates(
                 remoteSerialNumbers: certificates.map(\.serialNumber),

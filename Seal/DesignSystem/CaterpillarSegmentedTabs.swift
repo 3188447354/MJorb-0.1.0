@@ -56,7 +56,7 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
         } label: {
             HStack(spacing: 6) {
                 Text(title(item))
-                    .font(.system(size: labelFontSize, weight: Self.weight(for: proximity)))
+                    .font(.system(size: labelFontSize, weight: .semibold))
                     .foregroundStyle(
                         Color.sealAccent.blended(
                             with: Color.sealTextSecondary,
@@ -100,13 +100,6 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
         return (mid - stretched / 2, stretched)
     }
 
-    private static func weight(for proximity: CGFloat) -> Font.Weight {
-        switch proximity {
-        case ..<0.35: return .medium
-        case ..<0.7: return .semibold
-        default: return .bold
-        }
-    }
 }
 
 private extension Color {

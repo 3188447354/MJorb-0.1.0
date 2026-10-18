@@ -164,7 +164,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal
         PRODUCT_NAME: Seal
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: 0.1.3
+        MARKETING_VERSION: 0.1.4
         CURRENT_PROJECT_VERSION: 3
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
@@ -183,7 +183,7 @@ targets:
       - path: Shared/PairingActivityAttributes.swift
     resources:
       # 与主 App 共用真实 Seal 品牌图标，避免 Live Activity 退化成 SF Symbol。
-      - path: Seal/Resources/Assets.xcassets
+      - path: SealLiveActivity/Assets.xcassets
     info:
       path: SealLiveActivity/Info.plist
       properties:
@@ -226,7 +226,7 @@ targets:
         #    代价：扩展会占用免费 Apple ID 每周 10 个 App ID 名额中的 1 个。
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.LiveActivity
         PRODUCT_NAME: SealLiveActivity
-        MARKETING_VERSION: 0.1.3
+        MARKETING_VERSION: 0.1.4
         CURRENT_PROJECT_VERSION: 3
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic

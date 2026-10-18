@@ -34,7 +34,7 @@ struct CertificateCleanupPolicyTests {
     func replacementPickerOnlyOffersIOSDevelopmentCertificates() {
         #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "iOS Development") == true)
         #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "Apple iPhone Developer") == true)
-        #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "Apple Development") == false)
+        #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: "Apple Development") == true)
         #expect(CertificateCleanupPolicy.isIOSDevelopmentCertificate(name: nil) == false)
     }
 
@@ -147,6 +147,20 @@ struct CertificateCleanupPolicyTests {
             identityConfidence: .complete
         )
         #expect(plan.revocable.contains(where: { $0.serialNumber == "A" }) == false)
+    }
+
+    @Test
+    func signerOnlyIdentityStillProtectsSealCertificateAndAllowsOtherCandidates() {
+        let plan = CertificateCleanupPolicy.makePlan(
+            certificates: [makeCertificate("AA11"), makeCertificate("BB22")],
+            apps: [],
+            localUsableSerials: [],
+            deviceReferencedSerials: [],
+            sealActualSignerSerialNumber: "AA11",
+            identityConfidence: .signerIdentified
+        )
+        #expect(plan.kept.map(\.serialNumber) == ["AA11"])
+        #expect(plan.revocable.map(\.serialNumber) == ["BB22"])
     }
 
     /// 真实签名者读不出来时，自动撤销全部关闭：任何一张都可能是 Seal 的命。

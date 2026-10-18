@@ -1743,7 +1743,10 @@ final class AppsViewModel: ObservableObject {
               case .failed(let failure) = session.status,
               CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code),
               let signingCoordinator else { return [] }
-        return try await signingCoordinator.certificateSacrificeCandidates(accountID: session.account.id)
+        return try await signingCoordinator.certificateSacrificeCandidates(
+            accountID: session.account.id,
+            allowSealSigner: session.app.isSeal
+        )
     }
 
     /// 用户在证书列表中选定并二次确认后，只撤销所选证书，再重试当前签名。
@@ -1776,7 +1779,8 @@ final class AppsViewModel: ObservableObject {
                 let result = try await signingCoordinator
                     .revokeKeylessCertificateAfterConfirmation(
                         accountID: session.account.id,
-                        serialNumber: serialNumber
+                        serialNumber: serialNumber,
+                        allowSealSigner: session.app.isSeal
                     )
                 try? await logStore?.append(
                     category: .signing,

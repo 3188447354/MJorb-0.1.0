@@ -26,8 +26,8 @@ struct UpdateChecker {
             guard let http = response as? HTTPURLResponse else {
                 return .unavailable(.serviceUnavailable)
             }
-            guard http.statusCode == 200 else {
-                return .unavailable(Self.failure(forHTTPStatus: http.statusCode))
+            if let statusResult = Self.result(forHTTPStatus: http.statusCode) {
+                return statusResult
             }
 
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -181,10 +181,20 @@ struct UpdateChecker {
 
     static func failure(forHTTPStatus statusCode: Int) -> UpdateCheckFailure {
         switch statusCode {
-        case 404: return .noPublishedRelease
+        case 404: return .serviceUnavailable
         case 403, 429: return .rateLimited
         case 500...599: return .serviceUnavailable
         default: return .serviceUnavailable
+        }
+    }
+
+    /// 404 from Releases/latest means this repository has no published latest release yet.
+    /// 200 continues into version parsing; other statuses remain actionable failures.
+    static func result(forHTTPStatus statusCode: Int) -> UpdateCheckResult? {
+        switch statusCode {
+        case 200: return nil
+        case 404: return .latest
+        default: return .unavailable(failure(forHTTPStatus: statusCode))
         }
     }
 }
@@ -198,7 +208,6 @@ enum UpdateCheckResult {
 
 enum UpdateCheckFailure: Equatable {
     case configuration
-    case noPublishedRelease
     case rateLimited
     case serviceUnavailable
     case invalidRelease
@@ -206,7 +215,6 @@ enum UpdateCheckFailure: Equatable {
 
     var statusText: String {
         switch self {
-        case .noPublishedRelease: return "暂未发布可用更新"
         case .rateLimited: return "检查次数过多，请稍后重试"
         case .serviceUnavailable: return "更新服务暂时不可用"
         case .invalidRelease: return "更新版本信息无效"
@@ -216,7 +224,6 @@ enum UpdateCheckFailure: Equatable {
 
     var detail: String {
         switch self {
-        case .noPublishedRelease: return "当前更新仓库还没有可用的正式版本"
         case .rateLimited: return "GitHub 暂时限制了请求，请过一会再检查"
         case .serviceUnavailable: return "请检查网络后重试"
         case .invalidRelease: return "请等待开发者修正发布信息后再试"
