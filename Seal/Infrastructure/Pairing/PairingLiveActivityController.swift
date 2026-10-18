@@ -24,7 +24,7 @@ final class PairingLiveActivityController {
 
     /// 新进程无法恢复已结束的原生配对监听，因此旧活动不能继续显示为可配对。
     /// 启动时收回本应用遗留的活动，避免重复岛和过期配对码。
-    func endOrphanedActivities() async {
+    nonisolated func endOrphanedActivities() async {
         let orphaned = Activity<PairingActivityAttributes>.activities
             .filter { $0.activityState == .active || $0.activityState == .stale }
         for activity in orphaned {

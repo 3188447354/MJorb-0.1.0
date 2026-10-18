@@ -1,3 +1,10 @@
+## 2026-10-19 07:16:27 CI #49 遗留灵动岛清理的隔离边界
+
+- **证据**：swift-regression 定位 PairingLiveActivityController.swift:31，主线程隔离的 Activity 对象传给非隔离异步 end 接口被 Swift 6 拒绝。
+- **修复**：endOrphanedActivities 不读取控制器状态，标为 nonisolated，在同一非隔离调用内枚举系统活动并结束，避免将主线程持有的活动句柄跨隔离传递；不降低并发检查、不改 UI 与状态流。
+- **API 核对**：Apple ActivityKit end(_:dismissalPolicy:) 允许异步结束活动，使用 immediate 清除旧活动。https://developer.apple.com/documentation/activitykit/activity/end(_:dismissalpolicy:)
+- **版本与验证**：0.1.27；待 CI 编译及真机重启后清理残留活动验证。
+
 ## 2026-10-19 06:59:26 CI #48 权限缓存跨异步闭包缺少 Sendable 键
 
 - **证据**：swift-regression 定位 ApplePortalSigningService.swift:2648、2659，cachedEntitlements 在 updateFeatures 与 assignAppGroups 的恢复闭包之间传递有数据竞争风险。
