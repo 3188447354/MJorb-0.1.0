@@ -56,7 +56,7 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
         } label: {
             HStack(spacing: 6) {
                 Text(title(item))
-                    .font(.system(size: labelFontSize, weight: .semibold))
+                    .font(.system(size: labelFontSize, weight: .medium))
                     .foregroundStyle(
                         Color.sealAccent.blended(
                             with: Color.sealTextSecondary,

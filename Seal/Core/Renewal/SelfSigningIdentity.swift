@@ -39,6 +39,29 @@ struct InstalledIdentity: Codable, Equatable, Sendable {
         readErrors.isEmpty && mainTarget != nil && targets.allSatisfy(\.isComplete)
     }
 
+    /// 可安全用于自替换前置判断与当前签名者保护。
+    /// `signerIdentified` 只证明 CMS 签名者和目标 Bundle ID，不证明描述文件有效；
+    /// 因此它不能让候选安装通过 `CandidateIdentity.matches`，但也不应抹掉已读出的真实签名者。
+    var canSafelyIdentifySigners: Bool {
+        guard readErrors.isEmpty,
+              let mainTarget,
+              targets.isEmpty == false,
+              mainTarget.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else { return false }
+
+        let targetIDs = targets.map { $0.bundleIdentifier.lowercased() }
+        guard Set(targetIDs).count == targetIDs.count else { return false }
+
+        return targets.allSatisfy { target in
+            let hasBundleID = target.bundleIdentifier
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let hasSigner = target.signerSerialNumber
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            let signerWasRead = target.status == .complete || target.status == .signerIdentified
+            return hasBundleID && hasSigner && signerWasRead
+        }
+    }
+
     /// 身份读取失败时的可读诊断摘要（每个非 complete 目标的状态 + readErrors），
     /// 用于日志与错误文案定位「主程序还是扩展、描述文件问题还是 CMS 签名问题」。
     var readFailureSummary: String {

@@ -32,6 +32,23 @@
 > 复盘记录：现象 → 根因 → 修复 → 涉及文件 → 验证状态。新条目追加到「历史记录」顶部（最新在前）。
 > 动手前先查阅下方「常犯坑位」，避免同类问题重复发生。
 
+## 2026-10-18 13:16:25 重装后重新导入已安装应用被版本检查拦截
+
+- **现象**：卸载并重装 Seal 后，设备恢复的已安装应用记录没有旧版本号；重新导入原 IPA 时显示“无法确认版本”并禁用继续操作。
+- **根因**：设备恢复记录没有原 IPA，版本号按设计为空；`ImportWorkflow.checkVersion` 把缺失的旧版本号与导入 IPA 自身版本无效混为一类。
+- **修复**：新增“旧版本未记录”状态。旧版本为空且新 IPA 版本有效时，显示“旧版本未记录 · v…”并允许确认覆盖签名，沿用原签名 Bundle ID/团队身份；新 IPA 版本本身无效仍维持拦截，已知旧版本的降级判断不变。
+- **涉及文件**：`Seal/Core/Import/ImportDraft.swift`、`Seal/Core/Import/ImportWorkflow.swift`、`Seal/Features/Import/ImportConfirmationView.swift`、`SealTests/Import/ImportWorkflowTests.swift`、`RELEASE_NOTES.md`。
+- **验证**：新增回归测试覆盖恢复记录缺少版本时重新导入并保留签名身份；Windows 本机不编译 Swift，待 GitHub CI 的 `swift-regression` 与构建 job 验证。
+
+## 2026-10-18 13:07:26 log26 八项问题处理
+
+- **现象**：爱思安装的 Seal 无法在应用内自签覆盖；检查更新重复请求；分页标题字重闪变；自定义颜色弹层互相遮挡且拖动卡顿；签名证书页读不到当前签名者；中文 IPA 签名后被判定缺少主可执行文件；Apple ID 的已签名 App 显示 Apple 门户生成名称；灵动岛图标与状态文字显示不完整。
+- **根因**：扩展的描述文件状态为 `signerIdentified` 时，旧流程把“已读出真实 CMS 签名者”误当成“签名者未知”，阻断自替换和证书保护；ZIP 中未标 UTF-8 的中文路径被默认解码成乱码；颜色预览每个拖动事件都刷新全局主题；更新缓存没有在成功结果上复用。
+- **修复**：自替换与证书保护现在允许所有目标 Bundle ID/真实签名者均可确认的 `signerIdentified` 身份；待安装候选仍要求完整身份。IPA 路径优先按 UTF-8 读取。更新检查在进程内缓存成功结果并合并并发请求。取色器从主题抽屉正式关闭后才出现，取消恢复主题抽屉、完成关闭全部；预览最多每 33 ms 写入一次主题。两项分页固定中等字重。灵动岛加入 Seal 图标、修正状态/路径排版，并在活动失效时回退显示真实配对码通知。
+- **签名分配说明**：log26 中 `KMusicLiveActivity` 扩展需要主 App 不具备的 `beta-reports-active` 与 App Groups，因此单独使用 App ID/描述文件是正确结果；这次保留混合共享规则，没有强行共享。该 IPA 的安装前失败点为 `SEAL-INSTALL-730` 主可执行文件路径解码/匹配失败。
+- **涉及文件**：`project.yml`、`RELEASE_NOTES.md`、`Seal/App/RootTabView.swift`、`Seal/Core/Renewal/SelfReplacementCoordinator.swift`、`Seal/Core/Renewal/SelfReplacementPolicy.swift`、`Seal/Core/Renewal/SelfSigningIdentity.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/DesignSystem/CaterpillarSegmentedTabs.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Settings/AppleAccountDetailView.swift`、`Seal/Features/Settings/CustomAccentColorEditor.swift`、`Seal/Features/Settings/SettingsRootView.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`Seal/Infrastructure/Signing/SigningWorkspace.swift`、`Seal/Infrastructure/UpdateChecker.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`，及对应 `SealTests` 回归测试。
+- **验证**：`git diff --check` 通过；补充真实签名者识别、更新缓存、UTF-8 中文 IPA 和 Apple ID 软件名称回归测试。Windows 本机未编译 Swift，也未运行 XCTest；需 GitHub CI 编译/测试，再用原始 `歌一刀` IPA 与实机验证安装、灵动岛、主题拖动和证书页面。
+
 ## 2026-10-17 Seal 与 IPA 更新链路文案和状态统一
 
 - **现象**：更新流程把“检查失败”与“已是最新版”合并；下载/校验阶段的失败文案过度归因于网络；Seal 自更新与普通 IPA 覆盖确认共用一套冗余内容；长内容或小屏会挤压操作区。

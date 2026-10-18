@@ -343,9 +343,11 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
     init(snapshot: ApplePortalAppIDSnapshot, accountID: UUID, relatedApps: [AppRecord]) {
         id = snapshot.id
         appIdentifier = snapshot.identifier
-
-        let trimmedName = snapshot.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        name = trimmedName.isEmpty ? "App 名称未记录" : trimmedName
+        name = AppleAccountAppNamePolicy.name(
+            for: snapshot.bundleIdentifier,
+            accountID: accountID,
+            relatedApps: relatedApps
+        )
         bundleIdentifier = snapshot.bundleIdentifier
 
         let normalizedBundleIdentifier = snapshot.bundleIdentifier.lowercased()
@@ -381,5 +383,31 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
 
     var expirationText: String {
         SealSettingsDateFormatter.string(from: expiryDate)
+    }
+}
+
+enum AppleAccountAppNamePolicy {
+    static func name(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
+        let target = normalize(bundleIdentifier)
+        guard target.isEmpty == false else { return "App 名称未记录" }
+
+        let matchingApp = relatedApps.first { app in
+            guard app.accountID == accountID else { return false }
+            let identifiers: [String] = [
+                app.originalBundleIdentifier,
+                app.mappedBundleIdentifier ?? "",
+                app.preferredBundleIdentifier ?? ""
+            ] + app.signingTargets.map(\.bundleIdentifier)
+                + app.extensions.flatMap { [$0.originalBundleIdentifier, $0.mappedBundleIdentifier ?? ""] }
+            return identifiers.contains { normalize($0) == target }
+        }
+        let appName = matchingApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return appName.isEmpty ? "App 名称未记录" : appName
+    }
+
+    private static func normalize(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
     }
 }

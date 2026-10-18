@@ -7,6 +7,44 @@ import Testing
 struct UpdateCheckerAssetTests {
 
     @Test
+    func successfulLatestCheckIsReusedEvenForManualCheck() async {
+        let cache = UpdateCheckCache()
+        let counter = UpdateCheckLoadCounter()
+
+        let first = await cache.result(force: false) {
+            await counter.increment()
+            return .latest
+        }
+        let second = await cache.result(force: true) {
+            await counter.increment()
+            return .unavailable(.network)
+        }
+
+        if case .latest = first {} else { Issue.record("Expected first result to be latest") }
+        if case .latest = second {} else { Issue.record("Manual check should reuse a successful latest result") }
+        #expect(await counter.value == 1)
+    }
+
+    @Test
+    func manualCheckRetriesAnUnavailableResult() async {
+        let cache = UpdateCheckCache()
+        let counter = UpdateCheckLoadCounter()
+
+        let first = await cache.result(force: false) {
+            await counter.increment()
+            return .unavailable(.network)
+        }
+        let second = await cache.result(force: true) {
+            await counter.increment()
+            return .latest
+        }
+
+        if case .unavailable(.network) = first {} else { Issue.record("Expected the first request to fail") }
+        if case .latest = second {} else { Issue.record("Manual retry should accept the recovered result") }
+        #expect(await counter.value == 2)
+    }
+
+    @Test
     func acceptsGitHubDownloadHostsOverHTTPS() throws {
         for raw in [
             "https://github.com/sun/Seal-Releases/releases/download/1.0/Seal.ipa",
@@ -153,4 +191,10 @@ struct UpdateCheckerAssetTests {
     private func asset(name: String, url: String) -> [String: Any] {
         ["name": name, "browser_download_url": url]
     }
+}
+
+private actor UpdateCheckLoadCounter {
+    private(set) var value = 0
+
+    func increment() { value += 1 }
 }

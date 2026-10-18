@@ -8,10 +8,25 @@ struct UpdateChecker {
 
     private let repo = "3188447354/MJorb-0.1.0"
     private let lastNotifiedVersionKey = "update_notifier.last_notified_version"
+    private static let cache = UpdateCheckCache()
 
-    /// 检查更新。失败与“已是最新版”分开返回，避免 About 页把请求失败误报为最新。
-    /// - Parameter force: 手动检查时传 true，忽略已通知记录，有新版本就弹
+    /// 成功结果在本次进程内复用；新启动重新检查。手动重试只重试失败请求，
+    /// 已是最新版或已有更新时不重复请求网络。
     func check(force: Bool = false) async -> UpdateCheckResult {
+        let repository = repo
+        let result = await Self.cache.result(force: force) {
+            await Self.fetchLatest(repo: repository)
+        }
+        guard force == false else { return result }
+        if case .available(let notice) = result {
+            let lastNotified = UserDefaults.standard.string(forKey: lastNotifiedVersionKey)
+            if lastNotified == notice.version { return .suppressed }
+            UserDefaults.standard.set(notice.version, forKey: lastNotifiedVersionKey)
+        }
+        return result
+    }
+
+    private static func fetchLatest(repo: String) async -> UpdateCheckResult {
         guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else {
             return .unavailable(.configuration)
         }
@@ -45,16 +60,6 @@ struct UpdateChecker {
             }
             if versionComparison != .orderedDescending {
                 return .latest
-            }
-
-            // 非强制模式：已经通知过这个版本，不重复弹
-            if !force {
-                let lastNotified = UserDefaults.standard.string(forKey: lastNotifiedVersionKey)
-                if lastNotified == tagName {
-                    return .suppressed
-                }
-                // 仅自动检查标记已通知；手动检查不写记录，避免吃掉后续自动弹窗
-                UserDefaults.standard.set(tagName, forKey: lastNotifiedVersionKey)
             }
 
             // 从 Release 读取标题和正文，发版时可自定义
@@ -199,14 +204,14 @@ struct UpdateChecker {
     }
 }
 
-enum UpdateCheckResult {
+enum UpdateCheckResult: Sendable {
     case unavailable(UpdateCheckFailure)
     case latest
     case suppressed
     case available(UpdateNotice)
 }
 
-enum UpdateCheckFailure: Equatable {
+enum UpdateCheckFailure: Equatable, Sendable {
     case configuration
     case rateLimited
     case serviceUnavailable
@@ -224,7 +229,7 @@ enum UpdateCheckFailure: Equatable {
 
     var detail: String {
         switch self {
-        case .rateLimited: return "GitHub 暂时限制了请求，请过一会再检查"
+        case .rateLimited: return "更新服务请求次数过多，请稍后重试"
         case .serviceUnavailable: return "请检查网络后重试"
         case .invalidRelease: return "请等待开发者修正发布信息后再试"
         case .configuration, .network: return "请检查网络后重试"
@@ -232,7 +237,7 @@ enum UpdateCheckFailure: Equatable {
     }
 }
 
-struct UpdateNotice: Identifiable {
+struct UpdateNotice: Identifiable, Sendable {
     let id = UUID()
     let version: String
     let title: String
@@ -240,4 +245,35 @@ struct UpdateNotice: Identifiable {
     let downloadURL: URL?
     let ipaDownloadURL: URL?
     let sha256DownloadURL: URL?
+}
+
+actor UpdateCheckCache {
+    private var cachedResult: UpdateCheckResult?
+    private var inFlight: Task<UpdateCheckResult, Never>?
+
+    func result(
+        force: Bool,
+        load: @escaping @Sendable () async -> UpdateCheckResult
+    ) async -> UpdateCheckResult {
+        if let cachedResult {
+            if case .unavailable = cachedResult {
+                if force == false { return cachedResult }
+                self.cachedResult = nil
+            } else {
+                return cachedResult
+            }
+        }
+
+        let result: UpdateCheckResult
+        if let inFlight {
+            result = await inFlight.value
+        } else {
+            let task = Task { await load() }
+            inFlight = task
+            result = await task.value
+            cachedResult = result
+            inFlight = nil
+        }
+        return result
+    }
 }

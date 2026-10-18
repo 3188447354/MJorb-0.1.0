@@ -14,6 +14,9 @@ enum VersionCheckResult: Equatable, Sendable {
     case buildUpgrade(oldBuild: String, newBuild: String, version: String)
     /// 同营销版本但构建号更低：视为降级
     case buildDowngrade(oldBuild: String, newBuild: String, version: String)
+    /// 已安装记录没有保存旧版本（例如重装 Seal 后从设备恢复的记录），新 IPA 版本有效，
+    /// 可以按首次补录版本进入覆盖签名流程。
+    case missingInstalledVersion(newVersion: String)
     /// 版本号无法按数字段解析，不猜测升级或降级
     case unreadableVersion
 }

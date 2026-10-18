@@ -8,23 +8,28 @@ struct CustomAccentColorEditor: View {
     @Binding var accentRawValue: String
     @Binding var isPresented: Bool
     let onComplete: () -> Void
+    let onCancel: () -> Void
 
     @State private var color: HSBAColor
     @State private var hexInput: String
     /// 进入编辑器时的主题快照 —— 取消时用它还原。
     @State private var originalHex: String
     @State private var originalAccentRawValue: String
+    @State private var previewTask: Task<Void, Never>?
+    @State private var pendingPreviewHex: String?
 
     init(
         customHex: Binding<String>,
         accentRawValue: Binding<String>,
         isPresented: Binding<Bool>,
-        onComplete: @escaping () -> Void
+        onComplete: @escaping () -> Void,
+        onCancel: @escaping () -> Void
     ) {
         self._customHex = customHex
         self._accentRawValue = accentRawValue
         self._isPresented = isPresented
         self.onComplete = onComplete
+        self.onCancel = onCancel
         let initial = HSBAColor(hex: customHex.wrappedValue) ?? HSBAColor(hex: SealAccentTheme.defaultCustomHex)!
         _color = State(initialValue: initial)
         _hexInput = State(initialValue: initial.hex)
@@ -54,6 +59,9 @@ struct CustomAccentColorEditor: View {
                     .buttonStyle(AccentEditorSecondaryButtonStyle())
                 Button("完成") {
                     guard let normalized = SealAccentTheme.normalizedHex(hexInput) else { return }
+                    previewTask?.cancel()
+                    previewTask = nil
+                    pendingPreviewHex = nil
                     customHex = normalized
                     accentRawValue = SealAccentTheme.custom.rawValue
                     isPresented = false
@@ -168,15 +176,33 @@ struct CustomAccentColorEditor: View {
 
     private func applyPreview(_ value: String) {
         guard let normalized = SealAccentTheme.normalizedHex(value) else { return }
-        customHex = normalized
-        accentRawValue = SealAccentTheme.custom.rawValue
+        pendingPreviewHex = normalized
+        guard previewTask == nil else { return }
+        previewTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 33_000_000)
+            guard Task.isCancelled == false else {
+                previewTask = nil
+                return
+            }
+            if let pendingPreviewHex {
+                customHex = pendingPreviewHex
+                if accentRawValue != SealAccentTheme.custom.rawValue {
+                    accentRawValue = SealAccentTheme.custom.rawValue
+                }
+            }
+            previewTask = nil
+        }
     }
 
     /// 取消：还原进入编辑器前的颜色与主题选择。
     private func cancel() {
+        previewTask?.cancel()
+        previewTask = nil
+        pendingPreviewHex = nil
         customHex = originalHex
         accentRawValue = originalAccentRawValue
         isPresented = false
+        onCancel()
     }
 }
 

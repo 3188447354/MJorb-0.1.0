@@ -285,18 +285,12 @@ struct AppsRootView: View {
         .accessibilityIdentifier("apps-stage-tabs")
     }
 
-    /// 点标签时同时写 `mode`（驱动分页器）和 `pagerProgress`（驱动下划线）。
+    /// 标签点击只改变目标页；连续滚动偏移由分页器几何测量统一驱动下划线。
     private var selectionBinding: Binding<ListMode> {
         Binding(
             get: { mode },
             set: { newValue in
                 mode = newValue
-                // 点击时做补间，让下划线和内容页同步滑过去，而不是瞬移。
-                if let index = ListMode.allCases.firstIndex(of: newValue) {
-                    withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                        pagerProgress = CGFloat(index)
-                    }
-                }
             }
         )
     }
@@ -716,4 +710,3 @@ private extension View {
         modifier(SealListCardModifier(cornerRadius: cornerRadius))
     }
 }
-

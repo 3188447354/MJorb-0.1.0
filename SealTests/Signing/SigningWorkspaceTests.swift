@@ -74,6 +74,32 @@ struct SigningWorkspaceTests {
     }
 
     @Test
+    func recoversUTF8ExecutableNameWhenZIPFlagIsMissing() throws {
+        let source = try IPAArchiveFixture.make(
+            apps: [.init(directoryName: "歌一刀.app", bundleIdentifier: "com.example.song", name: "歌一刀")],
+            includeMobileProvision: true
+        )
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        try Self.clearUTF8FilenameFlags(in: source)
+
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "SealUnicodeExecutableTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let prepared = try SigningWorkspace().prepare(
+            ipaURL: source,
+            workspaceRoot: root.appending(path: "Work"),
+            originalBundleID: "com.example.song",
+            teamID: "TEAMID"
+        )
+
+        #expect(prepared.appURL.lastPathComponent == "歌一刀.app")
+        #expect(FileManager.default.fileExists(atPath: prepared.appURL.appending(path: "歌一刀").path))
+    }
+
+    @Test
     func appliesCustomDisplayNameAndPrimaryIconToPackagedApp() throws {
         let source = try IPAArchiveFixture.make()
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
@@ -244,5 +270,63 @@ struct SigningWorkspaceTests {
             atPath: layoutPrepared.appURL.appending(path: "Root.framework").path))
         #expect(FileManager.default.fileExists(
             atPath: layoutPrepared.appURL.appending(path: "Frameworks/Root.framework").path) == false)
+    }
+}
+
+private extension SigningWorkspaceTests {
+    static func clearUTF8FilenameFlags(in url: URL) throws {
+        var data = try Data(contentsOf: url)
+        let centralHeader = [UInt8](arrayLiteral: 0x50, 0x4b, 0x01, 0x02)
+        let endOfCentralDirectory = [UInt8](arrayLiteral: 0x50, 0x4b, 0x05, 0x06)
+
+        func readUInt16(_ offset: Int) -> UInt16 {
+            UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+        }
+
+        func readUInt32(_ offset: Int) -> UInt32 {
+            UInt32(data[offset])
+                | (UInt32(data[offset + 1]) << 8)
+                | (UInt32(data[offset + 2]) << 16)
+                | (UInt32(data[offset + 3]) << 24)
+        }
+
+        func clearUTF8Flag(_ offset: Int) {
+            let flags = readUInt16(offset)
+            let updated = flags & ~(UInt16(1) << 11)
+            data[offset] = UInt8(updated & 0xff)
+            data[offset + 1] = UInt8(updated >> 8)
+        }
+
+        let lowerBound = max(0, data.count - 65_557)
+        var endOffset: Int?
+        if data.count >= 22 {
+            for candidate in stride(from: data.count - 22, through: lowerBound, by: -1) {
+                guard Array(data[candidate..<(candidate + 4)]) == endOfCentralDirectory else { continue }
+                let commentLength = Int(readUInt16(candidate + 20))
+                if candidate + 22 + commentLength == data.count {
+                    endOffset = candidate
+                    break
+                }
+            }
+        }
+        guard let endOffset else { throw CocoaError(.fileReadCorruptFile) }
+
+        let entryCount = Int(readUInt16(endOffset + 10))
+        var entryOffset = Int(readUInt32(endOffset + 16))
+        for _ in 0..<entryCount {
+            guard entryOffset + 46 <= data.count,
+                  Array(data[entryOffset..<(entryOffset + 4)]) == centralHeader else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let nameLength = Int(readUInt16(entryOffset + 28))
+            let extraLength = Int(readUInt16(entryOffset + 30))
+            let commentLength = Int(readUInt16(entryOffset + 32))
+            let localHeaderOffset = Int(readUInt32(entryOffset + 42))
+
+            clearUTF8Flag(entryOffset + 8)
+            clearUTF8Flag(localHeaderOffset + 6)
+            entryOffset += 46 + nameLength + extraLength + commentLength
+        }
+        try data.write(to: url, options: .atomic)
     }
 }

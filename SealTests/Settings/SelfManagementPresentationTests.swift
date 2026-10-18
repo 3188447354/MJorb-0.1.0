@@ -95,6 +95,45 @@ struct SelfManagementStateResolverTests {
         #expect(state == .selfManaged)
     }
 
+    @Test
+    func identifiedExtensionSignerDoesNotHideTheSealMainSigner() {
+        let main = SignedTargetIdentity(
+            kind: .mainApp,
+            bundleIdentifier: "com.example.seal",
+            teamIdentifier: "TEAM",
+            applicationIdentifier: "TEAM.com.example.seal",
+            profileUUID: "PROFILE",
+            profileExpirationDate: .distantFuture,
+            signerSerialNumber: "MAIN-SIGNER",
+            signerCertificateSHA256: "SHA256",
+            status: .complete
+        )
+        let extensionTarget = SignedTargetIdentity(
+            kind: .appExtension,
+            bundleIdentifier: "com.example.seal.activity",
+            teamIdentifier: "",
+            applicationIdentifier: "",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: "EXT-SIGNER",
+            signerCertificateSHA256: "",
+            status: .signerIdentified
+        )
+        let identity = InstalledIdentity(
+            bundleURL: URL(fileURLWithPath: "/Running/Seal.app"),
+            version: "1.0",
+            buildNumber: "1",
+            targets: [main, extensionTarget],
+            readErrors: []
+        )
+
+        #expect(SelfManagementStateResolver.resolve(
+            identity: identity,
+            pendingTransaction: nil,
+            signerHasLocalPrivateKey: false
+        ) == .externalBootstrap)
+    }
+
     /// 已准备未提交：本机身份就绪，可以提交一次覆盖安装。
     @Test
     func preparedTransactionIsLocalIdentityReady() {

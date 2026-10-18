@@ -44,15 +44,21 @@ final class PairingLiveActivityController {
 
     /// 只在收到系统给出的真实六码后调用。若活动已不可用，调用方应切换到通知回退。
     @discardableResult
-    func showCode(_ code: String) -> Bool {
+    func showCode(_ code: String) async -> Bool {
         guard code.range(of: #"^\d{6}$"#, options: .regularExpression) != nil,
               let activity else {
             return false
         }
+        guard activity.activityState == .active || activity.activityState == .stale else {
+            finish()
+            return false
+        }
         let expiry = Date().addingTimeInterval(Self.codeLifetime)
         scheduleDismiss(at: expiry)
-        Task {
-            await activity.update(.init(state: Self.codeState(code), staleDate: expiry))
+        await activity.update(.init(state: Self.codeState(code), staleDate: expiry))
+        guard activity.activityState == .active || activity.activityState == .stale else {
+            finish()
+            return false
         }
         return true
     }
@@ -126,10 +132,10 @@ final class PairingLiveActivityController {
         stage: .preparing,
         code: "",
         title: "Seal",
-        detail: "设置 → 隐私与安全性 → 开发者模式 → 与 Seal 配对"
+        detail: "隐私与安全 - 开发者模式 - 与 Seal 配对"
     )
 
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
-        .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口中输入此码")
+        .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口输入此码")
     }
 }

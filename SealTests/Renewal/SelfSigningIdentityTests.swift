@@ -35,6 +35,34 @@ struct SelfSigningIdentityTests {
             readErrors: ["failed to read extension"]
         )
         #expect(identity.isComplete == false)
+        #expect(identity.canSafelyIdentifySigners == false)
+    }
+
+    @Test
+    func signerIdentifiedExtensionAllowsSelfReplacementPreparationButNotCandidateMatch() {
+        let extensionWithIdentifiedSigner = SignedTargetIdentity(
+            kind: .appExtension,
+            bundleIdentifier: "com.example.seal.share",
+            teamIdentifier: "",
+            applicationIdentifier: "",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: "ABC123",
+            signerCertificateSHA256: "",
+            status: .signerIdentified
+        )
+        let running = InstalledIdentity.fixture(targets: [.mainFixture, extensionWithIdentifiedSigner])
+        let candidate = CandidateIdentity.fixture(targets: [.mainFixture, .extensionFixture])
+
+        #expect(running.isComplete == false)
+        #expect(running.canSafelyIdentifySigners)
+        #expect(candidate.matches(running) == false)
+    }
+
+    @Test
+    func unidentifiedExtensionSignerStillBlocksSelfReplacementPreparation() {
+        let running = InstalledIdentity.fixture(targets: [.mainFixture, .unknownExtensionFixture])
+        #expect(running.canSafelyIdentifySigners == false)
     }
 
     @Test

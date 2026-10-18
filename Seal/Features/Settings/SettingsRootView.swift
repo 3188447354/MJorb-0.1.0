@@ -404,36 +404,16 @@ struct AppearanceThemeSheet: View {
     @Binding var appearanceRawValue: String
     @Binding var accentRawValue: String
     @Binding var customAccentHex: String
-    @Binding var isThemeSheetPresented: Bool
-    @State private var isCustomColorEditorPresented = false
+    let onCustomColorRequested: () -> Void
 
     var body: some View {
-        ZStack {
-            if !isCustomColorEditorPresented {
-                SealDrawer(title: "\u{5916}\u{89C2}\u{4E0E}\u{4E3B}\u{9898}") {
-                    VStack(spacing: 14) {
-                        appearanceCard
-                        accentCard
-                    }
-                    .padding(.bottom, 12)
-                }
+        SealDrawer(title: "\u{5916}\u{89C2}\u{4E0E}\u{4E3B}\u{9898}") {
+            VStack(spacing: 14) {
+                appearanceCard
+                accentCard
             }
-
-            if isCustomColorEditorPresented {
-                Color.black.opacity(0.22)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-                CustomAccentColorEditor(
-                    customHex: $customAccentHex,
-                    accentRawValue: $accentRawValue,
-                    isPresented: $isCustomColorEditorPresented,
-                    onComplete: { isThemeSheetPresented = false }
-                )
-                .transition(.scale(scale: 0.96).combined(with: .opacity))
-                .zIndex(1)
-            }
+            .padding(.bottom, 12)
         }
-        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isCustomColorEditorPresented)
     }
 
     private var appearanceCard: some View {
@@ -560,7 +540,7 @@ struct AppearanceThemeSheet: View {
 
     private var customAccentButton: some View {
         Button {
-            isCustomColorEditorPresented = true
+            onCustomColorRequested()
         } label: {
             HStack(spacing: 10) {
                 SpectrumRing()

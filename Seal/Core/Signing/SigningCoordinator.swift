@@ -1280,8 +1280,8 @@ actor SigningCoordinator {
         let apps = (try? await appStore.fetchAll()) ?? []
         let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
         guard let runningIdentity,
+              runningIdentity.canSafelyIdentifySigners,
               let mainTarget = runningIdentity.mainTarget,
-              (mainTarget.status == .complete || mainTarget.status == .signerIdentified),
               mainTarget.signerSerialNumber.isEmpty == false else {
             let summary = runningIdentity?.readFailureSummary ?? "installedIdentity 读取失败"
             try? await logStore?.append(
@@ -1295,9 +1295,9 @@ actor SigningCoordinator {
                 code: "SEAL-CERT-230"
             )
         }
-        let sealProtectedSerials = [
-            SigningCertificateSelectionPolicy.normalizedSerialNumber(mainTarget.signerSerialNumber)
-        ]
+        let sealProtectedSerials = Set(runningIdentity.targets.map {
+            SigningCertificateSelectionPolicy.normalizedSerialNumber($0.signerSerialNumber)
+        })
         let protected = candidates.filter {
             allowSealSigner
                 || sealProtectedSerials.contains(SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)) == false
@@ -1307,8 +1307,9 @@ actor SigningCoordinator {
                 serialNumber: certificate.serialNumber,
                 apps: apps
             )
-            let isCurrentSealSigner = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
-                == SigningCertificateSelectionPolicy.normalizedSerialNumber(mainTarget.signerSerialNumber)
+            let isCurrentSealSigner = sealProtectedSerials.contains(
+                SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
+            )
             return CertificateSacrificeCandidate(
                 certificate: certificate,
                 affectedAppCount: affected.count,
@@ -1449,7 +1450,7 @@ actor SigningCoordinator {
         // 授权列表可能包含并未实际签名的证书，DB 记录可能是旧值（2026-09-15 真机确认）。
         // 身份读不出来时无法证明任何一张证书不是 Seal 的命，自动清理整体关闭。
         let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
-        guard runningIdentity?.isComplete == true,
+        guard runningIdentity?.canSafelyIdentifySigners == true,
               let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
             let summary = runningIdentity?.readFailureSummary ?? "installedIdentity 读取失败"
             try? await logStore?.append(
@@ -1464,7 +1465,7 @@ actor SigningCoordinator {
             localUsableSerials: localUsableSerials,
             deviceReferencedSerials: deviceReferenced,
             sealActualSignerSerialNumber: sealActualSigner,
-            identityConfidence: .complete
+            identityConfidence: runningIdentity?.mainTarget?.status ?? .unreadable
         )
         let reuseStatuses = inventory.certificates.compactMap { certificate -> SigningCertificateReuseStatus? in
             guard let local = SigningCertificateMaterialPolicy.availableCertificate(secret: secret, serialNumber: certificate.serialNumber) else { return nil }

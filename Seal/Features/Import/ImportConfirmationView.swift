@@ -86,7 +86,7 @@ struct ImportConfirmationView: View {
                             } else {
                                 showDowngradeConfirm = true
                             }
-                        case .upgrade, .buildUpgrade, .newApp:
+                        case .upgrade, .buildUpgrade, .missingInstalledVersion, .newApp:
                             didTapPrimaryAction = true
                             onPrimaryAction()
                         }
@@ -358,6 +358,8 @@ struct ImportConfirmationView: View {
             return "同版本更新 · v\(version)"
         case .buildDowngrade(_, _, let version):
             return "同版本降级 · v\(version)"
+        case .missingInstalledVersion(let version):
+            return "旧版本未记录 · v\(version)"
         case .unreadableVersion:
             return "无法比较版本变化"
         case .upgrade(let oldVersion, let newVersion), .downgrade(let oldVersion, let newVersion):
@@ -375,6 +377,8 @@ struct ImportConfirmationView: View {
             return "同版本更新 · v\(version)"
         case .buildDowngrade(_, _, let version):
             return "同版本降级 · v\(version)"
+        case .missingInstalledVersion(let version):
+            return "旧版本未记录 · v\(version)"
         case .alreadyLatest(let version):
             return "已是最新版 · v\(version)"
         case .upgrade(let oldVersion, let newVersion), .downgrade(let oldVersion, let newVersion):

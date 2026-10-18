@@ -33,8 +33,8 @@ enum SelfReplacementPolicy {
     ) -> SelfReplacementReconcileAction {
         guard transaction.phase != .confirmed else { return .none }
         guard currentProcessID != preparedProcessID else { return .awaitNextLaunch }
-        guard running.isComplete else {
-            return .requireRecovery(reason: "无法完整读取当前 Seal 主程序和扩展身份")
+        guard running.canSafelyIdentifySigners else {
+            return .requireRecovery(reason: "无法确认当前 Seal 主程序或扩展的真实签名者")
         }
         if transaction.candidate.matches(running) { return .settle }
         if running == transaction.installedBefore {

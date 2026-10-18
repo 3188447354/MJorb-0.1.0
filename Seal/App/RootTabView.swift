@@ -17,6 +17,9 @@ struct RootTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: AppSection = .apps
     @State private var isAppearanceThemePresented = false
+    @State private var isCustomAccentColorPresented = false
+    @State private var shouldPresentCustomAccentColorAfterThemeDismiss = false
+    @State private var didCheckUpdatesThisLaunch = false
     @State private var launchCheckInProgress = false
     @State private var lastLaunchCheckAt: Date?
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
@@ -24,8 +27,6 @@ struct RootTabView: View {
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
     @State private var updateNotice: UpdateNotice?
     @State private var updateCheckInProgress = false
-    @AppStorage("update_checker.last_auto_check_at") private var lastAutomaticUpdateCheckAt = 0.0
-    @AppStorage("update_checker.last_auto_check_succeeded") private var lastAutomaticUpdateCheckSucceeded = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -152,11 +153,35 @@ struct RootTabView: View {
                 appearanceRawValue: $appearanceRawValue,
                 accentRawValue: $accentRawValue,
                 customAccentHex: $customAccentHex,
-                isThemeSheetPresented: $isAppearanceThemePresented
+                onCustomColorRequested: {
+                    shouldPresentCustomAccentColorAfterThemeDismiss = true
+                    isAppearanceThemePresented = false
+                }
             )
             .presentationDetents([.height(454), .medium])
             .presentationDragIndicator(.hidden)
+        } onDismiss: {
+            guard shouldPresentCustomAccentColorAfterThemeDismiss else { return }
+            shouldPresentCustomAccentColorAfterThemeDismiss = false
+            isCustomAccentColorPresented = true
         }
+        .overlay {
+            if isCustomAccentColorPresented {
+                Color.black.opacity(0.22)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                CustomAccentColorEditor(
+                    customHex: $customAccentHex,
+                    accentRawValue: $accentRawValue,
+                    isPresented: $isCustomAccentColorPresented,
+                    onComplete: {},
+                    onCancel: { isAppearanceThemePresented = true }
+                )
+                .transition(.scale(scale: 0.96).combined(with: .opacity))
+                .zIndex(1)
+            }
+        }
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isCustomAccentColorPresented)
     }
 
     /// 从灵动岛 / 锁屏卡片跳回配对页。
@@ -185,26 +210,18 @@ struct RootTabView: View {
 
     @MainActor
     private func performUpdateCheck() async {
-        guard updateCheckInProgress == false else { return }
-        let now = Date().timeIntervalSince1970
-        let interval: TimeInterval = lastAutomaticUpdateCheckSucceeded ? 12 * 60 * 60 : 5 * 60
-        if now - lastAutomaticUpdateCheckAt < interval {
-            return
-        }
+        guard updateCheckInProgress == false, didCheckUpdatesThisLaunch == false else { return }
+        didCheckUpdatesThisLaunch = true
         updateCheckInProgress = true
         defer { updateCheckInProgress = false }
         while scenePhase == .active && hasBlockingUpdateOperation {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
-        guard scenePhase == .active else { return }
-        let result = await UpdateChecker.shared.check()
-        lastAutomaticUpdateCheckAt = now
-        switch result {
-        case .latest, .suppressed, .available:
-            lastAutomaticUpdateCheckSucceeded = true
-        case .unavailable:
-            lastAutomaticUpdateCheckSucceeded = false
+        guard scenePhase == .active else {
+            didCheckUpdatesThisLaunch = false
+            return
         }
+        let result = await UpdateChecker.shared.check()
         if case .available(let notice) = result {
             updateNotice = notice
         }

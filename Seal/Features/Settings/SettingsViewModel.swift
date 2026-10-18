@@ -81,7 +81,7 @@ enum SelfManagementStateResolver {
         pendingTransaction: SelfReplacementTransaction?,
         signerHasLocalPrivateKey: Bool
     ) -> SelfManagementState {
-        guard let identity, identity.isComplete,
+        guard let identity, identity.canSafelyIdentifySigners,
               let signer = identity.mainTarget?.signerSerialNumber,
               SigningCertificateSelectionPolicy.normalizedSerialNumber(signer).isEmpty == false
         else {
@@ -634,7 +634,7 @@ final class SettingsViewModel: ObservableObject {
             // 真实签名者 A 永远不可撤销：撤了当前运行的 Seal 立刻「不再可用」。
             // 身份读不出来时无法证明目标不是 A，一律拒绝（只相信真实 CMS 签名者）。
             let runningIdentity = SelfAppMetadata.current()?.installedIdentity
-            guard runningIdentity?.isComplete == true,
+            guard runningIdentity?.canSafelyIdentifySigners == true,
                   let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
                 throw Self.failure(
                     title: "无法撤销证书",
@@ -747,7 +747,7 @@ final class SettingsViewModel: ObservableObject {
             // 用户确认后、撤销前：重新拉远端清单 + 重新读取真实签名者 A。
             // 确认与执行之间状态可能已变化，撤销不可逆，绝不复用旧快照。
             let runningIdentity = SelfAppMetadata.current()?.installedIdentity
-            guard runningIdentity?.isComplete == true,
+            guard runningIdentity?.canSafelyIdentifySigners == true,
                   let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
                 throw Self.failure(
                     title: "无法更换证书",
@@ -1534,7 +1534,7 @@ final class SettingsViewModel: ObservableObject {
         isSelfManagementLoading = true
         defer { isSelfManagementLoading = false }
         let identity = SelfAppMetadata.current()?.installedIdentity
-        let signer = (identity?.isComplete == true)
+        let signer = (identity?.canSafelyIdentifySigners == true)
             ? identity?.mainTarget?.signerSerialNumber
             : nil
         sealActualSignerSerialNumber = signer
@@ -2406,11 +2406,16 @@ final class SettingsViewModel: ObservableObject {
             Task { await PairingCodeNotification.present(code: code) }
             return
         }
-        guard pairingLiveActivity.showCode(code) == false else { return }
-        pairingUsesNotifications = true
         Task {
-            _ = await PairingCodeNotification.requestAuthorizationIfNeeded()
-            await PairingCodeNotification.present(code: code)
+            guard await pairingLiveActivity.showCode(code) else {
+                // 配对可能在活动更新等待期间已成功或失败；终态已经收尾时，
+                // 不再补发一个已经无效的配对码通知。
+                guard phonePairingHost != nil else { return }
+                pairingUsesNotifications = true
+                _ = await PairingCodeNotification.requestAuthorizationIfNeeded()
+                await PairingCodeNotification.present(code: code)
+                return
+            }
         }
     }
 

@@ -108,8 +108,16 @@ actor ImportWorkflow {
             return .newApp
         }
 
-        let oldVersion = existing.version ?? ""
-        let newVersion = parsed.version ?? ""
+        let oldVersion = (existing.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let newVersion = (parsed.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Version.compareIfValid(newVersion, newVersion) != nil else {
+            return .unreadableVersion
+        }
+        // 设备恢复记录没有原 IPA，版本留空是预期状态。只要这次导入包有有效版本，
+        // 就把它作为首次可确认版本，继续走已安装应用覆盖签名；不要误报成 IPA 版本无效。
+        guard oldVersion.isEmpty == false else {
+            return .missingInstalledVersion(newVersion: newVersion)
+        }
         guard let versionComparison = Version.compareIfValid(newVersion, oldVersion) else {
             return .unreadableVersion
         }

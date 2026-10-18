@@ -1,6 +1,5 @@
 import ActivityKit
 import SwiftUI
-import UIKit
 import WidgetKit
 
 /// 灵动岛 / 锁屏上的 Seal 配对状态。系统决定是否展开和具体尺寸，界面只提供各状态内容。
@@ -17,7 +16,7 @@ struct PairingLiveActivityWidget: Widget {
                     HStack(spacing: 6) {
                         sealMark
                         Text(context.state.title)
-                            .font(.caption.weight(.semibold))
+                            .font(.caption2.weight(.semibold))
                             .lineLimit(1)
                     }
                     .foregroundStyle(.white)
@@ -26,22 +25,34 @@ struct PairingLiveActivityWidget: Widget {
                     status(for: context.state)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: context.state.stage == .code ? 6 : 0) {
-                        if context.state.stage == .code {
+                    VStack(spacing: context.state.stage == .code ? 6 : 4) {
+                        if context.state.stage == .preparing {
+                            Text("前往设置")
+                                .font(.subheadline.weight(.semibold))
+                            Text(context.state.detail)
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.78))
+                                .lineSpacing(5)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if context.state.stage == .code {
                             Text(grouped(context.state.code))
                                 .font(.system(size: 30, weight: .bold, design: .monospaced))
                                 .monospacedDigit()
                                 .tracking(2)
                         }
-                        Text(context.state.detail)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.78))
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if context.state.stage != .preparing {
+                            Text(context.state.detail)
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.78))
+                                .lineSpacing(5)
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, context.state.stage == .code ? 2 : 12)
+                    .padding(.top, context.state.stage == .code ? 2 : 8)
                     .padding(.horizontal, 8)
                 }
             } compactLeading: {
@@ -57,18 +68,11 @@ struct PairingLiveActivityWidget: Widget {
     }
 
     private var sealMark: some View {
-        Group {
-            if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
-            } else {
-                Image(systemName: "feather")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.blue)
-            }
-        }
-        .frame(width: 20, height: 20)
+        Image("SealBrandIcon")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 20, height: 20)
+            .accessibilityLabel("Seal")
     }
 
     @ViewBuilder
@@ -76,8 +80,11 @@ struct PairingLiveActivityWidget: Widget {
         HStack(spacing: 4) {
             statusIcon(for: state.stage)
             Text(statusText(for: state.stage))
+                .lineLimit(1)
+                .minimumScaleFactor(0.68)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(.caption.weight(.semibold))
+        .font(.caption2.weight(.semibold))
         .foregroundStyle(statusColor(for: state.stage))
     }
 
@@ -89,7 +96,7 @@ struct PairingLiveActivityWidget: Widget {
                 .fill(Color.blue)
                 .frame(width: 7, height: 7)
         case .paired:
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: "checkmark.circle")
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
         }
@@ -97,10 +104,10 @@ struct PairingLiveActivityWidget: Widget {
 
     private func statusText(for stage: PairingActivityAttributes.Stage) -> String {
         switch stage {
-        case .preparing: return "准备中"
-        case .code: return "等待中"
-        case .paired: return "已完成"
-        case .failed: return "未完成"
+        case .preparing: return "准备配对"
+        case .code: return "等待配对"
+        case .paired: return "配对完成"
+        case .failed: return "配对失败"
         }
     }
 
@@ -116,12 +123,14 @@ struct PairingLiveActivityWidget: Widget {
     private func compactTrailing(for state: PairingActivityAttributes.ContentState) -> some View {
         switch state.stage {
         case .code:
-            Text(state.code)
-                .font(.system(size: 15, weight: .bold, design: .monospaced))
+            Text(grouped(state.code))
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
         case .paired:
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: "checkmark.circle")
                 .foregroundStyle(.green)
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
@@ -147,11 +156,23 @@ struct PairingLiveActivityWidget: Widget {
                     .monospacedDigit()
                     .tracking(2.5)
             }
-            Text(state.detail)
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.8))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            if state.stage == .preparing {
+                Text("前往设置")
+                    .font(.subheadline.weight(.semibold))
+                Text(state.detail)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineSpacing(5)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(state.detail)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineSpacing(5)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .foregroundStyle(.white)
         .padding(18)

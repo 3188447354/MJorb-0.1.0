@@ -463,6 +463,48 @@ private extension ImportWorkflowTests {
 // MARK: - 覆盖更新：导入新版 → 覆盖安装已安装应用（2026-09-25 用户反馈）
 
 extension ImportWorkflowTests {
+    /// 重装 Seal 后从设备恢复的记录没有旧版本，但重新导入的 IPA 有效；
+    /// 应允许用已保存的签名身份重新签名覆盖，而不是被“无法确认版本”拦截。
+    @Test
+    func reimportingRecoveredInstalledAppWithMissingVersionCanProceedToResign() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let installedID = UUID()
+        let installed = AppRecord(
+            id: installedID,
+            originalBundleIdentifier: "com.example.demo",
+            mappedBundleIdentifier: "com.example.demo.TEAM000001",
+            name: "Demo",
+            version: "",
+            buildNumber: "",
+            size: 0,
+            state: .installed,
+            accountID: UUID(),
+            signingTeamID: "TEAM000001",
+            needsIPAImport: true,
+            ipaRelativePath: "",
+            importedAt: Date(timeIntervalSince1970: 100)
+        )
+        try await environment.appStore.save(installed)
+
+        let source = try IPAArchiveFixture.make()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let workflow = makeWorkflow(environment: environment)
+
+        await workflow.prepare(sourceURL: source)
+
+        let draft = try requireDraft(await workflow.state)
+        #expect(draft.versionCheck == .missingInstalledVersion(newVersion: "1.2.3"))
+
+        await workflow.confirm(target: .replaceInstalled(appID: installedID))
+
+        let imported = try requireCompleted(await workflow.state)
+        #expect(imported.version == "1.2.3")
+        #expect(imported.state == .imported)
+        #expect(imported.mappedBundleIdentifier == installed.mappedBundleIdentifier)
+        #expect(imported.replacesInstalledAppID == installedID)
+    }
+
     /// 覆盖更新导入的是独立待签名记录：旧的已安装记录必须保留，直到安装并通过
     /// 设备核验；新记录继承安装身份并精确指向旧记录，供安装成功时原子切换。
     @Test

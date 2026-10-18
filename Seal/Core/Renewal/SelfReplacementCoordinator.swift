@@ -120,7 +120,7 @@ actor SelfReplacementCoordinator: SelfReplacing {
         preloadedData: Data? = nil
     ) async throws -> SelfReplacementTransaction {
         let running = try readRunningIdentity()
-        guard running.isComplete else {
+        guard running.canSafelyIdentifySigners else {
             throw SelfReplacementFailure.runningIdentityUnknown(running.readErrors)
         }
         // 调用方（installSignedIPA）已把 IPA 读进内存做验证，直接复用，
