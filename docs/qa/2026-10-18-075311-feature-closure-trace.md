@@ -124,3 +124,9 @@ CI #22 的 Swift 回归发现证书恢复候选的 `recommendedSerialNumber` get
 | `Seal/Features/Apps/CertificateSacrificePickerView.swift` | 2026-10-18T10:29:38+08:00 |
 | `project.yml`（0.1.6 → 0.1.7） | 2026-10-18T10:29:38+08:00 |
 | `RELEASE_NOTES.md`（新增 0.1.7） | 2026-10-18T10:29:38+08:00 |
+
+CI #25 的源码错误码清单守卫发现 `SigningCoordinator.swift` 行号变化后，生成清单仍引用旧行号。按 CI 生成器更新索引；相关生成器单测 11 项通过。
+
+| 路径 | 修改时间 |
+| --- | --- |
+| `docs/qa/generated/error-code-inventory.json` | 2026-10-18T10:58:11+08:00 |
