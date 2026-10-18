@@ -7,7 +7,7 @@
 | 问题 | 结论 | 路径 | 最后修改时间 |
 | --- | --- | --- | --- |
 | 签名失败后没有“撤销并继续签名” | `204b/204e` 进入撤销选择和二次确认；`204f/204g` 只允许重新读取候选列表，避免错误撤销 | `Seal/Core/Signing/CertificateRequestFailurePolicy.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`Scripts/verify-release-safety.py` | 2026-10-18T08:21:36+08:00、2026-10-18T08:21:51+08:00 |
-| 待安装 / 已安装分组标签 | 当前源码已经有分页标签、左右滑动和毛毛虫下划线；入口在 AppsRootView，组件在 CaterpillarSegmentedTabs。本次不重写已有实现 | `Seal/Features/Apps/AppsRootView.swift`、`Seal/DesignSystem/CaterpillarSegmentedTabs.swift` | 既有：2026-10-17T19:00:48+08:00、2026-10-17T09:45:10+08:00 |
+| 待安装 / 已安装分组标签 | 现有等宽标签和毛毛虫指示器保留；本次将分页改为连续拖动进度，手指移动时下划线同步伸缩，松手按预测位移吸附到最近页，点击标签同步切页 | `Seal/Features/Apps/AppsRootView.swift`、`Seal/DesignSystem/CaterpillarSegmentedTabs.swift` | 本次 `AppsRootView.swift` 修改时间见下方“最终文件时间”；组件既有：2026-10-17T09:45:10+08:00 |
 | 检查更新总是显示失败 | 已区分无 Release、GitHub 限流、服务错误、无效发布和网络错误；当前仓库实际返回 404，属于“暂未发布可用更新”。入口右侧不再固定写“检查失败”，改为对应原因 | `Seal/Infrastructure/UpdateChecker.swift`、`Seal/Features/Settings/AboutView.swift` | 2026-10-18T07:49:26+08:00、2026-10-18T08:00:09+08:00 |
 | Apple ID > 已签名 App 信息不全 | 每项现在明确显示应用名称、Apple 返回的 App ID、Bundle ID、有效期至 | `Seal/Features/Settings/AppleAccountDetailView.swift` | 2026-10-18T07:49:44+08:00 |
 | 已安装应用详情没有按定稿显示 | 已改为 App ID、Bundle ID、有效期至，移除描述文件创建时间 | `Seal/Features/Apps/AppDetailView.swift` | 2026-10-18T07:48:07+08:00 |
@@ -22,4 +22,33 @@
 
 - 源码差异检查：`git diff --check`
 - 单元测试已覆盖证书名额错误进入撤销恢复集，以及 Release HTTP 状态分类。
-- Swift 编译与 IPA 内容仍须通过 GitHub Actions 的 macOS CI 验证。
+- 本地 49 项源码契约测试通过；Swift 编译与 IPA 内容须由本次最新 GitHub Actions run 验证。
+
+## 最终文件时间
+
+精确修改时间统一使用工作区文件系统记录的 `Asia/Shanghai` 时区，到秒；删除文件用包含删除的提交时间记录。
+
+| 路径 | 修改时间 |
+| --- | --- |
+| `Seal/Core/Signing/CertificateRequestFailurePolicy.swift` | 2026-10-18T08:21:36+08:00 |
+| `Seal/Features/Apps/AppsRootView.swift` | 2026-10-18T09:11:26+08:00 |
+| `Seal/Features/Apps/AppsViewModel.swift` | 2026-10-18T07:48:07+08:00 |
+| `Seal/Features/Apps/SigningProgressView.swift` | 2026-10-18T08:21:36+08:00 |
+| `Seal/Features/Apps/AppDetailView.swift` | 2026-10-18T07:48:07+08:00 |
+| `Seal/Features/Settings/AboutView.swift` | 2026-10-18T08:00:09+08:00 |
+| `Seal/Features/Settings/AppleAccountDetailView.swift` | 2026-10-18T07:49:44+08:00 |
+| `Seal/Infrastructure/Signing/ApplePortalSigningService.swift` | 2026-10-18T07:54:31+08:00 |
+| `Seal/Infrastructure/UpdateChecker.swift` | 2026-10-18T07:49:26+08:00 |
+| `Seal/Infrastructure/Pairing/PairingCodeNotification.swift` | 2026-10-18T07:56:55+08:00 |
+| `Seal/Infrastructure/Notifications/SealNotificationPresenter.swift` | 2026-10-18T07:53:04+08:00 |
+| `Seal/App/RootTabView.swift` | 2026-10-18T07:53:04+08:00 |
+| `SealLiveActivity/PairingLiveActivityWidget.swift` | 2026-10-18T07:51:51+08:00 |
+| `Scripts/tests/test_failure_contract_source.py` | 2026-10-18T07:54:31+08:00 |
+| `Scripts/verify-release-safety.py` | 2026-10-18T08:21:51+08:00 |
+| `SealTests/Signing/CertificateRequestFailurePolicyTests.swift` | 2026-10-18T07:49:51+08:00 |
+| `SealTests/Update/UpdateCheckerAssetTests.swift` | 2026-10-18T07:49:58+08:00 |
+| `docs/qa/generated/error-code-inventory.json` | 2026-10-18T09:11:33+08:00 |
+| `.github/workflows/ios.yml` | 2026-10-18T08:47:21+08:00 |
+| `SealTests/Notifications/PairingCodeNotificationRouteTests.swift` (删除) | 2026-10-18T08:02:16+08:00（删除提交） |
+
+追踪文档本身以文件系统的最终写入时间为准；修改完成后读取该文件的 `LastWriteTime`。
