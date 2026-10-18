@@ -34,6 +34,7 @@ on:
       - "project.yml"
       - "Config/**"
       - "Scripts/**"
+      - "docs/qa/generated/error-code-inventory.json"
       - ".github/workflows/ios.yml"
   workflow_dispatch:
     inputs:
