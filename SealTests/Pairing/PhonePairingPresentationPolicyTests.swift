@@ -47,4 +47,26 @@ struct PhonePairingPresentationPolicyTests {
         #expect(policy.showsDesktopAssistant == false)
         #expect(policy.showsPairingFileImport == false)
     }
+
+    @Test
+    func onlyTerminalPairingActivityStatesDismissWhenOpened() {
+        #expect(PairingActivityAttributes.Stage.preparing.isTerminal == false)
+        #expect(PairingActivityAttributes.Stage.code.isTerminal == false)
+        #expect(PairingActivityAttributes.Stage.paired.isTerminal)
+        #expect(PairingActivityAttributes.Stage.failed.isTerminal)
+    }
+
+    @Test
+    func onlyPairingCodeNotificationRoutesToThePairingScreen() {
+        #expect(
+            PairingCodeNotification.shouldOpenPairing(
+                requestIdentifier: PairingCodeNotification.identifier
+            )
+        )
+        #expect(
+            PairingCodeNotification.shouldOpenPairing(
+                requestIdentifier: "com.mjorb.seal.background-renewal"
+            ) == false
+        )
+    }
 }

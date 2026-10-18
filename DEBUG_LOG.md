@@ -1,3 +1,32 @@
+## 2026-10-18 17:50:48 灵动岛 Seal 图标使用圆角方形
+
+- **改动**：Seal 图标维持 20pt 尺寸和全彩，增加 4pt 连续圆角裁切，外观与应用图标一致。
+- **涉及文件**：`SealLiveActivity/PairingLiveActivityWidget.swift`、`RELEASE_NOTES.md`。
+- **验证**：`git diff --check` 通过；最终外观待云 CI 和真机复验。
+
+## 2026-10-18 17:46:05 灵动岛展开态顶行被胶囊遮挡
+
+- **现象**：实机展开灵动岛时，左侧 Seal 图标和标题、右侧配对状态都被中间胶囊遮挡。
+- **根因**：品牌与状态分别放在 `.leading` / `.trailing` 区域；`.belowIfTooWide` 只在内容过宽时下移，不保证顶行始终避开摄像头区域。
+- **修复**：移除展开态顶部两侧区域，将图标、Seal 和状态排成一行放进 `.bottom` 区域，配对说明位于其下；紧凑态与锁屏布局不变。
+- **验证**：布局按 Apple 提供的 expanded `.bottom` 区域实现；`git diff --check` 通过，Swift 编译及实机四状态遮挡检查待云 CI/设备验证。
+
+## 2026-10-18 17:39:21 灵动岛图标在实机被系统渲染成黑灰色
+
+- **现象**：实机上的 Seal 灵动岛图标呈黑灰色；源码中的品牌 PNG 是蓝底白色，且 `.renderingMode(.original)` 未阻止系统强调色渲染。
+- **根因**：iOS 18 及以上 WidgetKit 强调色模式会重映射图像颜色；仅设置 SwiftUI 的 `.original` 没有明确声明 WidgetKit 图像应保留全彩。
+- **修复**：对 iOS 18 及以上的品牌图像加 `.widgetAccentedRenderingMode(.fullColor)`，旧系统继续使用原图；未替换图片资产。
+- **验证**：检查主 App 与 Live Activity 资源均为相同的彩色 PNG；Apple 文档确认 `.fullColor` 可禁止强调色模式改写图像颜色。编译和实机显示效果待云 CI 与设备复验。
+
+## 2026-10-18 17:36:19 灵动岛配对状态无法可靠返回与收尾
+
+- **现象**：等待配对码时点灵动岛会提前结束活动；配对完成/失败后活动句柄已丢失，点回 Seal 无法立即移除；通知回退点击不进入设备页，通知权限请求与发码存在竞态；展开态右侧状态可能被灵动岛遮挡。
+- **根因**：所有状态点击都走同一无条件清理；终态结束后立即清空 Activity 句柄；通知代理只处理续签通知；Live Activity 不可用时异步请求通知权限后立刻启动配对。
+- **修复**：配对中点击只导航并保留活动，成功/失败才立即结束；串行化码更新与终态结束，自动超时仍由 ActivityKit 负责；通知授权通过后才启动备用配对，通知点击通过一次性路由回设备页；统一灵动岛与锁屏的四态内容，并保留原色 Seal 图标。
+- **涉及文件**：`Shared/PairingActivityAttributes.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、`Seal/Infrastructure/Pairing/PairingCodeNotification.swift`、`Seal/Infrastructure/Notifications/SealNotificationPresenter.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/App/RootTabView.swift`、`SealTests/Pairing/PhonePairingPresentationPolicyTests.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **版本**：`0.1.14`，主 App 与 Live Activity target 同步。
+- **验证**：配对终态与通知路由判据新增单测；源码/差异检查通过后由 `MJorb-0.1.0` 云 CI 编译；真实设备需回归紧凑态六码、展开态四状态、锁屏、通知回退和返回收尾。
+
 ## 2026-10-18 17:03:23 待安装与已安装分页手势未驱动标签动画
 
 - **现象**：实机横向滑动页面时，下划线没有随手指连续移动，标签颜色也没有过渡；点击标签和页面位置可能各自改变。

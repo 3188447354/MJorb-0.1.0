@@ -12,48 +12,21 @@ struct PairingLiveActivityWidget: Widget {
                 .widgetURL(PairingDeepLink.url)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
-                        sealMark
-                        Text(context.state.title)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.white)
-                }
-                DynamicIslandExpandedRegion(.trailing) {
-                    status(for: context.state)
-                }
                 DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: context.state.stage == .code ? 6 : 4) {
-                        if context.state.stage == .preparing {
-                            Text("前往设置")
-                                .font(.subheadline.weight(.semibold))
-                            Text(context.state.detail)
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.78))
-                                .lineSpacing(5)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else if context.state.stage == .code {
-                            Text(grouped(context.state.code))
-                                .font(.system(size: 30, weight: .bold, design: .monospaced))
-                                .monospacedDigit()
-                                .tracking(2)
+                    VStack(spacing: 9) {
+                        HStack(spacing: 6) {
+                            sealMark
+                            Text(context.state.title)
+                                .font(.caption2.weight(.semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            status(for: context.state)
                         }
-                        if context.state.stage != .preparing {
-                            Text(context.state.detail)
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.78))
-                                .lineSpacing(5)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+
+                        pairingDetails(context.state, codeSize: 30)
                     }
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, context.state.stage == .code ? 2 : 8)
-                    .padding(.horizontal, 8)
                 }
             } compactLeading: {
                 sealMark
@@ -67,12 +40,28 @@ struct PairingLiveActivityWidget: Widget {
         }
     }
 
-    private var sealMark: some View {
+    private var sealMarkImage: Image {
         Image("SealBrandIcon")
+            .renderingMode(.original)
             .resizable()
-            .scaledToFit()
-            .frame(width: 20, height: 20)
-            .accessibilityLabel("Seal")
+    }
+
+    @ViewBuilder
+    private var sealMark: some View {
+        if #available(iOS 18.0, *) {
+            sealMarkImage
+                .widgetAccentedRenderingMode(.fullColor)
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .accessibilityLabel("Seal")
+        } else {
+            sealMarkImage
+                .scaledToFit()
+                .frame(width: 20, height: 20)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .accessibilityLabel("Seal")
+        }
     }
 
     @ViewBuilder
@@ -82,7 +71,7 @@ struct PairingLiveActivityWidget: Widget {
             Text(statusText(for: state.stage))
                 .lineLimit(1)
                 .minimumScaleFactor(0.68)
-                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(statusColor(for: state.stage))
@@ -150,32 +139,49 @@ struct PairingLiveActivityWidget: Widget {
                 Spacer()
                 status(for: state)
             }
-            if state.stage == .code {
-                Text(grouped(state.code))
-                    .font(.system(size: 36, weight: .bold, design: .monospaced))
-                    .monospacedDigit()
-                    .tracking(2.5)
-            }
-            if state.stage == .preparing {
+            pairingDetails(state, codeSize: 36)
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+    }
+
+    @ViewBuilder
+    private func pairingDetails(
+        _ state: PairingActivityAttributes.ContentState,
+        codeSize: CGFloat
+    ) -> some View {
+        VStack(spacing: state.stage == .code ? 6 : 4) {
+            switch state.stage {
+            case .preparing:
                 Text("前往设置")
                     .font(.subheadline.weight(.semibold))
+                instruction(state.detail)
+            case .code:
+                Text(grouped(state.code))
+                    .font(.system(size: codeSize, weight: .bold, design: .monospaced))
+                    .monospacedDigit()
+                    .tracking(2)
+                instruction(state.detail)
+            case .paired, .failed:
                 Text(state.detail)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .lineSpacing(5)
+                    .font(.subheadline.weight(.medium))
                     .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text(state.detail)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .lineSpacing(5)
-                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .foregroundStyle(.white)
-        .padding(18)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 8)
+    }
+
+    private func instruction(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.white.opacity(0.78))
+            .lineSpacing(4)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func tint(for stage: PairingActivityAttributes.Stage) -> Color {

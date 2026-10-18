@@ -4,12 +4,14 @@ import Foundation
 /// 控制手机配对的 Live Activity 生命周期。
 ///
 /// 活动只在用户主动开始配对时预创建，保证随后切去系统设置前已经取得系统允许的
-/// 前台创建窗口；预创建态没有假配对码，也会在短超时、失败、取消或用户回到 Seal 时清理。
+/// 前台创建窗口；预创建态没有假配对码，配对中点击返回会保留真实配对码。
 /// 真正六码到达后才显示号码；只有凭证已成功导入本地后才显示完成。
 @MainActor
 final class PairingLiveActivityController {
 
     private var activity: Activity<PairingActivityAttributes>?
+    private var activityOperation: Task<Void, Never>?
+    private var stage: PairingActivityAttributes.Stage?
     private var expiresAt: Date?
     private var dismissTask: Task<Void, Never>?
 
@@ -23,8 +25,8 @@ final class PairingLiveActivityController {
     /// 在用户按下「开始配对」的前台时调用。返回 false 时由调用方走通知回退。
     @discardableResult
     func prepare(deviceName: String) -> Bool {
-        guard isEnabled else { return false }
         finish()
+        guard isEnabled else { return false }
 
         let expiry = Date().addingTimeInterval(Self.preparationLifetime)
         let attributes = PairingActivityAttributes(deviceName: deviceName)
@@ -34,10 +36,12 @@ final class PairingLiveActivityController {
                 content: .init(state: Self.preparingState, staleDate: expiry),
                 pushType: nil
             )
+            stage = .preparing
             scheduleDismiss(at: expiry)
             return true
         } catch {
             activity = nil
+            stage = nil
             return false
         }
     }
@@ -46,19 +50,29 @@ final class PairingLiveActivityController {
     @discardableResult
     func showCode(_ code: String) async -> Bool {
         guard code.range(of: #"^\d{6}$"#, options: .regularExpression) != nil,
-              let activity else {
+              let activity,
+              stage == .preparing || stage == .code else {
             return false
         }
         guard activity.activityState == .active || activity.activityState == .stale else {
             finish()
             return false
         }
+        let activityID = activity.id
+        stage = .code
         let expiry = Date().addingTimeInterval(Self.codeLifetime)
         scheduleDismiss(at: expiry)
         // ActivityKit's current SDK marks update as concurrent; this handle is only passed
         // to that API here and remains otherwise isolated to this controller.
         nonisolated(unsafe) let activityForUpdate = activity
-        await activityForUpdate.update(.init(state: Self.codeState(code), staleDate: expiry))
+        let previousOperation = activityOperation
+        let updateOperation = Task {
+            await previousOperation?.value
+            await activityForUpdate.update(.init(state: Self.codeState(code), staleDate: expiry))
+        }
+        activityOperation = updateOperation
+        await updateOperation.value
+        guard self.activity?.id == activityID, stage == .code else { return false }
         guard activity.activityState == .active || activity.activityState == .stale else {
             finish()
             return false
@@ -70,6 +84,7 @@ final class PairingLiveActivityController {
     /// 不依赖 Seal 继续在前台或后台运行。
     func markPaired() {
         endWithResult(
+            stage: .paired,
             state: .init(stage: .paired, code: "", title: "Seal", detail: "点击返回 Seal"),
             lifetime: Self.completionLifetime
         )
@@ -78,22 +93,34 @@ final class PairingLiveActivityController {
     /// 失败态不保留旧配对码；同样由系统在短暂提示后结束活动。
     func markFailed() {
         endWithResult(
+            stage: .failed,
             state: .init(stage: .failed, code: "", title: "Seal", detail: "返回 Seal 查看原因"),
             lifetime: Self.failureLifetime
         )
     }
 
-    /// 用户点回 Seal、取消流程，或到了兜底时间时关闭活动。
+    /// 新一轮配对开始或活动到期时立即关闭旧活动。
     func finish() {
         dismissTask?.cancel()
         dismissTask = nil
         expiresAt = nil
+        stage = nil
         guard let activity else { return }
         self.activity = nil
-        Task { await activity.end(nil, dismissalPolicy: .immediate) }
+        let previousOperation = activityOperation
+        activityOperation = Task {
+            await previousOperation?.value
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
     }
 
     func abandon() { finish() }
+
+    /// 点活动返回 Seal 时保留仍在进行的配对码；成功或失败态才立即收起。
+    func dismissIfTerminal() {
+        guard stage?.isTerminal == true else { return }
+        finish()
+    }
 
     /// App 回到前台时只回收已过期活动，不中断仍在进行的配对。
     func discardExpiredActivityIfNeeded() {
@@ -105,17 +132,18 @@ final class PairingLiveActivityController {
     /// 把结束时刻提交给 ActivityKit。过去只用本地 `Task.sleep`，Seal 被挂起或杀掉时
     /// 任务不会执行，导致完成卡片长期残留。
     private func endWithResult(
+        stage: PairingActivityAttributes.Stage,
         state: PairingActivityAttributes.ContentState,
         lifetime: TimeInterval
     ) {
-        dismissTask?.cancel()
-        dismissTask = nil
-        expiresAt = nil
         guard let activity else { return }
-        self.activity = nil
+        self.stage = stage
         let dismissalDate = Date().addingTimeInterval(lifetime)
+        scheduleDismiss(at: dismissalDate)
         let content = ActivityContent(state: state, staleDate: dismissalDate)
-        Task {
+        let previousOperation = activityOperation
+        activityOperation = Task {
+            await previousOperation?.value
             await activity.end(content, dismissalPolicy: .after(dismissalDate))
         }
     }
@@ -135,7 +163,7 @@ final class PairingLiveActivityController {
         stage: .preparing,
         code: "",
         title: "Seal",
-        detail: "隐私与安全 - 开发者模式 - 与 Seal 配对"
+        detail: "隐私与安全-开发者模式-与 Seal 配对"
     )
 
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {

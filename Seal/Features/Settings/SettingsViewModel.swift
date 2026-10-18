@@ -2357,7 +2357,19 @@ final class SettingsViewModel: ObservableObject {
             deviceName: Self.phonePairingDeviceDisplayName
         ) == false
         if pairingUsesNotifications {
-            Task { _ = await PairingCodeNotification.requestAuthorizationIfNeeded() }
+            guard await PairingCodeNotification.requestAuthorizationIfNeeded() else {
+                let failure = Self.failure(
+                    title: "需要通知权限",
+                    reason: "灵动岛目前不可用，Seal 需要通过通知显示系统生成的配对码。",
+                    recovery: "在系统设置中允许 Seal 通知后重试",
+                    code: "SEAL-PAIR-218"
+                )
+                phonePairingHost = nil
+                phonePairingState = .failed(failure)
+                alertFailure = failure
+                releasePhonePairingLease()
+                return
+            }
         }
         host.start { [weak self] event in
             self?.handlePhonePairingEvent(event)
@@ -2412,7 +2424,16 @@ final class SettingsViewModel: ObservableObject {
                 // 不再补发一个已经无效的配对码通知。
                 guard phonePairingHost != nil else { return }
                 pairingUsesNotifications = true
-                _ = await PairingCodeNotification.requestAuthorizationIfNeeded()
+                guard await PairingCodeNotification.requestAuthorizationIfNeeded() else {
+                    pairingUsesNotifications = false
+                    alertFailure = Self.failure(
+                        title: "配对码已生成",
+                        reason: "灵动岛已不可用，且 Seal 没有通知权限。配对码仍显示在设备配对页。",
+                        recovery: "返回 Seal 查看配对码，再回到系统设置继续配对",
+                        code: "SEAL-PAIR-218"
+                    )
+                    return
+                }
                 await PairingCodeNotification.present(code: code)
                 return
             }
@@ -2445,9 +2466,9 @@ final class SettingsViewModel: ObservableObject {
         Task { await PairingCodeNotification.clear() }
     }
 
-    /// 用户点回 Seal 时收掉活动或通知。
-    func dismissPairingPresentation() {
-        pairingLiveActivity.finish()
+    /// 用户点回 Seal 时清掉通知；仅关闭已经成功或失败的 Live Activity。
+    func handlePairingPresentationOpen() {
+        pairingLiveActivity.dismissIfTerminal()
         Task { await PairingCodeNotification.clear() }
     }
 

@@ -12,6 +12,10 @@ struct PairingActivityAttributes: ActivityAttributes {
         case paired
         /// 配对未完成，旧码必须隐藏。
         case failed
+
+        var isTerminal: Bool {
+            self == .paired || self == .failed
+        }
     }
 
     struct ContentState: Codable, Hashable, Sendable {

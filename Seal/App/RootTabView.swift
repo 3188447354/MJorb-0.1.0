@@ -61,7 +61,14 @@ struct RootTabView: View {
         .onContinueUserActivity(NSUserActivityTypeLiveActivity) { _ in
             openPairingSettings()
         }
+        .onReceive(NotificationCenter.default.publisher(for: PairingCodeNotification.opened)) { _ in
+            guard PairingCodeNotification.consumePairingScreenRequest() else { return }
+            openPairingSettings()
+        }
         .task {
+            if PairingCodeNotification.consumePairingScreenRequest() {
+                openPairingSettings()
+            }
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
             // 更新抽屉只在首屏与本地检查稳定后呈现，避免启动瞬间叠两层流程。
@@ -192,10 +199,8 @@ struct RootTabView: View {
     private func openPairingSettings() {
         selection = .settings
         settingsViewModel.requestedRoute = .pairing
-        // 人已经回到 App：
-        //  - 浮在系统设置上方的配对码横幅没有存在意义了；
-        //  - **灵动岛上那枚「配对成功」也要收掉** —— 这是它消失的唯一正常路径。
-        settingsViewModel.dismissPairingPresentation()
+        // 人已经回到 App：清掉通知回退；配对进行中保留码，成功或失败态立即收起。
+        settingsViewModel.handlePairingPresentationOpen()
     }
 
     private func installSelfUpdate(_ localURL: URL) {
