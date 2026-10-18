@@ -55,7 +55,10 @@ final class PairingLiveActivityController {
         }
         let expiry = Date().addingTimeInterval(Self.codeLifetime)
         scheduleDismiss(at: expiry)
-        await activity.update(.init(state: Self.codeState(code), staleDate: expiry))
+        // ActivityKit's current SDK marks update as concurrent; this handle is only passed
+        // to that API here and remains otherwise isolated to this controller.
+        nonisolated(unsafe) let activityForUpdate = activity
+        await activityForUpdate.update(.init(state: Self.codeState(code), staleDate: expiry))
         guard activity.activityState == .active || activity.activityState == .stale else {
             finish()
             return false

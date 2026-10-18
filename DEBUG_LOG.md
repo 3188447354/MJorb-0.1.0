@@ -32,6 +32,14 @@
 > 复盘记录：现象 → 根因 → 修复 → 涉及文件 → 验证状态。新条目追加到「历史记录」顶部（最新在前）。
 > 动手前先查阅下方「常犯坑位」，避免同类问题重复发生。
 
+## 2026-10-18 13:47:18 ActivityKit 新并发标注导致 Swift 编译失败
+
+- **现象**：CI 的 Swift 回归任务在 `PairingLiveActivityController.swift:58` 报 `sending 'activity' risks causing data races`，导致 Swift 6 编译失败。
+- **根因**：当前 SDK 将 `Activity.update(_:)` 标记为并发执行；`Activity` 句柄保存在主 actor 隔离的控制器中，直接传入该方法触发并发检查。
+- **修复**：仅在调用 ActivityKit 更新方法前创建局部 `nonisolated(unsafe)` 别名；句柄其余读取和生命周期仍由主 actor 控制器管理。版本递增至 `0.1.9`。
+- **涉及文件**：`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证**：`git diff --check` 与发布版本守卫待检查；Windows 本机无法编译 Swift，须由下一轮 GitHub CI 验证并继续实机检查灵动岛更新。
+
 ## 2026-10-18 13:32:47 SwiftUI 外观抽屉 sheet 参数顺序编译失败
 
 - **现象**：CI 的 Swift 回归编译在 `RootTabView.swift:151` 报 `Incorrect argument label in call (have 'isPresented:_:onDismiss:', expected 'isPresented:onDismiss:content:')`。
