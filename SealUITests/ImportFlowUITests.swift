@@ -38,7 +38,7 @@ final class ImportFlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["已安装，0 个"].exists)
         // 稳定初始态：等 resolveInitialModeIfNeeded 把 mode 从初始 .installed 异步切到 .unsigned
-        // 完成后再点，避免 tap 命中中转窗口导致 TabView 不切页（header 竞态）。
+        // 完成后再点，避免 tap 命中中转窗口导致分页器不切页（header 竞态）。
         XCTAssertTrue(app.staticTexts["待安装应用"].waitForExistence(timeout: 10))
 
         // ⚠️ 用 `tapStage` 而不是裸 `tap()` + `waitForExistence`（2026-09-17）。
@@ -65,8 +65,8 @@ final class ImportFlowUITests: XCTestCase {
         // 本测试原先断言「滑完目标页的文字出现」，而构建 131 因此红：
         // `ImportFlowUITests.swift:63`（滑左之后 5 秒内「已安装应用」没出现）。
         // 该提交**只有 8 张 PNG 删除、0 个 Swift 改动**，且同一份测试代码在构建 130 是绿的
-        // ⇒ 抖动，不是回归。机制同 `tapStage`：`apps-stage-pager` 是
-        // `TabView(selection: $mode)`，动画未结束时手势会被吞掉；也可能手势被接受了却不翻页。
+        // ⇒ 抖动，不是回归。机制同 `tapStage`：`apps-stage-pager` 是横向分页 `ScrollView`，
+        // 程序化翻页动画未结束时手势会被吞掉；也可能手势被接受了却不翻页。
         // 两种都让「目标页文字出现」成为**不确定信号**。
         //
         // ⚠️ 同一轮 CI 里 `testTwoStageNavigationCanBeTappedWithoutChangingHeaderAlignment`（已改）是绿的，
@@ -162,7 +162,7 @@ final class ImportFlowUITests: XCTestCase {
 
     /// 在分页器上滑动并等**选中态**切换，**滑一次不一定生效**。
     ///
-    /// 与 `tapStage` 同源：`apps-stage-pager` 是 `TabView(selection: $mode)`，
+    /// 与 `tapStage` 同源：`apps-stage-pager` 是横向分页 `ScrollView`，
     /// 初始 mode 由 `resolveInitialModeIfNeeded()` **程序化翻页**决定 ——
     /// 动画未结束时手势会被吞掉；也可能手势被接受了、页面没翻。
     /// 两者都让「目标页文字出现」变成**不确定信号**（2026-09-18 构建 131 实测）。

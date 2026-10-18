@@ -1,6 +1,14 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct AppPagerOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct AppsRootView: View {
     private enum ListMode: String, Identifiable, CaseIterable {
         case unsigned = "待安装"
@@ -16,7 +24,6 @@ struct AppsRootView: View {
     @State private var mode: ListMode = .installed
     /// 内容页的连续位置（0 = 待安装，1 = 已安装），由分页器测量写入、驱动毛毛虫下划线。
     @State private var pagerProgress: CGFloat = 1
-    @State private var pagerDragStartProgress: CGFloat?
     @State private var detailApp: AppRecord?
     @State private var pendingDeleteApp: AppRecord?
     @State private var installedActionApp: AppRecord?
@@ -297,55 +304,46 @@ struct AppsRootView: View {
     private var appPager: some View {
         GeometryReader { proxy in
             let pageWidth = max(proxy.size.width, 1)
-            ZStack(alignment: .leading) {
+            ScrollView(.horizontal) {
                 HStack(spacing: 0) {
                     appPage(.unsigned, apps: viewModel.unsignedApps)
-                        .frame(width: pageWidth, height: proxy.size.height)
+                        .containerRelativeFrame(.horizontal)
+                        .id(ListMode.unsigned)
                     appPage(.installed, apps: viewModel.installedApps)
-                        .frame(width: pageWidth, height: proxy.size.height)
+                        .containerRelativeFrame(.horizontal)
+                        .id(ListMode.installed)
                 }
-                .frame(width: pageWidth * CGFloat(ListMode.allCases.count), height: proxy.size.height, alignment: .leading)
-                .offset(x: -pagerProgress * pageWidth)
+                .scrollTargetLayout()
+                .background {
+                    GeometryReader { content in
+                        Color.clear.preference(
+                            key: AppPagerOffsetPreferenceKey.self,
+                            value: content.frame(in: .named("apps-stage-scroll")).minX
+                        )
+                    }
+                }
             }
-            .frame(width: pageWidth, height: proxy.size.height, alignment: .leading)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 10)
-                    .onChanged { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                        if pagerDragStartProgress == nil {
-                            pagerDragStartProgress = pagerProgress
-                        }
-                        let start = pagerDragStartProgress ?? pagerProgress
-                        let progress = start - value.translation.width / pageWidth
-                        var transaction = Transaction()
-                        transaction.animation = nil
-                        withTransaction(transaction) {
-                            pagerProgress = min(max(progress, 0), CGFloat(ListMode.allCases.count - 1))
-                        }
-                    }
-                    .onEnded { value in
-                        defer { pagerDragStartProgress = nil }
-                        guard let start = pagerDragStartProgress,
-                              abs(value.translation.width) > abs(value.translation.height) else { return }
-                        // predictedEndTranslation 把松手速度计入目标页；再按最近页吸附。
-                        let projected = start - value.predictedEndTranslation.width / pageWidth
-                        let targetIndex = min(max(Int(projected.rounded()), 0), ListMode.allCases.count - 1)
-                        withAnimation(.spring(response: 0.34, dampingFraction: 0.82)) {
-                            mode = ListMode.allCases[targetIndex]
-                            pagerProgress = CGFloat(targetIndex)
-                        }
-                    }
-            )
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: pagerPosition, anchor: .leading)
+            .scrollIndicators(.hidden)
+            .coordinateSpace(name: "apps-stage-scroll")
             .clipped()
             .accessibilityIdentifier("apps-stage-pager")
-            .onChange(of: mode) { _, newMode in
-                guard let index = ListMode.allCases.firstIndex(of: newMode) else { return }
-                withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
-                    pagerProgress = CGFloat(index)
+            .onPreferenceChange(AppPagerOffsetPreferenceKey.self) { offset in
+                var transaction = Transaction()
+                transaction.animation = nil
+                withTransaction(transaction) {
+                    pagerProgress = min(max(-offset / pageWidth, 0), CGFloat(ListMode.allCases.count - 1))
                 }
             }
         }
+    }
+
+    private var pagerPosition: Binding<ListMode?> {
+        Binding(
+            get: { mode },
+            set: { if let mode = $0 { self.mode = mode } }
+        )
     }
 
     private func appPage(_ pageMode: ListMode, apps: [AppRecord]) -> some View {
