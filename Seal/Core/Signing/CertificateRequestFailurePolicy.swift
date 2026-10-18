@@ -13,6 +13,13 @@ enum CertificateRequestFailurePolicy {
         "SEAL-CERT-204g"
     ]
 
+    /// Apple 明确拒绝创建新开发证书时，才能进入“选一张旧证书撤销”的确认链路。
+    /// 204f/204g 表示之前的撤销结果或列表已经变化，只能先重新读取候选列表。
+    static let sacrificeSelectionEligibleCodes: Set<String> = [
+        "SEAL-CERT-204b",
+        "SEAL-CERT-204e"
+    ]
+
     static func isCertificateLimitError(_ error: Error) -> Bool {
         matches(error, expected: ALTAppleAPIError(.tooManyCertificates))
     }

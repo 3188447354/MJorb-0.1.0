@@ -4049,18 +4049,22 @@ def violations(load=read):
           "Sacrifice: only SideStore-compatible iOS Development certificates may be offered")
     apps_vm = load("Seal/Features/Apps/AppsViewModel.swift")
     check("func confirmCertificateSacrificeAndRetry(serialNumber: String)" in apps_vm
-          and '["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code)' in apps_vm,
+          and "CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code)" in apps_vm,
           "Sacrifice: ViewModel selected-certificate action must be gated on certificate-limit failures")
     check("resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)" in apps_vm,
           "Sacrifice: affected installed apps must be re-signed after the retry succeeds")
     progress_view = load("Seal/Features/Apps/SigningProgressView.swift")
     picker_view = load("Seal/Features/Apps/CertificateSacrificePickerView.swift")
-    check('"查看证书并继续"' in progress_view
+    certificate_policy = load("Seal/Core/Signing/CertificateRequestFailurePolicy.swift")
+    check('"SEAL-CERT-204b"' in certificate_policy
+          and "sacrificeSelectionEligibleCodes" in certificate_policy
+          and '"撤销并继续签名"' in progress_view
           and "CertificateSacrificePickerView" in progress_view
           and '"确认撤销并继续签名"' in picker_view
           and "viewModel.confirmCertificateSacrificeAndRetry(serialNumber: serial)" in picker_view,
           "Sacrifice: failure page must show picker and require confirmation before selected revoke")
-    check('"SEAL-CERT-204g"' in coord and '"SEAL-CERT-204g"' in progress_view,
+    check('"SEAL-CERT-204g"' in coord and '"SEAL-CERT-204g"' in progress_view
+          and '"重新读取证书"' in progress_view,
           "Sacrifice: stale selection must stop before revoke and return to candidate refresh")
 
     # recovery 文案不应引导用户离开当前恢复流程，去设置页手动撤销证书。

@@ -6,7 +6,7 @@
 
 | 问题 | 结论 | 路径 | 最后修改时间 |
 | --- | --- | --- | --- |
-| 签名失败后没有“撤销并继续签名” | 已补齐证书名额错误 `SEAL-CERT-204b` 的入口；选择证书后仍需二次确认，才会撤销并重试 | `Seal/Core/Signing/CertificateRequestFailurePolicy.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/SigningProgressView.swift` | 2026-10-18T07:48:07+08:00 |
+| 签名失败后没有“撤销并继续签名” | `204b/204e` 进入撤销选择和二次确认；`204f/204g` 只允许重新读取候选列表，避免错误撤销 | `Seal/Core/Signing/CertificateRequestFailurePolicy.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`Scripts/verify-release-safety.py` | 2026-10-18T08:21:36+08:00、2026-10-18T08:21:51+08:00 |
 | 待安装 / 已安装分组标签 | 当前源码已经有分页标签、左右滑动和毛毛虫下划线；入口在 AppsRootView，组件在 CaterpillarSegmentedTabs。本次不重写已有实现 | `Seal/Features/Apps/AppsRootView.swift`、`Seal/DesignSystem/CaterpillarSegmentedTabs.swift` | 既有：2026-10-17T19:00:48+08:00、2026-10-17T09:45:10+08:00 |
 | 检查更新总是显示失败 | 已区分无 Release、GitHub 限流、服务错误、无效发布和网络错误；当前仓库实际返回 404，属于“暂未发布可用更新”。入口右侧不再固定写“检查失败”，改为对应原因 | `Seal/Infrastructure/UpdateChecker.swift`、`Seal/Features/Settings/AboutView.swift` | 2026-10-18T07:49:26+08:00、2026-10-18T08:00:09+08:00 |
 | Apple ID > 已签名 App 信息不全 | 每项现在明确显示应用名称、Apple 返回的 App ID、Bundle ID、有效期至 | `Seal/Features/Settings/AppleAccountDetailView.swift` | 2026-10-18T07:49:44+08:00 |

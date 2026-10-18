@@ -25,7 +25,7 @@ struct SigningProgressView: View {
 
                 if let session,
                    case .failed(let failure) = session.status,
-                   ["SEAL-CERT-204e", "SEAL-CERT-204f", "SEAL-CERT-204g"].contains(failure.code) {
+                   CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
                     EmptyView()
                 } else if let session {
                     signingRuntimeCard(session)
@@ -300,7 +300,7 @@ struct SigningProgressView: View {
 
     @ViewBuilder
     private func failureContent(_ failure: ImportFailure) -> some View {
-        if failure.code == "SEAL-CERT-204e" {
+        if CertificateRequestFailurePolicy.sacrificeSelectionEligibleCodes.contains(failure.code) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "exclamationmark.circle")
@@ -414,7 +414,7 @@ struct SigningProgressView: View {
                 .sealPrimaryAction(cornerRadius: 14)
 
         case .failed(let failure):
-            if CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
+            if CertificateRequestFailurePolicy.sacrificeSelectionEligibleCodes.contains(failure.code) {
                 Button("撤销并继续签名") {
                     isCertificatePickerPresented = true
                 }
@@ -427,6 +427,11 @@ struct SigningProgressView: View {
                 .foregroundStyle(Color.sealTextSecondary)
                 .frame(maxWidth: .infinity)
                 .frame(height: 36)
+            } else if CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
+                Button("重新读取证书") {
+                    isCertificatePickerPresented = true
+                }
+                .sealPrimaryAction(cornerRadius: 14)
             } else if failure.code == "SEAL-APPID-DEVICELIMIT" {
                 VStack(spacing: 10) {
                     Button("已处理数量上限，继续安装") {
@@ -656,7 +661,7 @@ struct SigningProgressView: View {
     private func primaryRecoveryTitle(_ failure: ImportFailure) -> String {
         if let title = semanticPrimaryRecoveryTitle(failure) { return title }
         if isNonRetryableFailure(failure) { return "知道了" }
-        if failure.code == "SEAL-CERT-204e" { return "查看证书并继续" }
+        if CertificateRequestFailurePolicy.sacrificeSelectionEligibleCodes.contains(failure.code) { return "撤销并继续签名" }
         if failure.code == "SEAL-CERT-204g" { return "重新读取证书" }
         if failure.code == "SEAL-CERT-204f" { return "重新读取证书" }
         if failure.code.hasPrefix("SEAL-NET-") { return "重新签名" }
