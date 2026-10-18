@@ -1,6 +1,6 @@
 # 2026-10-18 功能闭环追踪
 
-记录生成时间：2026-10-18T07:53:11+08:00
+记录生成时间：2026-10-18T07:53:11+08:00；版本号更新至 `0.1.2`：2026-10-18T09:18:01+08:00
 
 这份记录只列出本次核对后实际存在的代码与本次新增修改，供后续通过路径和时间快速定位。
 
@@ -49,6 +49,8 @@
 | `SealTests/Update/UpdateCheckerAssetTests.swift` | 2026-10-18T07:49:58+08:00 |
 | `docs/qa/generated/error-code-inventory.json` | 2026-10-18T09:11:33+08:00 |
 | `.github/workflows/ios.yml` | 2026-10-18T08:47:21+08:00 |
+| `project.yml`（主 App 与 Live Activity 版本 `0.1.1` → `0.1.2`） | 2026-10-18T09:18:01+08:00 |
+| `RELEASE_NOTES.md`（新增 `0.1.2` 更新说明） | 2026-10-18T09:18:01+08:00 |
 | `SealTests/Notifications/PairingCodeNotificationRouteTests.swift` (删除) | 2026-10-18T08:02:16+08:00（删除提交） |
 
 追踪文档本身以文件系统的最终写入时间为准；修改完成后读取该文件的 `LastWriteTime`。
