@@ -58,10 +58,31 @@ struct AppExtensionProfileStrategyTests {
 
     /// 默认共享，只有实际能力检查不兼容的扩展才单独申请描述文件。
     @Test
-    func onlyLiveContainerUsesIndependentProfilesByDefault() {
+    func allAppsUseCapabilityBasedSharingByDefault() {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: false) == .sharedMainProfile)
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .sharedMainProfile)
+    }
+
+    @Test(arguments: [0, 1, 3, 9, 12])
+    func sharingUsesEveryExtensionRegardlessOfCount(extensionCount: Int) {
+        let extensions = (0..<extensionCount).map { mappedMain + ".Extension\($0)" }
+        let targets = [mappedMain] + extensions
+        var permissions = Dictionary(uniqueKeysWithValues: targets.map { ($0, Set<String>()) })
+        #expect(AppExtensionProfileStrategy.independentBundleIdentifiers(
+            mainBundleID: mappedMain,
+            entitlementsByBundleID: permissions,
+            expectedBundleIdentifiers: targets
+        ).isEmpty)
+
+        if let last = extensions.last {
+            permissions[last] = ["com.apple.developer.kernel.increased-memory-limit"]
+            #expect(AppExtensionProfileStrategy.independentBundleIdentifiers(
+                mainBundleID: mappedMain,
+                entitlementsByBundleID: permissions,
+                expectedBundleIdentifiers: targets
+            ) == [last])
+        }
     }
 
     /// 含扩展的普通 App 现在**默认共享**；是否真的共享由 `sharedProfileBlocker` 在拿到
@@ -101,7 +122,7 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func liveContainerUsesIndependentDefault() {
+    func liveContainerUsesSharedDefault() {
         let app = AppRecord(
             originalBundleIdentifier: "com.kdt.livecontainer",
             name: "LiveContainer",
@@ -113,7 +134,36 @@ struct AppExtensionProfileStrategyTests {
             importedAt: .now
         )
 
-        #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
+        #expect(app.effectiveExtensionProfileStrategy == .sharedMainProfile)
+    }
+
+    @Test
+    func liveContainerOnlySeparatesExtensionsWhosePermissionsAreNotCovered() {
+        let main = "com.kdt.livecontainer.TEAM"
+        let process = main + ".LiveProcess"
+        let share = main + ".ShareExtension"
+        let launcher = main + ".LaunchAppExtension"
+        let groups = "com.apple.security.application-groups"
+        let memory = "com.apple.developer.kernel.increased-memory-limit"
+        let targets = [main, process, share, launcher]
+        var permissions: [String: Set<String>] = [
+            main: [groups, memory],
+            process: [groups, memory],
+            share: [groups],
+            launcher: [groups]
+        ]
+        #expect(AppExtensionProfileStrategy.independentBundleIdentifiers(
+            mainBundleID: main,
+            entitlementsByBundleID: permissions,
+            expectedBundleIdentifiers: targets
+        ).isEmpty)
+
+        permissions[main] = [groups]
+        #expect(AppExtensionProfileStrategy.independentBundleIdentifiers(
+            mainBundleID: main,
+            entitlementsByBundleID: permissions,
+            expectedBundleIdentifiers: targets
+        ) == [process])
     }
 
     /// 已记录的独立策略应保持独立。
@@ -394,9 +444,9 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func defaultsSealToSharedAndLiveContainerToIndependentProfiles() {
+    func defaultsSealAndLiveContainerToCapabilityBasedSharing() {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .sharedMainProfile)
     }
 
     @Test

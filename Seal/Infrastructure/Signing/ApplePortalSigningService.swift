@@ -1200,7 +1200,8 @@ actor ApplePortalSigningService {
                 mappings: prepared.bundleIDMappings,
                 originalMainBundleID: app.originalBundleIdentifier,
                 mappedMainBundleID: prepared.mappedMainBundleID,
-                extensionProfileStrategy: app.effectiveExtensionProfileStrategy,
+                // 完整重签按当前 IPA 的实际权限重新分配；描述文件续签仍沿用已安装拓扑。
+                extensionProfileStrategy: .sharedMainProfile,
                 appName: app.displayName,
                 appURL: prepared.appURL,
                 workspace: prepared,
@@ -1277,7 +1278,7 @@ actor ApplePortalSigningService {
             let applicationIdentifiers = try signingWorkspace.signedBundleTargets(in: prepared).reduce(into: [String: String]()) {
                 result, target in
                 guard let application = ALTApplication(fileURL: target.bundleURL),
-                      let identifier = try application.readEntitlements()[ALTCapabilities.applicationIdentifier] as? String,
+                      let identifier = try application.readEntitlements()[ALTEntitlement.applicationIdentifier] as? String,
                       identifier.isEmpty == false,
                       identifier.contains("*") == false else {
                     throw Self.failure(
@@ -2534,7 +2535,7 @@ actor ApplePortalSigningService {
             let entitlementSource = filteredAppIDEntitlements(
                 from: application,
                 team: team,
-                cachedEntitlements: cachedEntitlementsByBundleID[mappedBundleID]
+                cachedEntitlements: try cachedEntitlementsByBundleID[mappedBundleID] ?? application.readEntitlements()
             )
             var entitlementValues: [String: ProvisioningEntitlementValue] = [:]
             for (entitlement, value) in entitlementSource {

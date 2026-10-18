@@ -396,13 +396,12 @@ enum AppleAccountAppNamePolicy {
 
     static func applicationIdentifier(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
         let target = normalize(bundleIdentifier)
-        guard let applicationIdentifier = relatedApps
+        guard let value = relatedApps
             .filter({ $0.accountID == accountID })
             .lazy
             .flatMap(\.signingTargets)
             .first(where: { normalize($0.bundleIdentifier) == target })?
             .applicationIdentifier,
-              let value = applicationIdentifier,
               value.isEmpty == false,
               value.contains("*") == false else {
             return "未记录"

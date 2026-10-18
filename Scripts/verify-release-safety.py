@@ -4412,8 +4412,11 @@ def violations(load=read):
     #
     # 普通 IPA 默认共享，只有能力不兼容的扩展单独申请描述文件。
     strategy_source = strip_comments(load("Seal/Core/Signing/AppExtensionProfileStrategy.swift"))
-    check("isLiveContainer ? .independentProfiles : .sharedMainProfile" in strategy_source,
-          "R65①: 默认共享主描述文件；LiveContainer 独立，能力不兼容扩展再单独分配 ✗")
+    r65_default = section_or_empty(strategy_source, "static func defaultFor(", "static func profileTopologyEntitlements(")
+    r65_full_sign = section_or_empty(portal_source, "private func signOnce(", "private func fetchTeams(")
+    check(".sharedMainProfile" in r65_default and ".independentProfiles" not in r65_default
+          and "extensionProfileStrategy: .sharedMainProfile," in r65_full_sign,
+          "R65①: 全部应用默认共享，完整重签按实际权限重新分配，不得按应用名称强制独立 ✗")
     check("return [originalMainBundleID: mappedMainBundleID]" in strategy_source
           and "return mappings" in strategy_source,
           "R65②: 共享策略只创建主 App ID，独立策略保留每个目标 ✗")
@@ -4479,9 +4482,9 @@ def violations(load=read):
           "Swift compile: primaryActionTitle 必须显式 return String ✗")
 
     strategy_tests = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
-    check("func onlyLiveContainerUsesIndependentProfilesByDefault()" in strategy_tests
+    check("func allAppsUseCapabilityBasedSharingByDefault()" in strategy_tests
           and "func ordinaryAppWithExtensionsUsesTheSharedDefault()" in strategy_tests
-          and "func liveContainerUsesIndependentDefault()" in strategy_tests
+          and "func liveContainerUsesSharedDefault()" in strategy_tests
           and "func sharedProfileBlockerReportsTheFirstUncoveredExtensionDeterministically()" in strategy_tests
           and "func downgradeUnderSharedProfileClearsEveryBundleEmbeddingThatProfile()" in strategy_tests,
           "R65⑪: 必须覆盖默认策略、共享阻塞和共享描述文件的能力降级范围 ✗")
@@ -8746,11 +8749,15 @@ def main():
          "            stageStartedAt = now",
          "            stageStartedAt = nil",
          "R64: `advanceStage` 必须记 `stageStartedAt`"),
-        # ── R65：普通扩展共享，明确阻塞后由用户选择独立签名 ──
+        # ── R65：全部应用按实际能力共享，只有不兼容扩展独立 ──
         ("Seal/Core/Signing/AppExtensionProfileStrategy.swift",
-         "isLiveContainer ? .independentProfiles : .sharedMainProfile",
-         "isLiveContainer ? .sharedMainProfile : .independentProfiles",
-         "R65①: 默认共享主描述文件；LiveContainer 独立，能力不兼容扩展再单独分配"),
+         "static func defaultFor(isSeal _: Bool, isLiveContainer _: Bool) -> Self {\n        .sharedMainProfile",
+         "static func defaultFor(isSeal _: Bool, isLiveContainer _: Bool) -> Self {\n        .independentProfiles",
+         "R65①: 全部应用默认共享"),
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         "                extensionProfileStrategy: .sharedMainProfile,\n                appName: app.displayName,",
+         "                extensionProfileStrategy: app.effectiveExtensionProfileStrategy,\n                appName: app.displayName,",
+         "R65①: 全部应用默认共享"),
         ("Seal/Core/Signing/AppExtensionProfileStrategy.swift",
          "return [originalMainBundleID: mappedMainBundleID]",
          "return mappings",

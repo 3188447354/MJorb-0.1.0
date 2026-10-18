@@ -1,3 +1,22 @@
+## 2026-10-19 06:09:11 CI #45 三处 Swift 类型错误
+
+- **证据**：swift-regression 日志定位 AppleAccountDetailView.swift:405 的重复 Optional 解包，以及 ApplePortalSigningService.swift:1280 的不存在类型 ALTCapabilities、:2537 的可空权限字典实参。
+- **修复**：完整 App ID 读取只解包一次；按 upstream/AltSign/Sources/ALTCapabilities.swift 中真实声明使用 ALTEntitlement.applicationIdentifier；缓存未命中时使用 throwing readEntitlements 读取，不伪造空权限。
+- **版本与验证**：合入待推 0.1.23；本地仅差异检查与生成错误码清单，Swift 编译交 CI。
+
+## 2026-10-19 06:06:57 扩展数量不作固定假设
+
+- **要求与核对**：IPA 可含零个、一个或多个扩展；实际处理遍历解析出的完整 Bundle ID 集合，不按示例中的三个扩展截断，也不新增数量上限。
+- **验证补充**：参数化测试覆盖 0、1、3、9、12 个扩展，全兼容时全部共享；最后一个扩展需要额外权限时，仅它独立。测试待 CI 执行。
+
+## 2026-10-19 06:01:03 全部应用按实际能力共享扩展描述文件
+
+- **要求**：用户明确取消应用名称特例，含 Seal、LiveContainer 在内，能共享的全部共享。
+- **证据**：LiveContainer 官方 main 的主应用 entitlements.xml 已含 LiveProcess 使用的内存、HealthKit 与 App Groups；LaunchAppExtension、ShareExtension 的声明为相同 App Groups。历史版本的 LiveProcess 特例不能替代实际 IPA 判断。
+- **修复**：defaultFor 不再按 isSeal/isLiveContainer 强制独立；完整签名统一从共享策略开始，按权限键、值及 App Groups 计算不兼容扩展；旧记录只在 profile-only 续签时保留既有拓扑，完整重签重新分配并落盘。
+- **验证**：增加三个 LC 扩展全部共享、仅 LiveProcess 需独立两种数据断言；保留旧独立记录续签策略测试；同步 CI 检查及变异锚点，未本地运行完整守卫。
+- **版本**：0.1.23，待与 CI 修复一起推送并验证；不把上游权限相同当作真机安装已通过。
+
 ## 2026-10-19 05:51:36 后台续签快捷指令状态契约修复
 
 - **证据**：CI #44 的 Swift 编译报告 SealRenewalIntentOutcome 不存在 accepted 成员。
