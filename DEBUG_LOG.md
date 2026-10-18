@@ -1,3 +1,10 @@
+## 2026-10-19 05:51:36 后台续签快捷指令状态契约修复
+
+- **证据**：CI #44 的 Swift 编译报告 SealRenewalIntentOutcome 不存在 accepted 成员。
+- **根因**：入口已按 BackgroundRenewalAdmission.accepted 映射并反馈已接收请求，但结果枚举仍残留旧 started 命名。
+- **修复**：结果枚举统一为 accepted；保留 busy、notReady 及原反馈，不把请求接收误称为续签已完成或已启动。
+- **版本与验证**：版本递增至 0.1.22；待 CI 编译及快捷指令实机验收。
+
 ## 2026-10-19 05:35:55 迟到安装回调 Result 类型修复
 
 - **证据**：CI #43 的 Swift 编译在 HardTimeout、BlockingCall、InstallChannel、MinimuxerInstallChannel 和 SigningCoordinator 报 String 不遵循 Error。

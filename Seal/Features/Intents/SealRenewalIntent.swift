@@ -1,14 +1,14 @@
 import AppIntents
 import Foundation
 
-/// `RefreshAllAppsIntent.perform()` 的两种结果。
+/// `RefreshAllAppsIntent.perform()` 的请求接收结果。
 ///
 /// **刻意不用 `Bool`** ——「没启动」只有一种表现（返回 `false`），但有两种完全不同的原因，
 /// 下一步动作也不同：容器还没装配好是**等一等再试**，而本地存储初始化失败是
 /// **先打开一次 Seal 把数据修好**。折成 `Bool` 就只能给一句没有指向的提示。
 enum SealRenewalIntentOutcome: Sendable {
-    /// 已经点火，续签在后台跑。
-    case started
+    /// 已接收请求，正在准备后台续签所需的设备连接。
+    case accepted
     /// 界面尚未装配完（后台唤起的极早期），或本地存储初始化失败。
     case notReady
     case busy
