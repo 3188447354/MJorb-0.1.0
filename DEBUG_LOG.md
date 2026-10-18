@@ -1,3 +1,10 @@
+## 2026-10-19 06:59:26 CI #48 权限缓存跨异步闭包缺少 Sendable 键
+
+- **证据**：swift-regression 定位 ApplePortalSigningService.swift:2648、2659，cachedEntitlements 在 updateFeatures 与 assignAppGroups 的恢复闭包之间传递有数据竞争风险。
+- **根因**：缓存值已为 any Sendable，但字典键 ALTEntitlement 为公共结构且未声明 Sendable；真实定义仅含 let rawValue: String。
+- **修复**：在 upstream/AltSign/Sources/ALTCapabilities.swift 为 ALTEntitlement 增加编译器检查的 Sendable 遵循，不使用 unchecked、不降低 Swift 6 并发检查、不改变权限内容。
+- **版本与验证**：0.1.26；待 CI 验证权限更新与 App Groups 两个调用点编译通过。
+
 ## 2026-10-19 06:44:23 CI #47 证书恢复错误构造参数不匹配
 
 - **证据**：swift-regression 编译定位 SigningCoordinator.swift:365，Self.failure 不接收 title 参数。

@@ -8,7 +8,7 @@
 
 import Foundation
 
-public struct ALTEntitlement: RawRepresentable, Hashable, ExpressibleByStringLiteral, CustomStringConvertible {
+public struct ALTEntitlement: RawRepresentable, Hashable, ExpressibleByStringLiteral, CustomStringConvertible, Sendable {
     public let rawValue: String
     
     public init(rawValue: String) {

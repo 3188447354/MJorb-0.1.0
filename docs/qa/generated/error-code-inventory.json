@@ -4312,7 +4312,7 @@
       }
     },
     "SEAL-CERT-240a": {
-      "auditStatus": "reference_only",
+      "auditStatus": "unreviewed",
       "identifierKinds": {
         "standard_error_code": 6
       },
@@ -4321,7 +4321,7 @@
           "identifierKind": "standard_error_code",
           "line": 368,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
-          "role": "failure_emission_candidate",
+          "role": "structured_failure_emission",
           "semanticFields": [],
           "semanticValues": {},
           "source": "code: \"SEAL-CERT-240a\""
@@ -4374,8 +4374,9 @@
       ],
       "occurrenceCount": 6,
       "roles": {
-        "failure_emission_candidate": 3,
-        "internal_event_or_log": 3
+        "failure_emission_candidate": 2,
+        "internal_event_or_log": 3,
+        "structured_failure_emission": 1
       }
     },
     "SEAL-CERT-240b": {
@@ -13929,8 +13930,8 @@
       "contracted": 62,
       "diagnostic_only": 5,
       "mixed": 3,
-      "reference_only": 287,
-      "unreviewed": 77
+      "reference_only": 286,
+      "unreviewed": 78
     },
     "identifierKinds": {
       "diagnostic_tag": 73,
@@ -13941,14 +13942,14 @@
     "roles": {
       "comment_reference": 130,
       "executable_reference": 123,
-      "failure_emission_candidate": 232,
+      "failure_emission_candidate": 231,
       "internal_event_or_log": 205,
-      "structured_failure_emission": 156
+      "structured_failure_emission": 157
     },
     "structuredFailureContracts": {
-      "directOccurrences": 156,
+      "directOccurrences": 157,
       "withExplicitSemantics": 73,
-      "withoutExplicitSemantics": 83
+      "withoutExplicitSemantics": 84
     },
     "uniqueIdentifiers": 435
   }

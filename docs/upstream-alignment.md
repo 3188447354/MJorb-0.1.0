@@ -334,3 +334,8 @@ on 4.5.2」✗。
 - 官方源码：主应用 https://github.com/LiveContainer/LiveContainer/blob/main/entitlements.xml ，LiveProcess https://github.com/LiveContainer/LiveContainer/blob/main/LiveProcess/LiveProcess.entitlements ，LaunchAppExtension 与 ShareExtension 目录中的同名 entitlements。
 - 当前主应用已声明 LiveProcess 的内存、HealthKit 和 App Groups 权限；另外两个扩展声明相同 App Groups。不能沿用旧版本中 LiveProcess 比主应用多权限的结论，固定按应用名称全部独立。
 - Seal 改为所有应用均按本次 IPA 的权限键、值和 App Groups 检测；完整签名重新分配，profile-only 沿用已安装记录，避免未重签就改变二进制身份。最终授权以 Apple 返回的 profile 与产物校验为准。
+
+### 2026-10-19 AltSign 权限键并发契约
+
+- 本地真实定义 upstream/AltSign/Sources/ALTCapabilities.swift：ALTEntitlement 为仅含不可变 String 的值类型；ALTApplication.readEntitlements 已返回 [ALTEntitlement: any Sendable]。
+- CI #48 证实权限字典在异步恢复闭包中传递时键缺少 Sendable；补编译器检查的 Sendable 遵循，保持权限内容和所有认证请求不变。
