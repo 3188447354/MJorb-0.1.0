@@ -32,6 +32,14 @@
 > 复盘记录：现象 → 根因 → 修复 → 涉及文件 → 验证状态。新条目追加到「历史记录」顶部（最新在前）。
 > 动手前先查阅下方「常犯坑位」，避免同类问题重复发生。
 
+## 2026-10-18 14:00:24 恢复应用导入回归测试参数顺序错误
+
+- **现象**：CI 的 Swift 测试目标报 `argument 'ipaRelativePath' must precede argument 'needsIPAImport'`，同一处初始化调用触发多条诊断。
+- **根因**：新增恢复记录测试构造 `AppRecord` 时，参数顺序与其显式初始化器声明顺序不一致。
+- **修复**：将 `ipaRelativePath` 移到 `needsIPAImport` 前；版本递增至 `0.1.10`。
+- **涉及文件**：`SealTests/Import/ImportWorkflowTests.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证**：`git diff --check` 待检查；Windows 本机无法编译 Swift，待 GitHub CI 重新验证测试目标与 IPA 构建。
+
 ## 2026-10-18 13:47:18 ActivityKit 新并发标注导致 Swift 编译失败
 
 - **现象**：CI 的 Swift 回归任务在 `PairingLiveActivityController.swift:58` 报 `sending 'activity' risks causing data races`，导致 Swift 6 编译失败。

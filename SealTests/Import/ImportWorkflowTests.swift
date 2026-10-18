@@ -481,8 +481,8 @@ extension ImportWorkflowTests {
             state: .installed,
             accountID: UUID(),
             signingTeamID: "TEAM000001",
-            needsIPAImport: true,
             ipaRelativePath: "",
+            needsIPAImport: true,
             importedAt: Date(timeIntervalSince1970: 100)
         )
         try await environment.appStore.save(installed)
