@@ -32,6 +32,14 @@
 > 复盘记录：现象 → 根因 → 修复 → 涉及文件 → 验证状态。新条目追加到「历史记录」顶部（最新在前）。
 > 动手前先查阅下方「常犯坑位」，避免同类问题重复发生。
 
+## 2026-10-18 13:32:47 SwiftUI 外观抽屉 sheet 参数顺序编译失败
+
+- **现象**：CI 的 Swift 回归编译在 `RootTabView.swift:151` 报 `Incorrect argument label in call (have 'isPresented:_:onDismiss:', expected 'isPresented:onDismiss:content:')`。
+- **根因**：`.sheet` 使用了内容闭包在前、`onDismiss` 在后的 trailing closure 写法，与当前 SwiftUI 声明的参数标签顺序不匹配。
+- **修复**：改为 `.sheet(isPresented:onDismiss:) { content }`，保留主题抽屉关闭后再呈现自定义颜色窗口的行为。
+- **涉及文件**：`Seal/App/RootTabView.swift`。
+- **验证**：待重新运行 GitHub CI 的 Swift 回归与 IPA 构建。
+
 ## 2026-10-18 13:16:25 重装后重新导入已安装应用被版本检查拦截
 
 - **现象**：卸载并重装 Seal 后，设备恢复的已安装应用记录没有旧版本号；重新导入原 IPA 时显示“无法确认版本”并禁用继续操作。

@@ -148,7 +148,11 @@ struct RootTabView: View {
                 )
             }
         }
-        .sheet(isPresented: $isAppearanceThemePresented) {
+        .sheet(isPresented: $isAppearanceThemePresented, onDismiss: {
+            guard shouldPresentCustomAccentColorAfterThemeDismiss else { return }
+            shouldPresentCustomAccentColorAfterThemeDismiss = false
+            isCustomAccentColorPresented = true
+        }) {
             AppearanceThemeSheet(
                 appearanceRawValue: $appearanceRawValue,
                 accentRawValue: $accentRawValue,
@@ -160,10 +164,6 @@ struct RootTabView: View {
             )
             .presentationDetents([.height(454), .medium])
             .presentationDragIndicator(.hidden)
-        } onDismiss: {
-            guard shouldPresentCustomAccentColorAfterThemeDismiss else { return }
-            shouldPresentCustomAccentColorAfterThemeDismiss = false
-            isCustomAccentColorPresented = true
         }
         .overlay {
             if isCustomAccentColorPresented {
