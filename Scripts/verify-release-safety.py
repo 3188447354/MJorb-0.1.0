@@ -1358,11 +1358,14 @@ def violations(load=read):
     # ③ 「跳过冗余 updateFeatures」优化永远不可能命中。
     # 注意：mapped 与 original 未必不同（无冲突时不加后缀），所以这条断言只能防**回退**，
     # 不能证明键一定对 —— 真正的判据是真机日志里「本次 []」变成真实能力集。
-    check("if let application = applications[mappedBundleID] {" in portal_source,
+    r24_phase1 = section_or_empty(
+        portal_source,
+        "for (originalBundleID, mappedBundleID) in ApplePortalAppIDResolver.preparationOrder(",
+        "preparedAppIDs.append((originalBundleID, mappedBundleID, appID))",
+    )
+    check("guard let application = applications[mappedBundleID]," in r24_phase1,
           "R24b: Phase 1 的 applications 查询必须用 mapped ID —— 用 original ID 查恒 nil，"
           "entitlements 全部静默丢失")
-    check("applications[originalBundleID]" not in portal_source,
-          "R24b: 代码里不许再出现用 original ID 查 applications 的写法（键错位复发）")
 
     # R25: 同步阻塞 FFI 的**每一处**等待都要有界（2026-09-17 审计出来的）。
     #
@@ -1376,7 +1379,7 @@ def violations(load=read):
     check("enum BlockingCall {" in blocking_source
           and "static func bounded<T: Sendable>(" in blocking_source,
           "R25: 必须有一个共用的「有界同步 FFI」包装 —— 每处各抄一份迟早漂移")
-    check("HardTimeout.run(seconds: seconds)" in blocking_source,
+    check(re.search(r"HardTimeout\.run\(\s*seconds: seconds,", blocking_source) is not None,
           "R25: 有界包装必须真的走硬超时")
     verifier_source = strip_comments(load("Seal/Features/Apps/InstalledAppDeviceVerifier.swift"))
     check("BlockingCall.bounded(seconds: InstalledAppRefreshProbePolicy.timeoutSeconds" in verifier_source
@@ -1388,7 +1391,9 @@ def violations(load=read):
     check("BlockingCall.bounded(seconds: BlockingCall.queryTimeoutSeconds" in cleaner_source,
           "R25: 维护期的设备探测必须有界 —— 一次无界阻塞会让整轮维护永远完不成")
     # 通道那份重复实现必须**委托**，不能再抄一遍（「同一条规则两份实现」已踩过五次）。
-    check("await BlockingCall.bounded(seconds: seconds, work)" in install_source
+    check("await BlockingCall.bounded(" in install_source
+          and "cancelsWorkOnTimeout: cancelsWorkOnTimeout," in install_source
+          and "            work\n        )" in install_source
           and "OffThreadOutcome" not in install_source,
           "R25: 安装通道的 offThread 必须委托给共用实现，不要保留第二份")
     # 安装后验证里的设备查询也是同步阻塞 FFI，而且**在循环里跑 8 次**。
@@ -2165,7 +2170,8 @@ def violations(load=read):
           and "func desiredFeatureKeys(mapped: String) -> Set<String>" in portal_source,
           "R34: 取证诊断必须把「远端 features 与本次要设置一致」的**个数**算出来 —— "
           "只说「features 非空」判断不了能不能跳过 updateFeatures")
-    check("guard let application = applications[mapped] else { return [] }" in portal_source,
+    check("guard let application = applications[mapped]," in portal_source
+          and "let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return [] }" in portal_source,
           "R34: desiredFeatureKeys 必须用 mapped ID 查 applications（original 恒 nil，取证空转）")
     # ⚠️ 还**必须报出值类型**：判据「键集相等 ⇒ 值也相等」只在**所有值都是布尔开关**时成立。
     # 若某个能力的值是列表（App Group / Associated Domains 之类），键集相等**不代表**值相等，
@@ -2353,14 +2359,8 @@ def violations(load=read):
     # ⚠️ **空白不敏感**（2026-09-24 调整）：两个调用点被
     # `recoveredAffectedAppIDs.formUnion(...)` 包了一层 ⇒ 缩进整体 +4。
     # 钉死列数会把「加了跟踪、逻辑没变」判成违规，逼着下一个人去改守卫而不是改代码。
-    check(re.search(
-              r"includeSeal: false,\s*\n\s*progress: progress\s*\n\s*\)",
-              coordinator_source
-          )
-          and re.search(
-              r"includeSeal: true,\s*\n\s*progress: progress\s*\n\s*\)",
-              coordinator_source
-          ),
+    check(re.search(r"includeSeal: false,\s*\n\s*progress: progress,", coordinator_source)
+          and re.search(r"includeSeal: true,\s*\n\s*progress: progress,", coordinator_source),
           "R66: `resignAppsAffectedByCertificateRotation` 的**两个**调用点都要把 `progress` "
           "传进去（Seal 自己那条 `includeSeal: false`、用户 App 那条 `includeSeal: true`）"
           "—— 只接一处等于另一条链路照旧静默")
@@ -2425,9 +2425,13 @@ def violations(load=read):
           and "private func pendingRotationRecovery(" in coordinator_source,
           "R67: 恢复子流程必须回传**真正恢复成功的** appID，并由一个共用函数算出「谁还没恢复」"
           "—— 三条出口各写一遍必然漂移成「修了一条、漏了另外两条」")
-    check(coordinator_source.count("SEAL-CERT-240") >= 2,
-          "R67: 撤销之后的失败/取消出口都要留痕（`SEAL-CERT-240`）—— "
-          "「撤销已发生但恢复没跑」必须在日志里查得到，不能只留在内存里")
+    cancellation_body = section_or_empty(
+        coordinator_source,
+        "} catch is CancellationError {",
+        "} catch let failure as ImportFailure {",
+    )
+    check('code: "SEAL-CERT-240"' in cancellation_body,
+          "R67: 撤销后取消签名必须留痕（SEAL-CERT-240）")
     # ⚠️ 必须限定在**这一个函数**里查：`code: failure.code` 在全文件有 3 处
     #（另两处是诊断附加逻辑），用全文件的 `in` 会让「这里把 code 换掉」这个退化漏网
     #（本轮实测漏网一次）。
@@ -2436,7 +2440,8 @@ def violations(load=read):
         "private func failureWithRotationConsequence(",
         "private func applySigningResult("
     )
-    check("recovery: failure.recovery," in consequence_body
+    check('code: "SEAL-CERT-240"' in consequence_body
+          and "recovery: failure.recovery," in consequence_body
           and "code: failure.code" in consequence_body,
           "R67: 追加后果时必须**保留原 code / recovery** —— `InstallFailureActionPolicy` "
           "按 code 决定按钮动作，换码会把「重试」换成别的动作")
@@ -2822,7 +2827,12 @@ def violations(load=read):
     #    `offThread` 的默认 `cancelsWorkOnTimeout: true` 会把取消传给 Rust 侧，
     #    可能撤销已下发的 installation_proxy 命令 —— 把「可能还在装」变成「确定装不上」。
     self_replace = strip_comments(load("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift"))
-    check("cancelsWorkOnTimeout: false" in self_replace,
+    self_replace_wait = section_or_empty(
+        self_replace,
+        "private func waitForSelfReplacement(",
+        "    func pushIpa(ipaData:",
+    )
+    check("cancelsWorkOnTimeout: false" in self_replace_wait,
           "R10: the self-replacement wait must stop waiting without cancelling the FFI")
     # 2) 等待只允许有一处：在别处再裸等一遍 `installation.value` 等于重新引入无超时等待。
     check(self_replace.count("try await installation.value") == 1,
@@ -3107,7 +3117,13 @@ def violations(load=read):
     )
     check("return nil" not in planner_code,
           "G: planner must not silently drop apps without an account")
-    check("state: .requiresAction" in planner and "missingAccountReason" in planner,
+    missing_account_branch = section_or_empty(
+        planner_code,
+        "guard case .resolved(let accountID) = resolution else {",
+        "return RefreshQueueItem(appID: app.id, accountID: accountID)",
+    )
+    check("state: .requiresAction" in missing_account_branch
+          and "requiresActionReason: Self.reason(for: resolution, app: app)" in missing_account_branch,
           "G: apps without an account must enter the queue as requiresAction with a reason")
     store = load("Seal/Infrastructure/Renewal/RefreshQueueStore.swift")
     # 2026-09-17 起签名带 `settled:`：有已定论结果的项按结果结算，不再一律降级。
@@ -3257,8 +3273,13 @@ def violations(load=read):
           "E: signed artifact and installed snapshot must be separated")
     # 必须排除被注释掉的调用：单纯 `in` 匹配会把 `// SignedArtifactSnapshot.advanceInstalled(`
     # 也算进去（守卫自己的变异检查抓到了这一点）。
+    verified_install = section_or_empty(
+        signing_coord,
+        "private func installSignedIPA(",
+        "private func settleLateInstall(",
+    )
     advance_lines = [
-        line for line in signing_coord.splitlines()
+        line for line in verified_install.splitlines()
         if "SignedArtifactSnapshot.advanceInstalled(" in line
         and line.strip().startswith("//") == False
     ]
@@ -4057,8 +4078,32 @@ def violations(load=read):
     check("func confirmCertificateSacrificeAndRetry(serialNumber: String)" in apps_vm
           and "CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code)" in apps_vm,
           "Sacrifice: ViewModel selected-certificate action must be gated on certificate-limit failures")
-    check("resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)" in apps_vm,
-          "Sacrifice: affected installed apps must be re-signed after the retry succeeds")
+    recovery_read = section_or_empty(
+        coord,
+        "let previouslyRevokedSerials: [String]",
+        "try await validateAccountSession("
+    )
+    recovery_store = section_or_empty(
+        coord,
+        "private func recordCertificateRevocations(",
+        "/// 受旧证书影响的已安装应用"
+    )
+    recovery_merge = section_or_empty(
+        coord,
+        "let locallyRevokedSerials = await certificateRotationState.snapshot()",
+        "guard installAfterSigning else { return app }"
+    )
+    recovery_after_install = section_or_empty(
+        coord,
+        "let installed = try await installSignedIPA(",
+        "// 自更新的接管确认"
+    )
+    check("revokedSerialNumbers(for: accountID)" in recovery_read
+          and "certificateRecoveryJournal.record(" in recovery_store
+          and "locallyRevokedSerials + previouslyRevokedSerials" in recovery_merge
+          and "resignAppsAffectedByCertificateRotation(" in recovery_after_install
+          and "finishCertificateRecoveryIfComplete(" in recovery_after_install,
+          "Sacrifice: persisted revocations must resume affected-app recovery after retry installation")
     progress_view = load("Seal/Features/Apps/SigningProgressView.swift")
     picker_view = load("Seal/Features/Apps/CertificateSacrificePickerView.swift")
     certificate_policy = load("Seal/Core/Signing/CertificateRequestFailurePolicy.swift")
@@ -4362,8 +4407,8 @@ def violations(load=read):
     #
     # 普通 IPA 默认共享，只有能力不兼容的扩展单独申请描述文件。
     strategy_source = strip_comments(load("Seal/Core/Signing/AppExtensionProfileStrategy.swift"))
-    check("isSeal || isLiveContainer ? .independentProfiles : .sharedMainProfile" in strategy_source,
-          "R65①: 默认策略必须是普通 IPA 共享，Seal 与 LiveContainer 独立 ✗")
+    check("isLiveContainer ? .independentProfiles : .sharedMainProfile" in strategy_source,
+          "R65①: 默认共享主描述文件；LiveContainer 独立，能力不兼容扩展再单独分配 ✗")
     check("return [originalMainBundleID: mappedMainBundleID]" in strategy_source
           and "return mappings" in strategy_source,
           "R65②: 共享策略只创建主 App ID，独立策略保留每个目标 ✗")
@@ -4412,7 +4457,7 @@ def violations(load=read):
           "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑 ✗")
 
     record_updater_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift"))
-    check("SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key)" in record_updater_source,
+    check("signedBundleIdentifier: bundleIdentifier" in record_updater_source,
           "R65⑨: 共享描述文件续签后仍必须为每个实际目标保留独立记录键 ✗")
 
     coordinator_source = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
@@ -4429,8 +4474,9 @@ def violations(load=read):
           "Swift compile: primaryActionTitle 必须显式 return String ✗")
 
     strategy_tests = load("SealTests/Signing/AppExtensionProfileStrategyTests.swift")
-    check("func onlySealAndLiveContainerUseIndependentProfilesByDefault()" in strategy_tests
+    check("func onlyLiveContainerUsesIndependentProfilesByDefault()" in strategy_tests
           and "func ordinaryAppWithExtensionsUsesTheSharedDefault()" in strategy_tests
+          and "func liveContainerUsesIndependentDefault()" in strategy_tests
           and "func sharedProfileBlockerReportsTheFirstUncoveredExtensionDeterministically()" in strategy_tests
           and "func downgradeUnderSharedProfileClearsEveryBundleEmbeddingThatProfile()" in strategy_tests,
           "R65⑪: 必须覆盖默认策略、共享阻塞和共享描述文件的能力降级范围 ✗")
@@ -4882,6 +4928,16 @@ def violations(load=read):
     # 这条链路会**写记录**，而它的错法不崩、不编译失败，只在真机上多造或少造记录 ——
     # 多造 = 列表里出现点开就报错的僵尸；少造 = 用户的应用永远回不来。所以每条判据都要钉住。
     r80_policy = load("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift")
+    r80_profile_scan = section_or_empty(
+        r80_policy,
+        "static func drafts(\n        profiles:",
+        "static func drafts(\n        installedApplications:",
+    )
+    r80_scan_record = section_or_empty(
+        r80_policy,
+        "static func makeRecord(\n        from draft: InstalledAppDraft,",
+        "static func normalizedTeamIdentifier(",
+    )
     check("guard raw.isEmpty == false else { continue }" in r80_policy
           and "context.knownTeamIdentifiers.contains(team)" in r80_policy
           and "isSealGeneratedBundleIdentifier(raw)" not in r80_policy,
@@ -4890,7 +4946,7 @@ def violations(load=read):
     check("context.knownTeamIdentifiers.contains(team)" in r80_policy,
           "Scan/team: 候选的 Team 必须在可信集合里 —— 设备端 dump 出来的是**全部**描述文件，"
           "含别的工具与旧账号留下的（真机实测 39 个 Bundle ID 变体 / 33 份孤儿）")
-    check("context.dismissedBundleIdentifiers.contains(normalized) == false" in r80_policy,
+    check("context.dismissedBundleIdentifiers.contains(normalized) == false" in r80_profile_scan,
           "Scan/tombstone: 用户主动从列表删过的 Bundle ID 不得被扫回 —— "
           "否则删一次回来一次，永远删不掉")
     check("canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier" in r80_policy,
@@ -4898,13 +4954,13 @@ def violations(load=read):
           "再造一条会得到「两条都叫 Seal」）")
     check("ProfileReclaimPolicy.isExtensionBundleID(" not in r80_policy,
           "Scan/extension: 不得按 Bundle ID 前缀猜扩展；交由设备安装查询确认")
-    check("signedIPARelativePath: nil" in r80_policy
-          and "signedIPASHA256: nil" in r80_policy
-          and "signedArtifactStatus: nil" in r80_policy
-          and "signingTargets: []," in r80_policy,
+    check("signedIPARelativePath: nil" in r80_scan_record
+          and "signedIPASHA256: nil" in r80_scan_record
+          and "signedArtifactStatus: nil" in r80_scan_record
+          and "signingTargets: []," in r80_scan_record,
           "Scan/identity: 扫回记录不得带任何「已签名产物」痕迹 —— 它从来没有过本地 IPA，"
           "填了会让下游拿一个不存在的文件去签名/安装")
-    check("            certificateSerialNumber: nil," in r80_policy,
+    check("            certificateSerialNumber: nil," in r80_scan_record,
           "Scan/certificate: 扫回记录不得填证书序列号 —— 描述文件里的 DeveloperCertificates 是"
           "**授权列表**、不是实际签名者；填了会让证书轮换把它排进「自动重签」（必然失败），"
           "并让撤销证书的确认弹窗承诺一件做不到的事")
@@ -5655,7 +5711,7 @@ def violations(load=read):
           "用户发来日志时第一件事就是查码表")
 
     check("AppSigningPresentationHelpers.pendingUpdateNote(" in r89_detail
-          and 'Text("v\\(app.version) · \\(app.size.sealFormattedByteCount)")' in r89_sheet
+          and 'Text(app.needsIPAImport ? "v\\(app.version) · 设备已安装" : "v\\(app.version) · \\(app.size.sealFormattedByteCount)")' in r89_sheet
           and "static func pendingUpdateNote(" in r89_present
           and "ProfileOnlyRenewalPolicy.hasPendingUpdateSource(" in r89_present
           and "guard app.isSeal," in r89_present,
@@ -5770,8 +5826,8 @@ def violations(load=read):
 
     r90_trigger = section_or_empty(
         r90_view_model,
-        "    func refreshAllFromBackgroundTrigger() {",
-        "\n    /// 「重试失败项」"
+        "    func refreshAllFromBackgroundTrigger() -> BackgroundRenewalAdmission {",
+        "    private var hasActiveSigningWork:"
     )
     check("refreshAll()" in r90_trigger
           and "container.appsViewModel.refreshAllFromBackgroundTrigger()" in r90_intent,
@@ -6176,7 +6232,9 @@ def violations(load=read):
           "R117②: 路径信号必须按 appID 隔离 ✗ —— "
           "旧的单变量 + 每项重置在并行下是竞态，上一项的 `.profileOnly` 会泄漏到下一项，"
           "Seal 那一项会被误记成成功而它其实换了进程")
-    check("let gate = Task<Void, Never> { _ = await predecessor?.value }" in r115_installer_code
+    check("while isBusy {" in r115_installer_code
+          and "try Task.checkCancellation()" in r115_installer_code
+          and "isBusy = true" in r115_installer_code
           and "SEAL-PROFILE-351" not in r115_installer_code,
           "R117③: 设备注入必须排队而非抛 351 ✗ —— "
           "并行后多项会同时到达注入，直接抛错等于让第二项白白失败；"
@@ -6217,8 +6275,8 @@ def violations(load=read):
     #（反过来锚点会被剥掉，切出空串 ⇒ 所有断言在空区间里失败）。
     r92_trigger = strip_comments(section_or_empty(
         r92_view_model,
-        "    func refreshAllFromBackgroundTrigger() {",
-        "\n    /// 「重试失败项」"
+        "    func refreshAllFromBackgroundTrigger() -> BackgroundRenewalAdmission {",
+        "    private var hasActiveSigningWork:"
     ))
     r92_wait = strip_comments(section_or_empty(
         r92_view_model,
@@ -7012,8 +7070,8 @@ def main():
          "",
          "Log: PEM private key blocks"),
         ("Seal/Core/Renewal/RefreshPlanner.swift",
-         "state: .requiresAction,",
-         "state: .pending,",
+         "                        requiresActionReason: Self.reason(for: resolution, app: app)",
+         "                        requiresActionReason: nil",
          "G: apps without an account must enter the queue"),
         ("Seal/Infrastructure/Renewal/RefreshQueueStore.swift",
          "items[index].state = .unknown",
@@ -7080,8 +7138,10 @@ def main():
          "return .installed",
          "E: signed artifact and installed snapshot must be separated"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "SignedArtifactSnapshot.advanceInstalled(",
-         "// SignedArtifactSnapshot.advanceInstalled(",
+         "            SignedArtifactSnapshot.advanceInstalled(\n"
+         "                of: &updated,\n",
+         "            // SignedArtifactSnapshot.advanceInstalled(\n"
+         "                of: &updated,\n",
          "E: the install-verified path must advance the snapshot"),
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
          "if Self.isTimeoutInstallError(error) {",
@@ -7179,10 +7239,10 @@ def main():
          "if case .blockedByInUseKeylessCerts(let appNames, let deviceOnlyCount) = cleanupOutcome {",
          "if false { // blocked in-use keyless certs no longer surface 204e ",
          "204e must surface when keyless certificates are still in use"),
-        ("Seal/Features/Apps/AppsViewModel.swift",
-         "resignAppsAffectedByCertificateSacrificeIfNeeded(signingSucceeded: signingSucceeded)",
-         "// affected apps left dead after certificate sacrifice",
-         "Sacrifice: affected installed apps must be re-signed after the retry succeeds"),
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "try await certificateRecoveryJournal.record(",
+         "try await certificateRecoveryJournal.write(",
+         "Sacrifice: persisted revocations must resume affected-app recovery after retry installation"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "        case .none:\n            return .unavailable",
          "        case .some(false):\n            return .unavailable",
@@ -7814,51 +7874,49 @@ def main():
         # 把 updateFeatures 退回「直接请求」：它是 Phase 1 里每个 bundle ID 的**第二次**写请求，
         # 与 addAppID 同等密集。主 App 撞 1100 会直接让整个签名失败、扩展撞 1100 会被静默清空 entitlements。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         "                        let updated: (appID: ALTAppID, downgradedToEmptyEntitlements: Bool) =\n"
-         "                            try await withSessionRecovery(\"更新应用能力 \\(mappedBundleID)\") {\n"
-         "                                try await updateFeatures(\n"
-         "                                    appID: appID,\n"
-         "                                    application: application,\n"
-         "                                    team: team,\n"
-         "                                    session: session\n"
-         "                                )\n"
-         "                            }\n"
-         "                        appID = updated.appID",
-         "                        appID = try await updateFeatures(\n"
+         "                    appID = try await withSessionRecovery(\"更新应用能力 \\(mappedBundleID)\") {\n"
+         "                        try await updateFeatures(\n"
          "                            appID: appID,\n"
          "                            application: application,\n"
+         "                            cachedEntitlements: cachedEntitlements,\n"
          "                            team: team,\n"
          "                            session: session\n"
-         "                        )",
+         "                        )\n"
+         "                    }",
+         "                    appID = try await updateFeatures(\n"
+         "                        appID: appID,\n"
+         "                        application: application,\n"
+         "                        cachedEntitlements: cachedEntitlements,\n"
+         "                        team: team,\n"
+         "                        session: session\n"
+         "                    )",
          "R24: 更新应用能力（updateFeatures）"),
         # 把 Phase 1 的 applications 查询退回 original ID：键错位会让 entitlements 恒空、
         # 签出的包不带任何能力（2026-09-18 真机日志「远端 ["TEAM000011"] vs 本次 []」实锤）。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         "                if let application = applications[mappedBundleID] {",
-         "                if let application = applications[originalBundleID] {",
+         "                guard let application = applications[mappedBundleID],",
+         "                guard let application = applications[originalBundleID],",
          "R24b: Phase 1 的 applications 查询必须用 mapped ID"),
         # 把 App Group 分配退回「直接请求」（去掉 withSessionRecovery 包裹）或重新加回免费闸门；
         # 降级跳过（`if updated.downgradedToEmptyEntitlements == false`）也必须保留，
         # 否则 3001 降级（feature 未启用）后再调 assign 端点会被 Apple 1200 拒。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         "                        if updated.downgradedToEmptyEntitlements == false {\n"
-         "                            try await withSessionRecovery(\"分配 App Group \\(mappedBundleID)\") {\n"
-         "                                try await assignAppGroups(\n"
-         "                                    appID: appID,\n"
-         "                                    application: application,\n"
-         "                                    team: team,\n"
-         "                                    session: session\n"
-         "                                )\n"
-         "                            }\n"
-         "                        }",
-         "                        if updated.downgradedToEmptyEntitlements == false {\n"
-         "                            try await assignAppGroups(\n"
-         "                                appID: appID,\n"
-         "                                application: application,\n"
-         "                                team: team,\n"
-         "                                session: session\n"
-         "                            )\n"
-         "                        }",
+         "                    try await withSessionRecovery(\"分配 App Group \\(mappedBundleID)\") {\n"
+         "                        try await assignAppGroups(\n"
+         "                            appID: appID,\n"
+         "                            application: application,\n"
+         "                            cachedEntitlements: cachedEntitlements,\n"
+         "                            team: team,\n"
+         "                            session: session\n"
+         "                        )\n"
+         "                    }",
+         "                    try await assignAppGroups(\n"
+         "                        appID: appID,\n"
+         "                        application: application,\n"
+         "                        cachedEntitlements: cachedEntitlements,\n"
+         "                        team: team,\n"
+         "                        session: session\n"
+         "                    )",
          "R24: 分配 App Group（免费付费都走"),
         # 把 filteredAppIDEntitlements 退回「不过滤 ALTFeature」：increased-memory-limit 等
         # 非 feature 能力会残留在期望授权集，描述文件不授予它们，签后必报 SEAL-ENTITLEMENT-401。
@@ -7899,7 +7957,12 @@ def main():
          "R25: 维护期的设备探测必须有界"),
         # 让通道不再委托：又变成两份实现，迟早漂移。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
-         "        await BlockingCall.bounded(seconds: seconds, work)",
+         "        await BlockingCall.bounded(\n"
+         "            seconds: seconds,\n"
+         "            cancelsWorkOnTimeout: cancelsWorkOnTimeout,\n"
+         "            onLateCompletion: onLateCompletion,\n"
+         "            work\n"
+         "        )",
          "        return Result { try await work() }",
          "R25: 安装通道的 offThread 必须委托给共用实现"),
         # 安装后验证退回无界查询 + 折叠 nil 的旧写法：
@@ -8108,6 +8171,12 @@ def main():
          "                + (typeSample.map { \"；本次要设置的能力与值类型 \\($0)\" } ?? \"\")\n",
          "",
          "R34: 取证诊断必须报出**值类型**"),
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         "guard let application = applications[mapped],\n"
+         "                  let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return [] }",
+         "guard let application = applications[original],\n"
+         "                  let cachedEntitlements = cachedEntitlementsByBundleID[mapped] else { return [] }",
+         "R34: desiredFeatureKeys 必须用 mapped ID 查 applications"),
         # ── R35：解压前按解压后体积判空间（2026-09-18）──
         # 删掉这次检查：高压缩比的包又会被低估，可能在签名中途写满磁盘。
         ("Seal/Infrastructure/Signing/SigningWorkspace.swift",
@@ -8242,9 +8311,15 @@ def main():
          "R67: 恢复子流程必须回传**真正恢复成功的** appID，并由一个共用函数算出「谁还没恢复」"),
         # 撤销后的失败出口不再留痕：撤销已发生、App 已打不开，日志里却查不到。
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         '            code: "SEAL-CERT-240"',
-         '            code: "SEAL-CERT-241"',
-         "R67: 撤销之后的失败/取消出口都要留痕（`SEAL-CERT-240`）—— "),
+         '                    code: "SEAL-CERT-240"\n'
+         '                )\n'
+         '            }\n'
+         '            throw CancellationError()',
+         '                    code: "SEAL-CERT-241"\n'
+         '                )\n'
+         '            }\n'
+         '            throw CancellationError()',
+         "R67: 撤销后取消签名必须留痕（SEAL-CERT-240）"),
         # 追加后果时把 code 换掉：按钮动作跟着变（`InstallFailureActionPolicy` 按 code 判定）。
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "            recovery: failure.recovery,\n            code: failure.code",
@@ -8661,9 +8736,9 @@ def main():
          "R64: `advanceStage` 必须记 `stageStartedAt`"),
         # ── R65：普通扩展共享，明确阻塞后由用户选择独立签名 ──
         ("Seal/Core/Signing/AppExtensionProfileStrategy.swift",
-         "isSeal || isLiveContainer ? .independentProfiles : .sharedMainProfile",
-         "isSeal || isLiveContainer ? .sharedMainProfile : .independentProfiles",
-         "R65①: 默认策略必须是普通 IPA 共享"),
+         "isLiveContainer ? .independentProfiles : .sharedMainProfile",
+         "isLiveContainer ? .sharedMainProfile : .independentProfiles",
+         "R65①: 默认共享主描述文件；LiveContainer 独立，能力不兼容扩展再单独分配"),
         ("Seal/Core/Signing/AppExtensionProfileStrategy.swift",
          "return [originalMainBundleID: mappedMainBundleID]",
          "return mappings",
@@ -8677,8 +8752,8 @@ def main():
          "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) != .orderedSame",
          "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑"),
         ("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift",
-         "SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.key)",
-         "SigningTargetRecord(binding: $0.value, signedBundleIdentifier: $0.value.bundleIdentifier)",
+         "signedBundleIdentifier: bundleIdentifier,",
+         "signedBundleIdentifier: binding.bundleIdentifier,",
          "R65⑨: 共享描述文件续签后仍必须为每个实际目标保留独立记录键"),
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "AppExtensionProfileStrategy.independentBundleIdentifiers(",
@@ -9055,13 +9130,21 @@ def main():
         # ④ 给扫回记录填上证书序列号 ⇒ 证书轮换会选中它（必然失败），
         #    撤销确认弹窗也会承诺一件做不到的事 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
-         "            certificateSerialNumber: nil,",
-         "            certificateSerialNumber: \"deadbeef\",",
+         "            certificateSerialNumber: nil,\n"
+         "            // 设备标识符不填",
+         "            certificateSerialNumber: \"deadbeef\",\n"
+         "            // 设备标识符不填",
          "Scan/certificate:"),
         # ⑤ 给扫回记录盖上「已安装签名产物」⇒ 下游会拿不存在的文件去安装 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
-         "            signedArtifactStatus: nil,",
-         "            signedArtifactStatus: .installed,",
+         "            signedIPASHA256: nil,\n"
+         "            signedArtifactStatus: nil,\n"
+         "            preferredBundleIdentifier: draft.bundleIdentifier,\n"
+         "            preferredDisplayName: nil,",
+         "            signedIPASHA256: nil,\n"
+         "            signedArtifactStatus: .installed,\n"
+         "            preferredBundleIdentifier: draft.bundleIdentifier,\n"
+         "            preferredDisplayName: nil,",
          "Scan/identity:"),
         # ⑥ 墓碑文件名硬编码 ⇒ 与 AppConfiguration 漂移（写一份、读另一份）✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
@@ -9840,8 +9923,8 @@ def main():
          "R91⑨c:"),
         # ⑨b 把「会改变扩展集合」的步骤也塞进 `purpose` 开关 ⇒ R91⑨b 报红。
         ("Seal/Infrastructure/Signing/SigningWorkspace.swift",
-         "            try removeUnsupportedBundles(in: appURL)\n",
-         "            if purpose == .signing { try removeUnsupportedBundles(in: appURL) }\n",
+         "            try rejectUnsupportedBundles(in: appURL)\n",
+         "            if purpose == .signing { try rejectUnsupportedBundles(in: appURL) }\n",
          "R91⑨b:"),
         # ⑩ profile-only 那处 `prepare` 改回 `.signing` ⇒ R91⑩ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
@@ -9992,8 +10075,8 @@ def main():
          "R117②:"),
         # ③ 注入排队被删（351 抛错回来）⇒ R117③ 报红。
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "        let gate = Task<Void, Never> { _ = await predecessor?.value }",
-         "        // no queue",
+         "        while isBusy {\n            try Task.checkCancellation()",
+         "        while false {\n            try Task.checkCancellation()",
          "R117③:"),
 
         # ── R92：后台触发的通道时序 / 通道瞬时重试 / 未预期错误可观测 ──

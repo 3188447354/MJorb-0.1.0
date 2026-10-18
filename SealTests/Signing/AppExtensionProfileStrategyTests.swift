@@ -58,10 +58,10 @@ struct AppExtensionProfileStrategyTests {
 
     /// 默认共享，只有实际能力检查不兼容的扩展才单独申请描述文件。
     @Test
-    func appsUseCapabilityBasedSharingByDefault() {
+    func onlyLiveContainerUsesIndependentProfilesByDefault() {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: false) == .sharedMainProfile)
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .sharedMainProfile)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
     }
 
     /// 含扩展的普通 App 现在**默认共享**；是否真的共享由 `sharedProfileBlocker` 在拿到
@@ -101,7 +101,7 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func liveContainerUsesSharedDefaultWhenItsCapabilitiesAllowIt() {
+    func liveContainerUsesIndependentDefault() {
         let app = AppRecord(
             originalBundleIdentifier: "com.kdt.livecontainer",
             name: "LiveContainer",
@@ -113,7 +113,7 @@ struct AppExtensionProfileStrategyTests {
             importedAt: .now
         )
 
-        #expect(app.effectiveExtensionProfileStrategy == .sharedMainProfile)
+        #expect(app.effectiveExtensionProfileStrategy == .independentProfiles)
     }
 
     /// 已记录的独立策略应保持独立。
@@ -394,9 +394,9 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func defaultsSealAndLiveContainerToCapabilityBasedSharing() {
+    func defaultsSealToSharedAndLiveContainerToIndependentProfiles() {
         #expect(AppExtensionProfileStrategy.defaultFor(isSeal: true, isLiveContainer: false) == .sharedMainProfile)
-        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .sharedMainProfile)
+        #expect(AppExtensionProfileStrategy.defaultFor(isSeal: false, isLiveContainer: true) == .independentProfiles)
     }
 
     @Test

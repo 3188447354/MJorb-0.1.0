@@ -61,16 +61,14 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
                 options: [],
                 format: nil
               )
-        guard let plist = object as? [String: Any] else {
+        guard let plist = object as? [String: any Sendable] else {
             throw NSError(
                 domain: "SideSign.AppBundle.Entitlements",
                 code: 2,
                 userInfo: [NSLocalizedDescriptionKey: "Entitlements are not a valid property-list dictionary"]
             )
         }
-        return plist.reduce(into: [String: any Sendable]()) { result, pair in
-            result[pair.key] = pair.value
-        }
+        return plist
     }
 
     public var infoPlistURL: URL {

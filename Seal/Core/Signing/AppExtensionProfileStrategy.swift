@@ -13,8 +13,8 @@ enum AppExtensionProfileStrategy: String, Codable, CaseIterable, Equatable, Send
     case selectiveProfiles
 
     /// 默认策略。
-    static func defaultFor(isSeal: Bool, isLiveContainer: Bool) -> Self {
-        .sharedMainProfile
+    static func defaultFor(isSeal _: Bool, isLiveContainer: Bool) -> Self {
+        isLiveContainer ? .independentProfiles : .sharedMainProfile
     }
 
     /// 为「共用主描述文件是否安全」保留 IPA 的真实能力边界。

@@ -1,3 +1,10 @@
+## 2026-10-19 04:37:29 CI 失败修复与守卫同步
+
+- **问题**：CI 的 iOS 编译在 `SideSign/AppBundle.swift` 因 `Any` 不满足 Swift 6 `Sendable` 失败；release safety 检查和变异样例仍引用旧实现，另有 AppRecord 参数顺序问题。
+- **修复**：entitlements 直接解析为 `[String: any Sendable]`；修正恢复记录参数顺序；缺少 IPA 只在 profile-only 不可用时拦截；普通扩展默认共享、LiveContainer 独立；让守卫按当前签名、撤销恢复、注入排队和扫描链路检查。
+- **版本**：主 App 与 Live Activity 的 marketing version 同步为 `0.1.18`；构建号保持现状。
+- **验证**：Swift 编译、回归测试及更新后的 CI 守卫待云端构建验证；本机 Windows 无法编译 iOS 项目。
+
 ## 2026-10-19 02:33:44 全面审计代码修复批次
 
 - **范围**：按 `D:\Seal_Develop\Research\Audits\Seal-0.1.15-20261018\run-1\REPORT-updated.md` 逐项处理 F01–F32；V01–V08 保留为需要真机、Apple 账号或系统测量的验证项，不伪称已通过。

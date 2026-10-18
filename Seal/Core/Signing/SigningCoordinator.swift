@@ -318,6 +318,18 @@ actor SigningCoordinator {
                 code: "SEAL-SIGN-404"
             )
         }
+        if app.isSeal == false,
+           app.state == .installed,
+           app.hasSignedArtifact == false,
+           app.signedArtifactStatus == nil,
+           case .requiresFullResign = ProfileOnlyRenewalPolicy.evaluate(app: app),
+           (try? await fileStore.exists(relativePath: app.ipaRelativePath)) == false {
+            throw Self.failure(
+                reason: "「\(app.displayName)」没有可用于完整重签的本地 IPA。",
+                recovery: "导入该应用的 IPA 后再完整重签；如需仅更新描述文件，请先恢复有效的签名身份记录。",
+                code: "SEAL-RECOVER-002"
+            )
+        }
         // 一次读全，两个用途：① 找本次要签的账号；② 给「绑定账号是否悬空」这条判据提供
         // **现存账号集合**（`SigningCertificateSelectionPolicy`，理由见 SEAL-AUTH-111 的注释）。
         let knownAccounts = try await accountRepository.fetchAll()
@@ -640,21 +652,6 @@ actor SigningCoordinator {
                     progress: progress,
                     onWorkUnits: onWorkUnits,
                     onCertificateResolved: onCertificateResolved
-                )
-            }
-
-            // 缺少本地 IPA 只阻断需要重签的路径，不能先于 profile-only 资格检查。
-            // 外部签名工具装入的应用可能没有 Seal 的 IPA 文件，但若本地仍有完整、匹配的
-            // 签名身份与描述文件目标，profile-only 续签不需要读取 IPA。
-            if app.isSeal == false,
-               app.state == .installed,
-               app.hasSignedArtifact == false,
-               app.signedArtifactStatus == nil,
-               (try? await fileStore.exists(relativePath: app.ipaRelativePath)) == false {
-                throw Self.failure(
-                    reason: "「\(app.displayName)」没有可用于完整重签的本地 IPA。",
-                    recovery: "导入该应用的 IPA 后再完整重签；如需仅更新描述文件，请先恢复有效的签名身份记录。",
-                    code: "SEAL-RECOVER-002"
                 )
             }
 

@@ -142,9 +142,7 @@ struct SigningWorkspace: Sendable {
                 try replacePrimaryAppIcon(at: appURL, imageData: preferredIconData)
             }
 
-            if purpose == .signing {
-                try rejectUnsupportedBundles(in: appURL)
-            }
+            try rejectUnsupportedBundles(in: appURL)
 
             // 清理 ESign 等其它签名工具留下的注入脚本/标记残留（容错，不阻断签名）。
             removeThirdPartyInjectionArtifacts(in: appURL)
