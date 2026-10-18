@@ -361,7 +361,7 @@ actor SigningCoordinator {
                 previouslyRevokedSerials = try await certificateRecoveryJournal
                     .revokedSerialNumbers(for: accountID)
             } catch {
-                throw Self.failure(
+                throw ImportFailure(
                     title: "证书恢复记录无法读取",
                     reason: "本机保存的证书恢复记录无法读取，为避免漏掉受影响应用，本次签名已停止。",
                     recovery: "保留当前数据，重新启动 Seal 后重试；如仍失败请导出日志",

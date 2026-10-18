@@ -1,3 +1,9 @@
+## 2026-10-19 06:44:23 CI #47 证书恢复错误构造参数不匹配
+
+- **证据**：swift-regression 编译定位 SigningCoordinator.swift:365，Self.failure 不接收 title 参数。
+- **修复**：仅该自定义标题分支直接构造 ImportFailure，保留标题、原因、恢复建议及 SEAL-CERT-240a，不改变证书恢复处理逻辑。
+- **版本与验证**：0.1.25；本地差异检查与错误码清单同步，Swift 编译待 CI。
+
 ## 2026-10-19 06:29:17 CI #46 列表状态反馈漏写返回
 
 - **证据**：swift-regression 编译定位 ImportedAppRow.swift:219–222，sealWarning/sealDanger 与 nil 无法推断返回类型。
