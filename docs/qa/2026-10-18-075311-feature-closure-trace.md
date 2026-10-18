@@ -116,3 +116,4 @@ CI #20 的 Swift 回归编译发现原生分页 `AppPagerOffsetPreferenceKey.def
 | `RELEASE_NOTES.md`（新增 0.1.6） | 2026-10-18T10:09:29+08:00 |
 
 追踪文档本身以文件系统的最终写入时间为准；修改完成后读取该文件的 `LastWriteTime`。
+

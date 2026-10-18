@@ -716,3 +716,4 @@ private extension View {
         modifier(SealListCardModifier(cornerRadius: cornerRadius))
     }
 }
+
