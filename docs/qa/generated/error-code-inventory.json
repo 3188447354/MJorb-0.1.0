@@ -10082,7 +10082,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 392,
+          "line": 398,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11446,7 +11446,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 409,
+          "line": 415,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11467,7 +11467,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 416,
+          "line": 422,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12072,7 +12072,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 328,
+          "line": 334,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12094,7 +12094,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 344,
+          "line": 350,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12115,7 +12115,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 355,
+          "line": 361,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12157,7 +12157,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 320,
+          "line": 326,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
