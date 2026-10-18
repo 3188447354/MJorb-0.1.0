@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 3121)
-Total output lines: 247
-
 import SwiftUI
 
 struct CertificateSacrificePickerView: View {
@@ -114,7 +111,18 @@ struct CertificateSacrificePickerView: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Color.sealTextSecondary)
                             .fixedSize(horizontal: false, vertical: true)
-       …121 tokens truncated…0.55 : 1)
+                    }
+                }
+            }
+            .padding(.bottom, 8)
+        } footer: {
+            VStack(spacing: 8) {
+                Button("撤销所选证书") {
+                    isConfirmationPresented = true
+                }
+                .sealPrimaryAction(cornerRadius: 14)
+                .disabled(isLoading || failureMessage != nil || selectedCandidate == nil)
+                .opacity(isLoading || failureMessage != nil || selectedCandidate == nil ? 0.55 : 1)
 
                 Button("取消") { dismiss() }
                     .font(.system(size: 15, weight: .medium))
@@ -236,4 +244,3 @@ struct CertificateSacrificePickerView: View {
         isLoading = false
     }
 }
-
