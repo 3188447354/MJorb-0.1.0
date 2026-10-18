@@ -1,3 +1,9 @@
+## 2026-10-19 06:29:17 CI #46 列表状态反馈漏写返回
+
+- **证据**：swift-regression 编译定位 ImportedAppRow.swift:219–222，sealWarning/sealDanger 与 nil 无法推断返回类型。
+- **根因与修复**：installedInstallFeedback 在前置 if 后使用了未返回的 switch；补为 return switch，保持安装待确认、失败与设备不可用反馈不变。
+- **验证与版本**：本地差异检查通过，版本递增为 0.1.24；Swift 编译与回归交 CI；此前扩展共享和数量动态处理改动全部保留。
+
 ## 2026-10-19 06:09:11 CI #45 三处 Swift 类型错误
 
 - **证据**：swift-regression 日志定位 AppleAccountDetailView.swift:405 的重复 Optional 解包，以及 ApplePortalSigningService.swift:1280 的不存在类型 ALTCapabilities、:2537 的可空权限字典实参。

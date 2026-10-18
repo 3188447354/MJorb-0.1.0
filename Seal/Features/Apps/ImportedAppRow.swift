@@ -215,7 +215,7 @@ struct ImportedAppRow: View {
         if app.pendingSignedSnapshot?.installAttemptID != nil {
             return ("安装结果待确认", .sealWarning)
         }
-        switch app.signedArtifactStatus {
+        return switch app.signedArtifactStatus {
         case .awaitingVerification: ("安装结果待确认", .sealWarning)
         case .installFailed: ("安装失败", .sealDanger)
         case .deviceUnavailable: ("设备不可用", .sealWarning)
