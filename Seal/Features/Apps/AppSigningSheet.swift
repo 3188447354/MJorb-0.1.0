@@ -386,7 +386,7 @@ struct AppSigningSheet: View {
 
     private var requestedBundleIDForSigning: String? {
         guard isRenewal == false else { return nil }
-        targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var bundleIDValidationError: String? {
