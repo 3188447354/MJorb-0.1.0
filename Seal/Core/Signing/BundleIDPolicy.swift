@@ -36,7 +36,7 @@ enum BundleIDPolicy {
                 code: "SEAL-BUNDLE-002"
             )
         }
-        if let requested = normalized(requestedBundleIdentifier), requested.isEmpty == false {
+        if let requested = normalized(requestedBundleIdentifier) {
             return try validated(requested)
         }
         if let preferred = normalized(app.preferredBundleIdentifier), preferred.isEmpty == false {
@@ -49,21 +49,15 @@ enum BundleIDPolicy {
     }
 
     static func recommendedBundleIdentifier(for original: String, teamID: String) -> String {
-        var value = normalized(original) ?? original
-        // 对齐 AltStore 官方格式（原始+teamID），同时保留 Seal 标识：原始.seal.teamID
-        // 恒定不变，同一个应用+同一个 team 永远是同一个 Bundle ID，不随机
-        // 已安装应用续签时复用之前的 mappedBundleIdentifier，不受此格式影响
-        // 若输入已带 .seal 后缀（大小写不敏感，例如对 Seal 签过的包再次签名），先剥离，
-        // 避免重复追加得到 xxx.seal.seal.teamID
-        let sealSuffix = ".seal"
-        if value.lowercased().hasSuffix(sealSuffix) {
-            value = String(value.dropLast(sealSuffix.count))
-        }
-        return "\(value).seal.\(teamID)"
+        // 这是签名面板展示的可编辑默认值，不是签名器的隐式改写规则。
+        // 始终追加一次 Team，恢复记录时才能精确还原导入 IPA 的原始 Bundle ID。
+        let value = normalized(original) ?? original
+        let team = teamID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard team.isEmpty == false else { return value }
+        return "\(value).\(team)"
     }
 
-    /// 无 teamID 时的重载：返回原始 Bundle ID（仅用于恢复记录等无账号上下文的场景）
-    /// 实际签名时必须调用带 teamID 的版本
+    /// 无 teamID 时同样保留原始 Bundle ID。
     static func recommendedBundleIdentifier(for original: String) -> String {
         normalized(original) ?? original
     }
@@ -96,14 +90,7 @@ enum BundleIDPolicy {
         guard identifier.isEmpty == false else {
             throw failure(reason: "不能为空")
         }
-        guard identifier.count <= 255 else {
-            throw failure(reason: "不能超过 255 个字符")
-        }
-        guard identifier.hasPrefix(".") == false,
-              identifier.hasSuffix(".") == false,
-              identifier.contains("..") == false else {
-            throw failure(reason: "不能以 . 开头或结尾，不能包含连续 ..")
-        }
+        // 这里只挡 Apple 明确不允许的字符；长度、段数和可用情况由 Apple 注册结果裁定。
         let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-.")
         guard identifier.unicodeScalars.allSatisfy({ allowed.contains($0) }) else {
             // ⚠️ 文案要说清**为什么**（2026-09-19 用户问「Bundle ID 能不能带符号/表情」）：
@@ -116,16 +103,6 @@ enum BundleIDPolicy {
                 reason: "只能包含 A-Z、a-z、0-9、- 和 .（Apple 规定，空格、中文、表情、其它符号都不行）。"
                     + "想改桌面显示的名字（那个可以带表情）请用「App 名称」"
             )
-        }
-        let segments = identifier.split(separator: ".", omittingEmptySubsequences: false)
-        guard segments.count >= 2 else {
-            throw failure(reason: "至少包含两段")
-        }
-        guard segments.allSatisfy({ segment in
-            guard let first = segment.first, let last = segment.last else { return false }
-            return first != "-" && last != "-"
-        }) else {
-            throw failure(reason: "每段不能以 - 开头或结尾")
         }
         return identifier
     }

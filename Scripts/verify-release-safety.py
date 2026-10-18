@@ -4876,17 +4876,17 @@ def violations(load=read):
           "真机排障时最先要回答的问题，静默保留事务会让它无从查起。")
 
     # ── R80：设备端扫回已安装记录（2026-09-25 用户需求 A）────────────────────
-    # 「只卸载了 Seal、其他 Seal 签名的 App 没卸载」⇒ 记录（Seal.sqlite）随 Seal 一起没了，
-    # 设备上的 App 还在。唯一痕迹是**设备端的描述文件**（Bundle ID 形如 `<原始>.seal.<team>`）。
+    # 「只卸载了 Seal、其他应用没卸载」⇒ 记录（Seal.sqlite）随 Seal 一起没了，设备上的 App 还在。
+    # 恢复读取描述文件的实际 Bundle ID，不依赖 Seal 或其它签名工具的命名格式。
     #
     # 这条链路会**写记录**，而它的错法不崩、不编译失败，只在真机上多造或少造记录 ——
     # 多造 = 列表里出现点开就报错的僵尸；少造 = 用户的应用永远回不来。所以每条判据都要钉住。
     r80_policy = load("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift")
-    check("ProfileReclaimPolicy.sealGeneratedMarker" in r80_policy
-          and "range.lowerBound > lowered.startIndex" in r80_policy
-          and "range.upperBound < lowered.endIndex" in r80_policy,
-          "Scan/shape: 扫回形态判据必须与 ProfileReclaimPolicy 同源（共用 `.seal.` marker、"
-          "前后都要有内容）—— 回收与扫回是同一条规则的两个方向，判据分叉必然自相矛盾")
+    check("guard raw.isEmpty == false else { continue }" in r80_policy
+          and "context.knownTeamIdentifiers.contains(team)" in r80_policy
+          and "isSealGeneratedBundleIdentifier(raw)" not in r80_policy,
+          "Scan/nonempty-id: 扫回需保留描述文件实际 Bundle ID 并验证可信 Team，"
+          "不得把 Seal 自己生成的后缀当作识别门槛")
     check("context.knownTeamIdentifiers.contains(team)" in r80_policy,
           "Scan/team: 候选的 Team 必须在可信集合里 —— 设备端 dump 出来的是**全部**描述文件，"
           "含别的工具与旧账号留下的（真机实测 39 个 Bundle ID 变体 / 33 份孤儿）")
@@ -4896,8 +4896,8 @@ def violations(load=read):
     check("canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier" in r80_policy,
           "Scan/seal: Seal 自己不得参与扫回（它的记录由 SelfAppRegistrar 专门管理，"
           "再造一条会得到「两条都叫 Seal」）")
-    check("ProfileReclaimPolicy.isExtensionBundleID(" in r80_policy,
-          "Scan/extension: 扩展不得单独建记录（isAppInstalled 对扩展恒为 false ⇒ 点开就报错的僵尸）")
+    check("ProfileReclaimPolicy.isExtensionBundleID(" not in r80_policy,
+          "Scan/extension: 不得按 Bundle ID 前缀猜扩展；交由设备安装查询确认")
     check("signedIPARelativePath: nil" in r80_policy
           and "signedIPASHA256: nil" in r80_policy
           and "signedArtifactStatus: nil" in r80_policy
@@ -9037,11 +9037,11 @@ def main():
          "func findsInstalledRecordLegacy()",
          "Import: 覆盖更新判据的关键单测必须仍在"),
         # ── R80：设备端扫回 / 有效期秒级 / 取消 ≠ 超时（2026-09-25）──
-        # ① 形态判据不再要求 `.seal.` 在中间 ⇒ 任何含 `.seal.` 的 ID 都会被扫回 ✓ 报红。
+        # ① 丢弃空 ID 的判据被移除 ⇒ 空值也可能成为记录 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
-         "        return range.lowerBound > lowered.startIndex && range.upperBound < lowered.endIndex",
-         "        return true",
-         "Scan/shape:"),
+         "            guard raw.isEmpty == false else { continue }",
+         "            guard true else { continue }",
+         "Scan/nonempty-id:"),
         # ② 去掉 Team 可信判据 ⇒ 别的工具/旧账号留下的 profile 也会被补成记录 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
          "                  context.knownTeamIdentifiers.contains(team) else { continue }",

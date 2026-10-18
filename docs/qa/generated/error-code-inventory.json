@@ -351,7 +351,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 82,
+          "line": 67,
           "path": "Seal/Core/Signing/BundleIDMapper.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -2674,7 +2674,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 138,
+          "line": 115,
           "path": "Seal/Core/Signing/BundleIDPolicy.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -2716,7 +2716,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 402,
+          "line": 376,
           "path": "Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -10957,7 +10957,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 562,
+          "line": 560,
           "path": "Seal/Features/Apps/AppSigningSheet.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -10999,7 +10999,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 426,
+          "line": 400,
           "path": "Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11008,7 +11008,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 447,
+          "line": 421,
           "path": "Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11874,7 +11874,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 50,
+          "line": 36,
           "path": "Seal/Core/Signing/BundleIDMapper.swift",
           "role": "comment_reference",
           "semanticFields": [],

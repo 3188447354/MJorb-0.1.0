@@ -4,7 +4,7 @@ import Testing
 
 struct BundleIDMapperTests {
     @Test
-    func mainBundleIdentifierUsesStableSealTeamSuffix() {
+    func preservesSourceBundleIdentifierAcrossTeams() {
         let mapper = BundleIDMapper()
         let first = mapper.mainBundleID(original: "com.example.demo", teamID: "TEAM1")
         let sameTeam = mapper.mainBundleID(original: "com.example.demo", teamID: "TEAM1")
@@ -19,12 +19,12 @@ struct BundleIDMapperTests {
             teamID: "TEAM1"
         )
 
-        // 新格式：原始.seal.teamID（对齐 AltStore）；同 app+同 team 恒定不随机，不同 team 相互隔离
-        #expect(first == "com.example.demo.seal.TEAM1")
+        // Team 不参与 Bundle ID 命名；Apple 的 App ID 在各自开发团队内管理。
+        #expect(first == "com.example.demo")
         #expect(first == sameTeam)
-        #expect(otherTeam == "com.example.demo.seal.TEAM2")
-        #expect(first != otherTeam)
-        #expect(appExtension == "com.example.demo.seal.TEAM1.share")
+        #expect(otherTeam == "com.example.demo")
+        #expect(first == otherTeam)
+        #expect(appExtension == "com.example.demo.share")
         #expect(appGroup == "group.com.example.demo.seal.TEAM1")
         #expect(appGroup == mapper.appGroupID(
             original: "group.com.example.demo",
@@ -60,33 +60,63 @@ struct BundleIDMapperTests {
     }
 
     @Test
-    func requestedMainBundleIdentifierHonoredWithinTeamSuffix() {
+    func requestedMainBundleIdentifierIsUsedExactlyAsShownInTheEditor() {
         let mapper = BundleIDMapper()
-        // requested 不带当前 team 后缀 → 统一换算成当前团队的推荐 ID（自动补 .seal.<teamID>），
-        // 避免同一个 Bundle ID 被不同 team 的多个设备注册占用
+        // 默认值可以含 Team 后缀，用户编辑后的值也必须原样用于签名。
         #expect(
             mapper.mainBundleID(
                 original: "com.example.demo",
                 teamID: "TEAM1",
-                requested: "com.example.demo.custom"
-            ) == "com.example.demo.custom.seal.TEAM1"
+                requested: "com.example.demo.TEAM1"
+            ) == "com.example.demo.TEAM1"
         )
-        // requested 已带当前 team 后缀 → 原样复用（续签复用已安装 / UI 默认推荐值）
         #expect(
             mapper.mainBundleID(
                 original: "com.example.demo",
                 teamID: "TEAM1",
-                requested: "com.example.demo.custom.seal.TEAM1"
-            ) == "com.example.demo.custom.seal.TEAM1"
+                requested: "com.example.custom"
+            ) == "com.example.custom"
         )
-        // team 后缀匹配大小写不敏感
         #expect(
             mapper.mainBundleID(
                 original: "com.example.demo",
-                teamID: "team1",
-                requested: "com.example.demo.custom.seal.TEAM1"
-            ) == "com.example.demo.custom.seal.TEAM1"
+                teamID: "TEAM1",
+                requested: ""
+            ).isEmpty
         )
+    }
+
+    @Test
+    func policyKeepsTheVisibleDefaultOrUserEditedBundleIdentifier() throws {
+        let imported = AppRecord(
+            originalBundleIdentifier: "com.example.demo",
+            name: "Demo",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .preflightPassed,
+            ipaRelativePath: "Apps/demo.ipa",
+            importedAt: Date()
+        )
+
+        #expect(
+            try BundleIDPolicy.targetBundleIdentifier(
+                for: imported,
+                requestedBundleIdentifier: "com.example.demo.TEAM1"
+            ) == "com.example.demo.TEAM1"
+        )
+        #expect(
+            try BundleIDPolicy.targetBundleIdentifier(
+                for: imported,
+                requestedBundleIdentifier: "com.example.custom"
+            ) == "com.example.custom"
+        )
+        #expect(throws: ImportFailure.self) {
+            try BundleIDPolicy.targetBundleIdentifier(
+                for: imported,
+                requestedBundleIdentifier: ""
+            )
+        }
     }
 
     @Test
@@ -173,12 +203,12 @@ struct BundleIDMapperTests {
     }
 
     @Test
-    func recommendedBundleIdentifierDoesNotDoubleAppendSealCaseInsensitively() {
-        // 带 teamID 版本负责追加 .seal.teamID；输入已带 .seal（大小写不敏感）时先剥离再追加，不重复
-        #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo", teamID: "T") == "com.example.demo.seal.T")
+    func recommendedBundleIdentifierAddsEditableTeamSuffix() {
+        #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo", teamID: "T") == "com.example.demo.T")
         #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo.seal", teamID: "T") == "com.example.demo.seal.T")
-        #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo.SEAL", teamID: "T") == "com.example.demo.seal.T")
-        // 无 teamID 重载仅用于无账号上下文的兜底，原样返回 trim 后的原始值，不追加后缀
+        #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo.T", teamID: "T") == "com.example.demo.T.T")
+        #expect(BundleIDPolicy.recommendedBundleIdentifier(for: " com.vendor.app.123 ", teamID: "T") == "com.vendor.app.123.T")
+        #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo", teamID: "  ") == "com.example.demo")
         #expect(BundleIDPolicy.recommendedBundleIdentifier(for: "com.example.demo") == "com.example.demo")
     }
 
@@ -189,8 +219,8 @@ struct BundleIDMapperTests {
             mapper.extensionBundleID(
                 original: "com.example.app.widget",
                 originalMainBundleID: "com.example.app",
-                mappedMainBundleID: "com.example.app.seal"
-            ) == "com.example.app.seal.widget"
+                mappedMainBundleID: "com.example.app.TEAM1"
+            ) == "com.example.app.TEAM1.widget"
         )
         #expect(
             mapper.extensionBundleID(
@@ -202,13 +232,14 @@ struct BundleIDMapperTests {
     }
 
     @Test
-    func bundleIdentifierValidationCoversFinalRules() {
+    func bundleIdentifierValidationOnlyEnforcesAppleCharacterSet() {
         #expect(BundleIDPolicy.validationError(for: "") != nil)
-        #expect(BundleIDPolicy.validationError(for: "single") != nil)
-        #expect(BundleIDPolicy.validationError(for: ".com.example") != nil)
-        #expect(BundleIDPolicy.validationError(for: "com..example") != nil)
-        #expect(BundleIDPolicy.validationError(for: "com.-example") != nil)
-        #expect(BundleIDPolicy.validationError(for: "com.example-") != nil)
+        // 反向域名是 Apple 推荐格式；本地只校验 Apple 明确列出的字符范围。
+        #expect(BundleIDPolicy.validationError(for: "single") == nil)
+        #expect(BundleIDPolicy.validationError(for: ".com.example") == nil)
+        #expect(BundleIDPolicy.validationError(for: "com..example") == nil)
+        #expect(BundleIDPolicy.validationError(for: "com.-example") == nil)
+        #expect(BundleIDPolicy.validationError(for: "com.example-") == nil)
         #expect(BundleIDPolicy.validationError(for: "com.example_app") != nil)
         #expect(BundleIDPolicy.validationError(for: "com.example-app") == nil)
     }

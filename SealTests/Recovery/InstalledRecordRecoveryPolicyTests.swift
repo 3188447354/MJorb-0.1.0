@@ -12,28 +12,6 @@ import Testing
 /// 多造 = 列表里出现点开就报错的僵尸；少造 = 用户的应用永远回不来。
 /// 所以每一条边界都必须在这里钉死。
 struct InstalledRecordRecoveryPolicyTests {
-    // MARK: - 形态判据
-
-    @Test
-    func recognisesSealGeneratedShapeOnlyInTheMiddle() {
-        // `<原始>.seal.<team>` —— 正常形态。
-        #expect(InstalledRecordRecoveryPolicy.isSealGeneratedBundleIdentifier(
-            "com.example.demo.seal.ABCDE12345"
-        ))
-        // 大小写不敏感（Bundle ID 本身大小写不敏感）。
-        #expect(InstalledRecordRecoveryPolicy.isSealGeneratedBundleIdentifier(
-            "com.example.demo.SEAL.abcde12345"
-        ))
-        // `.seal.` 必须在**中间**：前后都要有内容。
-        #expect(InstalledRecordRecoveryPolicy.isSealGeneratedBundleIdentifier(".seal.ABCDE") == false)
-        #expect(InstalledRecordRecoveryPolicy.isSealGeneratedBundleIdentifier("com.demo.seal.") == false)
-        // 别的工具的形态（`<原始>.<teamID>`）不得命中。
-        #expect(InstalledRecordRecoveryPolicy.isSealGeneratedBundleIdentifier(
-            "com.example.demo.ABCDE12345"
-        ) == false)
-        #expect(InstalledRecordRecoveryPolicy.isSealGeneratedBundleIdentifier("") == false)
-    }
-
     // MARK: - 反推原始 Bundle ID
 
     @Test
@@ -49,30 +27,43 @@ struct InstalledRecordRecoveryPolicyTests {
         ) == "com.example.demo")
     }
 
-    /// 🔴 这条是「取第一次还是取最后一次 `.seal.`」的判别点。
-    ///
-    /// 原始 Bundle ID **本身可能含 `.seal.`**（例如 `com.mjorb.seal.apps`）。
-    /// 拿不到 Team 时若取**第一次** `.seal.`，会把原始 ID 截断成 `com.mjorb`
-    /// —— 那是一条**不存在**的 Bundle ID，用户点续签会得到 `SEAL-BUNDLE-002`。
     @Test
-    func fallsBackToTheLastSealMarkerSoOriginalsContainingSealSurvive() {
+    func stripsExactTeamSuffixUsedByCurrentSigningDefault() {
+        #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
+            fromMapped: "com.example.demo.ABCDE12345",
+            teamIdentifier: "ABCDE12345"
+        ) == "com.example.demo")
+        // 若 IPA 原始 ID 本身以 Team 字符串结尾，新签名默认会再追加一次；恢复只剥一层。
+        #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
+            fromMapped: "com.example.demo.ABCDE12345.ABCDE12345",
+            teamIdentifier: "ABCDE12345"
+        ) == "com.example.demo.ABCDE12345")
+    }
+
+    /// 没有可信 Team 时无法判断 `.seal.<TeamID>` 是工具添加还是原始 ID，必须保留完整值。
+    @Test
+    func doesNotGuessAtLegacySuffixWithoutTrustedTeam() {
         #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
             fromMapped: "com.mjorb.seal.apps.seal.ABCDE12345",
             teamIdentifier: nil
-        ) == "com.mjorb.seal.apps")
+        ) == "com.mjorb.seal.apps.seal.ABCDE12345")
     }
 
     @Test
-    func returnsNilWhenNothingCanBeStripped() {
+    func preservesAnyNonemptyBundleIdentifier() {
         #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
             fromMapped: "com.example.demo",
             teamIdentifier: "ABCDE12345"
-        ) == nil)
-        // `.seal.` 在开头 ⇒ 剥完是空串 ⇒ 身份不完整，宁可不建。
+        ) == "com.example.demo")
+        // 格式不完整或 Team 不匹配时不猜它的含义，保留设备真实 ID。
         #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
             fromMapped: ".seal.ABCDE12345",
             teamIdentifier: "ABCDE12345"
-        ) == nil)
+        ) == ".seal.ABCDE12345")
+        #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
+            fromMapped: "com.example.demo.OTHERTEAM",
+            teamIdentifier: "ABCDE12345"
+        ) == "com.example.demo.OTHERTEAM")
         #expect(InstalledRecordRecoveryPolicy.originalBundleIdentifier(
             fromMapped: "   ",
             teamIdentifier: "ABCDE12345"
@@ -93,6 +84,29 @@ struct InstalledRecordRecoveryPolicyTests {
         #expect(drafts.first?.originalBundleIdentifier == "com.example.demo")
         #expect(drafts.first?.teamIdentifier == "ABCDE12345")
         #expect(drafts.first?.displayName == "com.example.demo")
+    }
+
+    @Test
+    func recoversOtherToolBundleIDFormatsWithoutRewritingThem() {
+        let context = makeContext(teams: ["ABCDE12345"])
+        let installedBundleIDs = [
+            "com.example.demo",
+            "com.example.demo.ABCDE12345",
+            "com.vendor.application.custom-name",
+        ]
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            profiles: installedBundleIDs.map {
+                makeProfile(bundleID: $0, team: "ABCDE12345")
+            },
+            context: context
+        )
+        let expected = installedBundleIDs.sorted()
+        #expect(drafts.map(\.bundleIdentifier) == expected)
+        #expect(drafts.map(\.originalBundleIdentifier) == [
+            "com.example.demo",
+            "com.example.demo",
+            "com.vendor.application.custom-name",
+        ])
     }
 
     @Test
@@ -131,11 +145,22 @@ struct InstalledRecordRecoveryPolicyTests {
         let drafts = InstalledRecordRecoveryPolicy.drafts(
             profiles: [
                 makeProfile(bundleID: "com.mjorb.seal", team: "ABCDE12345"),
+                makeProfile(bundleID: "com.mjorb.seal.ABCDE12345", team: "ABCDE12345"),
                 makeProfile(bundleID: "com.mjorb.seal.seal.ABCDE12345", team: "ABCDE12345"),
             ],
             context: context
         )
         #expect(drafts.isEmpty)
+    }
+
+    @Test
+    func doesNotExcludeAnotherAppJustBecauseItsIDStartsWithSealBundleID() {
+        let context = makeContext(teams: ["ABCDE12345"])
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            profiles: [makeProfile(bundleID: "com.mjorb.seal.helper", team: "ABCDE12345")],
+            context: context
+        )
+        #expect(drafts.map(\.bundleIdentifier) == ["com.mjorb.seal.helper"])
     }
 
     /// 设备端 dump 出来的是**全部**描述文件（含别的工具、旧账号留下的）。
@@ -144,38 +169,30 @@ struct InstalledRecordRecoveryPolicyTests {
     func rejectsProfilesFromUntrustedTeam() {
         let context = makeContext(teams: ["ABCDE12345"])
         let drafts = InstalledRecordRecoveryPolicy.drafts(
-            profiles: [makeProfile(bundleID: "com.example.demo.seal.OTHERTEAM", team: "OTHERTEAM")],
+            profiles: [makeProfile(bundleID: "com.example.demo.OTHERTEAM", team: "OTHERTEAM")],
             context: context
         )
         #expect(drafts.isEmpty)
         // 没有 Team 的描述文件同样不可信。
         let noTeam = InstalledRecordRecoveryPolicy.drafts(
-            profiles: [makeProfile(bundleID: "com.example.demo.seal.ABCDE12345", team: nil)],
+            profiles: [makeProfile(bundleID: "com.example.demo", team: nil)],
             context: context
         )
         #expect(noTeam.isEmpty)
     }
 
-    /// 扩展不是独立安装的 App（`isAppInstalled` 对扩展恒为 false），
-    /// 单独建记录只会得到一条点开就报错的僵尸记录。
-    ///
-    /// ⚠️ **扩展的映射形态必须以 `BundleIDMapper.extensionBundleID` 为准**：
-    /// 它把扩展挂到**主 App 映射后**的 ID 下面 —— `com.example.demo` + 扩展
-    /// `com.example.demo.share` ⇒ 主 `com.example.demo.seal.ABCDE12345`、
-    /// 扩展 `com.example.demo.seal.ABCDE12345.share`。
-    /// **不是**「各自加 `.seal.<team>` 后缀」（写成 `com.example.demo.share.seal.ABCDE12345`
-    /// 会让前缀判据落空 ⇒ 扩展被当独立 App 建记录；2026-09-25 CI 上正是这么红的）。
+    /// 不能只看 Bundle ID 前缀推断扩展；设备端安装查询负责确认候选是否为独立 App。
     @Test
-    func doesNotRecoverExtensionsAsStandaloneApps() {
+    func doesNotGuessExtensionsFromBundleIDPrefixes() {
         let context = makeContext(teams: ["ABCDE12345"])
         let drafts = InstalledRecordRecoveryPolicy.drafts(
             profiles: [
-                makeProfile(bundleID: "com.example.demo.seal.ABCDE12345", team: "ABCDE12345"),
-                makeProfile(bundleID: "com.example.demo.seal.ABCDE12345.share", team: "ABCDE12345"),
+                makeProfile(bundleID: "com.example.demo", team: "ABCDE12345"),
+                makeProfile(bundleID: "com.example.demo.share", team: "ABCDE12345"),
             ],
             context: context
         )
-        #expect(drafts.map(\.bundleIdentifier) == ["com.example.demo.seal.ABCDE12345"])
+        #expect(drafts.map(\.bundleIdentifier) == ["com.example.demo", "com.example.demo.share"])
     }
 
     /// LockDown 路径同一份 profile 会落 raw + plist 两份 ⇒ 必须按 Bundle ID 去重。

@@ -386,14 +386,12 @@ struct AppSigningSheet: View {
 
     private var requestedBundleIDForSigning: String? {
         guard isRenewal == false else { return nil }
-        let trimmed = targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var bundleIDValidationError: String? {
         guard isRenewal == false else { return nil }
         let trimmed = targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false else { return nil }
         return BundleIDPolicy.validationError(for: trimmed)
     }
 
@@ -410,7 +408,7 @@ struct AppSigningSheet: View {
         }
         // 未签名且用户未手动编辑：
         // - 有 preferredBundleIdentifier → 用已保存的
-        // - 否则每次打开/回到配置抽屉都重新生成 0-999 随机后缀
+        // - 否则按当前账号生成可编辑的 Team 后缀默认值
         if let preferred = workingApp.preferredBundleIdentifier,
            !preferred.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             targetBundleID = preferred
@@ -430,8 +428,8 @@ struct AppSigningSheet: View {
         }
     }
 
-    /// 切换 Apple ID 后，全新未签且未手动改过 Bundle ID 的，用新账号 teamID 重算推荐 Bundle ID，
-    /// 使 `.seal.<TeamID>` 跟随所选账号变化；已签/已安装/Seal 自身不动（Bundle ID 已注册）。
+    /// 切换 Apple ID 后，全新未签且未手动改过 Bundle ID 的，用新账号 Team ID 更新默认值；
+    /// 已签/已安装/Seal 自身不动，用户手动编辑的值也不动。
     private func regenerateBundleIDForAccountChange(account: AppleAccountRecord) {
         guard isRenewal == false else { return }
         guard workingApp.belongsInInstalledList == false,

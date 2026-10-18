@@ -10,7 +10,7 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     let title: (Item) -> String
     var count: ((Item) -> Int)? = nil
     @Binding var selection: Item
-    @Binding var progress: CGFloat
+    @ObservedObject var progress: CaterpillarTabsProgress
 
     var spacing: CGFloat = 16
     var indicatorHeight: CGFloat = 3
@@ -46,12 +46,11 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
     }
 
     private func tab(_ item: Item, index: Int, width: CGFloat) -> some View {
-        let proximity = max(0, min(1, 1 - abs(progress - CGFloat(index))))
+        let proximity = max(0, min(1, 1 - abs(progress.value - CGFloat(index))))
 
         return Button {
             withAnimation(.spring(response: 0.30, dampingFraction: 0.86)) {
                 selection = item
-                progress = CGFloat(index)
             }
         } label: {
             HStack(spacing: 6) {
@@ -89,7 +88,7 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
 
     private func indicatorGeometry(tabWidth: CGFloat) -> (x: CGFloat, width: CGFloat) {
         let lastIndex = max(items.count - 1, 0)
-        let clamped = min(max(progress, 0), CGFloat(lastIndex))
+        let clamped = min(max(progress.value, 0), CGFloat(lastIndex))
         let lower = Int(floor(clamped))
         let upper = min(lower + 1, lastIndex)
         let t = clamped - CGFloat(lower)
@@ -100,6 +99,15 @@ struct CaterpillarSegmentedTabs<Item: Hashable & Identifiable>: View {
         return (mid - stretched / 2, stretched)
     }
 
+}
+
+@MainActor
+final class CaterpillarTabsProgress: ObservableObject {
+    @Published var value: CGFloat
+
+    init(value: CGFloat) {
+        self.value = value
+    }
 }
 
 private extension Color {

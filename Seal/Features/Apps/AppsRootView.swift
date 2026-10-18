@@ -1,14 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-private struct AppPagerOffsetPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct AppsRootView: View {
     private enum ListMode: String, Identifiable, CaseIterable {
         case unsigned = "待安装"
@@ -22,8 +14,8 @@ struct AppsRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .largeTitle) private var sealTitleSize = 38
     @State private var mode: ListMode = .installed
-    /// 内容页的连续位置（0 = 待安装，1 = 已安装），由分页器测量写入、驱动毛毛虫下划线。
-    @State private var pagerProgress: CGFloat = 1
+    /// 分页连续进度只刷新标签，不让每一帧手势都重建两个应用列表。
+    @State private var pagerProgress = CaterpillarTabsProgress(value: 1)
     @State private var detailApp: AppRecord?
     @State private var pendingDeleteApp: AppRecord?
     @State private var installedActionApp: AppRecord?
@@ -280,7 +272,7 @@ struct AppsRootView: View {
                 }
             },
             selection: selectionBinding,
-            progress: $pagerProgress
+            progress: pagerProgress
         )
         .accessibilityIdentifier("apps-stage-tabs")
     }
@@ -297,46 +289,25 @@ struct AppsRootView: View {
 
     private var appPager: some View {
         GeometryReader { proxy in
-            let pageWidth = max(proxy.size.width, 1)
-            ScrollView(.horizontal) {
-                HStack(spacing: 0) {
-                    appPage(.unsigned, apps: viewModel.unsignedApps)
-                        .containerRelativeFrame(.horizontal)
-                        .id(ListMode.unsigned)
+            NativeAppsPager(
+                selection: pagerSelectionBinding,
+                progress: pagerProgress,
+                pages: [
+                    appPage(.unsigned, apps: viewModel.unsignedApps),
                     appPage(.installed, apps: viewModel.installedApps)
-                        .containerRelativeFrame(.horizontal)
-                        .id(ListMode.installed)
-                }
-                .scrollTargetLayout()
-                .background {
-                    GeometryReader { content in
-                        Color.clear.preference(
-                            key: AppPagerOffsetPreferenceKey.self,
-                            value: content.frame(in: .named("apps-stage-scroll")).minX
-                        )
-                    }
-                }
-            }
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: pagerPosition, anchor: .leading)
-            .scrollIndicators(.hidden)
-            .coordinateSpace(name: "apps-stage-scroll")
-            .clipped()
-            .accessibilityIdentifier("apps-stage-pager")
-            .onPreferenceChange(AppPagerOffsetPreferenceKey.self) { offset in
-                var transaction = Transaction()
-                transaction.animation = nil
-                withTransaction(transaction) {
-                    pagerProgress = min(max(-offset / pageWidth, 0), CGFloat(ListMode.allCases.count - 1))
-                }
-            }
+                ]
+            )
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
     }
 
-    private var pagerPosition: Binding<ListMode?> {
+    private var pagerSelectionBinding: Binding<Int> {
         Binding(
-            get: { mode },
-            set: { if let mode = $0 { self.mode = mode } }
+            get: { ListMode.allCases.firstIndex(of: mode) ?? 0 },
+            set: { index in
+                guard ListMode.allCases.indices.contains(index) else { return }
+                mode = ListMode.allCases[index]
+            }
         )
     }
 

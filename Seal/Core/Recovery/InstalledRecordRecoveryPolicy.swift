@@ -23,7 +23,7 @@ struct DeviceProvisioningProfileSummary: Equatable, Sendable {
 /// `stage` 的取值就是「为什么一条都没补」的答案 —— 不留这个字段，
 /// 「扫回 0」和「根本没扫」在日志上分不开，而这两件事该看的下一处完全不同。
 struct InstalledRecordRecoverySummary: Equatable, Sendable {
-    /// 本地形态筛出来的候选份数。
+    /// 本地描述文件筛出来的候选份数。
     var candidates = 0
     /// 真正补回已安装列表的记录数。
     var recovered = 0
@@ -116,15 +116,14 @@ enum DismissedInstalledRecordTombstones {
 ///
 /// ## 背景（2026-09-25 用户反馈）
 ///
-/// 「只卸载了 Seal，其他 Seal 签名的 App 没卸载，重装 Seal 后它们进不了已安装列表」——
-/// 记录（`Seal.sqlite`）随 Seal 一起没了，设备上的应用却还在。唯一还能证明
-/// 「这个 App 是 Seal 装的」的痕迹是**设备端的描述文件**：Bundle ID 形如
-/// `<原始>.seal.<team>`（`ProfileReclaimPolicy.sealGeneratedMarker`）。
+/// 「只卸载了 Seal，其他应用没卸载，重装 Seal 后它们进不了已安装列表」——
+/// 记录（`Seal.sqlite`）随 Seal 一起没了，设备上的应用却还在。扫描设备上的描述文件，
+/// 根据真实 Bundle ID、可信 Team 和设备安装状态恢复记录，不依赖签名工具的 ID 格式。
 ///
 /// ## 五条纪律
 ///
-/// 1. **形态判据与 `ProfileReclaimPolicy` 同源**（`.seal.` 中缀、前后都要有内容）：
-///    别的工具（AltStore / SideStore）用 `<原始>.<teamID>`，天然不会命中。
+/// 1. **不按命名格式筛选**：Seal、AltStore、SideStore 或用户自定义的有效 Bundle ID，
+///    都按设备描述文件里的实际值识别；Team 只用于确认账号归属，不参与拼 ID。
 /// 2. **身份必须诚实**：重建的记录**没有本地 IPA**（文件从未存在过），所以
 ///    `signedIPARelativePath` / `signedIPASHA256` 留空、`signedArtifactStatus` 留 nil。
 ///    于是 `hasSignedArtifact == false` ⇒ 天然进不了 profile-only 续签、也进不了
@@ -173,7 +172,7 @@ enum InstalledRecordRecoveryPolicy {
         let knownTeamIdentifiers: Set<String>
         /// 用户主动从已安装列表移除过的 Bundle ID。
         let dismissedBundleIdentifiers: Set<String>
-        /// Seal 自己的规范 Bundle ID（`com.mjorb.seal`）；它的 `<规范>.…` 旧形态也一并排除。
+        /// Seal 自己的规范 Bundle ID（`com.mjorb.seal`）。
         let sealCanonicalBundleIdentifier: String
 
         init(
@@ -209,33 +208,22 @@ enum InstalledRecordRecoveryPolicy {
         ProfileReclaimPolicy.normalized(value)
     }
 
-    /// 形态判据：这个 Bundle ID 是不是 Seal 生成过的形态。
-    ///
-    /// 与 `ProfileReclaimPolicy.isReclaimableOrphan` 的第 ③ 步同判据、共用同一个
-    /// marker 常量（`.seal.` 前后都必须有内容）。回收与扫回是**同一条形态规则的
-    /// 两个方向**，判据一旦分叉，就会出现「回收认为不是 Seal 的、扫回认为是」这种自相矛盾。
-    static func isSealGeneratedBundleIdentifier(_ bundleID: String) -> Bool {
-        let lowered = normalizedBundleIdentifier(bundleID)
-        guard lowered.isEmpty == false else { return false }
-        guard let range = lowered.range(of: ProfileReclaimPolicy.sealGeneratedMarker) else {
-            return false
-        }
-        return range.lowerBound > lowered.startIndex && range.upperBound < lowered.endIndex
-    }
-
-    /// Seal 自己的形态：规范 ID 本身，或 `<规范>.…` 的旧自签形态
-    /// （与 `BundleIDPolicy.isLegacySelfBundleIdentifier` 同判据）。
+    /// Seal 自己的 ID：规范 ID，或历史上按 Team ID / `.seal.<TeamID>` 生成的自身 ID。
     ///
     /// 扫回必须排除 Seal：它的记录由 `SelfAppRegistrar` 专门管理，
     /// 扫回再造一条只会得到「两条都叫 Seal」的重复记录。
     static func isSealBundleIdentifier(
         _ bundleID: String,
-        canonicalBundleIdentifier: String
+        canonicalBundleIdentifier: String,
+        teamIdentifier: String?
     ) -> Bool {
         let value = normalizedBundleIdentifier(bundleID)
         let canonical = normalizedBundleIdentifier(canonicalBundleIdentifier)
         guard canonical.isEmpty == false, value.isEmpty == false else { return false }
-        return value == canonical || value.hasPrefix(canonical + ".")
+        guard value != canonical else { return true }
+        guard let team = normalizedTeamIdentifier(teamIdentifier) else { return false }
+        let historicalIDs = [canonical + "." + team, canonical + ".seal." + team]
+        return historicalIDs.contains { value == normalizedBundleIdentifier($0) }
     }
 
     static func context(
@@ -282,27 +270,26 @@ enum InstalledRecordRecoveryPolicy {
         )
     }
 
-    /// 本地形态筛选 —— **不碰设备**。
+    /// 本地描述文件筛选 —— **不碰设备**。
     static func drafts(
         profiles: [DeviceProvisioningProfileSummary],
         context: Context
     ) -> [Draft] {
-        // 先把「形态上像 Seal 生成的」挑出来并去重（LockDown 路径同一份 profile 会落
-        // raw + plist 两份），并留下它们的 Bundle ID —— 扩展判据要用这一整批。
-        var shaped: [(profile: DeviceProvisioningProfileSummary, bundleID: String)] = []
+        // 不以 `.seal`、团队后缀或其它工具的命名规则筛选。只读取非空 Bundle ID，
+        // 并用描述文件 Team 确认归属。LockDown 路径同一份 profile 会落 raw + plist 两份，先去重。
+        var candidates: [(profile: DeviceProvisioningProfileSummary, bundleID: String)] = []
         var seen: Set<String> = []
         for profile in profiles {
             let raw = profile.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
             guard raw.isEmpty == false else { continue }
             let normalized = normalizedBundleIdentifier(raw)
+            guard let team = normalizedTeamIdentifier(profile.teamIdentifier),
+                  context.knownTeamIdentifiers.contains(team) else { continue }
             guard seen.insert(normalized).inserted else { continue }
-            guard isSealGeneratedBundleIdentifier(raw) else { continue }
-            shaped.append((profile, raw))
+            candidates.append((profile, raw))
         }
-        let shapedBundleIDs = Set(shaped.map { normalizedBundleIdentifier($0.bundleID) })
-
         var drafts: [Draft] = []
-        for (profile, bundleID) in shaped {
+        for (profile, bundleID) in candidates {
             let normalized = normalizedBundleIdentifier(bundleID)
             // ① 已经是记录里某个 App / 扩展的生效 Bundle ID ⇒ 不算「缺失」。
             guard context.knownBundleIdentifiers.contains(normalized) == false else { continue }
@@ -311,21 +298,17 @@ enum InstalledRecordRecoveryPolicy {
             // ③ Seal 自己由 `SelfAppRegistrar` 专门管理，不参与扫回。
             guard isSealBundleIdentifier(
                 bundleID,
-                canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier
+                canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier,
+                teamIdentifier: profile.teamIdentifier
             ) == false else { continue }
-            // ④ Team 必须可信（见类型注释第 4 条）。
-            guard let team = normalizedTeamIdentifier(profile.teamIdentifier),
-                  context.knownTeamIdentifiers.contains(team) else { continue }
-            // ⑤ 扩展不是独立安装的 App ⇒ 不单独建记录。父 App 那条会把它一起覆盖。
-            guard ProfileReclaimPolicy.isExtensionBundleID(
-                bundleID,
-                ofAnyOf: shapedBundleIDs
-            ) == false else { continue }
-            // ⑥ 反推不出原始 Bundle ID ⇒ 身份不完整，宁可不建。
+            // ④ Team 已在本地描述文件筛选阶段与已添加账号 / 记录核对。
+            guard let team = normalizedTeamIdentifier(profile.teamIdentifier) else { continue }
+            // ⑤ 不从 Bundle ID 前缀猜测扩展关系；后续由设备安装查询确认哪些是独立 App。
+            // ⑥ Team 后缀和历史 Seal 后缀可还原原始 ID；其它格式保留设备实际 Bundle ID。
             guard let original = originalBundleIdentifier(
                 fromMapped: bundleID,
                 teamIdentifier: team
-            ), original.caseInsensitiveCompare(bundleID) != .orderedSame else { continue }
+            ) else { continue }
 
             drafts.append(Draft(
                 bundleIdentifier: bundleID,
@@ -344,31 +327,24 @@ enum InstalledRecordRecoveryPolicy {
         }
     }
 
-    /// 反推原始 Bundle ID：`<原始>.seal.<team>` → `<原始>`。
+    /// Team 后缀 `<原始>.<team>` 和旧 Seal 格式 `<原始>.seal.<team>` 还原为原始 ID；
+    /// 其它格式原样保留。
     ///
-    /// 拿不到 Team（或后缀形态不符）时退到**最后一次** `.seal.` 之前 ——
-    /// 必须取最后一次：原始 Bundle ID 本身可能含 `.seal.`
-    /// （例如 `com.mjorb.seal.apps`），取第一次会把原始 ID 截断。
+    /// 只有描述文件中可信 Team 与 ID 的末尾完全匹配时才剥离一次；其它 ID 保留设备实际值。
     static func originalBundleIdentifier(
         fromMapped mapped: String,
         teamIdentifier: String?
     ) -> String? {
         let value = mapped.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value.isEmpty == false else { return nil }
-        let marker = ProfileReclaimPolicy.sealGeneratedMarker
         if let team = normalizedTeamIdentifier(teamIdentifier) {
-            let suffix = marker + team
-            if value.lowercased().hasSuffix(suffix.lowercased()) {
+            let suffixes = [ProfileReclaimPolicy.sealGeneratedMarker + team, "." + team]
+            for suffix in suffixes where value.lowercased().hasSuffix(suffix.lowercased()) {
                 let stripped = String(value.dropLast(suffix.count))
-                return stripped.isEmpty ? nil : stripped
+                return stripped.isEmpty ? value : stripped
             }
         }
-        guard let range = value.range(
-            of: marker,
-            options: [.backwards, .caseInsensitive]
-        ) else { return nil }
-        let stripped = String(value[value.startIndex..<range.lowerBound])
-        return stripped.isEmpty ? nil : stripped
+        return value
     }
 
     /// 展示名。
@@ -378,9 +354,7 @@ enum InstalledRecordRecoveryPolicy {
     /// `apps.contains_key(&bundle_id).then_some(bundle_id)`），而描述文件的 `Name`
     /// 是 Apple 按 `<映射后的 Bundle ID>` 生成的，同样不是应用名。
     ///
-    /// ⇒ 用**反推出来的原始 Bundle ID**：它一定正确、一定可辨认，
-    /// 比「猜一个中文名猜错」诚实。将来若给 RustBridge 加一个返回
-    /// `CFBundleDisplayName` 的导出函数，改这一处即可。
+    /// ⇒ 用设备实际 Bundle ID：不会把工具自己的映射标记误当成应用名。
     static func displayName(forOriginalBundleIdentifier original: String) -> String {
         original
     }

@@ -1,3 +1,12 @@
+## 2026-10-18 17:03:23 待安装与已安装分页手势未驱动标签动画
+
+- **现象**：实机横向滑动页面时，下划线没有随手指连续移动，标签颜色也没有过渡；点击标签和页面位置可能各自改变。
+- **根因**：原实现用 SwiftUI 几何偏好值间接回传水平滚动位置，标签点击又直接写入动画进度，页面与指示器存在两个进度来源。
+- **修复**：横向页面改用 UIKit 原生分页滚动视图，按真实 `contentOffset / pageWidth` 连续发布进度；点击标签只更新目标页，由同一分页器执行切换。分页保留原有 SwiftUI 页面、各页纵向滚动与下拉刷新，并启用系统分页吸附和边界回弹。进度状态单独观察，避免每帧手势都重建应用列表。
+- **涉及文件**：`Seal/Features/Apps/NativeAppsPager.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/DesignSystem/CaterpillarSegmentedTabs.swift`、`project.yml`、`RELEASE_NOTES.md`、`docs/qa/generated/error-code-inventory.json`。
+- **版本**：`0.1.13`，主 App 与 Live Activity target 同步。
+- **验证**：错误码索引已重新生成，`git diff --check` 通过。Windows 无 Xcode，Swift 编译与实机慢拖、快滑、回弹、点击标签、纵向滚动/下拉刷新均待 GitHub CI 和真机验证。
+
 ## 2026-10-18 14:49:50 CI 错误码索引未随源代码行号更新
 
 - **现象**：CI 的错误码审计单测通过，但生成文件对比失败，阻断打包。
@@ -45,6 +54,14 @@
 
 > 复盘记录：现象 → 根因 → 修复 → 涉及文件 → 验证状态。新条目追加到「历史记录」顶部（最新在前）。
 > 动手前先查阅下方「常犯坑位」，避免同类问题重复发生。
+
+## 2026-10-18 16:37:26 新签名 Bundle ID 默认值与恢复逻辑统一
+
+- **现象**：签名器曾在面板值之外隐式追加 Team 和 `.seal`；设备记录恢复又按 Seal 专属格式筛选，且本地格式校验强加了长度、段数和点号段规则，导致有效值可能被拦截或恢复记录无法关联重导 IPA。
+- **修复**：新导入 IPA 的签名面板显示 `原 Bundle ID.<TeamID>` 可编辑默认值；mapper 只使用用户当前输入，不再追加或改写。覆盖更新/续签锁定已签名 ID，扩展沿用主 ID。本地校验只拦空值和 Apple 不支持字符。恢复按描述文件实际 ID 与可信 Team 识别，兼容当前 Team 后缀及历史 `.seal.<TeamID>`，其余格式不改写；不再靠 ID 前缀猜扩展。
+- **涉及文件**：`Seal/Core/Signing/BundleIDPolicy.swift`、`Seal/Core/Signing/BundleIDMapper.swift`、`Seal/Features/Apps/AppSigningSheet.swift`、`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、对应两份测试、`Scripts/verify-release-safety.py`、`docs/upstream-alignment.md`、`project.yml`、`RELEASE_NOTES.md`。
+- **版本**：`0.1.12`。
+- **验证**：`git diff --check` 通过；错误码索引重新生成（428 个标识、813 处引用）；两个构建 target 均为 `0.1.12`。Windows 无 Xcode，Swift 测试和 CI 守卫待 GitHub CI；记录恢复与重导仍需实机验证。
 
 ## 2026-10-18 14:00:24 恢复应用导入回归测试参数顺序错误
 
