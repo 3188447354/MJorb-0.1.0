@@ -9353,12 +9353,12 @@ def main():
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp()",
          "func sealEligibilityLegacy()",
-         "R82④: 必须覆盖记录完整时正常续签，以及记录不完整时由实时身份恢复；"),
+         "R82④: 必须覆盖完整记录正常续签、实时身份恢复，以及不完整记录回退；"),
         # ⑤ 把「实时身份恢复不完整记录」那条单测改名 ⇒ R82④ 报红。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",
          "func incompleteIdentityLegacy()",
-         "R82④: 必须覆盖记录完整时正常续签，以及记录不完整时由实时身份恢复；"),
+         "R82④: 必须覆盖完整记录正常续签、实时身份恢复，以及不完整记录回退；"),
         # ⑥ 结算退回「只看身份」⇒ R82⑤ 报红。**这正是本轮修的真问题**：
         #    准入放行了，结算侧却仍假定「Seal 续签 = 自替换」⇒ 成功项永远停在等待确认。
         ("Seal/Core/Renewal/RenewalCoordinator.swift",
@@ -9508,6 +9508,11 @@ def main():
          "func capacityRecoveryStillOffersTheRunningSealCertificateWhenItIsTheOnlyOne()",
          "func capacityRecoveryLegacy()",
          "R84⑧: 必须有两个方向的单测"),
+        # ⑨ 删除已签名产物门槛 ⇒ R84⑨ 报红（不完整记录不能走记录回退）。
+        ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
+         "                  app.hasSignedArtifact,\n",
+         "                  true,\n",
+         "R84⑨: Seal 的实时身份缺失或不匹配时，记录回退必须核对完整签名身份、目标和已装产物"),
         # ⑩ 把「A 排最后但仍进候选」改回「排除 A」⇒ Takeover 断言报红（免费账号死锁回归）。
         ("Seal/Core/Signing/CertificateTakeoverPolicy.swift",
          "        let ordered = ordinaryCandidates + runningSealCandidates\n",

@@ -4,7 +4,7 @@
 - **根因**：实时身份通道拒绝后调用通用记录判定；该判定只要求安装状态、Team、证书序列号和主 Bundle ID，没有确认 Seal 记录中的签名设备标识、目标快照与已签名产物。
 - **修复**：Seal 的记录通道要求持久签名身份、已装签名产物及当前全部目标记录；缺字段时回落完整重签。实时身份完整时仍直接放行，普通应用的可清理 `Signed.ipa` 缓存规则不变。
 - **涉及文件**：`Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift`、`SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift`、`Scripts/verify-release-safety.py`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`、`project.yml`。
-- **验证状态**：CI #57 首次暴露；CI #58 中 Swift 回归、签名器测试通过，但 R82① 旧守卫把受限的 Seal 记录完整性分支误判为身份一刀切。已将守卫改为校验完整记录放行与不完整记录拒绝，待完整 iOS CI 重跑。Windows 无 Xcode/Swift 工具链，不在本机运行测试或项目守卫。
+- **验证状态**：CI #57 首次暴露；CI #58 中 Swift 回归、签名器测试通过，但 R82① 旧守卫把受限的 Seal 记录完整性分支误判为身份一刀切。CI #59 中 Swift 回归、签名器测试再次通过，守卫本身通过，但 R82④ 两个变异用例仍匹配旧错误说明；已同步预期文案，并为已签名产物门槛新增变异检查，待完整 iOS CI 重跑。Windows 无 Xcode/Swift 工具链，不在本机运行测试或项目守卫。
 
 ## 2026-10-19 14:51:16 CI #56 失败复盘：待提交签名快照未持久化
 
