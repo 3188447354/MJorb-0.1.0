@@ -919,7 +919,9 @@ private extension ImportWorkflowTests {
             importedAt: Date(timeIntervalSince1970: 100)
         ))
 
-        let source = try IPAArchiveFixture.make()
+        let source = try IPAArchiveFixture.make(
+            apps: [.init(bundleIdentifier: "app.folia.major", name: "Folia")]
+        )
         defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
         let workflow = makeWorkflow(environment: environment)
         await workflow.prepare(sourceURL: source)
