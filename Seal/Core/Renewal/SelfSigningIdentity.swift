@@ -168,3 +168,19 @@ enum SelfManagementState: String, Codable, Sendable {
     case selfManaged
     case recoveryRequired
 }
+
+/// 首次接管时，Seal 必须完整重签一次，才能把当前签名证书的私钥保存到本机。
+/// 之后运行身份与本机私钥匹配，普通 profile-only 续签继续可用。
+enum SelfSigningBootstrapPolicy {
+    static func requiresFullResign(
+        isSeal: Bool,
+        signerSerialNumber: String?,
+        signerHasLocalPrivateKey: Bool
+    ) -> Bool {
+        guard isSeal,
+              let signerSerialNumber,
+              signerSerialNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        else { return false }
+        return signerHasLocalPrivateKey == false
+    }
+}

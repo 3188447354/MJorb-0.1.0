@@ -12,7 +12,9 @@ import Foundation
 ///
 /// 默认只认 `originalBundleIdentifier`（**导入包的原始身份**），不拿签名后的身份匹配，
 /// 避免把「同原始包、不同签名身份」的副本一并吞掉。恢复出的已安装记录标记
-/// `needsIPAImport` 时，重新导入的是设备上已签名的 IPA，此时额外允许按 mapped Bundle ID 匹配。
+/// `needsIPAImport` 时，重新导入的是设备上已签名的 IPA，此时额外允许按 mapped Bundle ID 匹配；
+/// 兼容旧版恢复记录把 original 错存成 mapped 的情况，按历史 `.seal.<TeamID>` 标记识别原始 IPA，
+/// 让用户重导入时可以接管并修复那条记录。
 ///
 /// ⚠️ 只有**已安装**记录才构成覆盖更新候选。待签名记录不参与：仓库刻意支持
 /// 「同一个 IPA 导入多个副本、用不同 Bundle ID 分别签名同时安装」，那条路径上的记录
@@ -33,7 +35,12 @@ enum ImportReplacementPolicy {
                     normalizedBundleIdentifier(record.originalBundleIdentifier) == target
                 let matchesRecoveredSignedBundleIdentifier = record.needsIPAImport
                     && normalizedBundleIdentifier(record.mappedBundleIdentifier ?? "") == target
-                return matchesOriginalBundleIdentifier || matchesRecoveredSignedBundleIdentifier
+                let matchesRecoveredOriginalBundleIdentifier = normalizedBundleIdentifier(
+                    recoveredOriginalBundleIdentifier(for: record) ?? ""
+                ) == target
+                return matchesOriginalBundleIdentifier
+                    || matchesRecoveredSignedBundleIdentifier
+                    || matchesRecoveredOriginalBundleIdentifier
             }
             .max { lhs, rhs in
                 installedTimestamp(lhs) < installedTimestamp(rhs)
@@ -61,5 +68,33 @@ enum ImportReplacementPolicy {
 
     private static func installedTimestamp(_ record: AppRecord) -> Date {
         record.lastInstalledAt ?? record.importedAt
+    }
+
+    private static func recoveredOriginalBundleIdentifier(for record: AppRecord) -> String? {
+        guard record.needsIPAImport,
+              let mappedBundleIdentifier = record.mappedBundleIdentifier else { return nil }
+        let mapped = mappedBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard mapped.isEmpty == false,
+              normalizedBundleIdentifier(record.originalBundleIdentifier)
+                == normalizedBundleIdentifier(mapped)
+        else { return nil }
+
+        if let teamIdentifier = record.signingTeamID,
+           InstalledRecordRecoveryPolicy.normalizedTeamIdentifier(teamIdentifier) != nil {
+            let restored = InstalledRecordRecoveryPolicy.originalBundleIdentifier(
+                fromMapped: mapped,
+                teamIdentifier: teamIdentifier
+            )
+            return normalizedBundleIdentifier(restored ?? "") == normalizedBundleIdentifier(mapped)
+                ? nil
+                : restored
+        }
+
+        let marker = ProfileReclaimPolicy.sealGeneratedMarker
+        guard let markerRange = mapped.range(of: marker, options: .backwards) else { return nil }
+        let original = String(mapped[..<markerRange.lowerBound])
+        let suffix = String(mapped[markerRange.upperBound...])
+        guard original.isEmpty == false, suffix.isEmpty == false else { return nil }
+        return original
     }
 }

@@ -12,30 +12,21 @@ struct PairingLiveActivityWidget: Widget {
                 .widgetURL(PairingDeepLink.url)
         } dynamicIsland: { context in
             DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 7) {
-                        sealMark
-                        Text(context.state.title)
-                            .font(.caption2.weight(.semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundStyle(.white)
-                }
-
-                DynamicIslandExpandedRegion(.trailing) {
-                    status(for: context.state)
-                }
+                DynamicIslandExpandedRegion(.leading) { EmptyView() }
+                DynamicIslandExpandedRegion(.trailing) { EmptyView() }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    pairingDetails(context.state, codeSize: 30)
+                    VStack(spacing: 8) {
+                        brandingRow(context.state)
+                        pairingDetails(context.state, codeSize: 30)
+                    }
                 }
             } compactLeading: {
-                sealMark
+                EmptyView()
             } compactTrailing: {
                 compactTrailing(for: context.state)
             } minimal: {
-                sealMark
+                statusIcon(for: context.state.stage)
             }
             .widgetURL(PairingDeepLink.url)
             .keylineTint(tint(for: context.state.stage))
@@ -43,7 +34,7 @@ struct PairingLiveActivityWidget: Widget {
     }
 
     private var sealMarkImage: Image {
-        Image("SealBrandIcon")
+        Image("SealBrandIcon", bundle: .main)
             .renderingMode(.original)
             .resizable()
     }
@@ -54,13 +45,13 @@ struct PairingLiveActivityWidget: Widget {
             sealMarkImage
                 .widgetAccentedRenderingMode(.fullColor)
                 .scaledToFit()
-                .frame(width: 20, height: 20)
+                .frame(width: 24, height: 24)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .accessibilityLabel("Seal")
         } else {
             sealMarkImage
                 .scaledToFit()
-                .frame(width: 20, height: 20)
+                .frame(width: 24, height: 24)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .accessibilityLabel("Seal")
         }
@@ -135,16 +126,23 @@ struct PairingLiveActivityWidget: Widget {
 
     private func lockScreen(_ state: PairingActivityAttributes.ContentState) -> some View {
         VStack(spacing: 10) {
-            HStack(spacing: 7) {
-                sealMark
-                Text(state.title).font(.headline)
-                Spacer()
-                status(for: state)
-            }
+            brandingRow(state)
             pairingDetails(state, codeSize: 36)
         }
         .foregroundStyle(.white)
         .padding(18)
+    }
+
+    private func brandingRow(_ state: PairingActivityAttributes.ContentState) -> some View {
+        HStack(spacing: 7) {
+            sealMark
+            Text(state.title)
+                .font(.headline)
+                .lineLimit(1)
+            Spacer()
+            status(for: state)
+        }
+        .foregroundStyle(.white)
     }
 
     @ViewBuilder

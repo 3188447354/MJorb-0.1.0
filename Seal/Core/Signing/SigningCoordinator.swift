@@ -249,7 +249,21 @@ actor SigningCoordinator {
             await renewalPolicy.admissionDecision(for: app)
         guard case .eligible = predicted else { return false }
         let liveIdentity = await renewalPolicy.liveIdentity(for: app)
-        // 已安装签名证书必须可确认；profile-only 不需要本机保存该证书私钥。
+        if let liveIdentity {
+            guard let knownAccounts = try? await accountRepository.fetchAll() else { return false }
+            let signerHasLocalPrivateKey = await hasLocalPrivateKey(
+                for: liveIdentity.certificateSerialNumber,
+                accounts: knownAccounts
+            )
+            if SelfSigningBootstrapPolicy.requiresFullResign(
+                isSeal: true,
+                signerSerialNumber: liveIdentity.certificateSerialNumber,
+                signerHasLocalPrivateKey: signerHasLocalPrivateKey
+            ) {
+                return false
+            }
+        }
+        // 已安装签名证书必须可确认；Seal 只有在本机已有匹配私钥后才可走 profile-only。
         guard ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
             app: app, liveIdentity: liveIdentity
         ) != nil else { return false }
@@ -535,6 +549,27 @@ actor SigningCoordinator {
                 forceResign: forceResign,
                 installAfterSigning: installAfterSigning
             )
+            if useProfileOnlyRenewal, app.isSeal,
+               let liveProfileOnlyIdentity {
+                let signerHasLocalPrivateKey = await hasLocalPrivateKey(
+                    for: liveProfileOnlyIdentity.certificateSerialNumber,
+                    accounts: knownAccounts,
+                    preferredAccountID: accountID,
+                    preferredSecret: secret
+                )
+                if SelfSigningBootstrapPolicy.requiresFullResign(
+                    isSeal: true,
+                    signerSerialNumber: liveProfileOnlyIdentity.certificateSerialNumber,
+                    signerHasLocalPrivateKey: signerHasLocalPrivateKey
+                ) {
+                    useProfileOnlyRenewal = false
+                    try? await logStore?.append(
+                        category: .renewal,
+                        level: .info,
+                        message: "首次本机接管：当前 Seal 签名者没有本机私钥，本次完整重签以生成本机证书。"
+                    )
+                }
+            }
             // 🔴 设备端身份核验必须**先于**路径通知，且**没明确通过就回落完整重签**。
             //
             // profile-only 只是**加速路径**，不是安全边界：「不以本地旧记录直接覆盖设备」
@@ -1024,6 +1059,30 @@ actor SigningCoordinator {
     /// 对第三方调用会得到 **Seal 自己**的身份，造成假阳性。
     private func liveProfileOnlyIdentity(for app: AppRecord) async -> LiveProfileOnlyIdentity? {
         await policy(for: app).liveIdentity(for: app)
+    }
+
+    private func hasLocalPrivateKey(
+        for serialNumber: String,
+        accounts: [AppleAccountRecord],
+        preferredAccountID: UUID? = nil,
+        preferredSecret: AccountSecret? = nil
+    ) async -> Bool {
+        for account in accounts {
+            let secret: AccountSecret?
+            if account.id == preferredAccountID, let preferredSecret {
+                secret = preferredSecret
+            } else {
+                secret = try? await keychain.load(accountID: account.id)
+            }
+            if let secret,
+               SigningCertificateMaterialPolicy.availableCertificate(
+                   secret: secret,
+                   serialNumber: serialNumber
+               ) != nil {
+                return true
+            }
+        }
+        return false
     }
 
     private func shouldUseProfileOnlyRenewal(

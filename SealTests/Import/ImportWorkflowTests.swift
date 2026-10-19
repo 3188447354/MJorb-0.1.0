@@ -902,6 +902,31 @@ private extension ImportWorkflowTests {
         #expect(draft.versionCheck == .sameVersionRecovery(version: "1.2.3"))
     }
 
+    @Test
+    func sameVersionRecoveredRecordWithEmptyIPAPathCanBeReimported() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        try await environment.appStore.save(AppRecord(
+            originalBundleIdentifier: "app.folia.major",
+            mappedBundleIdentifier: "app.folia.major.seal.TEAM123456",
+            name: "Folia",
+            version: "1.2.3",
+            buildNumber: "45",
+            size: 0,
+            state: .installed,
+            ipaRelativePath: "",
+            needsIPAImport: true
+        ))
+
+        let source = try IPAArchiveFixture.make()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let workflow = makeWorkflow(environment: environment)
+        await workflow.prepare(sourceURL: source)
+
+        let draft = try requireDraft(await workflow.state)
+        #expect(draft.versionCheck == .sameVersionRecovery(version: "1.2.3"))
+    }
+
     /// 与 `FailOnceAppStore` 的区别：可以先**预置**已安装记录、再武装失败。
     /// 覆盖更新的重试用例需要「记录已在库里 + 第一次保存失败」这个组合。
     actor ArmedFailOnceAppStore: AppStore {

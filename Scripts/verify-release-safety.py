@@ -4675,6 +4675,39 @@ def violations(load=read):
           "R69⑤: 配对助手的「< 17.4 ⇒ Lockdown」分流必须保留 —— 本轮只抬 Seal 的门槛，"
           "不删 Lockdown 通道（用户明确要求代码保留）")
 
+    # R119: 灵动岛品牌状态放在展开内容区，账号证书 App 行只显示应用名。
+    pairing_widget = squash(strip_comments(load("SealLiveActivity/PairingLiveActivityWidget.swift")))
+    check("DynamicIslandExpandedRegion(.leading) { EmptyView() }" in pairing_widget
+          and "DynamicIslandExpandedRegion(.trailing) { EmptyView() }" in pairing_widget
+          and "DynamicIslandExpandedRegion(.bottom) { VStack(spacing: 8) { brandingRow(context.state) pairingDetails(context.state, codeSize: 30) } }" in pairing_widget
+          and "} compactLeading: { EmptyView() }" in pairing_widget
+          and "} minimal: { statusIcon(for: context.state.stage) }" in pairing_widget,
+          "R119①: 灵动岛胶囊不得承载 Seal 品牌图标或状态文案；展开内容区必须显示品牌状态行")
+    pairing_branding = squash(section(
+        strip_comments(load("SealLiveActivity/PairingLiveActivityWidget.swift")),
+        "private func brandingRow(",
+        "private func pairingDetails("
+    ))
+    check("sealMark" in pairing_branding and "Text(state.title)" in pairing_branding
+          and "status(for: state)" in pairing_branding,
+          "R119②: 展开内容区与锁屏共用的品牌行必须包含图标、Seal 名称和配对状态")
+    apple_account_view = strip_comments(load("Seal/Features/Settings/AppleAccountDetailView.swift"))
+    apple_account_row = section(
+        apple_account_view,
+        "private struct AppleAccountAppRowView",
+        "private func accountDetailRow("
+    )
+    check("Text(item.name)" in apple_account_row
+          and 'accountDetailRow("应用名称", item.name' not in apple_account_row,
+          "R119③: 已签名 App 行只显示应用名，不得再显示「应用名称」标签")
+    pairing_asset_json = load("SealLiveActivity/Assets.xcassets/SealBrandIcon.imageset/Contents.json")
+    pairing_project = strip_yaml_comments(load("project.yml"))
+    check('Image("SealBrandIcon", bundle: .main)' in pairing_widget
+          and ".widgetAccentedRenderingMode(.fullColor)" in pairing_widget
+          and "SealLiveActivity/Assets.xcassets" in pairing_project
+          and '"filename" : "icon.png"' in pairing_asset_json,
+          "R119④: 灵动岛必须从扩展资源包加载真实 Seal 彩色图标，保留全彩渲染与图像资源")
+
     # R70: 「悬空绑定」不得用裸 UUID 比较拦下续签（2026-09-25 真机，构建 37）。
     #
     # 与 R68（`RenewalAccountResolver`）是**同一个「悬空引用」陷阱家族的第三处**：
@@ -5002,6 +5035,17 @@ def violations(load=read):
           "Scan/certificate: 扫回记录不得填证书序列号 —— 描述文件里的 DeveloperCertificates 是"
           "**授权列表**、不是实际签名者；填了会让证书轮换把它排进「自动重签」（必然失败），"
           "并让撤销证书的确认弹窗承诺一件做不到的事")
+    check("originalBundleIdentifier: draft.originalBundleIdentifier," in r80_scan_records[0],
+          "Scan/original-identity: 扫描恢复记录要保留还原出的原始 Bundle ID，"
+          "否则重导入原 IPA 会新建重复记录并在签名时撞上已安装身份")
+    check("recoveredOriginalBundleIdentifier(for: record)" in load("Seal/Core/Import/ImportReplacementPolicy.swift"),
+          "Scan/legacy-takeover: 已保存的旧恢复记录必须可由原始 IPA 接管修复，不能要求用户清空应用数据")
+    r80_import_workflow = load("Seal/Core/Import/ImportWorkflow.swift")
+    check("guard existing.needsIPAImport == false,\n"
+          "                  existing.ipaRelativePath.isEmpty == false," in r80_import_workflow,
+          "Scan/empty-ipa-path: 空路径或待补 IPA 的旧记录不得被误判成同版本且已有原始 IPA")
+    check("OrphanAppRecoveryService" not in load("Seal/Features/Apps/AppsViewModel.swift"),
+          "Scan/single-entry: 应用列表 load 不能并发启动旧设备扫描；恢复只从启动维护入口执行")
     check("AppConfiguration.Paths.dismissedInstalledRecordsFile" in r80_policy
           and "UserDefaults.standard" not in r80_policy,
           "Scan/storage: 墓碑必须落在与其它状态文件同目录的 JSON 文件里 —— "
@@ -5374,7 +5418,7 @@ def violations(load=read):
           "R84⑨: Seal 的实时身份缺失或不匹配时，记录回退必须核对完整签名身份、目标和已装产物 ✗ —— "
           "部分记录不得继续放行 profile-only")
 
-    # R85: profile-only 续签由 Apple 当前证书与描述文件状态裁决；本机私钥仅用于说明。
+    # R85: 普通 profile-only 续签由 Apple 当前证书与描述文件状态裁决；Seal 首次接管是协调层的一次性例外。
     r85_policy = load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift")
     r85_coord = load("Seal/Core/Signing/SigningCoordinator.swift")
     r85_present = load("Seal/Features/Apps/AppPresentation.swift")
@@ -5455,6 +5499,15 @@ def violations(load=read):
     check("func localCertificateNoteOnlySpeaksWhenTheDeviceIsReallyMissingTheKey()"
           in r85_present_tests,
           "R85⑩: 私钥状态文案 helper 必须有单测")
+
+    r85_bootstrap = strip_comments(load("Seal/Core/Renewal/SelfSigningIdentity.swift"))
+    r85_bootstrap_tests = load("SealTests/Settings/SelfManagementPresentationTests.swift")
+    check("enum SelfSigningBootstrapPolicy" in r85_bootstrap
+          and "guard isSeal" in r85_bootstrap
+          and "return signerHasLocalPrivateKey == false" in r85_bootstrap
+          and r85_coord.count("SelfSigningBootstrapPolicy.requiresFullResign(") == 2
+          and "func keylessSealSignerRequiresOneFullResign()" in r85_bootstrap_tests,
+          "R85⑪: 只有无本机私钥的 Seal 首次接管才完整重签；预测、执行与纯函数回归必须同步")
 
     # R86: 子流程的阶段**不得覆盖父会话**（2026-09-26 构建 48 真机，用户需求②）。
     #
@@ -6260,9 +6313,16 @@ def violations(load=read):
     # 预测 fullResign 但实际 profile-only ⇒ 只是多等一轮（无害）。
     # 因此：非 Seal 直接 false；必须查 policy 判 eligible；证书缺失也 false。
     r117_signing = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
+    r117_predictor = section_or_empty(
+        r117_signing,
+        "    func predictsProfileOnlyForSeal(app: AppRecord, accountID: UUID?) async -> Bool {",
+        "\n    func signAndInstall("
+    )
     check("func predictsProfileOnlyForSeal(app: AppRecord) async -> Bool" in r117_signing
           and "guard app.isSeal else { return false }" in r117_signing
-          and "case .eligible = predicted else { return false }" in r117_signing,
+          and "case .eligible = predicted else { return false }" in r117_signing
+          and "SelfSigningBootstrapPolicy.requiresFullResign(" in r117_predictor
+          and "hasLocalPrivateKey(" in r117_predictor,
           "R117④: Seal 路径预测必须保守 ✗ —— "
           "误判 profile-only 会让自替换杀掉并行中的进程；"
           "任何不确定都必须返回 false 走串行殿后")
@@ -9299,6 +9359,26 @@ def main():
          "                deviceScanner: DeviceInstalledAppScanner.live\n",
          "",
          "Scan/wire:"),
+        # ㉙ 把 mapped ID 当成原始 ID 会让原始 IPA 重导入时无法接管恢复记录 ✓ 报红。
+        ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
+         "            originalBundleIdentifier: draft.originalBundleIdentifier,",
+         "            originalBundleIdentifier: draft.bundleIdentifier,",
+         "Scan/original-identity:"),
+        # ㉚ 恢复若仍从 load 并发启动旧扫描，会绕过可信 Team 身份还原规则 ✓ 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "    func load(force: Bool = false) async {",
+         "    func load(force: Bool = false) async {\n        _ = \"OrphanAppRecoveryService\"",
+         "Scan/single-entry:"),
+        # ㉛ 去掉旧记录接管会让已经保存的错误恢复记录仍然无法重导入 ✓ 报红。
+        ("Seal/Core/Import/ImportReplacementPolicy.swift",
+         "recoveredOriginalBundleIdentifier(for: record)",
+         "legacyRecoveredOriginalBundleIdentifier(for: record)",
+         "Scan/legacy-takeover:"),
+        # ㉜ needsIPAImport 或空路径不再强制进入恢复导入 ⇒ 旧记录仍会被“已是最新”挡住 ✓ 报红。
+        ("Seal/Core/Import/ImportWorkflow.swift",
+         "existing.needsIPAImport == false,",
+         "existing.needsIPAImport == true,",
+         "Scan/empty-ipa-path:"),
         # ── R81：`accountID` 缺失不得拦下续签（2026-09-25 构建 43 真机）──
         # ① 删掉「缺绑定 ⇒ 同 Team 放行」分支 ⇒ R81②/R81④ 报红（扫回的记录又续签不了）。
         ("Seal/Core/Signing/SigningCertificateSelectionPolicy.swift",
@@ -10093,6 +10173,21 @@ def main():
          "        while isBusy {\n            try Task.checkCancellation()",
          "        while false {\n            try Task.checkCancellation()",
          "R117③:"),
+        # ── R85：Seal 首次本机私钥接管 ──
+        # 纯函数若不再要求无私钥的 Seal 进入完整重签 ⇒ R85⑪ 报红。
+        ("Seal/Core/Renewal/SelfSigningIdentity.swift",
+         "return signerHasLocalPrivateKey == false",
+         "return true",
+         "R85⑪:"),
+        # ④ 若预测时漏查 Seal 运行签名者的本机私钥，首次接管会进并行组并被自替换杀进程。
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "if SelfSigningBootstrapPolicy.requiresFullResign(\n"
+         "                isSeal: true,\n"
+         "                signerSerialNumber: liveIdentity.certificateSerialNumber,\n"
+         "                signerHasLocalPrivateKey: signerHasLocalPrivateKey\n"
+         "            ) {",
+         "if false {",
+         "R117④:"),
 
         # ── R92：后台触发的通道时序 / 通道瞬时重试 / 未预期错误可观测 ──
         # ① 点火前不再等通道（退回「拿到容器就续签」）⇒ R92① 报红。
@@ -10626,6 +10721,27 @@ def main():
          'Unicorn.xcframework.zip",\n'
          '        checksum: "4f61907db6aafc56fb3e336b524d742342312f498bb40739f1da55fb4a24614a"',
          "R118③:"),
+        # ── R119：灵动岛品牌文案移出胶囊；已签名 App 行仅显示应用名 ──
+        ("SealLiveActivity/PairingLiveActivityWidget.swift",
+         "} compactLeading: {\n                EmptyView()",
+         "} compactLeading: {\n                sealMark",
+         "R119①:"),
+        ("SealLiveActivity/PairingLiveActivityWidget.swift",
+         "            status(for: state)\n        }\n        .foregroundStyle(.white)",
+         "            Spacer()\n        }\n        .foregroundStyle(.white)",
+         "R119②:"),
+        ("Seal/Features/Settings/AppleAccountDetailView.swift",
+         "            Text(item.name)",
+         '            Text("应用名称")',
+         "R119③:"),
+        ("SealLiveActivity/PairingLiveActivityWidget.swift",
+         'Image("SealBrandIcon", bundle: .main)',
+         'Image("MissingBrandIcon", bundle: .main)',
+         "R119④:"),
+        ("SealLiveActivity/PairingLiveActivityWidget.swift",
+         ".widgetAccentedRenderingMode(.fullColor)",
+         ".widgetAccentedRenderingMode(.accented)",
+         "R119④:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

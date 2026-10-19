@@ -24,13 +24,15 @@ struct SelfManagementPresentation: Equatable, Sendable {
     let allowsInstall: Bool
     let showsComputerRecovery: Bool
 
+    var isVisible: Bool { state != .selfManaged }
+
     init(_ state: SelfManagementState) {
         self.state = state
         let values: (String, String, Bool, Bool)
         switch state {
         case .externalBootstrap:
             values =
-                ("电脑签名，等待本机接管", "先准备一张 Seal 自己能用的签名证书。", true, false)
+                ("请重新签名 Seal 获取本机私钥", "", true, false)
         case .preparingLocalIdentity:
             values =
                 ("正在准备本机签名身份", "请保持 Seal 在前台。", false, false)
@@ -100,7 +102,11 @@ enum SelfManagementStateResolver {
                 break
             }
         }
-        return signerHasLocalPrivateKey ? .selfManaged : .externalBootstrap
+        return SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: signer,
+            signerHasLocalPrivateKey: signerHasLocalPrivateKey
+        ) ? .externalBootstrap : .selfManaged
     }
 }
 
@@ -1660,7 +1666,10 @@ final class SettingsViewModel: ObservableObject {
         if let signer, let keychain {
             for account in accounts {
                 guard let secret = try? await keychain.load(accountID: account.id),
-                      secret.p12(for: signer) != nil else { continue }
+                      SigningCertificateMaterialPolicy.availableCertificate(
+                          secret: secret,
+                          serialNumber: signer
+                      ) != nil else { continue }
                 signerIsLocal = true
                 break
             }

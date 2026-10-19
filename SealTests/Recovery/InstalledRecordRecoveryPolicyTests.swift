@@ -103,6 +103,41 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
+    func restoresOriginalBundleIdentifierFromSealMappedIDUsingKnownAccountTeam() throws {
+        let mappedBundleIdentifier = "app.folia.major.seal.TEAM123456"
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(mappedBundleIdentifier)],
+            profiles: [],
+            context: makeContext(teams: ["TEAM123456"])
+        )
+
+        let draft = try #require(drafts.first)
+        #expect(draft.originalBundleIdentifier == "app.folia.major")
+        #expect(draft.bundleIdentifier == mappedBundleIdentifier)
+        #expect(draft.teamIdentifier == "TEAM123456")
+
+        let record = InstalledRecordRecoveryPolicy.makeRecord(from: draft, accountID: nil)
+        #expect(record.originalBundleIdentifier == "app.folia.major")
+        #expect(record.mappedBundleIdentifier == mappedBundleIdentifier)
+        #expect(record.needsIPAImport)
+        #expect(record.signedIPARelativePath == nil)
+    }
+
+    @Test
+    func doesNotStripMappedBundleIdentifierWithoutKnownTeam() throws {
+        let mappedBundleIdentifier = "app.folia.major.seal.TEAM123456"
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(mappedBundleIdentifier)],
+            profiles: [],
+            context: makeContext(teams: [])
+        )
+
+        let draft = try #require(drafts.first)
+        #expect(draft.originalBundleIdentifier == mappedBundleIdentifier)
+        #expect(draft.teamIdentifier == nil)
+    }
+
+    @Test
     func ignoresUnvalidatedAppsAndAlreadyKnownOrDismissedApps() {
         let context = makeContext(
             known: ["com.example.known"],

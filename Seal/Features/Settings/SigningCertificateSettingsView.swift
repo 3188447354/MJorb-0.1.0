@@ -13,22 +13,24 @@ struct SigningCertificateSettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 accountCard
 
-                selfManagementCard
-                    // 自更新覆盖安装由「重新打开的新进程」对账确认：旧进程结算发生在
-                    // 重新启动 Seal 之后。这里在等待确认态下自动轮询本地状态，一旦对账
-                    // 完成（事务被结算/关闭）本页自动切到已完成，无需人手点「检查安装结果」。
-                    .task(id: viewModel.selfManagement.state) {
-                        guard viewModel.selfManagement.state == .awaitingReplacementConfirmation else {
-                            return
-                        }
-                        while !Task.isCancelled {
-                            await viewModel.refreshSelfManagementState()
-                            if viewModel.selfManagement.state != .awaitingReplacementConfirmation {
-                                break
+                if viewModel.isSelfManagementLoading || viewModel.selfManagement.isVisible {
+                    selfManagementCard
+                        // 自更新覆盖安装由「重新打开的新进程」对账确认：旧进程结算发生在
+                        // 重新启动 Seal 之后。这里在等待确认态下自动轮询本地状态，一旦对账
+                        // 完成（事务被结算/关闭）本页自动切到已完成，无需人手点「检查安装结果」。
+                        .task(id: viewModel.selfManagement.state) {
+                            guard viewModel.selfManagement.state == .awaitingReplacementConfirmation else {
+                                return
                             }
-                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            while !Task.isCancelled {
+                                await viewModel.refreshSelfManagementState()
+                                if viewModel.selfManagement.state != .awaitingReplacementConfirmation {
+                                    break
+                                }
+                                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            }
                         }
-                    }
+                }
 
                 Text("签名证书")
                     .font(.subheadline.weight(.semibold))
@@ -217,19 +219,23 @@ struct SigningCertificateSettingsView: View {
                     .buttonStyle(.plain)
                 }
             }
-            Text(presentation.detail)
-                .font(.caption)
-                .foregroundStyle(Color.sealTextSecondary)
-            HStack(spacing: 8) {
-                Text("当前实际签名者")
+            if presentation.detail.isEmpty == false {
+                Text(presentation.detail)
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
-                Spacer(minLength: 8)
-                Text(viewModel.sealActualSignerSerialNumber.map(fullSerialText) ?? "读取失败")
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(Color.sealTextSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+            }
+            if presentation.state != .externalBootstrap {
+                HStack(spacing: 8) {
+                    Text("当前实际签名者")
+                        .font(.caption)
+                        .foregroundStyle(Color.sealTextSecondary)
+                    Spacer(minLength: 8)
+                    Text(viewModel.sealActualSignerSerialNumber.map(fullSerialText) ?? "读取失败")
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(Color.sealTextSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
             if presentation.showsComputerRecovery {
                 Text("不要卸载 Seal。请用电脑按相同的包名（含扩展部分）和团队覆盖安装。")

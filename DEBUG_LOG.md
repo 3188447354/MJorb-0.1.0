@@ -1,3 +1,30 @@
+## 2026-10-19 灵动岛品牌行被胶囊遮挡及已签名 App 名称冗余
+
+- **现象**：灵动岛配对活动的 Seal 图标显示灰色占位或未显示，品牌名称与配对状态文字挤在胶囊边缘；Apple ID 证书的已签名 App 列表每个应用名前还重复显示“应用名称”。
+- **根因**：品牌行被放在灵动岛 leading/trailing 区域和紧凑胶囊里；图标资源虽已随扩展打包，图片初始化却未明确绑定扩展资源包。已签名 App 行复用了带字段标题的通用详情行。
+- **修复**：把 Seal 图标、Seal 名称和配对状态合并到展开内容区底部及锁屏卡片的品牌行；胶囊仅保留配对码或状态图形。图标明确从 Live Activity 扩展自己的 `SealBrandIcon` 彩色资源加载，保留 WidgetKit 全彩渲染并增至 24 pt。已签名 App 行直接显示应用名，其他字段行不变。
+- **回归守卫**：R119①–④ 检查品牌状态行的位置与内容、胶囊不再显示品牌文案、已签名 App 行没有“应用名称”标签，以及扩展资源和全彩设置仍存在。
+- **涉及文件**：`SealLiveActivity/PairingLiveActivityWidget.swift`、`Seal/Features/Settings/AppleAccountDetailView.swift`、`Scripts/verify-release-safety.py`、本日志、`RELEASE_NOTES.md`。
+- **验证状态**：尚未运行 Swift/Xcode 测试、发布守卫或真机检查；Windows 无 Xcode/Swift 工具链。本次仅做本地源码与 diff 检查，不推送。
+
+## 2026-10-19 重装 Seal 后恢复的 Folia 无法通过重导入接管
+
+- **现象**：重装 Seal 后设备扫描恢复 Folia 记录，但本地没有原始 IPA/图标；续签因缺少 IPA 失败。重新导入原始 IPA 后又生成新记录，签名时与设备上原 Folia 的 Bundle ID 冲突。
+- **根因**：生产设备扫描路径的 `InstalledAppDraft` 只保存设备实际 Bundle ID；`makeRecord` 又把它同时写入原始与 mapped ID。对于 `app.folia.major.seal.<TeamID>`，导入的原始 `app.folia.major` 因而匹配不到恢复记录。旧恢复服务还把 IPA 路径记为空串，文件存在性检查会把 Documents 目录误当作 IPA，拦截同版本重导入。
+- **修复**：扫描恢复草稿同时保留原始 Bundle ID；优先使用唯一匹配描述文件的 Team，否则只在后缀精确匹配本机已知 Team 时还原 `.seal.<TeamID>` / `.<TeamID>`。mapped ID 仍保持设备实际值。导入判据兼容已保存的旧恢复记录，允许原始 IPA 按可信 Team 或历史 `.seal.<TeamID>` 标记接管修复；移除列表加载中的旧并发扫描，统一由启动维护恢复。导入的 IPA 图标可通过既有替换记录映射显示在已安装列表。
+- **回归用例**：覆盖 Folia 风格的已知 Team 映射 ID 还原、未知 Team 不剥离、新旧恢复记录都能被原始 IPA 接管、空 IPA 路径仍进入恢复导入；发布守卫覆盖恢复身份、存量修复和单一恢复入口。
+- **涉及文件**：`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Core/Import/ImportReplacementPolicy.swift`、`Seal/Core/Import/ImportWorkflow.swift`、`Seal/Features/Apps/AppsViewModel.swift`、相关回归测试、`Scripts/verify-release-safety.py`、`RELEASE_NOTES.md`。
+- **验证状态**：尚未运行 Swift/Xcode 测试或发布守卫；Windows 无 Xcode/Swift 工具链，按项目约定交由 CI 编译和回归。本次只做本地 diff 检查，不推送。
+
+## 2026-10-19 首次电脑签名安装后的本机私钥接管
+
+- **现象**：电脑签名安装 Seal 后，证书页显示没有本机私钥；点击续签只更新描述文件，运行签名者与本机私钥状态一直不变，Seal 无法接管自己的证书。
+- **根因**：`ProfileOnlyRenewalPolicy` 刻意允许没有本机私钥的应用走 profile-only。Seal 的运行身份可读时也使用这条通用准入，因此从未触发一次会生成本机私钥的完整签名。
+- **修复**：新增纯函数 `SelfSigningBootstrapPolicy`。只有 Seal 当前运行签名者序列号可读且没有匹配的可解析 P12 时，预测侧将 Seal 从批量 profile-only 并行组排除，执行侧将其续签改为完整重签并安装；证书页仅显示“请重新签名 Seal 获取本机私钥”状态，签名身份与本机私钥匹配后隐藏自管理卡，只显示证书卡。普通应用和已接管 Seal 保留描述文件续签。
+- **上游对照**：SideStore 的 `VerifyCertificateOperation(willResign: false)` 允许本地无私钥时继续核验并刷新描述文件；Seal 保留该通用机制，仅为首次本机接管增加 Seal 专属的一次完整重签。详见 `docs/upstream-alignment.md`。
+- **涉及文件**：`Seal/Core/Renewal/SelfSigningIdentity.swift`、`Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、证书页与展示状态、`SealTests/Settings/SelfManagementPresentationTests.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`、本日志。
+- **验证状态**：已添加 bootstrap 判据、证书页可见性回归用例，以及 R85/R117 源码守卫和变异用例；尚未运行 Swift/Xcode 测试、项目守卫、CI 或真机验证。当前仅做本地静态 diff 检查；本次不推送。
+
 ## 2026-10-19 更新 IPA 后恢复已安装应用图标
 
 - **现象**：设备扫描回来的已安装记录没有可读图标时显示默认图标；重新导入 IPA 后，待签名记录有新图标，但「应用-已安装」与证书页清单仍按旧记录 ID 取图，无法恢复。

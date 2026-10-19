@@ -238,7 +238,13 @@ private struct AppleAccountAppRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            accountDetailRow("应用名称", item.name, emphasis: true)
+            Text(item.name)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(Color.primary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
             accountDetailRow("App ID", item.appIdentifier)
             accountDetailRow("Bundle ID", item.bundleIdentifier, monospaced: true)
             accountDetailRow("有效期至", item.expirationText)
@@ -250,7 +256,6 @@ private struct AppleAccountAppRowView: View {
     private func accountDetailRow(
         _ title: String,
         _ value: String,
-        emphasis: Bool = false,
         monospaced: Bool = false
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
@@ -259,8 +264,7 @@ private struct AppleAccountAppRowView: View {
                 .foregroundStyle(Color.sealTextSecondary)
             Text(value)
                 .font(monospaced ? .caption.monospaced() : .caption)
-                .fontWeight(emphasis ? .semibold : .regular)
-                .foregroundStyle(emphasis ? Color.primary : Color.sealTextSecondary)
+                .foregroundStyle(Color.sealTextSecondary)
                 .lineLimit(1)
                 .truncationMode(monospaced ? .middle : .tail)
                 .textSelection(.enabled)

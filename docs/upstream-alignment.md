@@ -356,3 +356,11 @@ on 4.5.2」✗。
 | profile-only 记录回退 | `VerifyCertificateOperation(willResign: false)` 从设备已安装应用读取签名证书，再与 Apple 门户活动证书核对；`CacheSigningCertOperation` 也以 `installedApp` 为身份来源。 | Seal 优先核对运行包 CMS 身份；实时身份缺失或不匹配时，只有持久签名身份、完整目标快照和已签名产物都齐全，才允许走记录通道。Seal 的部分自管理记录回落完整重签。 |
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift` 与 `CacheSigningCertOperation.swift`。沿用“按已安装签名者核对”的边界；不把 SideStore 的 Core Data 表示直接搬入 Seal。
+
+### 2026-10-19 Seal 首次本机私钥接管
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 无本机私钥时的续签 | `VerifyCertificateOperation(willResign: false)` 核对当前安装包签名者；只要证书仍有效就可以只更新描述文件，不要求设备保存私钥。 | **普通 App 与已完成接管的 Seal 跟随**：继续允许 profile-only。首次电脑签名安装的 Seal 若当前运行签名者没有匹配的本机 P12，则由 `SigningCoordinator` 强制完整重签一次以生成本机签名材料；新包确认安装且运行身份匹配 P12 后，后续回到 profile-only。只在协调层加 Seal 专属的一次性接管，不改变通用准入策略。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift`。

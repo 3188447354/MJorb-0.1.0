@@ -75,6 +75,55 @@ struct ImportReplacementPolicyTests {
     }
 
     @Test
+    func recoveredInstalledRecordMatchesReimportedOriginalIPAAfterIdentityRecovery() {
+        let recovered = makeRecord(
+            original: "app.folia.major",
+            mapped: "app.folia.major.seal.TEAM123456",
+            isInstalled: true,
+            needsIPAImport: true
+        )
+        let candidate = ImportReplacementPolicy.installedReplacementCandidate(
+            for: makeParsed(bundleIdentifier: "app.folia.major"),
+            in: [recovered]
+        )
+
+        #expect(candidate?.id == recovered.id)
+    }
+
+    @Test
+    func legacyRecoveredRecordWithMappedOriginalCanBeTakenOverByReimportedIPA() {
+        let mappedBundleIdentifier = "app.folia.major.seal.TEAM123456"
+        let recovered = makeRecord(
+            original: mappedBundleIdentifier,
+            mapped: mappedBundleIdentifier,
+            isInstalled: true,
+            needsIPAImport: true
+        )
+        let candidate = ImportReplacementPolicy.installedReplacementCandidate(
+            for: makeParsed(bundleIdentifier: "app.folia.major"),
+            in: [recovered]
+        )
+
+        #expect(candidate?.id == recovered.id)
+    }
+
+    @Test
+    func legacyMappedOriginalFallbackAppliesOnlyToRecoveredRecords() {
+        let mappedBundleIdentifier = "app.folia.major.seal.TEAM123456"
+        let ordinaryInstalledRecord = makeRecord(
+            original: mappedBundleIdentifier,
+            mapped: mappedBundleIdentifier,
+            isInstalled: true
+        )
+        let candidate = ImportReplacementPolicy.installedReplacementCandidate(
+            for: makeParsed(bundleIdentifier: "app.folia.major"),
+            in: [ordinaryInstalledRecord]
+        )
+
+        #expect(candidate == nil)
+    }
+
+    @Test
     func picksMostRecentlyInstalledAmongDuplicates() {
         let older = makeRecord(
             original: "com.example.demo",

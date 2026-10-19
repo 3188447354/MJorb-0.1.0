@@ -32,9 +32,9 @@ struct LiveProfileOnlyIdentity: Equatable, Sendable {
 }
 
 /// Decides whether an installed app has enough identity to attempt a profile-only
-/// refresh. Missing profile snapshots and local private keys do not decide the path;
-/// the coordinator and Apple portal validate the current team, device, certificate,
-/// App IDs, and profile capabilities.
+/// refresh. Missing profile snapshots and local private keys do not decide ordinary
+/// profile-only renewals; the coordinator separately requires Seal's one-time local
+/// signing bootstrap when its running signer has no matching private key.
 ///
 /// 🔴 **Seal 自己不再被排除**（2026-09-25）：它与任何第三方已装应用走**同一条**判据 ——
 /// 「只更新描述文件、不重新安装」对 Seal 同样适用，判定依据是可核验的身份信息，
@@ -76,7 +76,7 @@ enum ProfileOnlyRenewalPolicy {
 
     /// `FullResignReason` 的**可读说明**（只用于日志）。
     ///
-    /// 界面文案不使用这里；本地私钥状态不会改变描述文件续签路径。
+    /// 界面文案不使用这里；Seal 首次本机接管的例外由 `SigningCoordinator` 单独处理。
     static func describe(_ reason: FullResignReason) -> String {
         switch reason {
         case .missingInstalledArtifact: "记录里缺少已安装产物"
@@ -91,10 +91,10 @@ enum ProfileOnlyRenewalPolicy {
     ///
     /// **三态而不是 `Bool`**：读不到账号密钥 与「确认没有私钥」的下一步动作完全不同 ——
     /// 前者（Keychain 暂时读不到 / 账号已删）**不能**凭空断言「缺私钥」，只能什么都不说；
-    /// 后者只说明本机没有私钥；描述文件续签仍由 Apple 门户里的证书状态决定。
+    /// 后者只说明本机没有私钥；普通应用的描述文件续签仍由 Apple 门户里的证书状态决定。
     ///
-    /// 本机没有该证书私钥时可以提示这一事实，但不据此强制完整重签；Apple 门户仍可能
-    /// 接受该证书并签发更新后的描述文件。提示由 `AppSigningPresentationHelpers` 统一提供。
+    /// 普通应用没有该证书私钥时不强制完整重签；Apple 门户仍可能接受该证书并签发更新后的
+    /// 描述文件。Seal 首次安装后的接管例外由 `SigningCoordinator` 处理。
     enum LocalCertificateAvailability: Equatable, Sendable {
         /// 没有记录序列号、或读不到该账号的密钥 ⇒ **不显示任何话**（不能凭空断言缺私钥）。
         case undetermined

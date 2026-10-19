@@ -153,7 +153,9 @@ actor ImportWorkflow {
             } else if buildComparison < 0 {
                 return .buildDowngrade(oldBuild: oldBuild, newBuild: newBuild, version: newVersion)
             }
-            guard (try? await fileStore.exists(relativePath: existing.ipaRelativePath)) == true else {
+            guard existing.needsIPAImport == false,
+                  existing.ipaRelativePath.isEmpty == false,
+                  (try? await fileStore.exists(relativePath: existing.ipaRelativePath)) == true else {
                 return .sameVersionRecovery(version: newVersion)
             }
             return .alreadyLatest(version: newVersion)

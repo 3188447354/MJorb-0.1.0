@@ -144,6 +144,7 @@ enum DismissedInstalledRecordTombstones {
 enum InstalledRecordRecoveryPolicy {
     struct InstalledAppDraft: Equatable, Sendable {
         let bundleIdentifier: String
+        let originalBundleIdentifier: String
         let teamIdentifier: String?
         let profileUUID: String?
         let profileName: String?
@@ -376,10 +377,19 @@ enum InstalledRecordRecoveryPolicy {
             }
             guard isSeal == false else { return nil }
 
+            // 设备清单只提供签名后的 ID。还原原始 ID 时只用唯一匹配的 profile Team，
+            // 或与本机已知 Team 精确匹配的后缀；证据不足就保留设备实际 ID。
             let profileTeam = matchedProfile.flatMap { normalizedTeamIdentifier($0.teamIdentifier) }
+            let teamIdentifier = profileTeam
+                ?? teamIdentifierForMappedBundle(bundleID, knownTeams: context.knownTeamIdentifiers)
+            let originalBundleIdentifier = Self.originalBundleIdentifier(
+                fromMapped: bundleID,
+                teamIdentifier: teamIdentifier
+            ) ?? bundleID
             return InstalledAppDraft(
                 bundleIdentifier: bundleID,
-                teamIdentifier: profileTeam,
+                originalBundleIdentifier: originalBundleIdentifier,
+                teamIdentifier: teamIdentifier,
                 profileUUID: matchedProfile?.uuid,
                 profileName: matchedProfile?.name,
                 profileCreationDate: matchedProfile?.creationDate,
@@ -401,6 +411,18 @@ enum InstalledRecordRecoveryPolicy {
         return target.hasPrefix(prefix) && target.count > prefix.count
     }
 
+    private static func teamIdentifierForMappedBundle(
+        _ bundleIdentifier: String,
+        knownTeams: Set<String>
+    ) -> String? {
+        let normalizedBundle = normalizedBundleIdentifier(bundleIdentifier)
+        let matches = knownTeams.filter { team in
+            let normalizedTeam = team.lowercased()
+            return normalizedBundle.hasSuffix(".\(normalizedTeam)")
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
     static func makeRecord(
         from draft: InstalledAppDraft,
         accountID: UUID?,
@@ -409,7 +431,7 @@ enum InstalledRecordRecoveryPolicy {
     ) -> AppRecord {
         AppRecord(
             id: id,
-            originalBundleIdentifier: draft.bundleIdentifier,
+            originalBundleIdentifier: draft.originalBundleIdentifier,
             mappedBundleIdentifier: draft.bundleIdentifier,
             name: draft.displayName,
             version: draft.version,

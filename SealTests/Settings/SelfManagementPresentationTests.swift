@@ -14,7 +14,7 @@ struct SelfManagementPresentationTests {
 
     /// 每个状态都必须有确定的口语化标题。
     @Test(arguments: [
-        PresentationCase(.externalBootstrap, "电脑签名，等待本机接管"),
+        PresentationCase(.externalBootstrap, "请重新签名 Seal 获取本机私钥"),
         PresentationCase(.preparingLocalIdentity, "正在准备本机签名身份"),
         PresentationCase(.localIdentityReady, "本机身份已就绪"),
         PresentationCase(.awaitingReplacementConfirmation, "已提交安装，等待重新打开 Seal 确认"),
@@ -49,6 +49,56 @@ struct SelfManagementPresentationTests {
         #expect(SelfManagementPresentation(.selfManaged).allowsInstall)
         #expect(SelfManagementPresentation(.preparingLocalIdentity).allowsInstall == false)
     }
+
+    @Test
+    func selfManagedStateHidesBootstrapCard() {
+        #expect(SelfManagementPresentation(.selfManaged).isVisible == false)
+        #expect(SelfManagementPresentation(.externalBootstrap).isVisible)
+        #expect(SelfManagementPresentation(.externalBootstrap).detail.isEmpty)
+    }
+}
+
+struct SelfSigningBootstrapPolicyTests {
+    @Test
+    func keylessSealSignerRequiresOneFullResign() {
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: "SERIAL",
+            signerHasLocalPrivateKey: false
+        ))
+    }
+
+    @Test
+    func thirdPartySignerDoesNotBootstrap() {
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: false,
+            signerSerialNumber: "SERIAL",
+            signerHasLocalPrivateKey: false
+        ) == false)
+    }
+
+    @Test
+    func localPrivateKeySkipsBootstrap() {
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: "SERIAL",
+            signerHasLocalPrivateKey: true
+        ) == false)
+    }
+
+    @Test
+    func unknownSignerDoesNotBootstrap() {
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: nil,
+            signerHasLocalPrivateKey: false
+        ) == false)
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: "   ",
+            signerHasLocalPrivateKey: false
+        ) == false)
+    }
 }
 
 struct SelfManagementStateResolverTests {
@@ -73,7 +123,7 @@ struct SelfManagementStateResolverTests {
         return transaction
     }
 
-    /// 无事务、真实签名者没有本机私钥：电脑签的 Seal，等待接管。
+    /// 无事务、当前实际签名者没有本机私钥：提示首次完整重签以完成接管。
     @Test
     func noTransactionWithExternalSignerIsExternalBootstrap() {
         let state = SelfManagementStateResolver.resolve(
