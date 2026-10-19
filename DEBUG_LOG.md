@@ -3,7 +3,8 @@
 - **现象**：首轮 CI（39258430026）Swift 回归编译失败；R120 守卫变异未能触发断言。修正后第二轮 CI（39261893803）再次在 IPA 测试夹具编译失败，并发现源错误码清单中的行号已过期。
 - **根因**：`ProfileOnlyRenewalPolicy.liveIdentity` 的 `allSatisfy` 闭包加入局部 `let` 后仍依赖单表达式隐式返回；R120 变异注入的 `ScrollView {}` 与守卫统计的 `ScrollView(` 形态不匹配；IPA fixture 的 ZIP 目录尾部搜索表达式过复杂，Swift 编译器无法完成类型检查；`IPAParserService.swift` 行数变化后未重生成错误码位置清单。
 - **修复**：在闭包中显式 `return`；变异用例改为 `ScrollView(showsIndicators: false)` 以确实增加嵌套滚动视图；将 ZIP 目录尾部查找拆成倒序循环；使用工作流同一命令重生成 `docs/qa/generated/error-code-inventory.json`（433 个标识、839 处）。
-- **验证状态**：第二轮 CI 的 R120 守卫已通过；错误码清单生成完成，`git diff --check` 通过。Swift fixture 编译修正和更新后的清单待下一轮 CI 验证；未在本机运行 Swift/Xcode 测试或项目守卫，尚未发布 Release。
+- **CI 追修**：第三轮完整 CI（39265000490）通过。正式 Release 构建（39268452198）在 `PairingLiveActivityController.finish()` 报 Swift 6.2 数据竞争错误：主线程隔离的 `Activity` 直接传给并发的 `end()`。按同文件现有 `update()` 做法，在等待上一操作后把句柄仅传给 ActivityKit `end()`。
+- **验证状态**：R120 守卫、Swift 回归、签名器测试、错误码清单审计与完整 unsigned IPA 构建均已在 CI 通过；Release 守卫及静态审计通过，但 Release 构建被上述 Swift 并发错误挡住。已修正 `end()` 调用，待下一轮 Release CI 验证。错误码清单用工作流同一命令生成（433 个标识、839 处），`git diff --check` 通过；未在本机运行 Swift/Xcode 测试或项目守卫，Release 尚未发布。
 
 ## 2026-10-19 ZIP 编码、续签实时身份与更新抽屉布局回归
 

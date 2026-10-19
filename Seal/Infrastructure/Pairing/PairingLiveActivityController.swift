@@ -117,9 +117,12 @@ final class PairingLiveActivityController {
         guard let activity else { return }
         self.activity = nil
         let previousOperation = activityOperation
+        // ActivityKit's current SDK marks end as concurrent; serialize the call with
+        // the prior operation and pass the handle only to that API.
+        nonisolated(unsafe) let activityForEnd = activity
         activityOperation = Task {
             await previousOperation?.value
-            await activity.end(nil, dismissalPolicy: .immediate)
+            await activityForEnd.end(nil, dismissalPolicy: .immediate)
         }
     }
 
