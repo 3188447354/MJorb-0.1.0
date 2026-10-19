@@ -414,7 +414,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2414,
+          "line": 2434,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -423,7 +423,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2438,
+          "line": 2458,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -432,7 +432,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2535,
+          "line": 2555,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -456,7 +456,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2531,
+          "line": 2551,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -496,7 +496,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2860,
+          "line": 2849,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -505,7 +505,7 @@
         },
         {
           "identifierKind": "legacy_error_identifier",
-          "line": 2952,
+          "line": 2941,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -1190,7 +1190,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1345,
+          "line": 1334,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -1221,7 +1221,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1352,
+          "line": 1341,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -1230,7 +1230,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1444,
+          "line": 1433,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -1439,7 +1439,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2723,
+          "line": 2712,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -1564,7 +1564,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2414,
+          "line": 2434,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -1724,7 +1724,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2731,
+          "line": 2720,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -2170,7 +2170,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2795,
+          "line": 2784,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -2766,7 +2766,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2983,
+          "line": 2972,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -2963,7 +2963,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1273,
+          "line": 1262,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -3038,7 +3038,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1274,
+          "line": 1263,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -3124,7 +3124,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1275,
+          "line": 1264,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -3164,7 +3164,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1276,
+          "line": 1265,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -3213,7 +3213,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1285,
+          "line": 1274,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -3222,7 +3222,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1293,
+          "line": 1282,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -3231,7 +3231,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1310,
+          "line": 1299,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -3272,7 +3272,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1459,
+          "line": 1448,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -3281,7 +3281,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1470,
+          "line": 1459,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -3290,7 +3290,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1481,
+          "line": 1470,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -3349,7 +3349,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1436,
+          "line": 1425,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -3631,7 +3631,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1769,
+          "line": 1758,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -3715,7 +3715,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1797,
+          "line": 1786,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4057,7 +4057,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1816,
+          "line": 1805,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4099,7 +4099,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1393,
+          "line": 1382,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4242,7 +4242,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 989,
+          "line": 978,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4251,7 +4251,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1859,
+          "line": 1848,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4260,7 +4260,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1994,
+          "line": 1983,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4269,7 +4269,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2042,
+          "line": 2031,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -4278,7 +4278,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2067,
+          "line": 2056,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4318,7 +4318,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1850,
+          "line": 1839,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4327,7 +4327,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2009,
+          "line": 1998,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4691,7 +4691,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3170,
+          "line": 3192,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -4734,7 +4734,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2327,
+          "line": 2347,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4743,7 +4743,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2558,
+          "line": 2578,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4752,7 +4752,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3250,
+          "line": 3289,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -4791,7 +4791,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2638,
+          "line": 2658,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -5049,7 +5049,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1025,
+          "line": 1014,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5058,7 +5058,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1026,
+          "line": 1015,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5067,7 +5067,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1031,
+          "line": 1020,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -5076,7 +5076,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1042,
+          "line": 1031,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -5085,7 +5085,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1732,
+          "line": 1721,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -5094,7 +5094,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1738,
+          "line": 1727,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5103,7 +5103,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1739,
+          "line": 1728,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5112,7 +5112,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2856,
+          "line": 2845,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -5230,7 +5230,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2507,
+          "line": 2496,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -5239,7 +5239,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2538,
+          "line": 2527,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -5386,7 +5386,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2478,
+          "line": 2467,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -6006,7 +6006,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2574,
+          "line": 2563,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -6318,7 +6318,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1656,
+          "line": 1645,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -6349,7 +6349,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1669,
+          "line": 1658,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -6398,7 +6398,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1678,
+          "line": 1667,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -6549,7 +6549,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1687,
+          "line": 1676,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -6642,7 +6642,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1636,
+          "line": 1625,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -6651,7 +6651,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1647,
+          "line": 1636,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -6682,7 +6682,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2292,
+          "line": 2281,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -6731,7 +6731,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2269,
+          "line": 2258,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7090,7 +7090,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2316,
+          "line": 2305,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7121,7 +7121,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2326,
+          "line": 2315,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -7441,21 +7441,12 @@
     "SEAL-IPA-101": {
       "auditStatus": "reference_only",
       "identifierKinds": {
-        "standard_error_code": 2
+        "standard_error_code": 1
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 62,
-          "path": "Seal/Core/Import/IPAParserService.swift",
-          "role": "failure_emission_candidate",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-101\""
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 110,
+          "line": 72,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7463,9 +7454,9 @@
           "source": "code: \"SEAL-IPA-101\""
         }
       ],
-      "occurrenceCount": 2,
+      "occurrenceCount": 1,
       "roles": {
-        "failure_emission_candidate": 2
+        "failure_emission_candidate": 1
       }
     },
     "SEAL-IPA-101b": {
@@ -7476,7 +7467,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 93,
+          "line": 55,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7518,7 +7509,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 147,
+          "line": 109,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7539,7 +7530,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 245,
+          "line": 207,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7548,7 +7539,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 507,
+          "line": 469,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7557,7 +7548,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 519,
+          "line": 481,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7566,7 +7557,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 544,
+          "line": 506,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7575,7 +7566,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 553,
+          "line": 515,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7596,7 +7587,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 379,
+          "line": 341,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7617,7 +7608,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 118,
+          "line": 80,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7638,7 +7629,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 215,
+          "line": 177,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7659,7 +7650,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 648,
+          "line": 610,
           "path": "Seal/Core/Import/IPAParserService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -7675,7 +7666,7 @@
     "SEAL-IPA-106": {
       "auditStatus": "reference_only",
       "identifierKinds": {
-        "standard_error_code": 2
+        "standard_error_code": 1
       },
       "locations": [
         {
@@ -7686,62 +7677,11 @@
           "semanticFields": [],
           "semanticValues": {},
           "source": "code: \"SEAL-IPA-106\""
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 47,
-          "path": "Seal/Core/Import/IPAParserService.swift",
-          "role": "failure_emission_candidate",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-106\""
-        }
-      ],
-      "occurrenceCount": 2,
-      "roles": {
-        "failure_emission_candidate": 2
-      }
-    },
-    "SEAL-IPA-107": {
-      "auditStatus": "unreviewed",
-      "identifierKinds": {
-        "standard_error_code": 1
-      },
-      "locations": [
-        {
-          "identifierKind": "standard_error_code",
-          "line": 36,
-          "path": "Seal/Core/Signing/IPADeviceCompatibility.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-107\""
         }
       ],
       "occurrenceCount": 1,
       "roles": {
-        "structured_failure_emission": 1
-      }
-    },
-    "SEAL-IPA-108": {
-      "auditStatus": "unreviewed",
-      "identifierKinds": {
-        "standard_error_code": 1
-      },
-      "locations": [
-        {
-          "identifierKind": "standard_error_code",
-          "line": 46,
-          "path": "Seal/Core/Signing/IPADeviceCompatibility.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "code: \"SEAL-IPA-108\""
-        }
-      ],
-      "occurrenceCount": 1,
-      "roles": {
-        "structured_failure_emission": 1
+        "failure_emission_candidate": 1
       }
     },
     "SEAL-IPA-200": {
@@ -8798,7 +8738,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 1630,
+          "line": 1619,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -10009,7 +9949,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3108,
+          "line": 3130,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -10018,7 +9958,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3141,
+          "line": 3163,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -10214,7 +10154,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3014,
+          "line": 3036,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -10246,7 +10186,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3014,
+          "line": 3036,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -10286,7 +10226,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3014,
+          "line": 3036,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -10351,7 +10291,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3344,
+          "line": 3373,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -10372,7 +10312,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2391,
+          "line": 2411,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -10381,7 +10321,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2779,
+          "line": 2801,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -10780,7 +10720,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3720,
+          "line": 3749,
           "path": "Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -10916,7 +10856,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1208,
+          "line": 1197,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -10925,7 +10865,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1215,
+          "line": 1204,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11224,7 +11164,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1099,
+          "line": 1088,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11233,7 +11173,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1134,
+          "line": 1123,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12122,7 +12062,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2362,
+          "line": 2351,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -12131,7 +12071,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2367,
+          "line": 2356,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12140,7 +12080,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2368,
+          "line": 2357,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12149,7 +12089,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2884,
+          "line": 2873,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -12172,7 +12112,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2891,
+          "line": 2880,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -12193,7 +12133,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2905,
+          "line": 2894,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -12214,7 +12154,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2912,
+          "line": 2901,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -12253,7 +12193,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2378,
+          "line": 2367,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12262,7 +12202,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2379,
+          "line": 2368,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12271,7 +12211,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2384,
+          "line": 2373,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -12280,7 +12220,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2856,
+          "line": 2845,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -12312,7 +12252,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2898,
+          "line": 2887,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -12882,7 +12822,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2876,
+          "line": 2865,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13178,7 +13118,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2783,
+          "line": 2772,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -13558,7 +13498,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 120,
+          "line": 127,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13579,7 +13519,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 121,
+          "line": 128,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13600,7 +13540,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 124,
+          "line": 131,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13621,7 +13561,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 123,
+          "line": 130,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13642,7 +13582,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 122,
+          "line": 129,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13755,7 +13695,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2825,
+          "line": 2814,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -13764,7 +13704,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2837,
+          "line": 2826,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -13773,7 +13713,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2869,
+          "line": 2858,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13840,26 +13780,26 @@
       "diagnostic_only": 5,
       "mixed": 3,
       "reference_only": 284,
-      "unreviewed": 78
+      "unreviewed": 76
     },
     "identifierKinds": {
       "diagnostic_tag": 73,
       "legacy_error_identifier": 2,
-      "standard_error_code": 764
+      "standard_error_code": 760
     },
-    "occurrences": 839,
+    "occurrences": 835,
     "roles": {
       "comment_reference": 122,
       "executable_reference": 125,
-      "failure_emission_candidate": 231,
+      "failure_emission_candidate": 229,
       "internal_event_or_log": 204,
-      "structured_failure_emission": 157
+      "structured_failure_emission": 155
     },
     "structuredFailureContracts": {
-      "directOccurrences": 157,
+      "directOccurrences": 155,
       "withExplicitSemantics": 73,
-      "withoutExplicitSemantics": 84
+      "withoutExplicitSemantics": 82
     },
-    "uniqueIdentifiers": 433
+    "uniqueIdentifiers": 431
   }
 }

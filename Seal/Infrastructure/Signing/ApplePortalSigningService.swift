@@ -2301,6 +2301,26 @@ actor ApplePortalSigningService {
                 )
             }
         }
+        var availableAppGroups: [ALTAppGroup] = []
+        let hasAppGroupEntitlements = cachedEntitlementsByBundleID.values.contains { entitlements in
+            (entitlements[.appGroups] as? [String])?.isEmpty == false
+        }
+        if hasAppGroupEntitlements {
+            availableAppGroups = try await withSessionRecovery("读取 App Groups") {
+                try await fetchAppGroups(team: team, session: session)
+            }
+            let existingGroupIdentifiers = availableAppGroups.map(\.groupIdentifier)
+            for bundleID in Array(cachedEntitlementsByBundleID.keys) {
+                guard var entitlements = cachedEntitlementsByBundleID[bundleID],
+                      let groups = entitlements[.appGroups] as? [String] else { continue }
+                entitlements[.appGroups] = AppGroupIdentifierPolicy.mappedIdentifiers(
+                    groups,
+                    teamIdentifier: team.identifier,
+                    existingIdentifiers: existingGroupIdentifiers
+                )
+                cachedEntitlementsByBundleID[bundleID] = entitlements
+            }
+        }
         var entitlementsByBundleID: [String: Set<String>] = [:]
         var entitlementValuesByBundleID: [String: [String: ProvisioningEntitlementValue]] = [:]
         // ⚠️ **期望集合取 `mappings.values`（映射后 Bundle ID），不是 `applications` 的键。**
@@ -2661,15 +2681,17 @@ actor ApplePortalSigningService {
                     }
                     // 免费账号与付费账号同样分配 App Group（对齐 SideStore 上游：`Feature.freeFeatures`
                     // 含 `.appGroups`，`updateAppGroups` 对免费账号无条件执行）。
-                    try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
+                    let updatedAppGroups = try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
                         try await assignAppGroups(
                             appID: appID,
                             application: application,
                             cachedEntitlements: cachedEntitlements,
                             team: team,
-                            session: session
+                            session: session,
+                            availableGroups: availableAppGroups
                         )
                     }
+                    availableAppGroups = updatedAppGroups
                 } catch {
                     // 完整 IPA 的任一扩展无法完成 App ID / capability / App Group
                     // 准备时，不能把它清空后继续产出一个表面成功的包。
@@ -3172,7 +3194,7 @@ actor ApplePortalSigningService {
             // 能力做门户提交，其余 capability 直接跳过（签出的包由 SideSign 按描述文件裁剪，自洽）。
             guard ALTFeature(entitlement: entitlement) != nil else { continue }
             if entitlement == .appGroups, let groups = value as? [String] {
-                // App Group ID 完全保留 IPA 声明；只统一顺序，不改写标识符。
+                // 读取 IPA entitlement 后已按当前团队现有组或团队后缀映射；这里只统一顺序。
                 filtered[entitlement] = AppGroupOrderingPolicy.canonicalize(groups)
             } else {
                 filtered[entitlement] = value
@@ -3234,15 +3256,32 @@ actor ApplePortalSigningService {
         return String(describing: value).lowercased()
     }
 
+    private func fetchAppGroups(
+        team: ALTTeam,
+        session: ALTAppleAPISession
+    ) async throws -> [ALTAppGroup] {
+        let fetchedBox: LegacyBox<[ALTAppGroup]> = try await withAppleTimeout {
+            try await withCheckedThrowingContinuation { continuation in
+                let callback = ContinuationBox(continuation)
+                ALTAppleAPI.shared.fetchAppGroups(for: team, session: session) { groups, error in
+                    Self.resume(callback, value: groups, error: error)
+                }
+            }
+        }
+        return fetchedBox.value
+    }
+
     private func assignAppGroups(
         appID: ALTAppID,
         application: ALTApplication,
         cachedEntitlements: [ALTEntitlement: any Sendable],
         team: ALTTeam,
-        session: ALTAppleAPISession
-    ) async throws {
-        guard let appGroupsValue = cachedEntitlements[.appGroups] else { return }
-        guard let originalGroups = appGroupsValue as? [String] else {
+        session: ALTAppleAPISession,
+        availableGroups: [ALTAppGroup]
+    ) async throws -> [ALTAppGroup] {
+        var available = availableGroups
+        guard let appGroupsValue = cachedEntitlements[.appGroups] else { return available }
+        guard let mappedGroups = appGroupsValue as? [String] else {
             throw Self.failure(
                 title: "应用组权限格式无效",
                 reason: "无法读取 \(application.bundleIdentifier) 的 App Groups 声明，Seal 已停止签名。",
@@ -3250,7 +3289,7 @@ actor ApplePortalSigningService {
                 code: "SEAL-ENTITLEMENT-403"
             )
         }
-        guard originalGroups.isEmpty == false else { return }
+        guard mappedGroups.isEmpty == false else { return available }
         // App Group 操作通过 actor 串行化；批量签名为串行循环，无并发创建风险
         // 2026-10-10：规范化后按默认字符串序排序，保证同一集合永远得到同一顺序。
         // 背景：原包 entitlement 里 app-groups 数组的顺序是任意的（不同构建可能不同，
@@ -3258,18 +3297,7 @@ actor ApplePortalSigningService {
         // 时取第 0 个当共享目录，顺序不同会导致两个 App 用不同的共享目录、互相看不见。
         // 注意用默认 `<`（区分大小写）：对本案即 [SideStore, AltStore]，主包第 0 个
         // 本来就是 SideStore，排序后不变，已转共享的数据不受影响。
-        let identifiers = AppGroupOrderingPolicy.canonicalize(originalGroups)
-        let fetchedBox: LegacyBox<[ALTAppGroup]> =
-            try await withAppleTimeout {
-                try await withCheckedThrowingContinuation { continuation in
-                let callback = ContinuationBox(continuation)
-                    ALTAppleAPI.shared.fetchAppGroups(for: team, session: session) {
-                        groups, error in
-                        Self.resume(callback, value: groups, error: error)
-                    }
-                }
-            }
-        var available = fetchedBox.value
+        let identifiers = AppGroupOrderingPolicy.canonicalize(mappedGroups)
         var assigned: [ALTAppGroup] = []
         for identifier in identifiers {
             try Task.checkCancellation()
@@ -3319,6 +3347,7 @@ actor ApplePortalSigningService {
                 }
             }
         }
+        return available
     }
 
     private func validateEmbeddedProfiles(

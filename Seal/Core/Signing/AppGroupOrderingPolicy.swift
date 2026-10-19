@@ -10,3 +10,20 @@ enum AppGroupOrderingPolicy {
         Array(Set(identifiers)).sorted()
     }
 }
+
+enum AppGroupIdentifierPolicy {
+    static func mappedIdentifiers(
+        _ identifiers: [String],
+        teamIdentifier: String,
+        existingIdentifiers: [String]
+    ) -> [String] {
+        let existing = Set(existingIdentifiers)
+        let teamSuffix = ".\(teamIdentifier)"
+        return AppGroupOrderingPolicy.canonicalize(identifiers.map { identifier in
+            if existing.contains(identifier) || identifier.hasSuffix(teamSuffix) {
+                return identifier
+            }
+            return identifier + teamSuffix
+        })
+    }
+}

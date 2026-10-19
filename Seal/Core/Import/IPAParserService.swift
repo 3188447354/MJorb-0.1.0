@@ -35,44 +35,6 @@ struct IPAParserService: Sendable {
         }
     }
 
-    func compatibilityMetadata(url: URL) throws -> IPADeviceCompatibilityMetadata {
-        let archive: Archive
-        do {
-            archive = try Archive(url: url, accessMode: .read)
-        } catch {
-            throw failure(
-                title: "无法检查 IPA 兼容性",
-                reason: "文件无法作为 IPA（ZIP）打开。",
-                recovery: "重新导入 IPA 后重试",
-                code: "SEAL-IPA-106"
-            )
-        }
-        let appInfoEntries = archive.filter { entry in
-            let components = archivePath(for: entry).split(separator: "/")
-            return components.count == 3
-                && components[0] == "Payload"
-                && components[1].hasSuffix(".app")
-                && components[2] == "Info.plist"
-        }
-        guard appInfoEntries.count == 1, let appInfoEntry = appInfoEntries.first else {
-            throw failure(
-                title: "无法检查 IPA 兼容性",
-                reason: "IPA 中的主应用信息缺失或不唯一。",
-                recovery: "重新导入完整 IPA 后重试",
-                code: "SEAL-IPA-101"
-            )
-        }
-        let info = try propertyList(
-            from: appInfoEntry,
-            in: archive,
-            maximumSize: limits.maximumMetadataSize
-        )
-        return IPADeviceCompatibilityMetadata(
-            supportedDevices: info["UISupportedDevices"] as? [String],
-            minimumOSVersion: info["MinimumOSVersion"] as? String
-        )
-    }
-
     private func parse(archive: Archive, sourceURL: URL) throws -> ParsedIPA {
         let entries = Array(archive)
         try validate(entries: entries)

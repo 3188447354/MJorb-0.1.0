@@ -1,3 +1,14 @@
+## 2026-10-20 更新下载进度、跨团队 App Group 与设备兼容性拦截
+
+- **现象**：更新抽屉下载时没有之前设计的传输进度；0.1.36 日志中 LiveContainer 的历史 App ID 可复用且无需新建，但完整签名仍失败；“歌一刀”被签名前置检查以设备型号不匹配拒绝。
+- **证据与根因**：`URLSession.download(for:)` 没有传入 `ProgressDownloadDelegate`，因此 `didWriteData` 没有绑定到该异步下载任务，进度视图一直停在初始不确定态。LiveContainer 的门户失败不是 App ID 重复/额度：Apple 拒绝 Seal 创建 IPA 原值 `group.com.SideStore.SideStore`，而本团队 App Group 列表已有团队后缀形式。另，`SigningCoordinator` 在门户请求前用 `UISupportedDevices` 和 `MinimumOSVersion` 主动拒绝签名。
+- **修复**：任务调用显式传 `delegate`，抽屉显示下载百分比与容量；读取团队已有 App Group 列表，对已有本团队组原样复用，其他组映射为团队后缀并在请求 entitlements、App Group 分配、profile 校验中共用；删除按设备列表与最低系统版本提前拒签的逻辑。设备实际安装由系统裁决。
+- **Seal 续签**：当前 0.1.36 源码已有按运行包真实签名者构造 Seal 实时身份的通道；同一签名证书的扩展可继承主 Team，签名者或已读 Team 不一致仍回落完整重签。本次新增同签名身份且本机私钥可用时保持 profile-only 的回归用例。`Seal-log(32)` 没有 Seal 续签操作，不能用该文件证明真机续签路径已通过。
+- **灵动岛**：0.1.36 IPA 已含扩展根目录的 `SealBrandIcon.png`，当前扩展代码也直接读取该资源并请求全彩渲染；日志没有 Live Activity 资源读取或渲染记录，因此暂时无法从这份日志定位灰色占位的运行期原因，本批不把它记作已修复。
+- **回归覆盖**：下载进度分数、App Group 团队映射、Seal 已接管后的 profile-only 判据；发布守卫增加进度代理绑定、设备声明不前置拦截、App Group 映射三项检查与变异。
+- **涉及文件**：更新下载器与抽屉、App Group 策略及 Portal 签名服务、IPA parser 与签名协调器、续签测试、发布守卫、错误码清单、版本、更新说明、上游对齐台账。
+- **验证状态**：尚未在本机运行 Swift/Xcode 或发布守卫；Windows 工具链不支持项目编译。待 CI 编译、守卫与回归；真实描述文件续签、下载进度和灵动岛图标仍需设备验收。
+
 ## 2026-10-19 CI 验收修正：闭包返回、守卫变异与 IPA 夹具编译
 
 - **现象**：首轮 CI（39258430026）Swift 回归编译失败；R120 守卫变异未能触发断言。修正后第二轮 CI（39261893803）再次在 IPA 测试夹具编译失败，并发现源错误码清单中的行号已过期。

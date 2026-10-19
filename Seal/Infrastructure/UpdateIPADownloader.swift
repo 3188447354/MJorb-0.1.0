@@ -23,7 +23,7 @@ struct UpdateIPADownloader {
     ///   `total` 为 nil，由 UI 改为展示「已下载 X」字节数，不再返回假百分比。
     /// - 超时策略：中国大陆网络下 GitHub 资产域可能长时间无响应，仅靠系统默认空闲超时会让
     ///   下载卡在 0% 不报错；此处收紧请求空闲超时到 15s、总时长硬上限 90s。
-    /// - 取消：使用 `URLSession.download(for:)` 原生异步 API，Task 取消会自动传导到传输任务，
+    /// - 取消：使用 `URLSession.download(for:delegate:)` 原生异步 API，Task 取消会自动传导到传输任务，
     ///   无需手动 `withTaskCancellationHandler`（避免旧式 `task.value` 在本 SDK 下的类型歧义）。
     func download(
         from url: URL,
@@ -50,7 +50,7 @@ struct UpdateIPADownloader {
 
         let (temporaryURL, response): (URL, URLResponse)
         do {
-            (temporaryURL, response) = try await session.download(for: request)
+            (temporaryURL, response) = try await session.download(for: request, delegate: delegate)
         } catch is CancellationError {
             try? fileManager.removeItem(at: destination)
             throw CancellationError()
@@ -90,6 +90,13 @@ struct UpdateIPADownloader {
     private static func isStorageFull(_ error: NSError) -> Bool {
         (error.domain == NSCocoaErrorDomain && error.code == NSFileWriteOutOfSpaceError)
             || (error.domain == NSPOSIXErrorDomain && error.code == 28)
+    }
+}
+
+enum UpdateDownloadProgress {
+    static func fraction(received: Int64, total: Int64?) -> Double? {
+        guard let total, total > 0 else { return nil }
+        return min(max(Double(received) / Double(total), 0), 1)
     }
 }
 

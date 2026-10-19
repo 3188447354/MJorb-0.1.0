@@ -4473,8 +4473,9 @@ def violations(load=read):
     )
     check("guard ALTFeature(entitlement: entitlement) != nil else { continue }" in filtered_entitlements_body
           and "AppGroupOrderingPolicy.canonicalize(groups)" in filtered_entitlements_body
-          and "bundleIDMapper.appGroupID(" not in filtered_entitlements_body,
-          "R65⑲: 能力请求过滤不可提交的 feature，并保留 IPA 原始 App Group 标识 ✗")
+          and "bundleIDMapper.appGroupID(" not in filtered_entitlements_body
+          and "AppGroupIdentifierPolicy.mappedIdentifiers(" in portal_source,
+          "R65⑲: 能力请求过滤不可提交的 feature，并将 App Groups 映射到本团队可授权的标识 ✗")
 
     renewal_policy_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift"))
     renewal_decision_source = section_or_empty(
@@ -4732,6 +4733,34 @@ def violations(load=read):
           and "normalizedVersion(trimmed) != normalizedVersion(version)" in update_notice_policy
           and "func releaseVersionHeadingIsNotRepeatedInUpdateItems()" in update_notice_tests,
           "R120: 更新抽屉须覆盖底部标签栏、由单一主滚动区承载内容，并过滤重复版本标题")
+
+    update_downloader = strip_comments(load("Seal/Infrastructure/UpdateIPADownloader.swift"))
+    check("session.download(for: request, delegate: delegate)" in update_downloader
+          and "func urlSession(" in update_downloader
+          and "didWriteData bytesWritten:" in update_downloader
+          and "UpdateDownloadProgress.fraction(received: received, total: total)" in update_notice_view
+          and "下载进度 \\(Int(progress * 100))%" in update_notice_view
+          and "downloadProgressIsDeterminateWhenTheResponseHasAContentLength()" in update_notice_tests,
+          "R122: 更新 IPA 下载必须把进度代理绑定到任务，并在抽屉显示实际百分比")
+
+    signing_coordinator = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
+    ipa_parser = strip_comments(load("Seal/Core/Import/IPAParserService.swift"))
+    check("IPADeviceCompatibility" not in signing_coordinator
+          and "compatibilityMetadata" not in ipa_parser
+          and not os.path.exists(ROOT / "Seal/Core/Signing/IPADeviceCompatibility.swift")
+          and not os.path.exists(ROOT / "SealTests/Signing/IPADeviceCompatibilityTests.swift"),
+          "R123: UISupportedDevices 与 MinimumOSVersion 不得作为 Seal 的签名前置拒绝条件")
+
+    app_group_policy = strip_comments(load("Seal/Core/Signing/AppGroupOrderingPolicy.swift"))
+    app_group_tests = load("SealTests/Signing/AppGroupOrderingPolicyTests.swift")
+    check("existing.contains(identifier)" in app_group_policy
+          and 'let teamSuffix = ".\\(teamIdentifier)"' in app_group_policy
+          and "return identifier + teamSuffix" in app_group_policy
+          and "AppGroupIdentifierPolicy.mappedIdentifiers(" in portal_source
+          and "existingGroupIdentifiers = availableAppGroups.map(\\.groupIdentifier)" in portal_source
+          and "reusesAnExistingAppGroupAndMapsForeignGroupsToTheCurrentTeam()" in app_group_tests
+          and "requestedEntitlements[mappedBundleID] = entitlementValues" in portal_source,
+          "R124: 复用本团队已有 App Group，否则映射到本团队组，并用同一标识校验 profile")
 
     # R70: 「悬空绑定」不得用裸 UUID 比较拦下续签（2026-09-25 真机，构建 37）。
     #
@@ -10805,6 +10834,21 @@ def main():
          "entry.path(using: .utf8)",
          "entry.path(using: .ascii)",
          "R121:"),
+        # ── R122：更新下载任务必须使用进度代理 ──
+        ("Seal/Infrastructure/UpdateIPADownloader.swift",
+         "session.download(for: request, delegate: delegate)",
+         "session.download(for: request)",
+         "R122:"),
+        # ── R123：IPA 的设备与系统版本声明不能阻断签名前置流程 ──
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "            let preferredIconData: Data?",
+         "            _ = IPADeviceCompatibility.currentModelIdentifier()\n            let preferredIconData: Data?",
+         "R123:"),
+        # ── R124：跨团队 App Group 必须映射到当前团队可授权的组 ──
+        ("Seal/Core/Signing/AppGroupOrderingPolicy.swift",
+         "return identifier + teamSuffix",
+         "return identifier",
+         "R124:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在

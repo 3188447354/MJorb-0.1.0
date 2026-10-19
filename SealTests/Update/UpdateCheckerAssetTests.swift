@@ -7,6 +7,18 @@ import Testing
 struct UpdateCheckerAssetTests {
 
     @Test
+    func downloadProgressIsDeterminateWhenTheResponseHasAContentLength() {
+        #expect(UpdateDownloadProgress.fraction(received: 25, total: 100) == 0.25)
+        #expect(UpdateDownloadProgress.fraction(received: 150, total: 100) == 1)
+    }
+
+    @Test
+    func downloadProgressRemainsIndeterminateWhenTheTotalIsUnknown() {
+        #expect(UpdateDownloadProgress.fraction(received: 25, total: nil) == nil)
+        #expect(UpdateDownloadProgress.fraction(received: 25, total: 0) == nil)
+    }
+
+    @Test
     func releaseVersionHeadingIsNotRepeatedInUpdateItems() {
         let items = UpdateNoticeContentPolicy.changeItems(
             from: "# v0.1.36\n- 修复续签\n\n### 界面\n- 调整更新抽屉",

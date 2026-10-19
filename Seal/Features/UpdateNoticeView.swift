@@ -192,7 +192,7 @@ struct UpdateNoticeView: View {
     }
 
     private func downloadingContent(received: Int64, total: Int64?) -> some View {
-        let progress = total.map { $0 > 0 ? min(Double(received) / Double($0), 1) : nil } ?? nil
+        let progress = UpdateDownloadProgress.fraction(received: received, total: total)
         return VStack(alignment: .leading, spacing: 0) {
             Text("正在下载更新包")
                 .font(.title3.weight(.bold))
@@ -286,8 +286,11 @@ struct UpdateNoticeView: View {
     private func downloadDetail(received: Int64, total: Int64?) -> String {
         guard received > 0 else { return "正在连接更新服务" }
         let receivedText = received.formatted(.byteCount(style: .file))
-        guard let total, total > 0 else { return "已下载 \(receivedText)" }
-        return "已下载 \(receivedText) / \(total.formatted(.byteCount(style: .file)))"
+        guard let total, total > 0,
+              let progress = UpdateDownloadProgress.fraction(received: received, total: total) else {
+            return "已下载 \(receivedText)"
+        }
+        return "下载进度 \(Int(progress * 100))% · 已下载 \(receivedText) / \(total.formatted(.byteCount(style: .file)))"
     }
 
     @MainActor

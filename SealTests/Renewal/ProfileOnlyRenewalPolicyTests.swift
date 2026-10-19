@@ -300,6 +300,26 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
+    func bootstrappedSealWithItsLocalSignerRemainsEligibleForProfileOnlyRenewal() {
+        let app = makeSealRecordAsWrittenBySelfAppRegistrar()
+        let live = ProfileOnlyRenewalPolicy.liveIdentity(
+            installedIdentity: installedIdentity(bundleIdentifier: "com.example.demo.TEAM123456"),
+            runningVersion: app.version,
+            app: app
+        )
+
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: live)
+                == .eligible(targetBundleIdentifiers: ["com.example.demo.TEAM123456"])
+        )
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: live?.certificateSerialNumber,
+            signerHasLocalPrivateKey: true
+        ) == false)
+    }
+
+    @Test
     func liveSignerIdentityWithoutAProfileUUIDCanRenewProfiles() {
         let app = makeSealRecordAsWrittenBySelfAppRegistrar()
         let signerOnlyTarget = SignedTargetIdentity(

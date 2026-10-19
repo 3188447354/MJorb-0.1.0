@@ -717,17 +717,6 @@ actor SigningCoordinator {
             let originalURL = try await fileStore.fileURL(
                 relativePath: app.ipaRelativePath
             )
-            if installAfterSigning,
-               let modelIdentifier = IPADeviceCompatibility.currentModelIdentifier() {
-                let compatibility = try IPAParserService().compatibilityMetadata(url: originalURL)
-                if let failure = IPADeviceCompatibility.failure(
-                    metadata: compatibility,
-                    modelIdentifier: modelIdentifier,
-                    operatingSystemVersion: ProcessInfo.processInfo.operatingSystemVersion
-                ) {
-                    throw failure
-                }
-            }
             let preferredIconData: Data?
             if let preferredIconPath = app.preferredIconRelativePath {
                 preferredIconData = try? await fileStore.read(relativePath: preferredIconPath)
