@@ -169,7 +169,7 @@ struct InstalledAppActionSheet: View {
     private var certificateStatus: String {
         switch viewModel.localCertificateAvailability(for: app) {
         case .ready: "可用"
-        case .needsFullResign: "需重新签名"
+        case .missingPrivateKey: "本机无私钥"
         case .undetermined: "待核验"
         }
     }
@@ -177,7 +177,7 @@ struct InstalledAppActionSheet: View {
     private var certificateStatusColor: Color {
         switch viewModel.localCertificateAvailability(for: app) {
         case .ready: .sealSuccess
-        case .needsFullResign: .sealWarning
+        case .missingPrivateKey: .sealWarning
         case .undetermined: .sealTextSecondary
         }
     }

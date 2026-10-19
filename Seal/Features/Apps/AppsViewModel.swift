@@ -404,11 +404,10 @@ final class AppsViewModel: ObservableObject {
     }
 
     /// No source IPA is needed when the persisted signing identity is complete enough for a
-    /// profile-only renewal and its certificate private key is still available locally.
+    /// profile-only renewal. The active signing certificate is verified against Apple’s portal.
     func canRenewProfileOnlyWithoutIPA(_ app: AppRecord) -> Bool {
         guard app.needsIPAImport,
-              case .eligible = ProfileOnlyRenewalPolicy.evaluate(app: app),
-              localCertificateAvailability(for: app) == .ready else { return false }
+              case .eligible = ProfileOnlyRenewalPolicy.evaluate(app: app) else { return false }
         return true
     }
 

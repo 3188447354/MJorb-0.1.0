@@ -214,7 +214,7 @@ struct AppExtensionProfileStrategyTests {
     }
 
     @Test
-    func selectiveStrategyRestoresIndependentTargetsFromCommittedProfileUUIDs() {
+    func renewalAllocationIsDerivedFromCommittedProfileUUIDs() {
         func target(_ bundleID: String, profileUUID: String) -> SigningTargetRecord {
             SigningTargetRecord(
                 bundleIdentifier: bundleID,
@@ -255,7 +255,7 @@ struct AppExtensionProfileStrategyTests {
                     mappedBundleIdentifier: mappedWidget
                 )
             ],
-            extensionProfileStrategy: .selectiveProfiles
+            extensionProfileStrategy: .sharedMainProfile
         )
 
         #expect(app.independentlyProvisionedExtensionBundleIdentifiers == [mappedShare])

@@ -329,10 +329,10 @@ struct SigningWorkspace: Sendable {
         return targets
     }
 
-    /// 校验条目数 / 路径安全 / 解压总量上限，**并把解压后总量返回出去**。
+    /// 校验条目数与路径安全，**并把解压后总量返回出去**。
     ///
     /// ⚠️ 返回值的用途是**判磁盘空间**（见 `validateFreeSpace`）——
-    /// 原先这个总量只用于「8GB 安全上限」，没有参与空间判断（2026-09-18）。
+    /// 不对 IPA 解压总量设 Seal 自定义上限。
     @discardableResult
     private func validate(_ entries: [Entry]) throws -> UInt64 {
         guard entries.count <= limits.maximumEntryCount else {
@@ -350,9 +350,9 @@ struct SigningWorkspace: Sendable {
                 )
             }
             let (sum, overflow) = expandedSize.addingReportingOverflow(entry.uncompressedSize)
-            guard overflow == false, sum <= limits.maximumExpandedSize else {
+            guard overflow == false else {
                 throw Self.signingFailure(
-                    reason: "IPA 解压后总大小超过安全上限（\(sum) > \(limits.maximumExpandedSize) 字节）。",
+                    reason: "IPA 解压后总大小无法安全计算。",
                     code: "SEAL-SIGN-402a"
                 )
             }
@@ -369,8 +369,8 @@ struct SigningWorkspace: Sendable {
     /// 实际峰值 ≈ 100 + 1500 + 100 = 1700MB，而那道门槛只有 600MB
     /// ⇒ 可能在**签名中途写满磁盘**，比「直接拒绝」更糟（工作区停在半成品状态）。
     ///
-    /// 这里 `validate(entries)` 已经把解压后总量算出来了（它本来只用于 8GB 安全上限），
-    /// 顺手拿它判一次真实空间。**必须排在真正解压之前**，否则就变成「解压到一半没空间」。
+    /// 这里 `validate(entries)` 已经把解压后总量算出来了，顺手拿它判一次真实空间。
+    /// **必须排在真正解压之前**，否则就变成「解压到一半没空间」。
     ///
     /// ## 峰值的真实构成（2026-10-16 按真机日志修正）
     ///
@@ -406,7 +406,7 @@ struct SigningWorkspace: Sendable {
     /// - 抖音（压缩比 ≈1.9×）：780MB × 4 = 3.32GB，而实际峰值 ≈3.0GB ⇒ **假警报**（挡住能签的机器）
     /// - 高压缩比的包：100MB × 4 = 600MB，而实际峰值 ≈1.7GB ⇒ **低估**（可能中途写满磁盘）
     ///
-    /// 顺带跑一遍 `validate`（条目数 / 路径安全 / 8GB 上限）⇒ 这些限制也提前到 `prepare`
+    /// 顺带跑一遍 `validate`（条目数 / 路径安全）⇒ 这些检查也提前到 `prepare`
     /// 之前暴露。代价只是多开一次 zip 读中央目录（毫秒级，不解压）。
     func requiredTemporarySpace(forIPAAt ipaURL: URL) throws -> UInt64 {
         let archive = try Archive(url: ipaURL, accessMode: .read)

@@ -8,6 +8,13 @@ import Foundation
 /// （旧模型是"签名阶段乐观推进顶层，失败再纠正"，已于 2026-10-07 重构废除。）
 enum SignedArtifactSnapshot {
 
+    /// 安装前用待提交快照校验本次签名产物，但不提前修改持久化记录。
+    static func installationValidationRecord(from app: AppRecord) -> AppRecord {
+        var validationRecord = app
+        validationRecord.commitPendingSnapshot()
+        return validationRecord
+    }
+
     /// 签名完成后的产物状态。
     ///
     /// - 未安装的应用：产物已就绪（`.available`），可以装。

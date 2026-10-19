@@ -223,7 +223,7 @@ actor SigningCoordinator {
     ///
     /// 检查的是 Seal 走 fullResign 的主要触发条件：
     /// - 有新版待安装（pendingSelfUpdateSource）
-    /// - 证书/私钥缺失
+    /// - 无法确认已安装签名者
     /// - 账号不匹配
     ///
     /// ⚠️ 预测条件必须与 `shouldUseProfileOnlyRenewal` 的 guard 对齐（2026-10-08）：
@@ -249,7 +249,7 @@ actor SigningCoordinator {
             await renewalPolicy.admissionDecision(for: app)
         guard case .eligible = predicted else { return false }
         let liveIdentity = await renewalPolicy.liveIdentity(for: app)
-        // 证书私钥必须在本机（否则实际执行时会回落 fullResign）。
+        // 已安装签名证书必须可确认；profile-only 不需要本机保存该证书私钥。
         guard ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
             app: app, liveIdentity: liveIdentity
         ) != nil else { return false }
@@ -326,7 +326,7 @@ actor SigningCoordinator {
            (try? await fileStore.exists(relativePath: app.ipaRelativePath)) == false {
             throw Self.failure(
                 reason: "「\(app.displayName)」没有可用于完整重签的本地 IPA。",
-                recovery: "导入该应用的 IPA 后再完整重签；如需仅更新描述文件，请先恢复有效的签名身份记录。",
+                recovery: "导入该应用的原始 IPA 后重试；profile-only 续签会从本地权限记录或原始 IPA 重建续签数据。",
                 code: "SEAL-RECOVER-002"
             )
         }
@@ -525,13 +525,10 @@ actor SigningCoordinator {
             // 上游 SideStore 的 `refresh` 准入是**已安装产物的签名证书**，不看记录；
             // 本仓对自身的等价物就是 `SelfAppMetadata.current()`（读运行包的 CMS 身份）。
             let liveProfileOnlyIdentity = await liveProfileOnlyIdentity(for: app)
-            // ⚠️ 传 `secret`：准入的最后一条是「**本机**是否真的持有记录里那张证书的私钥」，
-            // 只看记录答不了这个问题（见 `shouldUseProfileOnlyRenewal` 的注释）。
             var useProfileOnlyRenewal = await shouldUseProfileOnlyRenewal(
                 app: app,
                 liveIdentity: liveProfileOnlyIdentity,
-                accountID: accountID,
-                secret: secret,
+                teamIdentifier: account.teamID,
                 deviceIdentifier: deviceIdentifier,
                 targetBundleIdentifier: targetBundleIdentifier,
                 selectedCertificateSerialNumber: selectedCertificateSerialNumber,
@@ -550,6 +547,7 @@ actor SigningCoordinator {
             // ⚠️ 核验要等通道就绪（冷启动最长 75s），所以路径通知会晚于 `.waitingForChannel`
             // 阶段。这是刻意的：宁可晚说，也不先说错（旧行为是先说「仅更新描述文件」、
             // 再抛错，用户看到的是「说好只换描述文件，结果失败」）。
+            var profileOnlyRequiresNewCertificate = false
             if useProfileOnlyRenewal {
                 if let channelStart {
                     _ = try await channelStart.value
@@ -639,20 +637,46 @@ actor SigningCoordinator {
 
             if useProfileOnlyRenewal {
                 // 走到这里说明设备端身份核验已完成（上方已 join + 留痕 + 可能 markTainted）。
-                return try await renewProfilesOnly(
-                    app: app,
-                    account: account,
-                    secret: secret,
-                    deviceIdentifier: deviceIdentifier,
-                    // 快路径不会读取此文件；旧记录缺签名目标时才由门户层解包回退。
-                    // 原包缺失不能阻断已有完整身份的描述文件续签。
-                    originalIPAURL: try? await fileStore.fileURL(relativePath: app.ipaRelativePath),
-                    workspaceRoot: workspaceRoot,
-                    targetBundleIdentifier: targetBundleIdentifier,
-                    progress: progress,
-                    onWorkUnits: onWorkUnits,
-                    onCertificateResolved: onCertificateResolved
-                )
+                guard let profileOnlyCertificateSerialNumber =
+                    ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
+                        app: app,
+                        liveIdentity: liveProfileOnlyIdentity
+                    ) else {
+                    throw Self.failure(
+                        reason: "无法确认当前安装包的签名证书。",
+                        recovery: "重新读取安装包身份后重试",
+                        code: "SEAL-PROFILE-361"
+                    )
+                }
+                do {
+                    return try await renewProfilesOnly(
+                        app: app,
+                        account: account,
+                        secret: secret,
+                        deviceIdentifier: deviceIdentifier,
+                        certificateSerialNumber: profileOnlyCertificateSerialNumber,
+                        liveIdentity: liveProfileOnlyIdentity,
+                        // 快路径不会读取此文件；旧记录缺签名目标时才由门户层解包回退。
+                        // 原包缺失不能阻断已有完整身份的描述文件续签。
+                        originalIPAURL: try? await fileStore.fileURL(relativePath: app.ipaRelativePath),
+                        workspaceRoot: workspaceRoot,
+                        targetBundleIdentifier: targetBundleIdentifier,
+                        progress: progress,
+                        onWorkUnits: onWorkUnits,
+                        onCertificateResolved: onCertificateResolved
+                    )
+                } catch let failure as ImportFailure where failure.code == "SEAL-PROFILE-335" {
+                    // 这是 Apple 端的实际结果：当前安装包的签名证书已不在所选团队的活动证书清单。
+                    // 继续注入旧证书的 profile 无法续签；改走完整签名，让标准证书流程选择/创建可用证书。
+                    profileOnlyRequiresNewCertificate = true
+                    useProfileOnlyRenewal = false
+                    await onRenewalExecutionPath(.fullResign)
+                    try? await logStore?.append(
+                        category: .renewal,
+                        level: .warning,
+                        message: "Apple 当前不再提供已安装应用所用证书，改为完整签名并安装：\(app.name)"
+                    )
+                }
             }
 
             let originalURL = try await fileStore.fileURL(
@@ -679,7 +703,9 @@ actor SigningCoordinator {
             // 失败消灭在签名前，而不是等首次 sign 撞 204 再清。设备核验失败 / 拉不到远清单 /
             // 撤销失败都返回非 .cleaned，这里静默跳过（下方 reactive 撞 204 兜底仍在），
             // 绝不因本次前置清理新增失败面。
-            var signSelectedSerial = effectiveCertificateSerialNumber
+            var signSelectedSerial = profileOnlyRequiresNewCertificate
+                ? selectedCertificateSerialNumber
+                : effectiveCertificateSerialNumber
             if case .cleaned = try await autoCleanOrphanCertificatesIfPossible(
                 account: account,
                 secret: secret
@@ -1003,8 +1029,7 @@ actor SigningCoordinator {
     private func shouldUseProfileOnlyRenewal(
         app: AppRecord,
         liveIdentity: LiveProfileOnlyIdentity?,
-        accountID: UUID,
-        secret: AccountSecret,
+        teamIdentifier: String,
         deviceIdentifier: String,
         targetBundleIdentifier: String,
         selectedCertificateSerialNumber: String?,
@@ -1016,7 +1041,9 @@ actor SigningCoordinator {
         let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: liveIdentity)
         guard forceResign,
               installAfterSigning,
-              app.accountID == accountID,
+              (liveIdentity?.teamIdentifier ?? app.signingTeamID)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(teamIdentifier) == .orderedSame,
               app.mappedBundleIdentifier?.caseInsensitiveCompare(targetBundleIdentifier) == .orderedSame,
               ProfileOnlyRenewalPolicy.isBoundToCurrentDevice(
                   app: app,
@@ -1055,38 +1082,6 @@ actor SigningCoordinator {
                != SigningCertificateSelectionPolicy.normalizedSerialNumber(storedSerial) {
             return false
         }
-        // 🔴 **最后一道闸门：本机必须持有记录里那张证书的私钥**（2026-09-26，构建 48 真机）。
-        //
-        // 前几条判据只回答「记录是否完整」，**回答不了「本机能不能执行」**：
-        // 记录里的序列号可以指向一张本机早已没有私钥的证书（重装 Seal 会清 Keychain、
-        // 删过 Apple ID、或证书轮换刚发生）。此时 `renewProfilesOnly` 会把序列号交给
-        // `prepareProfileOnlyRenewal`，在 `existingProfileOnlyCertificate` 处抛
-        // `SEAL-PROFILE-334` —— 而**准入已经宣布「仅更新描述文件」**，用户看到的是
-        // 「说好不重装，结果失败」。构建 48 日志里这一条出现 4 次，批量续签因此被记成失败 1。
-        //
-        // ⇒ 提前到准入：不可用就回落完整重签（重签会拿到一张本机有私钥的证书并写回记录，
-        //   下一次准入自然又走 profile-only）。
-        //
-        // ⚠️ 判据传的是 `app.certificateSerialNumber`（= 执行侧 `renewProfilesOnly` 真正用的
-        // 那个值），**不是** `storedSerial`（带实时身份兜底）—— 两者不同时会出现
-        // 「准入检查了 A、执行用的是 B」，那是 `SEAL-PROFILE-361` 那个洞的同一种错法。
-        //
-        // ⚠️ 放在**最后**：走到这里说明前面每条判据都放行了 ⇒ 这条日志的归因是**精确**的
-        //（不会把「别的判据拦下的」说成「本机缺私钥」）。
-        if let blockReason = ProfileOnlyRenewalPolicy.localCertificateMaterialBlock(
-            secret: secret,
-            certificateSerialNumber: app.certificateSerialNumber
-        ) {
-            try? await logStore?.append(
-                category: .renewal,
-                level: .warning,
-                message: "profile-only 快路径不可用（\(ProfileOnlyRenewalPolicy.describe(blockReason))）："
-                    + "本机没有该应用当前证书的私钥，本次改为完整重签并安装；"
-                    + "重签后证书与本机匹配，后续续签会回到「只更新描述文件」：\(app.name)",
-                code: "SEAL-PROFILE-364"
-            )
-            return false
-        }
         return true
     }
 
@@ -1095,6 +1090,8 @@ actor SigningCoordinator {
         account: AppleAccountRecord,
         secret: AccountSecret,
         deviceIdentifier: String,
+        certificateSerialNumber: String,
+        liveIdentity: LiveProfileOnlyIdentity?,
         originalIPAURL: URL?,
         workspaceRoot: URL,
         targetBundleIdentifier: String,
@@ -1102,13 +1099,6 @@ actor SigningCoordinator {
         onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void,
         onCertificateResolved: @escaping @Sendable (String) async -> Void
     ) async throws -> AppRecord {
-        guard let certificateSerialNumber = app.certificateSerialNumber else {
-            throw Self.failure(
-                reason: "已安装应用的签名身份不完整，无法安全地只更新描述文件来续签。",
-                recovery: "执行完整重签以重新建立应用身份",
-                code: "SEAL-PROFILE-361"
-            )
-        }
         // ── 分阶段打点（2026-10-04 签名优化）──
         // 先测量再优化：各阶段耗时进日志，真机验证时才能定位瓶颈。
         let renewStart = ContinuousClock.now
@@ -1130,6 +1120,7 @@ actor SigningCoordinator {
             workspaceRoot: workspaceRoot,
             targetBundleIdentifier: targetBundleIdentifier,
             certificateSerialNumber: certificateSerialNumber,
+            liveIdentity: liveIdentity,
             // 门户服务仍按 `(SigningStage)` 回调 —— 它只关心「走到哪一步」、
             // 不知道也不需要知道「这是谁的应用」⇒ 在**边界**补上主体即可
             // （这里推的恒是 `app` 自己的阶段）。不要为此把 `SigningStageUpdate`
@@ -1579,11 +1570,18 @@ actor SigningCoordinator {
             level: .info,
             message: "[SEAL-OP] 安装已签名包: appID \(appID.uuidString.prefix(8))"
         )
-        guard var app = try await appStore.fetchAll().first(where: { $0.id == appID }),
-              let signedPath = app.signedIPARelativePath,
+        guard var app = try await appStore.fetchAll().first(where: { $0.id == appID }) else {
+            throw Self.failure(
+                reason: "本机签名包记录不完整。",
+                recovery: "重新签名",
+                code: "SEAL-INSTALL-719"
+            )
+        }
+        let validationApp = SignedArtifactSnapshot.installationValidationRecord(from: app)
+        guard let signedPath = app.signedIPARelativePath,
               let expectedSHA256 = app.signedIPASHA256,
               let bundleIdentifier = app.mappedBundleIdentifier,
-              let expirationDate = app.provisioningProfileExpirationDate else {
+              let expirationDate = validationApp.provisioningProfileExpirationDate else {
             throw Self.failure(
                 reason: "本机签名包记录不完整。",
                 recovery: "重新签名",
@@ -1637,11 +1635,11 @@ actor SigningCoordinator {
         // 此前这里只查主 target，于是「主 profile 有效、扩展 profile 已过期」的包
         // 能一路走到设备端，失败信息还是设备端的模糊错误。
         if case let .rejected(failure) = PreInstallValidation.validate(
-            app: app,
+            app: validationApp,
             bundleIdentifier: bundleIdentifier,
             deviceIdentifier: currentDeviceIdentifier,
-            accountTeamID: app.signingTeamID,
-            certificateSerialNumber: app.certificateSerialNumber
+            accountTeamID: validationApp.signingTeamID,
+            certificateSerialNumber: validationApp.certificateSerialNumber
         ) {
             app.signedArtifactStatus = PreInstallValidation.artifactStatus(forCode: failure.code)
             try await persistAppState(app)

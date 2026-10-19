@@ -459,10 +459,10 @@ struct SigningProgressView: View {
             runtimeRow("签名账户", viewModel.fullEmail(for: session.account))
             Divider().padding(.leading, 14)
             runtimeSerialRow("证书序列号", certificateDisplayName(session))
-            // 本机没有该证书私钥 ⇒ 这次续签会**完整重签并安装**（而不是只更新描述文件）。
-            // 放在这里是为了让「为什么进度条在重传整包」当场有答案 ——
+            // 私钥缺失只作状态提示；是否需要完整重签由 Apple 对现有证书的实际响应决定。
+            // 放在这里是为了让本机证书状态对用户可见 ——
             // 用户 2026-09-26 的要求：文案必须与真实操作对齐，没做的事不写。
-            // 用**紧凑版**文案：这一段正在跑、卡片窄，一行说清「这次为什么要重签」就够
+            // 用**紧凑版**文案：这一段正在跑、卡片窄，一行说明本机私钥状态即可
             //（完整版留给详情页 / 操作抽屉，见 `AppSigningPresentationHelpers` 的分工说明）。
             if let note = AppSigningPresentationHelpers.localCertificateCompactNote(
                 for: viewModel.localCertificateAvailability(for: session.app)
@@ -519,7 +519,7 @@ struct SigningProgressView: View {
         .padding(.vertical, 4)
     }
 
-    /// 「证书序列号」行下面的说明：本机没有该证书私钥 ⇒ 这一次续签会**完整重签并安装**。
+    /// 「证书序列号」行下面的说明：本机私钥状态只作提示；续签路径按 Apple 对现有证书的实际响应决定。
     /// 与详情页 / 操作抽屉共用同一份文案真源
     ///（`AppSigningPresentationHelpers.localCertificateRebuildDetail`）。
     private func signingNoteRow(_ note: String) -> some View {

@@ -31,12 +31,13 @@ struct LiveProfileOnlyIdentity: Equatable, Sendable {
     let runningVersion: String
 }
 
-/// Decides whether an installed app has enough persisted identity to attempt a
-/// profile-only refresh. The coordinator adds current-account and current-device
-/// checks before it can enter the device transaction.
+/// Decides whether an installed app has enough identity to attempt a profile-only
+/// refresh. Missing profile snapshots and local private keys do not decide the path;
+/// the coordinator and Apple portal validate the current team, device, certificate,
+/// App IDs, and profile capabilities.
 ///
 /// 🔴 **Seal 自己不再被排除**（2026-09-25）：它与任何第三方已装应用走**同一条**判据 ——
-/// 「只更新描述文件、不重新安装」对 Seal 同样适用，判定依据是**记录是否完整**，
+/// 「只更新描述文件、不重新安装」对 Seal 同样适用，判定依据是可核验的身份信息，
 /// 与「这是谁的应用」无关。理由见 `evaluate(app:)`。
 ///
 /// 🔴 **记录不是唯一入口**（2026-09-26，构建 46 真机）：只认「持久化记录完整」仍然不够。
@@ -59,30 +60,6 @@ enum ProfileOnlyRenewalPolicy {
         /// 记录证实上一份产物曾移除扩展。profile-only 只能换描述文件，无法把已
         /// 删除的二进制扩展装回去；必须完整重签并覆盖安装一次才能自愈。
         case incompleteExtensionSet
-        /// 扩展的持久化描述文件拓扑无法证明与当前策略一致。profile-only 只替换描述文件，
-        /// 不能修复已安装二进制的签名拓扑，必须完整重签迁移。
-        case extensionProfileIntegrityMigration
-        /// 🔴 **本机没有「该应用当前使用的那张证书」的私钥**（2026-09-26，构建 48 真机）。
-        ///
-        /// 记录里的 `certificateSerialNumber` 可以指向一张**只有 Apple 门户上还在、本机
-        /// Keychain 里已经没有私钥**的证书。三种成因都真实存在：
-        ///   · 首次把 Seal 装到手机上 —— `SelfAppRegistrar` 从**运行包**的描述文件回填序列号，
-        ///     而重装 Seal 会清空 Keychain（构建 48 日志：`本机有私钥 0 张`）；
-        ///   · 删掉 Apple ID 后重新添加；
-        ///   · 证书轮换刚发生 —— 旧证书被撤销、新证书刚建好，而记录还指着旧的那个。
-        ///
-        /// 此时 `prepareProfileOnlyRenewal` 会在 `existingProfileOnlyCertificate` 处抛
-        /// `SEAL-PROFILE-334`，**而准入已经宣布「仅更新描述文件」** ⇒ 用户看到的是
-        /// 「说好不重装，结果失败」。构建 48 日志里这一条出现 **4 次**，其中一次是
-        /// 批量续签的第 3/3 项（Seal 自己），整批因此被记成「失败 1」。
-        ///
-        /// ⇒ 把这条判据**提前到准入**：本机证书不可用就回落完整重签。完整重签会申请/复用
-        ///   一张**本机有私钥**的证书并把序列号写回记录，下一次准入自然又走 profile-only
-        ///   —— 这正是用户要的「匹配之后后续再走不重装的更新续签模式」。
-        ///   （同一份日志已证明这条路通：撤销 `…E9DA0CD9` 后新建 `…976EFE08`，
-        ///   随后 LiveContainer / Guoguo 的完整重签都复用了它。）
-        case missingLocalCertificateMaterial
-
         /// 🔴 **记录里有一条「已导入但尚未生效」的更新源**（2026-09-26，用户实测）。
         ///
         /// 覆盖更新把记录写成**新导入包**的版本号（`hasPendingSelfUpdateSource = true`，
@@ -92,68 +69,20 @@ enum ProfileOnlyRenewalPolicy {
         ///
         /// 真机复现：把 1.3.20 的 IPA 手动导入 1.3.19 的 Seal ⇒ 落在「已安装」并显示 1.3.20，
         /// 点「续签」直接走 profile-only ⇒ 「关于」里仍是 1.3.19。
-        /// 对**第三方**应用不会出现这个问题（它们的记录缺 `signedArtifactStatus`，
-        /// 记录通道本来就回落完整重签）—— 只有 Seal 自己走「运行产物身份」这条第二通道。
+        /// 这条版本比较只对 Seal 的运行包身份有效；普通应用仍由用户选择的更新/重签动作
+        /// 决定是否要更换二进制，不能将它们的持久化版本号当作运行版本。
         case pendingSelfUpdateSource
-    }
-
-    enum PortalAppIDDecision: Equatable, Sendable {
-        case reuse
-        case requiresFullResign
-    }
-
-    /// Profile-only may reuse the exact portal App ID, but may never create one.
-    /// Creating it would consume a free-account App ID slot while presenting the
-    /// operation as a no-install renewal.
-    static func portalAppIDDecision(isPresent: Bool) -> PortalAppIDDecision {
-        isPresent ? .reuse : .requiresFullResign
-    }
-
-    /// profile-only 的**执行前提**：本机必须持有「该应用当前使用的那张证书」的私钥，
-    /// 且它仍能覆盖一份完整 7 天描述文件寿命。
-    ///
-    /// 返回 `nil` = 前提成立（可以走快路径）；非 `nil` = **必须回落完整重签**的理由。
-    ///
-    /// - Parameter certificateSerialNumber: **必须传执行侧真正会用的那个序列号** ——
-    ///   `SigningCoordinator.renewProfilesOnly` 用的是 `app.certificateSerialNumber`，
-    ///   而**不是**带实时身份兜底的 `effectiveCertificateSerialNumber`。
-    ///   两者不同时会出现「准入检查了 A、执行用的是 B」，正是本项目反复踩的
-    ///   「上游放行、下游又拦」（`SEAL-PROFILE-361` 就是那个洞）。
-    ///
-    /// 判据与执行侧**同源**：都用 `SigningCertificateMaterialPolicy.availableCertificate`
-    /// ＋ `reuseStatus == .reusable` —— 与 `ApplePortalSigningService.certificateReusable(_:)`
-    /// 是同一个口径，所以这里判「不可用」时，执行侧**一定**也会判不可用（不会误拦）。
-    ///
-    /// ⚠️ 与 `evaluate(app:)` 的分工：那一条判「记录是否完整到足以只换描述文件」，
-    /// 这一条判「**本机**是否真的能执行」—— 记录可以完全正确，而本机没有私钥。
-    static func localCertificateMaterialBlock(
-        secret: AccountSecret,
-        certificateSerialNumber: String?
-    ) -> FullResignReason? {
-        guard let serialNumber = nonBlank(certificateSerialNumber),
-              let certificate = SigningCertificateMaterialPolicy.availableCertificate(
-                  secret: secret,
-                  serialNumber: serialNumber
-              ),
-              SigningCertificateMaterialPolicy.reuseStatus(certificate) == .reusable else {
-            return .missingLocalCertificateMaterial
-        }
-        return nil
     }
 
     /// `FullResignReason` 的**可读说明**（只用于日志）。
     ///
-    /// 界面文案**不**用这里：界面只认 `missingLocalCertificateMaterial` 一个 case
-    ///（见 `AppSigningPresentationHelpers.localCertificateRebuildNote`），
-    /// 因为只有它对应「用户下一次点续签会发生什么」。
+    /// 界面文案不使用这里；本地私钥状态不会改变描述文件续签路径。
     static func describe(_ reason: FullResignReason) -> String {
         switch reason {
         case .missingInstalledArtifact: "记录里缺少已安装产物"
         case .incompleteSigningIdentity: "记录里的签名身份不完整"
         case .missingTargetRecord: "记录里缺少签名目标"
         case .incompleteExtensionSet: "上一份签名产物缺少扩展，需要完整重签修复"
-        case .extensionProfileIntegrityMigration: "扩展的描述文件记录与签名策略不一致，需要完整重签修复"
-        case .missingLocalCertificateMaterial: "本机没有该证书的私钥"
         case .pendingSelfUpdateSource: "已导入的更新源尚未安装"
         }
     }
@@ -162,7 +91,7 @@ enum ProfileOnlyRenewalPolicy {
     ///
     /// **三态而不是 `Bool`**：读不到账号密钥 与「确认没有私钥」的下一步动作完全不同 ——
     /// 前者（Keychain 暂时读不到 / 账号已删）**不能**凭空断言「缺私钥」，只能什么都不说；
-    /// 后者才是真的「下一次续签必然完整重签」。
+    /// 后者只说明本机没有私钥；描述文件续签仍由 Apple 门户里的证书状态决定。
     ///
     /// 用户 2026-09-26 明确要求：首次把 Seal 装到手机上时，本机没有该证书的私钥，
     /// 要在「证书序列号」那里写一句「需要重新签名一次获取本机证书」，
@@ -171,23 +100,22 @@ enum ProfileOnlyRenewalPolicy {
     enum LocalCertificateAvailability: Equatable, Sendable {
         /// 没有记录序列号、或读不到该账号的密钥 ⇒ **不显示任何话**（不能凭空断言缺私钥）。
         case undetermined
-        /// 本机有该证书的私钥，且剩余寿命足以覆盖一份完整 7 天描述文件。
+        /// 本机保存了可解析的该证书私钥。
         case ready
-        /// 本机没有该证书的私钥（或私钥在、但证书寿命已不足 7 天）⇒ 下一次续签会完整重签并安装。
-        case needsFullResign
+        /// 本机没有保存可解析的该证书私钥；Apple 门户仍可能允许更新其描述文件。
+        case missingPrivateKey
     }
 
-    /// 单个应用的「本机证书状态」。**与 `localCertificateMaterialBlock` 同源** ——
-    /// 前者是它的界面三态化，不会出现「界面说没事、执行时却抛 334」。
+    /// 单个应用的本机私钥状态，仅用于界面说明，不参与描述文件续签准入。
     static func localCertificateAvailability(
         secret: AccountSecret?,
         certificateSerialNumber: String?
     ) -> LocalCertificateAvailability {
         guard let secret, nonBlank(certificateSerialNumber) != nil else { return .undetermined }
-        return localCertificateMaterialBlock(
+        return SigningCertificateMaterialPolicy.availableCertificate(
             secret: secret,
-            certificateSerialNumber: certificateSerialNumber
-        ) == nil ? .ready : .needsFullResign
+            serialNumber: certificateSerialNumber
+        ) == nil ? .missingPrivateKey : .ready
     }
 
     /// 把「账号密钥表」映射成「每个**已安装**应用的本机证书状态」。
@@ -210,7 +138,7 @@ enum ProfileOnlyRenewalPolicy {
         return values
     }
 
-    /// 判定「这条记录是否完整到足以只换描述文件」。
+    /// 判定当前已安装目标是否具备尝试仅更新描述文件的身份信息。
     ///
     /// 🔴 **Seal 自己不再被排除**（2026-09-25 真机，构建 44）。
     ///
@@ -235,8 +163,9 @@ enum ProfileOnlyRenewalPolicy {
     /// `39a97cd039` 起插入 `cacheResignedMetadata`，`verifyCertificate` 更晚。
     /// **别再照抄旧注释**（本项目「过时注释比没有注释更贵」的老坑）。
     ///
-    /// ⚠️ 这里删掉的是「按身份一刀切」，**不是安全边界**：记录不完整（缺已装产物 /
-    /// 缺签名身份 / 缺目标记录）时，下面几条判据**一条都没有放松**，照旧回落完整重签。
+    /// Apple 门户会重新核验团队、证书、设备、App ID 和能力；Seal 不要求旧 profile UUID、
+    /// 旧 target 快照或本机证书私钥必须完整。缺少 entitlements 时由 Portal 层从 IPA 重建。
+    /// 仍无法确认应用身份或扩展目标时，才不能安全地仅替换描述文件。
     static func evaluate(app: AppRecord) -> Decision {
         // `removedExtensionBundleIdentifiers` 是历史完整签名曾物理移除扩展的唯一记录。
         // 只续签无法修复二进制布局，若继续走快路径会把“已续签”写回一个仍缺
@@ -244,21 +173,12 @@ enum ProfileOnlyRenewalPolicy {
         guard app.removedExtensionBundleIdentifiers.isEmpty else {
             return .requiresFullResign(.incompleteExtensionSet)
         }
-        // 本次预计使用的策略：与签名链路同源（`effectiveExtensionProfileStrategy` 走
-        // `defaultFor`，再按记录里的能力集过一遍 `sharedProfileBlocker` 的降级条件）。
-        let plannedStrategy = app.extensionProfileStrategy ?? app.effectiveExtensionProfileStrategy
-        guard extensionProfileIntegrityBlock(app, resolvedStrategy: plannedStrategy) == nil else {
-            return .requiresFullResign(.extensionProfileIntegrityMigration)
-        }
-        // `Signed.ipa` 是可再生的安装缓存，不是手机上已安装产物的续签身份。
-        // 维护页删除缓存后仍可只更新描述文件；真正的身份完整性由后续字段逐项验证。
+        // `Signed.ipa` 与旧 profile UUID / target 快照都不是续签身份的准入条件：
+        // entitlements 缺失时可从原始 IPA 重建，Apple 会对本轮 profile 的实际配置裁决。
         guard app.state == .installed,
-              app.accountID != nil,
-              let teamIdentifier = nonBlank(app.signingTeamID),
-              let certificateSerialNumber = normalizedSerialNumber(app.certificateSerialNumber),
-              let deviceIdentifier = nonBlank(app.signedDeviceIdentifier),
-              let mainBundleIdentifier = nonBlank(app.mappedBundleIdentifier),
-              let mainProfileUUID = nonBlank(app.provisioningProfileUUID) else {
+              nonBlank(app.signingTeamID) != nil,
+              effectiveCertificateSerialNumber(app: app, liveIdentity: nil) != nil,
+              let mainBundleIdentifier = nonBlank(app.mappedBundleIdentifier) else {
             return .requiresFullResign(.incompleteSigningIdentity)
         }
 
@@ -266,33 +186,8 @@ enum ProfileOnlyRenewalPolicy {
             nonBlank($0.mappedBundleIdentifier)
         }
         guard targetBundleIdentifiers.count == app.extensions.count + 1,
-              Set(targetBundleIdentifiers).count == targetBundleIdentifiers.count,
-              app.signingTargets.count == targetBundleIdentifiers.count else {
+              Set(targetBundleIdentifiers.map { $0.lowercased() }).count == targetBundleIdentifiers.count else {
             return .requiresFullResign(.missingTargetRecord)
-        }
-
-        let signingTargetBundleIdentifiers = app.signingTargets.map(\.bundleIdentifier)
-        guard Set(signingTargetBundleIdentifiers).count == signingTargetBundleIdentifiers.count else {
-            return .requiresFullResign(.missingTargetRecord)
-        }
-        let targetsByBundleIdentifier = Dictionary(
-            uniqueKeysWithValues: app.signingTargets.map { ($0.bundleIdentifier, $0) }
-        )
-        guard targetsByBundleIdentifier[mainBundleIdentifier]?.profileUUID?
-            .caseInsensitiveCompare(mainProfileUUID) == .orderedSame else {
-            return .requiresFullResign(.missingTargetRecord)
-        }
-
-        for bundleIdentifier in targetBundleIdentifiers {
-            guard let target = targetsByBundleIdentifier[bundleIdentifier],
-                  nonBlank(target.profileUUID) != nil,
-                  target.teamIdentifier == teamIdentifier,
-                  target.deviceIdentifiers.contains(deviceIdentifier),
-                  target.certificateSerialNumbers.contains(where: {
-                      normalizedSerialNumber($0) == certificateSerialNumber
-                  }) else {
-                return .requiresFullResign(.missingTargetRecord)
-            }
         }
 
         return .eligible(targetBundleIdentifiers: targetBundleIdentifiers)
@@ -301,8 +196,7 @@ enum ProfileOnlyRenewalPolicy {
     /// 从「运行包身份」构造 `LiveProfileOnlyIdentity`。任何一项读不出来都返回 nil —— **绝不猜**。
     ///
     /// - Parameter installedIdentity: `SelfAppMetadata.current()?.installedIdentity`。
-    ///   `isComplete == false`（主程序或任一扩展的 CMS 身份读不出来）时整体放弃：
-    ///   半份身份不能当准入门票（与 `CertificateCleanupPolicy` 的 `identityConfidence` 同口径）。
+    ///   要求每个当前安装目标的 Bundle ID 与 CMS 签名者可读；描述文件缺失或失效不阻止恢复。
     ///
     /// - Parameter runningVersion: `SelfAppMetadata.current()?.version` —— **正在运行的那个包**
     ///   的版本。它与记录里的 `version` 是两件事：记录描述「已导入的源包」，可能更新。
@@ -318,24 +212,26 @@ enum ProfileOnlyRenewalPolicy {
         app: AppRecord
     ) -> LiveProfileOnlyIdentity? {
         guard let installedIdentity,
-              installedIdentity.isComplete,
+              installedIdentity.canSafelyIdentifySigners,
               let mainTarget = installedIdentity.mainTarget,
               let mappedMainBundleIdentifier = nonBlank(app.mappedBundleIdentifier),
               mainTarget.bundleIdentifier.caseInsensitiveCompare(mappedMainBundleIdentifier) == .orderedSame,
-              let profileUUID = nonBlank(mainTarget.profileUUID),
               let serialNumber = nonBlank(mainTarget.signerSerialNumber),
-              let teamIdentifier = nonBlank(mainTarget.teamIdentifier),
+              let teamIdentifier = nonBlank(mainTarget.teamIdentifier) ?? nonBlank(app.signingTeamID),
               let resolvedRunningVersion = nonBlank(runningVersion) else {
             return nil
         }
-        let targets = [mappedMainBundleIdentifier] + app.extensions.compactMap {
-            nonBlank($0.mappedBundleIdentifier)
-        }
-        // 目标不能重复：重复会让「每个目标都有描述文件」的后续判据变成假话。
-        guard Set(targets).count == targets.count else { return nil }
+        let normalizedMainSerial = normalizedSerialNumber(serialNumber)
+        guard installedIdentity.targets.allSatisfy({
+            normalizedSerialNumber($0.signerSerialNumber) == normalizedMainSerial
+                && $0.teamIdentifier.caseInsensitiveCompare(teamIdentifier) == .orderedSame
+        }) else { return nil }
+        let targets = installedIdentity.targets.map(\.bundleIdentifier)
+        guard targets.first?.caseInsensitiveCompare(mappedMainBundleIdentifier) == .orderedSame,
+              Set(targets.map { $0.lowercased() }).count == targets.count else { return nil }
         return LiveProfileOnlyIdentity(
             mainBundleIdentifier: mappedMainBundleIdentifier,
-            profileUUID: profileUUID,
+            profileUUID: nonBlank(mainTarget.profileUUID) ?? "",
             certificateSerialNumber: serialNumber,
             teamIdentifier: teamIdentifier,
             targetBundleIdentifiers: targets,
@@ -438,9 +334,8 @@ enum ProfileOnlyRenewalPolicy {
     /// 此时记录完整性不再必要 —— 运行包本身就是「已安装」这个事实的最强证据，
     /// 比任何 DB 字段都强（DB 字段可能是安装前乐观写入的、也可能是旧值）。
     ///
-    /// ⚠️ 两条通道**都不放松**的是「身份必须可核验」：实时身份必须 `isComplete`
-    /// （主程序 ＋ 全部扩展的 CMS 都读得出来）、主目标 Bundle ID 必须与记录里的映射 ID
-    /// 一致、profile UUID 与签名者序列号都必须非空。
+    /// 实时身份必须能识别主应用和所有已安装目标的签名者，并与记录里的主 Bundle ID 一致；
+    /// profile UUID 可以缺失，因为续签会从 Apple 重新取得 profile。
     ///
     /// 🔴 **再加一条：记录里的源包版本必须等于正在运行的版本**（2026-09-26，用户实测）。
     /// 覆盖更新刻意把记录写成**新导入包**的版本号（`hasPendingSelfUpdateSource`），
@@ -453,17 +348,21 @@ enum ProfileOnlyRenewalPolicy {
         app: AppRecord,
         liveIdentity: LiveProfileOnlyIdentity?
     ) -> Decision {
-        // 签名拓扑不完整时，迁移必须先于 Seal 自身的实时身份快路径。
-        if extensionProfileIntegrityBlock(
-            app,
-            resolvedStrategy: app.extensionProfileStrategy ?? app.effectiveExtensionProfileStrategy
-        ) != nil {
-            return .requiresFullResign(.extensionProfileIntegrityMigration)
-        }
         if let liveIdentity,
            let mappedMainBundleIdentifier = nonBlank(app.mappedBundleIdentifier),
            liveIdentity.mainBundleIdentifier.caseInsensitiveCompare(mappedMainBundleIdentifier)
                == .orderedSame {
+            guard app.state == .installed else {
+                return .requiresFullResign(.missingInstalledArtifact)
+            }
+            guard app.removedExtensionBundleIdentifiers.isEmpty else {
+                return .requiresFullResign(.incompleteExtensionSet)
+            }
+            let liveTargets = liveIdentity.targetBundleIdentifiers
+            guard liveTargets.first?.caseInsensitiveCompare(mappedMainBundleIdentifier) == .orderedSame,
+                  Set(liveTargets.map { $0.lowercased() }).count == liveTargets.count else {
+                return .requiresFullResign(.missingTargetRecord)
+            }
             // ⚠️ 比较的是**营销版本**（`CFBundleShortVersionString`）—— 那正是更新通道
             // 判「有没有新版本」用的单位（见 `AGENTS.md` §6）。版本一致时再看
             // `pendingUpdateSourceFingerprint`：只有用户**显式导入了新源包**
@@ -477,26 +376,28 @@ enum ProfileOnlyRenewalPolicy {
             ) == false else {
                 return .requiresFullResign(.pendingSelfUpdateSource)
             }
-            return .eligible(targetBundleIdentifiers: liveIdentity.targetBundleIdentifiers)
+            return .eligible(targetBundleIdentifiers: liveTargets)
         }
         return evaluate(app: app)
     }
 
     /// 准入通过后判定「设备绑定」是否成立。
     ///
-    /// 记录通道要求 `signedDeviceIdentifier` 与会话设备一致；**实时身份通道不适用**
-    /// —— `LiveProfileOnlyIdentity` 证明的是「运行中的产物就是记录里那个应用」，
-    /// 比一条可能过期的 DB 字段更强，而 Seal 自身的记录里**从来没有**这个字段
-    /// （`SelfAppRegistrar` 不写它，也不该编造一个）。
+    /// 当前连接设备必须可识别；旧 `signedDeviceIdentifier` 仅是历史快照，Apple 会按
+    /// 当前设备注册状态生成 profile，本地旧值不参与准入。
     static func isBoundToCurrentDevice(
         app: AppRecord,
         deviceIdentifier: String,
         liveIdentity: LiveProfileOnlyIdentity?
     ) -> Bool {
-        if app.signedDeviceIdentifier?.caseInsensitiveCompare(deviceIdentifier) == .orderedSame {
-            return true
+        if let liveIdentity,
+           let mappedBundleIdentifier = nonBlank(app.mappedBundleIdentifier),
+           liveIdentity.mainBundleIdentifier.caseInsensitiveCompare(mappedBundleIdentifier) != .orderedSame {
+            return false
         }
-        return liveIdentity != nil
+        // 旧设备 ID 是记录快照，不是 Apple 对本轮 profile 的裁决。
+        // 当前设备必须可识别；Apple 端注册状态与新 profile 内的设备列表才是准据。
+        return nonBlank(deviceIdentifier) != nil
     }
 
     /// 准入通过后取「该应用实际被哪张证书签名」。
@@ -505,7 +406,21 @@ enum ProfileOnlyRenewalPolicy {
         app: AppRecord,
         liveIdentity: LiveProfileOnlyIdentity?
     ) -> String? {
-        nonBlank(app.certificateSerialNumber) ?? liveIdentity?.certificateSerialNumber
+        if let liveSerial = nonBlank(liveIdentity?.certificateSerialNumber) {
+            return liveSerial
+        }
+        if let recordedSerial = nonBlank(app.certificateSerialNumber) {
+            return recordedSerial
+        }
+        guard let mainBundleIdentifier = nonBlank(app.mappedBundleIdentifier),
+              let mainTarget = app.signingTargets.first(where: {
+                  $0.bundleIdentifier.caseInsensitiveCompare(mainBundleIdentifier) == .orderedSame
+              }) else { return nil }
+        let profileSerials = Set(mainTarget.certificateSerialNumbers.compactMap {
+            normalizedSerialNumber($0)
+        })
+        guard profileSerials.count == 1 else { return nil }
+        return profileSerials.first
     }
 
     private static func nonBlank(_ value: String?) -> String? {
@@ -520,31 +435,4 @@ enum ProfileOnlyRenewalPolicy {
         return normalized.isEmpty ? "0" : String(normalized)
     }
 
-    /// 旧记录或主应用、扩展、签名目标的描述文件分配不一致时，先完整重签迁移。
-    private static func extensionProfileIntegrityBlock(
-        _ app: AppRecord,
-        resolvedStrategy: AppExtensionProfileStrategy
-    ) -> Bool? {
-        guard app.extensions.isEmpty == false else { return nil }
-        guard let recorded = app.extensionProfileStrategy else { return true }
-        guard recorded == resolvedStrategy,
-              let mainProfileUUID = nonBlank(app.provisioningProfileUUID) else { return true }
-        var independentCount = 0
-        for ext in app.extensions {
-            guard let bundleID = nonBlank(ext.mappedBundleIdentifier),
-                  let extProfileUUID = nonBlank(ext.provisioningProfileUUID),
-                  let target = app.signingTargets.first(where: { $0.bundleIdentifier == bundleID }),
-                  let targetProfileUUID = nonBlank(target.profileUUID),
-                  extProfileUUID.caseInsensitiveCompare(targetProfileUUID) == .orderedSame else {
-                return true
-            }
-            let independent = targetProfileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame
-            if independent { independentCount += 1 }
-            if recorded == .sharedMainProfile && independent { return true }
-            if recorded == .independentProfiles && !independent { return true }
-        }
-        if recorded == .selectiveProfiles,
-           (independentCount == 0 || independentCount == app.extensions.count) { return true }
-        return nil
-    }
 }

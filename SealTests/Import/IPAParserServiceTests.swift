@@ -119,21 +119,6 @@ struct IPAParserServiceTests {
     }
 
     @Test
-    func rejectsExpandedSizeOverLimit() throws {
-        let url = try IPAArchiveFixture.make()
-        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        let limits = ArchiveLimits(
-            maximumEntryCount: 100,
-            maximumExpandedSize: 1,
-            maximumMetadataSize: 1_000_000
-        )
-
-        assertFailure(code: "SEAL-IPA-105") {
-            _ = try IPAParserService(limits: limits).parse(url: url)
-        }
-    }
-
-    @Test
     func rejectsNestedIPAWrapperBeforeReadingInnerArchive() throws {
         let url = try IPAArchiveFixture.make(
             apps: [], includeIcon: false,

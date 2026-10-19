@@ -156,19 +156,19 @@ struct AppPresentationTests {
     // MARK: - 「证书序列号」行下面那句说明（2026-09-26 构建 48 真机）
 
     /// 用户 2026-09-26 要求：本机没有该证书私钥时，在「证书序列号」那里写一句
-    /// 「需要重新签名一次获取本机证书」。
+    /// 「本机未保存此证书私钥」，但续签仍先尝试更新 Apple 描述文件。
     ///
     /// 这里钉住**「什么时候说话」**这条规则（纯函数，能测）；「文案出现在哪个界面」
     /// 由守卫按源码文本钉 —— 三个界面（进度卡片 / 详情页 / 操作抽屉）共用同一份真源。
     @Test
     func localCertificateNoteOnlySpeaksWhenTheDeviceIsReallyMissingTheKey() {
-        // 缺私钥 ⇒ 说完整版（说清「这一次会重签」＋「之后不会」）。
+        // 缺私钥 ⇒ 说明本机状态，不把它说成必须重签。
         #expect(
-            AppSigningPresentationHelpers.localCertificateNote(for: .needsFullResign)
+            AppSigningPresentationHelpers.localCertificateNote(for: .missingPrivateKey)
                 == AppSigningPresentationHelpers.localCertificateRebuildDetail
         )
         #expect(
-            AppSigningPresentationHelpers.localCertificateCompactNote(for: .needsFullResign)
+            AppSigningPresentationHelpers.localCertificateCompactNote(for: .missingPrivateKey)
                 == AppSigningPresentationHelpers.localCertificateRebuildNote
         )
         // 正常状态（本机有可复用私钥）与**读不到账号密钥**都不说话 ——
@@ -178,10 +178,9 @@ struct AppPresentationTests {
         #expect(AppSigningPresentationHelpers.localCertificateNote(for: .undetermined) == nil)
         #expect(AppSigningPresentationHelpers.localCertificateCompactNote(for: .ready) == nil)
         #expect(AppSigningPresentationHelpers.localCertificateCompactNote(for: .undetermined) == nil)
-        // 文案必须同时说清「这一次要重签」与「之后不再重装」——
-        // 缺后半句，用户会以为「每次续签都要重装」，而那正是这套快路径要消除的误解。
+        // 文案需明确本机私钥缺失不阻止先尝试 profile-only 续签。
         #expect(
-            AppSigningPresentationHelpers.localCertificateRebuildDetail.contains("只更新描述文件")
+            AppSigningPresentationHelpers.localCertificateRebuildDetail.contains("更新描述文件")
         )
     }
 

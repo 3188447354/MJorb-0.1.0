@@ -59,6 +59,22 @@ struct ImportReplacementPolicyTests {
     }
 
     @Test
+    func recoveredInstalledRecordCanMatchItsSignedBundleIdentifierWhenIPAIsReimported() {
+        let recovered = makeRecord(
+            original: "com.example.demo",
+            mapped: "com.example.demo.TEAM123456",
+            isInstalled: true,
+            needsIPAImport: true
+        )
+        let candidate = ImportReplacementPolicy.installedReplacementCandidate(
+            for: makeParsed(bundleIdentifier: "com.example.demo.TEAM123456"),
+            in: [recovered]
+        )
+
+        #expect(candidate?.id == recovered.id)
+    }
+
+    @Test
     func picksMostRecentlyInstalledAmongDuplicates() {
         let older = makeRecord(
             original: "com.example.demo",
@@ -152,6 +168,7 @@ struct ImportReplacementPolicyTests {
         mapped: String? = nil,
         isInstalled: Bool,
         isSeal: Bool = false,
+        needsIPAImport: Bool = false,
         installedAt: Date = Date(timeIntervalSince1970: 500)
     ) -> AppRecord {
         AppRecord(
@@ -165,6 +182,7 @@ struct ImportReplacementPolicyTests {
             accountID: isInstalled ? UUID() : nil,
             lastInstalledAt: isInstalled ? installedAt : nil,
             ipaRelativePath: "Apps/\(UUID().uuidString)/Original.ipa",
+            needsIPAImport: needsIPAImport,
             isSeal: isSeal,
             importedAt: Date(timeIntervalSince1970: 100)
         )

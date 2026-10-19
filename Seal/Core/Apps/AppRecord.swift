@@ -324,22 +324,13 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     /// 不需要另存一份容易与签名记录失配的 Bundle ID 清单。
     var independentlyProvisionedExtensionBundleIdentifiers: Set<String> {
         let extensionBundleIDs = Set(extensions.compactMap(\.mappedBundleIdentifier))
-        switch extensionProfileStrategy {
-        case .some(.sharedMainProfile):
-            return []
-        case .none:
-            return extensionBundleIDs
-        case .some(.independentProfiles):
-            return extensionBundleIDs
-        case .some(.selectiveProfiles):
-            guard let mainProfileUUID = provisioningProfileUUID else { return [] }
-            return Set(signingTargets.compactMap { target in
-                guard extensionBundleIDs.contains(target.bundleIdentifier),
-                      let profileUUID = target.profileUUID,
-                      profileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame else { return nil }
-                return target.bundleIdentifier
-            })
-    }
+        guard let mainProfileUUID = provisioningProfileUUID else { return [] }
+        return Set(signingTargets.compactMap { target in
+            guard extensionBundleIDs.contains(target.bundleIdentifier),
+                  let profileUUID = target.profileUUID,
+                  profileUUID.caseInsensitiveCompare(mainProfileUUID) != .orderedSame else { return nil }
+            return target.bundleIdentifier
+        })
     }
 
     var requiresLockedSigningIdentity: Bool {
@@ -371,7 +362,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     /// 删除可再生的已签名 IPA 缓存元数据，不触碰设备上已安装应用的续签身份。
-    /// 描述文件续签只依赖已安装身份、证书私钥与签名目标；缓存不存在时仅不能离线重装。
+    /// 描述文件续签由已安装签名身份和 Apple 返回的新 profile 驱动；缓存不存在时仅不能离线重装。
     mutating func clearSignedIPACacheMetadata() {
         signedIPARelativePath = nil
         signedIPASHA256 = nil

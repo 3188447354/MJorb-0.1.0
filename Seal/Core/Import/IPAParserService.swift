@@ -216,9 +216,9 @@ struct IPAParserService: Sendable {
             }
 
             let (sum, overflow) = expandedSize.addingReportingOverflow(entry.uncompressedSize)
-            guard overflow == false, sum <= limits.maximumExpandedSize else {
+            guard overflow == false else {
                 throw sizeFailure(
-                    detail: "IPA 解压后总大小超过安全上限（\(sum) > \(limits.maximumExpandedSize) 字节）。"
+                    detail: "IPA 解压后总大小无法安全计算。"
                 )
             }
             expandedSize = sum
@@ -633,9 +633,9 @@ struct IPAParserService: Sendable {
 
     private func sizeFailure(detail: String) -> ImportFailure {
         failure(
-            title: "IPA 过大",
+            title: "IPA 内容超出处理范围",
             reason: detail,
-            recovery: "选择较小的 IPA",
+            recovery: "检查 IPA 文件是否完整，再选择有效的 IPA 重试。",
             code: "SEAL-IPA-105"
         )
     }

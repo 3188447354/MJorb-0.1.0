@@ -1,6 +1,6 @@
 import Foundation
 
-/// 语义化版本比较（兼容 v 前缀与多段版本号）
+/// 数字版本比较；更新标签的 Apple 格式校验由 UpdateChecker 单独执行。
 enum Version {
     static var current: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
@@ -25,24 +25,34 @@ enum Version {
               let b = validatedComponents(of: rhs) else { return nil }
         let count = max(a.count, b.count)
         for index in 0..<count {
-            let av = index < a.count ? a[index] : 0
-            let bv = index < b.count ? b[index] : 0
-            if av < bv { return .orderedAscending }
-            if av > bv { return .orderedDescending }
+            let av = index < a.count ? a[index] : "0"
+            let bv = index < b.count ? b[index] : "0"
+            let normalizedA = String(av.drop(while: { $0 == "0" }))
+            let normalizedB = String(bv.drop(while: { $0 == "0" }))
+            let numericA = normalizedA.isEmpty ? "0" : normalizedA
+            let numericB = normalizedB.isEmpty ? "0" : normalizedB
+            if numericA.count < numericB.count { return .orderedAscending }
+            if numericA.count > numericB.count { return .orderedDescending }
+            if numericA != numericB {
+                return numericA.lexicographicallyPrecedes(numericB)
+                    ? .orderedAscending
+                    : .orderedDescending
+            }
         }
         return .orderedSame
     }
 
-    private static func validatedComponents(of version: String) -> [Int]? {
+    private static func validatedComponents(of version: String) -> [String]? {
         var text = version.trimmingCharacters(in: .whitespacesAndNewlines)
         while text.hasPrefix("v") || text.hasPrefix("V") {
             text.removeFirst()
         }
         let parts = text.components(separatedBy: ".")
         guard parts.isEmpty == false,
-              parts.allSatisfy({ !$0.isEmpty && $0.allSatisfy(\.isNumber) }) else { return nil }
-        let values = parts.compactMap(Int.init)
-        return values.count == parts.count ? values : nil
+              parts.allSatisfy({ part in
+                  part.isEmpty == false && part.utf8.allSatisfy { (48...57).contains($0) }
+              }) else { return nil }
+        return parts
     }
 
     private static func components(of version: String) -> [Int] {

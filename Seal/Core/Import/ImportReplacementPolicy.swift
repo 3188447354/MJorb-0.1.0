@@ -10,14 +10,15 @@ import Foundation
 ///    记录争同一个身份，被 `SEAL-BUNDLE-004` 拦下（用户报「同 Bundle ID 冲突」）；
 /// ③ 即便绕过，新记录不在已安装列表 ⇒ `forceResign` 为假 ⇒ 走不到续签那条免预检的路径。
 ///
-/// 判据只认 `originalBundleIdentifier`（**导入包的原始身份**），**不认** mapped/preferred ——
-/// 那两者是「签名后」的身份，拿它们匹配会把「同原始包、不同签名身份」的副本一并吞掉。
+/// 默认只认 `originalBundleIdentifier`（**导入包的原始身份**），不拿签名后的身份匹配，
+/// 避免把「同原始包、不同签名身份」的副本一并吞掉。恢复出的已安装记录标记
+/// `needsIPAImport` 时，重新导入的是设备上已签名的 IPA，此时额外允许按 mapped Bundle ID 匹配。
 ///
 /// ⚠️ 只有**已安装**记录才构成覆盖更新候选。待签名记录不参与：仓库刻意支持
 /// 「同一个 IPA 导入多个副本、用不同 Bundle ID 分别签名同时安装」，那条路径上的记录
 /// 全都是待签名状态，绝不能被替换掉。
 enum ImportReplacementPolicy {
-    /// 覆盖更新的目标：与导入包同原始 Bundle ID 的一条**已安装**记录。
+    /// 覆盖更新的目标：与导入包身份匹配的一条**已安装**记录。
     /// 有多条时取最近安装/导入的那条（用户最新在用的那个）。
     static func installedReplacementCandidate(
         for parsed: ParsedIPA,
@@ -27,9 +28,12 @@ enum ImportReplacementPolicy {
         guard target.isEmpty == false else { return nil }
         return records
             .filter { record in
-                record.isSeal == false
-                    && record.belongsInInstalledList
-                    && normalizedBundleIdentifier(record.originalBundleIdentifier) == target
+                guard record.isSeal == false, record.belongsInInstalledList else { return false }
+                let matchesOriginalBundleIdentifier =
+                    normalizedBundleIdentifier(record.originalBundleIdentifier) == target
+                let matchesRecoveredSignedBundleIdentifier = record.needsIPAImport
+                    && normalizedBundleIdentifier(record.mappedBundleIdentifier ?? "") == target
+                return matchesOriginalBundleIdentifier || matchesRecoveredSignedBundleIdentifier
             }
             .max { lhs, rhs in
                 installedTimestamp(lhs) < installedTimestamp(rhs)

@@ -33,7 +33,6 @@ enum AppConfiguration {
     // MARK: - 限制
     enum Limits {
         static let maxPairingFileSize = 5 * 1_024 * 1_024 // 5 MB
-        static let maxIPASize = 2 * 1_024 * 1_024 * 1_024 // 2 GB
     }
 
     // MARK: - 时间

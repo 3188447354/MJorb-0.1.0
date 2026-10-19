@@ -5,29 +5,13 @@ import Testing
 struct ProfileOnlyRenewalPolicyTests {
 
     @Test
-    func missingPortalAppIDRequiresFullResignInsteadOfRegistration() {
-        #expect(
-            ProfileOnlyRenewalPolicy.portalAppIDDecision(isPresent: false)
-                == .requiresFullResign
-        )
-    }
-
-    @Test
-    func existingPortalAppIDCanBeReused() {
-        #expect(
-            ProfileOnlyRenewalPolicy.portalAppIDDecision(isPresent: true)
-                == .reuse
-        )
-    }
-
-    @Test
     func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp() {
         // 回归钉（2026-09-25 真机，构建 44）：旧实现第一句就**按身份**排除 Seal
         // （`guard app.isSeal == false else { return .requiresFullResign(.sealSelfReplacement) }`）
         // ⇒ Seal 续签**永远**走完整重签 + 自替换安装 ⇒ 进程被系统换掉：
         // 批量续签队列项留在 `running` 变成未知（`SEAL-RENEW-007`）、
         // 自替换安装报 `SEAL-SELF-109`、用户必须手动重试。
-        // 判定依据是**记录是否完整**，与「这是谁的应用」无关 —— 上游 SideStore 的
+        // 判定依据是当前可核验的签名身份和 Apple 门户结果，与「这是谁的应用」无关 —— 上游 SideStore 的
         // `refresh` 管线对它自己也只注入描述文件、从不重签重装。
         let app = makeEligibleApp(isSeal: true)
 
@@ -43,14 +27,16 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func sealWithIncompleteRecordStillRequiresFullResign() {
-        // 反方向：去掉「按身份一刀切」**不是**后门 —— 记录不完整时 Seal 照旧回落完整重签。
+    func missingAccountRecordDoesNotBlockSameTeamProfileRenewal() {
         var app = makeEligibleApp(isSeal: true)
         app.accountID = nil
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.incompleteSigningIdentity)
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.TEAM123456.share"
+                ])
         )
     }
 
@@ -122,7 +108,7 @@ struct ProfileOnlyRenewalPolicyTests {
     @Test
     func installedThirdPartyAppKeepsProfileOnlyEligibilityAfterSignedCacheMetadataIsRemoved() {
         // `Signed.ipa` 是可重建的安装缓存，不是设备上已安装包的续签身份。
-        // 清缓存后只要签名目标、证书、设备和描述文件身份仍完整，就必须继续走
+        // 清缓存后只要应用和签名者身份仍可确认，就必须继续尝试
         // 「只更新描述文件」；否则“释放缓存”会偷偷把用户送进完整重签和重装。
         var app = makeEligibleApp()
         app.clearSignedIPACacheMetadata()
@@ -154,29 +140,37 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func sharedProfileWithMismatchedExtensionRecordForcesAFullResignMigration() {
+    func sharedProfileWithStaleExtensionUUIDStillUsesProfileRenewal() {
         var app = makeEligibleSharedProfileApp()
         app.extensions[0].provisioningProfileUUID = "UNEXPECTED-PROFILE"
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.extensionProfileIntegrityMigration)
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.TEAM123456.share"
+                ])
         )
     }
 
     @Test
-    func unrecordedLegacyExtensionStrategyAlsoForcesTheMigration() {
+    func unrecordedLegacyExtensionStrategyUsesTheRecordedProfileAllocations() {
         var app = makeEligibleApp()
         app.extensionProfileStrategy = nil
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.extensionProfileIntegrityMigration)
+                == .eligible(
+                    targetBundleIdentifiers: [
+                        "com.example.demo.TEAM123456",
+                        "com.example.demo.TEAM123456.share"
+                    ]
+                )
         )
     }
 
     @Test
-    func liveIdentityCannotBypassTheUnrecordedExtensionProfileMigration() {
+    func liveIdentityAlsoUsesTheRecordedProfileAllocationsWhenStrategyIsMissing() {
         var app = makeEligibleApp()
         app.extensionProfileStrategy = nil
         let live = LiveProfileOnlyIdentity(
@@ -193,12 +187,12 @@ struct ProfileOnlyRenewalPolicyTests {
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: live)
-                == .requiresFullResign(.extensionProfileIntegrityMigration)
+                == .eligible(targetBundleIdentifiers: live.targetBundleIdentifiers)
         )
     }
 
     @Test
-    func missingExtensionTargetRequiresProfileIntegrityMigration() {
+    func missingExtensionEntitlementRecordIsRebuiltWithoutFullResigning() {
         var app = makeEligibleApp()
         app.signingTargets.removeAll {
             $0.bundleIdentifier == "com.example.demo.TEAM123456.share"
@@ -206,29 +200,38 @@ struct ProfileOnlyRenewalPolicyTests {
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.extensionProfileIntegrityMigration)
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.TEAM123456.share"
+                ])
         )
     }
 
     @Test
-    func missingOwningAccountRequiresTheExistingFullResignRoute() {
+    func missingOwningAccountBindingDoesNotBlockSameTeamRenewal() {
         var app = makeEligibleApp()
         app.accountID = nil
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.incompleteSigningIdentity)
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.TEAM123456.share"
+                ])
         )
     }
 
     @Test
-    func staleMainProfileSnapshotRequiresTheExistingFullResignRoute() {
+    func staleMainProfileSnapshotDoesNotBlockProfileRenewal() {
         var app = makeEligibleApp()
         app.provisioningProfileUUID = "STALE-MAIN-PROFILE"
 
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app)
-                == .requiresFullResign(.missingTargetRecord)
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.TEAM123456.share"
+                ])
         )
     }
 
@@ -259,6 +262,40 @@ struct ProfileOnlyRenewalPolicyTests {
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: nil)
                 == .requiresFullResign(.incompleteSigningIdentity)
+        )
+    }
+
+    @Test
+    func liveSignerIdentityWithoutAProfileUUIDCanRenewProfiles() {
+        let app = makeSealRecordAsWrittenBySelfAppRegistrar()
+        let signerOnlyTarget = SignedTargetIdentity(
+            kind: .mainApp,
+            bundleIdentifier: "com.example.demo.TEAM123456",
+            teamIdentifier: "TEAM123456",
+            applicationIdentifier: "TEAM123456.com.example.demo",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: "00AABB",
+            signerCertificateSHA256: "sha",
+            status: .signerIdentified
+        )
+        let identity = InstalledIdentity(
+            bundleURL: URL(fileURLWithPath: "/Applications/Seal.app"),
+            version: app.version,
+            buildNumber: app.buildNumber,
+            targets: [signerOnlyTarget],
+            readErrors: []
+        )
+        let live = ProfileOnlyRenewalPolicy.liveIdentity(
+            installedIdentity: identity,
+            runningVersion: app.version,
+            app: app
+        )
+
+        #expect(live?.profileUUID == "")
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: live)
+                == .eligible(targetBundleIdentifiers: ["com.example.demo.TEAM123456"])
         )
     }
 
@@ -392,7 +429,7 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     /// 版本不一致时，实时身份**仍然**必须能构造出来 —— 否则会退化成
-    /// 「回落记录通道」，而记录通道对 Seal 恒判 `.missingInstalledArtifact`，
+    /// 「回落记录通道」，而某些 Seal 记录形态会被记录通道判为身份信息不完整，
     /// 归因就从「有更新没装」变成「记录里缺少已安装产物」（日志会误导排查）。
     @Test
     func aPendingUpdateStillReadsTheRunningIdentityInsteadOfFallingBack() {
@@ -490,20 +527,41 @@ struct ProfileOnlyRenewalPolicyTests {
                 liveIdentity: live
             )
         )
-        // 记录通道**不放松**：没有实时身份时，设备绑定必须真的匹配。
+        // 旧设备 ID 不是 Apple 对本轮 profile 的裁决；本次实际设备必须可识别。
         #expect(
             ProfileOnlyRenewalPolicy.isBoundToCurrentDevice(
                 app: app,
                 deviceIdentifier: "ANY-DEVICE",
+                liveIdentity: nil
+            )
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.isBoundToCurrentDevice(
+                app: app,
+                deviceIdentifier: "  ",
                 liveIdentity: nil
             ) == false
         )
     }
 
     @Test
-    func effectiveCertificateSerialNumberFallsBackToTheLiveIdentity() {
+    func staleDeviceBindingDoesNotBlockRenewalOnTheConnectedDevice() {
         var app = makeEligibleApp()
-        app.certificateSerialNumber = nil
+        app.signedDeviceIdentifier = "PREVIOUS-DEVICE"
+
+        #expect(
+            ProfileOnlyRenewalPolicy.isBoundToCurrentDevice(
+                app: app,
+                deviceIdentifier: "CURRENT-DEVICE",
+                liveIdentity: nil
+            )
+        )
+    }
+
+    @Test
+    func effectiveCertificateSerialNumberPrefersTheLiveInstalledSigner() {
+        var app = makeEligibleApp()
+        app.certificateSerialNumber = "OLD-SERIAL"
         let live = LiveProfileOnlyIdentity(
             mainBundleIdentifier: "com.example.demo.TEAM123456",
             profileUUID: "MAIN-PROFILE",
@@ -519,7 +577,25 @@ struct ProfileOnlyRenewalPolicyTests {
         )
         #expect(
             ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(app: app, liveIdentity: nil)
-                == nil
+                == "OLD-SERIAL"
+        )
+    }
+
+    @Test
+    func profileCertificateCanRecoverTheRecordedSignerWhenTheTopLevelSerialIsMissing() {
+        var app = makeEligibleApp()
+        app.certificateSerialNumber = nil
+
+        #expect(
+            ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(app: app, liveIdentity: nil)
+                == "AABB"
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app)
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.TEAM123456.share"
+                ])
         )
     }
 
@@ -529,11 +605,10 @@ struct ProfileOnlyRenewalPolicyTests {
     /// 要在「证书序列号」那里写一句「需要重新签名一次获取本机证书」，
     /// 并让**匹配之后**的续签回到「只更新描述文件、不重装」。
     ///
-    /// 这条钉住「什么时候该说这句话」的判据 —— 与准入的最后一道闸门
-    ///（`SigningCoordinator.shouldUseProfileOnlyRenewal` 里的 `localCertificateMaterialBlock`）
-    /// **同源**，所以不会出现「界面说没事、执行时却抛 `SEAL-PROFILE-334`」。
+    /// 这条仅覆盖界面状态：本机私钥缺失可以提示，但不拦截 profile-only；
+    /// 是否能续签由 Apple 活动证书与本轮 profile 请求决定。
     @Test
-    func missingLocalPrivateKeyIsReportedAsNeedingAFullResign() {
+    func missingLocalPrivateKeyDoesNotImplyProfileRenewalNeedsAFullResign() {
         // 记录里有序列号、账号密钥也能读到，但**本机没有这张证书的私钥**
         // —— 正是构建 48 日志里 `本机有私钥 0 张` 的形态（重装 Seal 会清空 Keychain）。
         let secret = AccountSecret(
@@ -547,7 +622,7 @@ struct ProfileOnlyRenewalPolicyTests {
             ProfileOnlyRenewalPolicy.localCertificateAvailability(
                 secret: secret,
                 certificateSerialNumber: "00AABB"
-            ) == .needsFullResign
+            ) == .missingPrivateKey
         )
         // 私钥材料**存在但解析不出来**（旧账号遗留 / 数据损坏）同样按「没有私钥」处理 ——
         // 与 `SigningCertificateMaterialPolicy.availableCertificate` 同口径。
@@ -564,7 +639,7 @@ struct ProfileOnlyRenewalPolicyTests {
             ProfileOnlyRenewalPolicy.localCertificateAvailability(
                 secret: corrupt,
                 certificateSerialNumber: "00AABB"
-            ) == .needsFullResign
+            ) == .missingPrivateKey
         )
     }
 
@@ -631,7 +706,7 @@ struct ProfileOnlyRenewalPolicyTests {
             ]
         )
 
-        #expect(values[installed.id] == .needsFullResign)
+        #expect(values[installed.id] == .missingPrivateKey)
         #expect(values[signed.id] == nil)
         #expect(values[danglingAccount.id] == .undetermined)
     }

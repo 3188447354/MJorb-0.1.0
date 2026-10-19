@@ -710,6 +710,7 @@ actor ApplePortalSigningService {
         workspaceRoot: URL,
         targetBundleIdentifier: String,
         certificateSerialNumber: String,
+        liveIdentity: LiveProfileOnlyIdentity? = nil,
         progress: @escaping @Sendable (SigningStage) async -> Void,
         onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void = { _ in }
     ) async throws -> ProfileOnlyPortalResult {
@@ -746,17 +747,12 @@ actor ApplePortalSigningService {
         )
 
         await progress(.preparingBundle)
-        // ⚠️ 续签**必须沿用应用当初实际签名时用的策略**（`app.extensionProfileStrategy`），
-        // 不能用 `app.effectiveExtensionProfileStrategy` —— 后者按当前源包拓扑选择默认值、
-        // **不看记录**。若误把历史上按独立描述文件签过的应用当成共享，只会取主 App
-        // 一份描述文件注入设备 ⇒
-        // **扩展自己的描述文件根本没续上，而记录却写着已续签** ✗。
-        // 1.3.5 之前的记录没有这个字段（那时只有独立模式）⇒ 回退 `.independentProfiles`。
-        // 守卫 **R65⑨** 钉住「必须取自记录、不得用 effective、不得写死」。
-        let renewalStrategy = app.extensionProfileStrategy ?? .independentProfiles
-        let renewalIndependentBundleIdentifiers = app.independentlyProvisionedExtensionBundleIdentifiers
-        let installedTargetBundleIdentifiers = [targetBundleIdentifier]
-            + app.extensions.compactMap(\.mappedBundleIdentifier)
+        let installedTargetBundleIdentifiers = liveIdentity?.targetBundleIdentifiers
+            ?? ([targetBundleIdentifier] + app.extensions.compactMap(\.mappedBundleIdentifier))
+        // Renewal starts from shared main profile; the actual IPA entitlements decide
+        // which extensions truly need their own profile.
+        let renewalIndependentBundleIdentifiers: Set<String> = []
+        let renewalStrategy: AppExtensionProfileStrategy = .sharedMainProfile
         // 🔴 **免解压快路径**（2026-09-29）：profile-only 续签只换描述文件、从不重签，
         // 它对权限的唯一需求就是「新描述文件仍授予旧描述文件授予过的那些键」。
         // 旧描述文件的 entitlements 已在 `app.signingTargets[].entitlements` 里落盘
@@ -765,18 +761,12 @@ actor ApplePortalSigningService {
         // 而 `prepare(.layoutOnly)` 仍要解压 + 改 Bundle ID，实测 **30–35 秒**
         // （根目录有 `.framework`/`.dylib` 的包更久）⇒ 这条省时的关键就在这。
         // 记录里没 entitlements（1.3.4x 之前的旧记录，解码落 `[:]`）⇒ 回落慢路径解压重建。
-        let preparationInput: ProfileOnlyRenewalPreparation
-        if let targets = Self.reconstructProfileOnlyRenewalTargets(
-            app: app,
-            targetBundleIdentifier: targetBundleIdentifier
-        ) {
-            preparationInput = .fastPath(targets)
-        } else {
+        func prepareLayoutOnlyWorkspace() throws -> PreparedSigningWorkspace {
             guard let originalIPAURL else {
                 throw Self.failure(
                     title: "续签身份信息不完整",
-                    reason: "本地记录缺少可用于只更新描述文件的签名目标，且原始 IPA 不可用。",
-                    recovery: "重新导入原始 IPA 后执行完整签名",
+                    reason: "本地记录缺少续签目标权限，且原始 IPA 不可用。",
+                    recovery: "重新导入原始 IPA 后重试",
                     code: "SEAL-PROFILE-332"
                 )
             }
@@ -802,12 +792,22 @@ actor ApplePortalSigningService {
                   Set(prepared.bundleIDMappings.values) == Set(installedTargetBundleIdentifiers) else {
                 throw Self.failure(
                     title: "应用目标已变化",
-                    reason: "本地 IPA 推导出的 App 与扩展目标集合和设备上已安装记录不一致。",
+                    reason: "本地 IPA 推导出的 App 与扩展目标集合和设备上已安装的应用不一致。",
                     recovery: "执行完整重签以重新建立应用身份",
                     code: "SEAL-PROFILE-331a"
                 )
             }
-            preparationInput = .slowPath(prepared)
+            return prepared
+        }
+        let preparationInput: ProfileOnlyRenewalPreparation
+        if let targets = Self.reconstructProfileOnlyRenewalTargets(
+            app: app,
+            targetBundleIdentifier: targetBundleIdentifier,
+            installedTargetBundleIdentifiers: installedTargetBundleIdentifiers
+        ) {
+            preparationInput = .fastPath(targets)
+        } else {
+            preparationInput = .slowPath(try prepareLayoutOnlyWorkspace())
         }
 
         // 快路径下复用首份 anisette；慢路径（上方解压 30 秒+）才刷新，
@@ -828,7 +828,6 @@ actor ApplePortalSigningService {
         )
         await progress(.preparingCertificate)
         let resolvedSerial = try await existingProfileOnlyCertificate(
-            secret: secret,
             expectedSerialNumber: certificateSerialNumber,
             team: team,
             session: session
@@ -846,16 +845,40 @@ actor ApplePortalSigningService {
         let preparation: ProfilePreparation
         switch preparationInput {
         case .fastPath(let targets):
-            preparation = try await renewalProvisioningProfiles(
-                targets: targets,
-                mappedMainBundleID: targetBundleIdentifier,
-                extensionProfileStrategy: renewalStrategy,
-                independentExtensionBundleIdentifiers: renewalIndependentBundleIdentifiers,
-                team: team,
-                session: session,
-                progress: progress,
-                onWorkUnits: onWorkUnits
-            )
+            do {
+                preparation = try await renewalProvisioningProfiles(
+                    targets: targets,
+                    mappedMainBundleID: targetBundleIdentifier,
+                    team: team,
+                    session: session,
+                    progress: progress,
+                    onWorkUnits: onWorkUnits
+                )
+            } catch let failure as ImportFailure where failure.code == "SEAL-PROFILE-337" {
+                let prepared = try prepareLayoutOnlyWorkspace()
+                let fallbackAnisette = try await anisetteProvider.fetch()
+                session = ALTAppleAPISession(
+                    dsid: secret.dsid,
+                    authToken: secret.authToken,
+                    anisetteData: fallbackAnisette,
+                    xcodeVersion: AppleAccountClient.xcodeVersion
+                )
+                preparation = try await provisioningProfiles(
+                    mappings: prepared.bundleIDMappings,
+                    originalMainBundleID: app.originalBundleIdentifier,
+                    mappedMainBundleID: prepared.mappedMainBundleID,
+                    extensionProfileStrategy: renewalStrategy,
+                    independentExtensionBundleIdentifiers: renewalIndependentBundleIdentifiers,
+                    appName: app.displayName,
+                    appURL: prepared.appURL,
+                    workspace: prepared,
+                    minimumProfileLifetime: 0,
+                    team: team,
+                    session: session,
+                    progress: progress,
+                    onWorkUnits: onWorkUnits
+                )
+            }
         case .slowPath(let prepared):
             preparation = try await provisioningProfiles(
                 mappings: prepared.bundleIDMappings,
@@ -866,7 +889,7 @@ actor ApplePortalSigningService {
                 appName: app.displayName,
                 appURL: prepared.appURL,
                 workspace: prepared,
-                requiresExistingAppIDs: true,
+                minimumProfileLifetime: 0,
                 team: team,
                 session: session,
                 progress: progress,
@@ -890,7 +913,7 @@ actor ApplePortalSigningService {
                 expectedCertificateSerialNumber: resolvedSerial,
                 expectedDeviceIdentifier: deviceIdentifier,
                 requestedAfter: requestedAt.addingTimeInterval(-Self.profileRequestClockTolerance),
-                minimumRemainingLifetime: Self.minimumFreshProfileLifetime
+                minimumRemainingLifetime: 0
             )
             guard binding.profileUUID?.isEmpty == false else {
                 throw Self.failure(
@@ -940,26 +963,14 @@ actor ApplePortalSigningService {
     }
 
     private func existingProfileOnlyCertificate(
-        secret: AccountSecret,
         expectedSerialNumber: String,
         team: ALTTeam,
         session: ALTAppleAPISession
     ) async throws -> String {
-        guard let local = SigningCertificateMaterialPolicy.availableCertificate(
-            secret: secret,
-            serialNumber: expectedSerialNumber
-        ), Self.certificateReusable(local) else {
-            throw Self.failure(
-                title: "当前证书不可续签",
-                reason: "profile-only 只能复用设备上当前应用使用、且仍能覆盖完整 7 天描述文件寿命的本机证书。",
-                recovery: "执行完整重签以申请新的签名证书",
-                code: "SEAL-PROFILE-334"
-            )
-        }
         let certificates = try await withSessionRecovery("核验当前签名证书", retriesOnTimeout: true) {
             try await fetchCertificates(team: team, session: session)
         }
-        guard certificates.contains(where: {
+        guard let certificate = certificates.first(where: {
             SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)
                 == SigningCertificateSelectionPolicy.normalizedSerialNumber(expectedSerialNumber)
         }) else {
@@ -970,7 +981,7 @@ actor ApplePortalSigningService {
                 code: "SEAL-PROFILE-335"
             )
         }
-        return local.serialNumber
+        return certificate.serialNumber
     }
 
     private static func shouldRetryWithFreshSigningCertificate(_ failure: ImportFailure) -> Bool {
@@ -1055,7 +1066,7 @@ actor ApplePortalSigningService {
             // - 抖音（压缩比 ≈1.9×）：780MB × 4 = 3.32GB，实际峰值 ≈3.0GB ⇒ **假警报**
             // - 高压缩比的包：100MB × 4 = 600MB，实际峰值 ≈1.7GB ⇒ **低估**
             // 现在直接问 `SigningWorkspace` 要准确值（它本来就要算这个数，顺带把
-            // 条目数 / 路径安全 / 8GB 上限也提前到这里暴露）。
+            // 条目数 / 路径安全也提前到这里暴露）。
             // 拿不到就**放行** —— `prepare` 里还有一道同样的检查兜底（那里 archive 已打开）。
             if let requiredBytes = try? signingWorkspace.requiredTemporarySpace(
                 forIPAAt: originalIPAURL
@@ -2220,7 +2231,7 @@ actor ApplePortalSigningService {
         appName: String,
         appURL: URL,
         workspace: PreparedSigningWorkspace,
-        requiresExistingAppIDs: Bool = false,
+        minimumProfileLifetime: TimeInterval = Self.minimumFreshProfileLifetime,
         team: ALTTeam,
         session: ALTAppleAPISession,
         progress: @escaping @Sendable (SigningStage) async -> Void,
@@ -2571,11 +2582,6 @@ actor ApplePortalSigningService {
                 }) {
                     appID = found
                 } else {
-                    if requiresExistingAppIDs,
-                       ProfileOnlyRenewalPolicy.portalAppIDDecision(isPresent: false)
-                            == .requiresFullResign {
-                        throw ApplePortalSigningFailure.profileOnlyAppIDMissing()
-                    }
                     do {
                         // 多扩展 App（如抖音）在 App ID 阶段密集建号，Apple 会掐断会话返回 1100。
                         // 退避重试后仍失败才向上抛，避免把限流误报成「登录过期」让用户白跑一趟重新验证。
@@ -2680,8 +2686,6 @@ actor ApplePortalSigningService {
                 ))
             } catch is CancellationError {
                 throw CancellationError()
-            } catch let failure as ImportFailure where requiresExistingAppIDs {
-                throw failure
             } catch {
                 // App ID 阶段必须原样保留所有扩展；删除扩展会制造一个能安装但功能
                 // 残缺的 IPA，且后续 profile-only 续签无法把二进制扩展补回来。
@@ -2699,7 +2703,8 @@ actor ApplePortalSigningService {
                 let profile = try await fetchProvisioningProfile(
                     for: preparedAppID.appID,
                     team: team,
-                    session: session
+                    session: session,
+                    minimumRemainingLifetime: minimumProfileLifetime
                 )
                 profiles.append(profile)
                 // 真实信号：描述文件也是一份一份取的，分母是 Phase 1 已就绪的个数。
@@ -2733,9 +2738,10 @@ actor ApplePortalSigningService {
     /// 调用方应回落「解压 IPA 重建」的慢路径。目标顺序：主 App 在前、扩展随后（与安装记录一致）。
     private static func reconstructProfileOnlyRenewalTargets(
         app: AppRecord,
-        targetBundleIdentifier: String
+        targetBundleIdentifier: String,
+        installedTargetBundleIdentifiers: [String]
     ) -> [ProfileOnlyRenewalTarget]? {
-        let installedTargets = [targetBundleIdentifier] + app.extensions.compactMap(\.mappedBundleIdentifier)
+        let installedTargets = installedTargetBundleIdentifiers
         guard Set(installedTargets).count == installedTargets.count else { return nil }
         var targets: [ProfileOnlyRenewalTarget] = []
         targets.reserveCapacity(installedTargets.count)
@@ -2753,18 +2759,11 @@ actor ApplePortalSigningService {
         return targets
     }
 
-    /// profile-only 续签专用路径：**不注册 App ID、不更新 features、不分配 App Group**。
-    ///
-    /// 为什么能跳过它们（而完整签名不能）：续签的前提是「App ID 已存在、能力已就绪」——
-    /// 首签时已建号并设置好 features / App Group，这里只换描述文件，而描述文件反映的
-    /// 正是该 App ID 当前已有的能力 ⇒ 重复提交能力是纯冗余请求，只会徒增 Apple 限流风险。
-    /// 对齐上游 SideStore refresh 流水线：`fetchProvisioningProfiles` 直接复用已有 App ID，
-    /// 只在能力确实缺时才走 `updateFeatures`（profile-only 续签则根本不改能力）。
+    /// profile-only 快路径只取 Apple 已有的 App ID 和对应描述文件。
+    /// 缺少 App ID 时由调用方回落到 IPA 能力解析与标准 App ID 准备流程。
     private func renewalProvisioningProfiles(
         targets: [ProfileOnlyRenewalTarget],
         mappedMainBundleID: String,
-        extensionProfileStrategy: AppExtensionProfileStrategy,
-        independentExtensionBundleIdentifiers: Set<String>,
         team: ALTTeam,
         session: ALTAppleAPISession,
         progress: @escaping @Sendable (SigningStage) async -> Void,
@@ -2780,6 +2779,30 @@ actor ApplePortalSigningService {
                 code: "SEAL-PROFILE-319"
             )
         }
+        var entitlementsByBundleIdentifier: [String: Set<String>] = [:]
+        var entitlementValuesByBundleIdentifier: [String: [String: ProvisioningEntitlementValue]] = [:]
+        for target in targets {
+            let topologyKeys = AppExtensionProfileStrategy.profileTopologyEntitlements(
+                from: Set(target.entitlements.keys)
+            )
+            entitlementsByBundleIdentifier[target.mappedBundleIdentifier] = topologyKeys
+            entitlementValuesByBundleIdentifier[target.mappedBundleIdentifier] =
+                target.entitlements.filter { topologyKeys.contains($0.key) }
+        }
+
+        let expectedBundleIdentifiers = targets.map(\.mappedBundleIdentifier)
+        let independentExtensionBundleIdentifiers =
+            AppExtensionProfileStrategy.independentBundleIdentifiers(
+                mainBundleID: mappedMainBundleID,
+                entitlementsByBundleID: entitlementsByBundleIdentifier,
+                entitlementValuesByBundleID: entitlementValuesByBundleIdentifier,
+                expectedBundleIdentifiers: expectedBundleIdentifiers
+            )
+        let extensionProfileStrategy = AppExtensionProfileStrategy.resolvedStrategy(
+            mainBundleID: mappedMainBundleID,
+            expectedBundleIdentifiers: expectedBundleIdentifiers,
+            independentBundleIdentifiers: independentExtensionBundleIdentifiers
+        )
         let portalTargets = targets.filter {
             $0.mappedBundleIdentifier == mappedMainBundleID
                 || independentExtensionBundleIdentifiers.contains($0.mappedBundleIdentifier)
@@ -2812,7 +2835,8 @@ actor ApplePortalSigningService {
             let profile = try await fetchProvisioningProfile(
                 for: prepared.appID,
                 team: team,
-                session: session
+                session: session,
+                minimumRemainingLifetime: 0
             )
             profiles.append(profile)
             await onWorkUnits(SigningWorkUnits(
@@ -2879,21 +2903,28 @@ actor ApplePortalSigningService {
     private func fetchProvisioningProfile(
         for appID: ALTAppID,
         team: ALTTeam,
-        session: ALTAppleAPISession
+        session: ALTAppleAPISession,
+        minimumRemainingLifetime: TimeInterval = Self.minimumFreshProfileLifetime
     ) async throws -> ALTProvisioningProfile {
         // 对齐 AltStore 官方实现：先获取，再尝试删除旧描述文件，删除成功则重新获取生成新的。
         // 免费账号从 2023-03-20 起无法删除描述文件，每次 fetch 会自动重新生成，
         // 因此删除失败时直接返回已获取的描述文件即可。
         // ⚠️ 申请描述文件内部会先 delete 再重建（写操作），退避重试**绝不开超时重试**（R33：超时重试会重复删/写）。
         return try await withSessionRecovery("申请描述文件 \(appID.bundleIdentifier)") {
-            try await requestProvisioningProfile(appID: appID, team: team, session: session)
+            try await requestProvisioningProfile(
+                appID: appID,
+                team: team,
+                session: session,
+                minimumRemainingLifetime: minimumRemainingLifetime
+            )
         }
     }
 
     private func requestProvisioningProfile(
         appID: ALTAppID,
         team: ALTTeam,
-        session: ALTAppleAPISession
+        session: ALTAppleAPISession,
+        minimumRemainingLifetime: TimeInterval
     ) async throws -> ALTProvisioningProfile {
         let requestStartedAt = Date()
         let requestedAfter = requestStartedAt.addingTimeInterval(-Self.profileRequestClockTolerance)
@@ -2973,12 +3004,16 @@ actor ApplePortalSigningService {
         }
 
         do {
-            try validateFreshProfile(candidate, requestedAfter: requestedAfter)
+            try validateFreshProfile(
+                candidate,
+                requestedAfter: requestedAfter,
+                minimumRemainingLifetime: minimumRemainingLifetime
+            )
             return candidate
         } catch let failure as ImportFailure where [
             "SEAL-PROFILE-315", "SEAL-PROFILE-315a", "SEAL-PROFILE-316"
         ].contains(failure.code) {
-            await diagnostic("描述文件首次结果不是本轮完整 7 天文件，立即在同一 Apple 会话重新申请一次", level: .warning)
+            await diagnostic("描述文件首次结果未通过本轮有效期核验，立即在同一 Apple 会话重新申请一次", level: .warning)
             let retryBox: LegacyBox<ALTProvisioningProfile> = try await withAppleTimeout(30) {
                 try await withCheckedThrowingContinuation { continuation in
                     let callback = ContinuationBox(continuation)
@@ -2992,19 +3027,24 @@ actor ApplePortalSigningService {
                     }
                 }
             }
-            try validateFreshProfile(retryBox.value, requestedAfter: requestedAfter)
+            try validateFreshProfile(
+                retryBox.value,
+                requestedAfter: requestedAfter,
+                minimumRemainingLifetime: minimumRemainingLifetime
+            )
             return retryBox.value
         }
     }
 
     private func validateFreshProfile(
         _ profile: ALTProvisioningProfile,
-        requestedAfter: Date
+        requestedAfter: Date,
+        minimumRemainingLifetime: TimeInterval
     ) throws {
         let binding = try ProvisioningProfileReader().binding(from: profile.data)
         try binding.validateFreshness(
             requestedAfter: requestedAfter,
-            minimumRemainingLifetime: Self.minimumFreshProfileLifetime
+            minimumRemainingLifetime: minimumRemainingLifetime
         )
     }
 
@@ -3132,17 +3172,8 @@ actor ApplePortalSigningService {
             // 能力做门户提交，其余 capability 直接跳过（签出的包由 SideSign 按描述文件裁剪，自洽）。
             guard ALTFeature(entitlement: entitlement) != nil else { continue }
             if entitlement == .appGroups, let groups = value as? [String] {
-                // App Group 的实际 group ID 在 `assignAppGroups` 里经
-                // `bundleIDMapper.appGroupID` 映射成 `group.<original>.seal.<teamID>`，
-                // 描述文件返回的也是映射后 ID。这里若保留原始 ID，签后 `validateEntitlements`
-                // 用「原始请求」对「映射后 profile」必报 SEAL-ENTITLEMENT-402（权限值不一致）。
-                // 必须用同一个映射源，让「请求集」与「描述文件」两侧的 group ID 逐字一致。
-                filtered[entitlement] = AppGroupOrderingPolicy.canonicalize(groups.map {
-                    signingWorkspace.bundleIDMapper.appGroupID(
-                        original: $0,
-                        teamID: team.identifier
-                    )
-                })
+                // App Group ID 完全保留 IPA 声明；只统一顺序，不改写标识符。
+                filtered[entitlement] = AppGroupOrderingPolicy.canonicalize(groups)
             } else {
                 filtered[entitlement] = value
             }
@@ -3221,18 +3252,13 @@ actor ApplePortalSigningService {
         }
         guard originalGroups.isEmpty == false else { return }
         // App Group 操作通过 actor 串行化；批量签名为串行循环，无并发创建风险
-        // 2026-10-10：映射后按默认字符串序排序，保证同一集合永远得到同一顺序。
+        // 2026-10-10：规范化后按默认字符串序排序，保证同一集合永远得到同一顺序。
         // 背景：原包 entitlement 里 app-groups 数组的顺序是任意的（不同构建可能不同，
         // 如 LiveContainer 主包与 LiveContainer2：两个组集合相同但顺序相反）；运行
         // 时取第 0 个当共享目录，顺序不同会导致两个 App 用不同的共享目录、互相看不见。
         // 注意用默认 `<`（区分大小写）：对本案即 [SideStore, AltStore]，主包第 0 个
         // 本来就是 SideStore，排序后不变，已转共享的数据不受影响。
-        let mappedIdentifiers = AppGroupOrderingPolicy.canonicalize(originalGroups.map {
-            signingWorkspace.bundleIDMapper.appGroupID(
-                original: $0,
-                teamID: team.identifier
-            )
-        })
+        let identifiers = AppGroupOrderingPolicy.canonicalize(originalGroups)
         let fetchedBox: LegacyBox<[ALTAppGroup]> =
             try await withAppleTimeout {
                 try await withCheckedThrowingContinuation { continuation in
@@ -3245,7 +3271,7 @@ actor ApplePortalSigningService {
             }
         var available = fetchedBox.value
         var assigned: [ALTAppGroup] = []
-        for identifier in mappedIdentifiers {
+        for identifier in identifiers {
             try Task.checkCancellation()
             if let existing = available.first(where: {
                 $0.groupIdentifier == identifier

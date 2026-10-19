@@ -63,7 +63,7 @@ struct UpdateCheckerAssetTests {
     }
 
     @Test
-    func mapsReleaseAPIStatusesToActionableStates() {
+    func mapsReleaseStatusesToActionableStates() {
         if case .latest? = UpdateChecker.result(forHTTPStatus: 404) {
             #expect(true)
         } else {
@@ -72,6 +72,116 @@ struct UpdateCheckerAssetTests {
         #expect(UpdateChecker.failure(forHTTPStatus: 403) == .rateLimited)
         #expect(UpdateChecker.failure(forHTTPStatus: 429) == .rateLimited)
         #expect(UpdateChecker.failure(forHTTPStatus: 503) == .serviceUnavailable)
+    }
+
+    @Test
+    func parsesStableReleasesInPublishedOrder() throws {
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v0.1.30"/>
+            <title>Seal v0.1.30</title>
+            <content type="html">&lt;ul&gt;&lt;li&gt;修复更新检查&lt;/li&gt;&lt;/ul&gt;</content>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v1.3.0"/>
+            <title>历史版本</title>
+            <content type="html">旧版</content>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v0.1.31-rc.1"/>
+            <title>预发布版本</title>
+            <content type="html">预发布</content>
+          </entry>
+        </feed>
+        """
+        let releases = try #require(
+            UpdateChecker.releaseEntries(
+                from: Data(xml.utf8),
+                repo: "3188447354/MJorb-0.1.0"
+            )
+        )
+
+        #expect(releases.count == 2)
+        #expect(releases[0].tag == "v0.1.30")
+        #expect(releases[0].title == "Seal v0.1.30")
+        #expect(releases[0].message == "修复更新检查")
+        #expect(releases[1].tag == "v1.3.0")
+    }
+
+    @Test
+    func acceptsNewerCrossSeriesAndUnboundedPatchVersions() throws {
+        let highPatch = "9" + String(repeating: "0", count: 80)
+        let xml = """
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v0.2.0"/>
+            <title>次版本更新</title>
+            <content type="html">跨次版本正式更新</content>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v0.1.\(highPatch)"/>
+            <title>大补丁号</title>
+            <content type="html">补丁号不设上限</content>
+          </entry>
+        </feed>
+        """
+        let releases = try #require(
+            UpdateChecker.releaseEntries(
+                from: Data(xml.utf8),
+                repo: "3188447354/MJorb-0.1.0"
+            )
+        )
+
+        #expect(releases.map(\.tag) == ["v0.2.0", "v0.1.\(highPatch)"])
+        #expect(Version.compareIfValid(releases[0].tag, "0.1.31") == .orderedDescending)
+        #expect(Version.compareIfValid(releases[1].tag, "0.1.31") == .orderedDescending)
+    }
+
+    @Test
+    func onlyAppleThreePartASCIIVersionsAreAccepted() throws {
+        let xml = """
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v0.1.32.1"/>
+            <title>四段版本</title>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/3188447354/MJorb-0.1.0/releases/tag/v0.1.３３"/>
+            <title>非 ASCII 数字</title>
+          </entry>
+        </feed>
+        """
+        let releases = try #require(
+            UpdateChecker.releaseEntries(
+                from: Data(xml.utf8),
+                repo: "3188447354/MJorb-0.1.0"
+            )
+        )
+
+        #expect(releases.isEmpty)
+    }
+
+    @Test
+    func extractsOnlyTrustedGitHubReleaseAssets() {
+        let baseURL = URL(string: "https://github.com/3188447354/MJorb-0.1.0/releases/expanded_assets/v0.1.30")!
+        let html = """
+        <a href="/3188447354/MJorb-0.1.0/releases/download/v0.1.30/Seal_0.1.30.ipa">Seal_0.1.30.ipa</a>
+        <a href="/3188447354/MJorb-0.1.0/releases/download/v0.1.30/Seal_0.1.30.ipa.sha256">Seal_0.1.30.ipa.sha256</a>
+        <a href="https://evil.example/Seal.ipa">untrusted</a>
+        """
+        let assets = UpdateChecker.releaseAssets(from: html, relativeTo: baseURL)
+
+        #expect(UpdateChecker.ipaDownloadURL(from: assets)?.absoluteString
+                == "https://github.com/3188447354/MJorb-0.1.0/releases/download/v0.1.30/Seal_0.1.30.ipa")
+        #expect(UpdateChecker.sha256DownloadURL(from: assets)?.absoluteString
+                == "https://github.com/3188447354/MJorb-0.1.0/releases/download/v0.1.30/Seal_0.1.30.ipa.sha256")
+    }
+
+    @Test
+    func rejectsMalformedReleaseFeed() {
+        #expect(UpdateChecker.releaseEntries(from: Data("not Atom".utf8), repo: "3188447354/MJorb-0.1.0") == nil)
     }
 
     /// 核心：即使仓库名硬编码，响应里的直链也必须独立校验 host。

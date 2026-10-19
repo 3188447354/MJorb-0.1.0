@@ -46,6 +46,32 @@ struct SignedArtifactSnapshotTests {
     // MARK: - 安装校验通过后的快照推进
 
     @Test
+    func installationValidationUsesPendingProfileWithoutCommittingTheStoredRecord() {
+        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
+        var app = makeApp(targets: [], profileUUID: "OLD-UUID")
+        app.provisioningProfileExpirationDate = nil
+        app.pendingSignedSnapshot = PendingSignedSnapshot(
+            expiryDate: expiry,
+            provisioningProfileUUID: "NEW-UUID",
+            provisioningProfileName: "New",
+            provisioningProfileCreationDate: nil,
+            provisioningProfileExpirationDate: expiry,
+            certificateSerialNumber: "NEW-SERIAL",
+            signingTargets: [],
+            extensionSnapshots: []
+        )
+
+        let validationRecord = SignedArtifactSnapshot.installationValidationRecord(from: app)
+
+        #expect(validationRecord.provisioningProfileUUID == "NEW-UUID")
+        #expect(validationRecord.provisioningProfileExpirationDate == expiry)
+        #expect(validationRecord.pendingSignedSnapshot == nil)
+        #expect(app.provisioningProfileUUID == "OLD-UUID")
+        #expect(app.provisioningProfileExpirationDate == nil)
+        #expect(app.pendingSignedSnapshot != nil)
+    }
+
+    @Test
     func advancingTheSnapshotTakesTheMainTargetProfile() {
         let expiry = Date(timeIntervalSince1970: 1_780_000_000)
         let creation = Date(timeIntervalSince1970: 1_750_000_000)

@@ -1,7 +1,7 @@
 import Foundation
 
 /// 启动更新通知检查器
-/// 从 GitHub Releases 拉取最新版本，有更新时弹窗提示
+/// 从 GitHub Releases 公共页面读取最新版本，有更新时弹窗提示
 /// 弹窗标题和内容来自 Release 的 name 和 body，可在 GitHub 发版时自定义
 struct UpdateChecker {
     static let shared = UpdateChecker()
@@ -27,63 +27,42 @@ struct UpdateChecker {
     }
 
     private static func fetchLatest(repo: String) async -> UpdateCheckResult {
-        guard let url = URL(string: "https://api.github.com/repos/\(repo)/releases/latest") else {
+        guard let url = URL(string: "https://github.com/\(repo)/releases.atom") else {
             return .unavailable(.configuration)
         }
 
         do {
-            var request = URLRequest(url: url)
-            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            request.setValue("Seal", forHTTPHeaderField: "User-Agent")
-            request.timeoutInterval = 10
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return .unavailable(.serviceUnavailable)
-            }
+            let (data, http) = try await fetch(url, accept: "application/atom+xml")
             if let statusResult = Self.result(forHTTPStatus: http.statusCode) {
                 return statusResult
             }
 
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let tagName = json["tag_name"] as? String else {
+            guard let releases = Self.releaseEntries(
+                from: data,
+                repo: repo
+            ) else {
                 return .unavailable(.invalidRelease)
             }
-
-            // 本地版本
-            let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
-
-            // 只有远端版本「严格高于」当前版本才提示更新；
-            // 回滚、发布顺序错乱或 tag 异常返回旧版本时静默忽略，避免提示下载旧 IPA。
-            guard let versionComparison = Version.compareIfValid(tagName, currentVersion) else {
+            // The feed is newest publication first. Select that release before comparing
+            // versions so an older historical tag with a numerically larger value cannot win.
+            guard let release = releases.first else { return .latest }
+            guard let versionComparison = Version.compareIfValid(release.tag, Version.current) else {
                 return .unavailable(.invalidRelease)
             }
             if versionComparison != .orderedDescending {
                 return .latest
             }
 
-            // 从 Release 读取标题和正文，发版时可自定义
-            let releaseName = json["name"] as? String ?? "发现新版本"
-            let releaseBody = (json["body"] as? String)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let message = releaseBody ?? ""
-
-            // 下载跳转地址：优先 Release 详情页，回退到仓库页面
-            let downloadURL = (json["html_url"] as? String)
-                .flatMap(URL.init(string:))
-                ?? URL(string: "https://github.com/\(repo)/releases")
-
-            // 从 attachments 里挑 IPA，供应用内直接下载覆盖安装
-            let assets = json["assets"] as? [[String: Any]] ?? []
-            let ipaDownloadURL = Self.ipaDownloadURL(from: assets)
-            // 配套校验和直链：下载 IPA 后必须与其比对口径，堵住「同一合法域名下资产被替换」。
-            let sha256DownloadURL = Self.sha256DownloadURL(from: assets)
+            let (ipaDownloadURL, sha256DownloadURL) = await Self.releaseAssetURLs(
+                repo: repo,
+                tag: release.tag
+            )
 
             return .available(UpdateNotice(
-                version: tagName,
-                title: releaseName,
-                message: message,
-                downloadURL: downloadURL,
+                version: release.tag,
+                title: release.title,
+                message: release.message,
+                downloadURL: release.pageURL,
                 ipaDownloadURL: ipaDownloadURL,
                 sha256DownloadURL: sha256DownloadURL
             ))
@@ -92,11 +71,128 @@ struct UpdateChecker {
         }
     }
 
+    private static func fetch(_ url: URL, accept: String = "text/html") async throws -> (Data, HTTPURLResponse) {
+        var request = URLRequest(url: url)
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.setValue("Seal", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        return (data, http)
+    }
+
+    static func releaseEntries(
+        from data: Data,
+        repo: String
+    ) -> [UpdateRelease]? {
+        let delegate = UpdateReleaseFeedParser()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+        guard parser.parse(), delegate.sawFeed else { return nil }
+
+        return delegate.entries.compactMap { entry in
+            guard let pageURL = URL(string: entry.pageURL),
+                  isTrustedReleasePage(pageURL, repo: repo),
+                  let tag = pageURL.pathComponents.last,
+                  isAppleReleaseVersion(tag) else {
+                return nil
+            }
+            return UpdateRelease(
+                tag: tag,
+                title: entry.title.isEmpty ? "发现新版本" : entry.title,
+                message: plainText(fromHTML: entry.content),
+                pageURL: pageURL
+            )
+        }
+    }
+
+    private static func isAppleReleaseVersion(_ version: String) -> Bool {
+        var normalized = version.trimmingCharacters(in: .whitespacesAndNewlines)
+        while normalized.hasPrefix("v") || normalized.hasPrefix("V") {
+            normalized.removeFirst()
+        }
+        let components = normalized.split(separator: ".")
+        guard components.count == 3,
+              components.allSatisfy({ component in
+                  component.utf8.allSatisfy { (48...57).contains($0) }
+              }) else { return false }
+        return true
+    }
+
+    private static func isTrustedReleasePage(_ url: URL, repo: String) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "github.com" else { return false }
+        let components = url.pathComponents
+        return components.count == 6
+            && components[1...4].joined(separator: "/") == "\(repo)/releases/tag"
+    }
+
+    private static func plainText(fromHTML html: String) -> String {
+        let withBreaks = html.replacingOccurrences(
+            of: "(?i)</(li|p|div)>|<br\\s*/?>",
+            with: "\n",
+            options: .regularExpression
+        )
+        let withoutTags = withBreaks.replacingOccurrences(
+            of: "<[^>]+>",
+            with: "",
+            options: .regularExpression
+        )
+        return withoutTags
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func releaseAssetURLs(repo: String, tag: String) async -> (URL?, URL?) {
+        guard let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://github.com/\(repo)/releases/expanded_assets/\(encodedTag)") else {
+            return (nil, nil)
+        }
+        do {
+            let (data, response) = try await fetch(url)
+            guard response.statusCode == 200,
+                  let baseURL = response.url,
+                  isTrustedDownloadURL(baseURL),
+                  let html = String(data: data, encoding: .utf8) else {
+                return (nil, nil)
+            }
+            let assets = releaseAssets(from: html, relativeTo: baseURL)
+            guard let ipaURL = ipaDownloadURL(from: assets),
+                  let checksumURL = sha256DownloadURL(from: assets) else {
+                return (nil, nil)
+            }
+            return (ipaURL, checksumURL)
+        } catch {
+            return (nil, nil)
+        }
+    }
+
+    static func releaseAssets(from html: String, relativeTo baseURL: URL) -> [[String: Any]] {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"<a\b[^>]*\bhref="([^"]+)"[^>]*>"#,
+            options: [.caseInsensitive]
+        ) else { return [] }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return regex.matches(in: html, range: range).compactMap { match in
+            guard let hrefRange = Range(match.range(at: 1), in: html) else { return nil }
+            let href = String(html[hrefRange]).replacingOccurrences(of: "&amp;", with: "&")
+            guard let url = URL(string: href, relativeTo: baseURL)?.absoluteURL,
+                  isTrustedDownloadURL(url) else { return nil }
+            return ["name": url.lastPathComponent, "browser_download_url": url.absoluteString]
+        }
+    }
+
     // MARK: - 更新资产的真实性
 
     /// Release 声称的版本（`tag_name`）与 IPA 内真实版本是否一致。
     ///
-    /// 这是一次**跨源交叉验证**：`tag_name` 来自 GitHub API 的元数据，
+    /// 这是一次**跨源交叉验证**：版本标签来自 GitHub Releases 的 Atom 元数据，
     /// `CFBundleShortVersionString` 来自**下载到的二进制本身**。
     /// 只校验下载域名是不够的 —— 同一仓库、同一合法域名下的资产仍然可以被替换，
     /// 那种情况下域名校验完全看不出异常。两边对不上，说明这个包要么不属于这个
@@ -110,7 +206,7 @@ struct UpdateChecker {
 
     /// Release 资产的下载直链必须来自 GitHub 官方域名，且必须是 HTTPS。
     ///
-    /// `browser_download_url` 来自 API 响应。仓库名虽然是硬编码的，但响应内容本身
+    /// 下载链接来自 GitHub 附件页。仓库名虽然是硬编码的，但响应内容本身
     /// 是不可信输入：一旦它指向攻击者的域名，「应用内更新」就会变成远程代码投递通道。
     /// 因此这里独立校验 scheme 与 host，不信任响应里说什么就是什么。
     static func isTrustedDownloadURL(_ url: URL) -> Bool {
@@ -127,7 +223,7 @@ struct UpdateChecker {
     /// 确定性地挑出 IPA 直链。
     ///
     /// 旧实现取**第一个**后缀为 `.ipa` 的附件：一次 Release 挂了多个 IPA 时
-    /// （不同架构、测试包、或后补的附件）装哪个全看 API 返回顺序 ——
+    /// （不同架构、测试包、或后补的附件）装哪个全看页面链接顺序 ——
     /// 既不确定，也让「往 Release 里多加一个附件」成为可行的投毒手法。
     /// 现在改为：**恰好一个**才给直链；没有或多个都不给，
     /// 回退到 Release 详情页由用户在浏览器里自己选。
@@ -220,7 +316,7 @@ enum UpdateCheckFailure: Equatable, Sendable {
 
     var statusText: String {
         switch self {
-        case .rateLimited: return "检查次数过多，请稍后重试"
+        case .rateLimited: return "更新服务暂时限制了请求"
         case .serviceUnavailable: return "更新服务暂时不可用"
         case .invalidRelease: return "更新版本信息无效"
         case .configuration, .network: return "未能获取版本信息"
@@ -229,7 +325,7 @@ enum UpdateCheckFailure: Equatable, Sendable {
 
     var detail: String {
         switch self {
-        case .rateLimited: return "更新服务请求次数过多，请稍后重试"
+        case .rateLimited: return "请稍后重试，或更换网络后再检查"
         case .serviceUnavailable: return "请检查网络后重试"
         case .invalidRelease: return "请等待开发者修正发布信息后再试"
         case .configuration, .network: return "请检查网络后重试"
@@ -245,6 +341,74 @@ struct UpdateNotice: Identifiable, Sendable {
     let downloadURL: URL?
     let ipaDownloadURL: URL?
     let sha256DownloadURL: URL?
+}
+
+struct UpdateRelease: Equatable, Sendable {
+    let tag: String
+    let title: String
+    let message: String
+    let pageURL: URL
+}
+
+private struct ParsedUpdateRelease {
+    var pageURL = ""
+    var title = ""
+    var content = ""
+}
+
+private final class UpdateReleaseFeedParser: NSObject, XMLParserDelegate {
+    private(set) var entries: [ParsedUpdateRelease] = []
+    private(set) var sawFeed = false
+    private var currentEntry: ParsedUpdateRelease?
+    private var activeField: String?
+    private var fieldText = ""
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        let element = elementName.lowercased()
+        if element == "feed" { sawFeed = true }
+        if element == "entry" {
+            currentEntry = ParsedUpdateRelease()
+            return
+        }
+        guard currentEntry != nil else { return }
+        if element == "link", attributeDict["rel"] == "alternate",
+           let href = attributeDict["href"] {
+            currentEntry?.pageURL = href
+        } else if element == "title" || element == "content" {
+            activeField = element
+            fieldText = ""
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        guard activeField != nil else { return }
+        fieldText += string
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        let element = elementName.lowercased()
+        if element == activeField {
+            if element == "title" { currentEntry?.title = fieldText }
+            if element == "content" { currentEntry?.content = fieldText }
+            activeField = nil
+            fieldText = ""
+        }
+        if element == "entry", let currentEntry {
+            entries.append(currentEntry)
+            self.currentEntry = nil
+        }
+    }
 }
 
 actor UpdateCheckCache {

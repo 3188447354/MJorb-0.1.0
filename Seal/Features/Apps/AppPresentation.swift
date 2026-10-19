@@ -170,28 +170,17 @@ enum AppSigningPresentationHelpers {
     /// 回主屏转场，让 iOS 用新版替换旧进程。文案提前说清楚，避免界面瞬间消失被误读成闪退。
     static let sealReturningHomeTip = "正在退回主屏幕，iOS 会用新版替换 Seal；替换完成后重新打开即可。"
 
-    /// 「证书序列号」行下面的一句说明：**本机没有该证书的私钥**时，下一次续签会
-    /// **完整重签并安装**，而不是只更新描述文件。
-    ///
-    /// 用户 2026-09-26 明确要求（原话）：
-    /// 「第一次安装手机设备证书没有或者与远端不同时，证书序列号那可以写一句
-    ///  需要重新签名一次获取本机证书，匹配之后后续再走不重装的更新续签模式。」
-    ///
-    /// 措辞刻意分两段，缺一段都会让用户误解：
-    ///   · 前半句说**这一次会发生什么**（需要重新签名一次获取本机证书）——
-    ///     否则用户看到进度条在重传整包会以为「说好的不重装怎么又重装了」；
-    ///   · 后半句说**以后会怎样**（之后续签只更新描述文件、不会重新安装）——
-    ///     否则用户会以为「每次续签都要重装」，而那正是这套快路径要消除的误解。
-    static let localCertificateRebuildNote = "需要重新签名一次获取本机证书"
+    /// 本机私钥状态的说明，不作为续签路径判断。
+    static let localCertificateRebuildNote = "本机未保存此证书私钥"
 
     /// 完整说明（详情页 / 操作抽屉用，能折行读全）。
     static let localCertificateRebuildDetail =
-        "本机没有该证书的私钥，需要重新签名一次获取本机证书；"
-        + "完成后证书与本机匹配，之后续签只更新描述文件，不会重新安装。"
+        "本机未保存此证书私钥。续签会先尝试使用 Apple 账号中的有效证书更新描述文件；"
+        + "只有 Apple 不再接受该证书时，才需要重新签名。"
 
     /// 该状态要不要在「证书序列号」行下面加一句说明；不需要时返回 `nil`。
     ///
-    /// **只有 `.needsFullResign` 才说话**：`.ready` 是正常状态（说了就是噪音），
+    /// **只有 `.missingPrivateKey` 才说话**：`.ready` 是正常状态（说了就是噪音），
     /// `.undetermined`（读不到账号密钥）**不能**替用户下结论 —— 那会把「Keychain 暂时读不到」
     /// 说成「你没有证书」，把用户送去重签一次本来不需要重签的续签。
     ///
@@ -203,14 +192,14 @@ enum AppSigningPresentationHelpers {
     static func localCertificateNote(
         for availability: ProfileOnlyRenewalPolicy.LocalCertificateAvailability
     ) -> String? {
-        availability == .needsFullResign ? localCertificateRebuildDetail : nil
+        availability == .missingPrivateKey ? localCertificateRebuildDetail : nil
     }
 
     /// 紧凑版说明（签名进度卡片用）。见上一条的分工说明。
     static func localCertificateCompactNote(
         for availability: ProfileOnlyRenewalPolicy.LocalCertificateAvailability
     ) -> String? {
-        availability == .needsFullResign ? localCertificateRebuildNote : nil
+        availability == .missingPrivateKey ? localCertificateRebuildNote : nil
     }
 
     /// 「有已导入的新版本还没装上」的说明（详情页 / 操作抽屉用）。

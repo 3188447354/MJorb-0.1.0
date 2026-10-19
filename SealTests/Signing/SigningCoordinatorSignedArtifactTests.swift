@@ -55,6 +55,65 @@ struct SigningCoordinatorSignedArtifactTests {
     }
 
     @Test
+    func installsManuallySignedArtifactWithPendingProfileSnapshot() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let appID = UUID()
+        let source = environment.root.appending(path: "ManuallySigned.ipa")
+        try Self.makeMinimalValidIPA(
+            at: source,
+            bundleID: "com.example.demo.seal",
+            executableName: "Demo"
+        )
+        let signedPath = try await environment.fileStore.storeSignedIPA(sourceURL: source, appID: appID)
+        let sha = try await environment.fileStore.sha256(relativePath: signedPath)
+        let expiration = Date().addingTimeInterval(3 * 86_400)
+        let app = AppRecord(
+            id: appID,
+            originalBundleIdentifier: "com.example.demo",
+            mappedBundleIdentifier: "com.example.demo.seal",
+            name: "Demo",
+            version: "1.0",
+            buildNumber: "1",
+            size: 18,
+            state: .signed,
+            signedDeviceIdentifier: "DEVICE-1",
+            ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
+            signedIPARelativePath: signedPath,
+            signedIPASHA256: sha,
+            signedArtifactStatus: .available,
+            preferredBundleIdentifier: "com.example.demo.seal",
+            importedAt: Date(),
+            pendingSignedSnapshot: PendingSignedSnapshot(
+                expiryDate: expiration,
+                provisioningProfileUUID: "PENDING-PROFILE",
+                provisioningProfileName: "Pending",
+                provisioningProfileCreationDate: nil,
+                provisioningProfileExpirationDate: expiration,
+                certificateSerialNumber: nil,
+                signingTargets: [],
+                extensionSnapshots: []
+            )
+        )
+        try await environment.appStore.save(app)
+        let coordinator = SigningCoordinator(
+            appStore: environment.appStore,
+            accountRepository: environment.accountRepository,
+            keychain: KeychainVault(),
+            fileStore: environment.fileStore,
+            installChannel: environment.installChannel
+        )
+
+        let result = try await coordinator.installSignedArtifact(appID: appID) { _ in }
+
+        #expect(result.state == .installed)
+        #expect(result.provisioningProfileExpirationDate == expiration)
+        #expect(result.provisioningProfileUUID == "PENDING-PROFILE")
+        #expect(result.pendingSignedSnapshot == nil)
+        #expect(await environment.installChannel.installCount == 1)
+    }
+
+    @Test
     func sealInstallDelegatesOnePreparedTransaction() async throws {
         let environment = try makeEnvironment()
         defer { try? FileManager.default.removeItem(at: environment.root) }

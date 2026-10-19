@@ -1,3 +1,36 @@
+## 2026-10-19 13:26:25 IPA 资源、标识符与更新版本规则对齐 Apple
+
+- **问题**：Seal 对 IPA 解压总量设 8 GB 默认上限，Bundle ID / App Group ID 会被写入 Seal 自定义格式；更新版本过滤规则也需要明确按 Apple 的版本格式执行。
+- **修改**：移除 IPA 解压总体积上限，不把 App Store Connect 的上传大小限制套到本地侧载；仍保留整数溢出、压缩包路径、条目数量、元数据读取及真实磁盘空间检查。移除 Bundle ID 的 Seal 前缀/扩展哈希生成；App Group ID 直接使用 IPA 声明值，不猜测并改写既有后缀。更新标签限定为三段 ASCII 数字格式，按最新正式发布及 Apple 数字版本比较，允许跨主、次版本升级且不设补丁号上限；版本比较改为字符串位数比较，避免 Int 溢出。
+- **兼容性**：主 Bundle ID 使用签名面板中的实际输入；原扩展 ID 若隶属原主 ID，则保留它的后缀并映射到用户输入的主 ID；无可确认层级关系时保留原扩展 ID。旧 IPA 中已存在的标识符按原值保留，不做猜测式迁移，以免改变 App Group 容器身份。
+- **涉及**：`Seal/Core/Configuration/AppConfiguration.swift`、`Seal/Core/Import/ArchiveLimits.swift`、`Seal/Core/Import/IPAParserService.swift`、`Seal/Core/Signing/BundleIDMapper.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`Seal/Infrastructure/Signing/SigningWorkspace.swift`、`Seal/Infrastructure/UpdateChecker.swift`、`Seal/Infrastructure/Version.swift`、相关测试、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **验证**：错误码清单生成成功（434 个 ID / 840 处）；`git diff --check` 通过。当前 Windows 环境没有 Swift 编译器，Swift 测试未运行；仍需目标仓库 CI 编译和设备验证。
+
+## 2026-10-19 12:55:16 续签准入与 Apple 实际状态对齐
+
+- **问题**：旧续签准入把本机私钥、旧 profile UUID、旧设备 ID、历史扩展 profile 拓扑和完整 target 快照当作必须条件；并在 Apple 缺少旧 App ID 时拒绝进入标准注册流程。它们中多项是 Seal 内部快照，不是 Apple 对本轮 profile 的最终裁决。
+- **修改**：`ProfileOnlyRenewalPolicy` 只保留应用 Team、当前签名证书、主 Bundle ID 和可确认扩展目标等必要身份；Team 与证书序列号字段缺失时，分别优先从当前安装身份和唯一旧主 profile 证书信息恢复。旧权限快照缺失时改从原始 IPA 重建；profile-only 按实际 entitlement 键和值重新分配可共享/需独立的扩展。Apple 当前证书清单不再包含已安装签名者时，自动切换完整签名。缺少真正无法恢复的二进制目标或原始 IPA 时仍明确失败，避免假报续签成功。
+- **同处冲突处理**：策略层与协调层对 profile-only 的 Team 判定已统一优先采用当前安装身份；本机私钥提示不再宣称必定完整重签。普通 IPA 的 Mach-O 完整签名仍需要私钥，这是不同操作链路，未放宽。
+- **未改范围**：完整 Mach-O 签名仍需有效私钥；Apple 返回的团队、证书、App ID、设备和 entitlement 约束仍生效。
+- **涉及**：`Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、续签策略测试、`Seal/Features/Apps/AppDetailView.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`docs/upstream-alignment.md`。
+- **验证**：静态 diff / 引用检查进行中；Windows 无 Swift 编译环境，未运行 Swift 测试，需 GitHub CI 与真机 Apple ID 续签验证。
+
+## 2026-10-19 10:59:25 更新检查、安装快照、续签分配与恢复导入修复
+
+- **更新检查**：未认证 GitHub REST API 会被出口 IP 限流；改从公开 Releases Atom 读取最新正式发布，并按 Apple 三段数字版本比较，允许跨主、次版本更新且不限制补丁号。历史记录中的“仅当前主版本.次版本”限制已由本条覆盖。
+- **签名后安装**：签名结果先保存在 `pendingSignedSnapshot`；安装校验现在用待提交快照副本核对描述文件和证书，只有安装成功才提交到已安装记录。
+- **恢复记录重导入**：仅当已安装记录标记 `needsIPAImport` 时，允许用它的签名后 Bundle ID 匹配恢复记录；普通副本的原始 Bundle ID 匹配规则不变。
+- **描述文件续签**：独立扩展集合从主应用与扩展的实际 profile UUID 关系推导；完整重签迁移只由目标或 profile 记录缺失/不一致触发，不再因旧策略字段缺失或不一致触发。
+- **测试**：新增更新序列、恢复记录匹配、pending 快照安装及策略标签过期回归用例；Windows 环境无法本地编译 Swift，待 GitHub CI 验证。
+
+## 2026-10-19 10:27:04 更新检查被 GitHub REST API 限流
+
+- **现象**：0.1.29 手动检查更新显示请求次数过多，未弹出 0.1.30 更新抽屉。
+- **证据与根因**：旧检查器请求未认证的 `api.github.com/releases/latest`；该接口按出口 IP 限额。复核时该 API 返回 `403 API rate limit exceeded`，而公开 Releases Atom 页可读取，v0.1.30 Release 与 IPA / SHA256 附件均存在。
+- **修复**：0.1.31 改为从公开 Releases Atom 页读取版本和正文，再从 GitHub 附件页提取唯一可信 IPA 与校验文件；保留原有版本比较、域名校验和 SHA256 校验，不增加重试冷却或签名限制。
+- **兼容性边界**：已安装的 0.1.29 已把 REST API 地址编译进二进制，服务器无法改写其检查地址；需要等该出口额度恢复、切换未受限网络，或手动安装修复版后，后续更新才走新链路。
+- **版本与验证**：版本推进到 `0.1.31`；Windows 不执行 Swift 本地编译，待当前仓库 GitHub CI 编译与回归。
+
 ## 2026-10-19 09:49:22 CI #52 IPA 版本校验未覆盖灵动岛扩展
 
 - **证据**：CI #52 的回归、签名器和打包任务均通过；解包其 IPA 后，主应用为 `0.1.29 (52)`，`SealLiveActivity.appex` 却为 `1.0`。
