@@ -2231,7 +2231,7 @@ actor ApplePortalSigningService {
         appName: String,
         appURL: URL,
         workspace: PreparedSigningWorkspace,
-        minimumProfileLifetime: TimeInterval = Self.minimumFreshProfileLifetime,
+        minimumProfileLifetime: TimeInterval = ApplePortalSigningService.minimumFreshProfileLifetime,
         team: ALTTeam,
         session: ALTAppleAPISession,
         progress: @escaping @Sendable (SigningStage) async -> Void,
@@ -2904,7 +2904,7 @@ actor ApplePortalSigningService {
         for appID: ALTAppID,
         team: ALTTeam,
         session: ALTAppleAPISession,
-        minimumRemainingLifetime: TimeInterval = Self.minimumFreshProfileLifetime
+        minimumRemainingLifetime: TimeInterval = ApplePortalSigningService.minimumFreshProfileLifetime
     ) async throws -> ALTProvisioningProfile {
         // 对齐 AltStore 官方实现：先获取，再尝试删除旧描述文件，删除成功则重新获取生成新的。
         // 免费账号从 2023-03-20 起无法删除描述文件，每次 fetch 会自动重新生成，

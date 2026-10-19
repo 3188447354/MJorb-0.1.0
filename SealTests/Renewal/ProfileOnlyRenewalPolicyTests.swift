@@ -154,7 +154,7 @@ struct ProfileOnlyRenewalPolicyTests {
     }
 
     @Test
-    func unrecordedLegacyExtensionStrategyUsesTheRecordedProfileAllocations() {
+    func missingLegacyExtensionStrategyDoesNotBlockProfileOnlyRenewal() {
         var app = makeEligibleApp()
         app.extensionProfileStrategy = nil
 
@@ -601,9 +601,8 @@ struct ProfileOnlyRenewalPolicyTests {
 
     // MARK: - 本机证书材料状态（R85，2026-09-26 构建 48 真机）
 
-    /// 用户 2026-09-26 的真机诉求：首次把 Seal 装到手机上时本机没有该证书的私钥，
-    /// 要在「证书序列号」那里写一句「需要重新签名一次获取本机证书」，
-    /// 并让**匹配之后**的续签回到「只更新描述文件、不重装」。
+    /// 本机没有当前签名证书私钥只影响本机状态说明，不自动让描述文件续签回落完整重签；
+    /// 能否签发新描述文件由 Apple 当前证书和设备状态决定。
     ///
     /// 这条仅覆盖界面状态：本机私钥缺失可以提示，但不拦截 profile-only；
     /// 是否能续签由 Apple 活动证书与本轮 profile 请求决定。

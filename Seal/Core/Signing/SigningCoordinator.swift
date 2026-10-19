@@ -1064,7 +1064,7 @@ actor SigningCoordinator {
             // 实际跑的却还是旧版 —— 用户报的正是「是不是续签的还是 1.3.19」。
             //
             // ⚠️ 归因必须**精确**：只有 `decision` 恰好是这一条时才说这句话，
-            // 不能把「别的判据拦下的」也算到它头上（与 `SEAL-PROFILE-364` 同一条纪律）。
+            // 不能把「别的判据拦下的」也算到它头上，日志只记录实际命中的原因。
             if case .requiresFullResign(.pendingSelfUpdateSource) = decision {
                 try? await logStore?.append(
                     category: .renewal,

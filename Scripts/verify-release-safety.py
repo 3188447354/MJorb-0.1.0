@@ -4441,9 +4441,16 @@ def violations(load=read):
     check("expectedBundleID: extensionProfileStrategy.expectedProfileBundleID(" in portal_source
           and "profilePreparation.independentExtensionBundleIdentifiers.contains($0) == false" in portal_source,
           "R65⑥: 混合描述文件必须同时用于嵌入校验和重签目标 ✗")
-    check("let renewalStrategy = app.extensionProfileStrategy ?? .independentProfiles" in portal_source
-          and "let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count" in portal_source,
-          "R65⑦: 续签必须沿用已记录策略及实际描述文件数量 ✗")
+    renewal_profile_source = section_or_empty(
+        portal_source,
+        "private func renewalProvisioningProfiles(",
+        "\n    private func fetchAppIDs("
+    )
+    check("AppExtensionProfileStrategy.independentBundleIdentifiers(" in renewal_profile_source
+          and "AppExtensionProfileStrategy.resolvedStrategy(" in renewal_profile_source
+          and "let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count" in portal_source
+          and "let resolvedRenewalStrategy = preparation.extensionProfileStrategy" in portal_source,
+          "R65⑦: 续签应根据 IPA 实际能力共享可共享扩展，并核对实际描述文件数量 ✗")
     check("func binding(forBundle bundleIdentifier: String)" in portal_source
           and "return profileBindings[mappedMainBundleID]" in portal_source
           and "return profileBindings[bundleIdentifier]" in portal_source,
@@ -4454,15 +4461,22 @@ def violations(load=read):
         "\n    private func submitUpdatedAppID(",
     )
     check("guard ALTFeature(entitlement: entitlement) != nil else { continue }" in filtered_entitlements_body
-          and "signingWorkspace.bundleIDMapper.appGroupID(" in filtered_entitlements_body,
-          "R65⑲: 能力请求必须过滤非 Apple feature，并映射 App Group 标识 ✗")
+          and "AppGroupOrderingPolicy.canonicalize(groups)" in filtered_entitlements_body
+          and "bundleIDMapper.appGroupID(" not in filtered_entitlements_body,
+          "R65⑲: 能力请求过滤不可提交的 feature，并保留 IPA 原始 App Group 标识 ✗")
 
     renewal_policy_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift"))
-    check("guard let recorded = app.extensionProfileStrategy else { return true }" in renewal_policy_source
-          and "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) == .orderedSame" in renewal_policy_source
-          and "if recorded == .sharedMainProfile && independent { return true }" in renewal_policy_source
-          and "if recorded == .independentProfiles && !independent { return true }" in renewal_policy_source,
-          "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑 ✗")
+    renewal_decision_source = section_or_empty(
+        renewal_policy_source,
+        "static func evaluate(app: AppRecord) -> Decision {",
+        "\n    static func liveIdentity("
+    )
+    check("app.extensions.compactMap" in renewal_decision_source
+          and "targetBundleIdentifiers.count == app.extensions.count + 1" in renewal_decision_source
+          and "guard let recorded = app.extensionProfileStrategy" not in renewal_policy_source
+          and "func missingLegacyExtensionStrategyDoesNotBlockProfileOnlyRenewal()" in
+              load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift"),
+          "R65⑧: 不强制依赖旧策略记录；续签从当前 IPA 权限重建扩展拓扑 ✗")
 
     record_updater_source = strip_comments(load("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift"))
     check("signedBundleIdentifier: bundleIdentifier" in record_updater_source,
@@ -4492,10 +4506,10 @@ def violations(load=read):
     renewal_policy_tests = load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift")
     renewal_record_tests = load("SealTests/Renewal/ProfileOnlyRenewalRecordUpdaterTests.swift")
     check("func completeSharedProfileWithExtensionsIsEligibleForProfileOnlyRenewal()" in renewal_policy_tests
-          and "func sharedProfileWithMismatchedExtensionRecordForcesAFullResignMigration()" in renewal_policy_tests
-          and "func unrecordedLegacyExtensionStrategyAlsoForcesTheMigration()" in renewal_policy_tests
+          and "func missingLegacyExtensionStrategyDoesNotBlockProfileOnlyRenewal()" in renewal_policy_tests
+          and "func missingExtensionEntitlementRecordIsRebuiltWithoutFullResigning()" in renewal_policy_tests
           and "func sharedMainProfileIsRecordedForEveryTargetWithoutCollapsingThem()" in renewal_record_tests,
-          "R65⑫: 共享续签必须放行完整新记录，阻断不一致或旧记录，并保留所有目标记录 ✗")
+          "R65⑫: 共享续签支持从旧记录恢复目标能力，并为每个实际目标保留记录 ✗")
 
     # R68: **续签的账号判据只能有一份，且必须识别悬空引用**（2026-09-24 构建 34 真机）。
     #
@@ -4794,9 +4808,9 @@ def violations(load=read):
           "`isSeal` 判据 —— 只要任一处按身份排除，Seal 就又回到自替换那条路 ✗"
           "（准入放行、执行侧又拦，等于没改）")
     check("func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp()" in r82_tests
-          and "func sealWithIncompleteRecordStillRequiresFullResign()" in r82_tests,
-          "R82④: 必须有**两个方向**的单测 —— ① Seal 记录完整 ⇒ `.eligible`；"
-          "② Seal 记录不完整 ⇒ 照旧回落完整重签（去掉身份豁免**不是**后门）。"
+          and "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()" in r82_tests,
+          "R82④: 必须覆盖记录完整时正常续签，以及记录不完整时由实时身份恢复；"
+          "缺少实时身份时仍回落完整重签。"
           "源码断言只能证明「结构在」，证明不了「真的放行」")
 
     # R82（续）：**准入放行还不够** —— 批量结算侧原先**假定 Seal 续签必然是自替换**。
@@ -5249,18 +5263,22 @@ def violations(load=read):
         "            if useProfileOnlyRenewal {\n                if let channelStart {",
         "            if isInstalledRenewal {"
     )
+    r84_live_identity = section_or_empty(
+        r84_policy,
+        "static func liveIdentity(",
+        "\n    static func pendingUpdateKind("
+    )
     check("static func liveIdentity(" in r84_policy
-          and "installedIdentity.isComplete," in r84_policy
+          and "installedIdentity.canSafelyIdentifySigners," in r84_live_identity
           and "mainTarget.bundleIdentifier.caseInsensitiveCompare(mappedMainBundleIdentifier) "
               "== .orderedSame" in r84_policy,
-          "R84①: 续签准入必须有**记录之外的实时身份通道**，且「身份完整」是硬门槛 ✗ —— "
+          "R84①: 续签准入必须有**记录之外的实时签名身份通道**，并验证签名者及目标身份 ✗ —— "
           "只认持久化记录时 Seal 自身永远不合格（`SelfAppRegistrar` 从不写 "
           "`signedDeviceIdentifier` / `signingTargets` / `signedIPARelativePath`）"
           "⇒ 每次续签都完整重签 + 自替换（构建 46：`SEAL-SELF-109` ＋ 续签被中断）。"
           "上游 SideStore 的 `refresh` 准入看的是**已安装产物的签名证书**，不看记录")
-    check("return .eligible(targetBundleIdentifiers: liveIdentity.targetBundleIdentifiers)"
-          in r84_policy,
-          "R84②: 实时身份命中时必须直接判 `.eligible`，**不得**再走记录判据 ✗ —— "
+    check("return .eligible(targetBundleIdentifiers: liveTargets)" in r84_policy,
+          "R84②: 实时身份命中并校验目标后必须直接判 `.eligible`，**不得**再走记录判据 ✗ —— "
           "否则「新增了通道」只是装饰：记录缺字段的应用（Seal 自身）照旧被拒")
     # ⚠️ 2026-09-26（R89）：准入改成「先算 `decision` 再进 guard」—— 判据本身没变
     #（`evaluate(app:liveIdentity:)` 仍然真的收到实时身份），但**调用形态**变了：
@@ -5286,13 +5304,18 @@ def violations(load=read):
           "构建 46 真机：Guoguo 每次续签都被它拦下（01:26:41 / 01:27:12 两条 363），"
           "01:28:08 才以完整重签成功 ⇒ 用户看到的就是「续签全都要重装」。"
           "上游 `refresh` 管线**完全不枚举设备描述文件**，真正的安全网在注入后的逐份读回")
+    r84_device_binding = section_or_empty(
+        r84_policy,
+        "static func isBoundToCurrentDevice(",
+        "\n    /// 准入通过后取"
+    )
     check("static func isBoundToCurrentDevice(" in r84_policy
-          and "return liveIdentity != nil" in r84_policy
-          and "signedDeviceIdentifier?.caseInsensitiveCompare(deviceIdentifier) == .orderedSame"
-              in r84_policy,
-          "R84⑤: 设备绑定必须**双通道**：记录通道不得放松"
-          "（`signedDeviceIdentifier` 仍要匹配），只有实时身份通道才免除 ✗ —— "
-          "把整条判据放松成「总是通过」会让「换设备后仍按旧记录注入」变成可能")
+          and "return nonBlank(deviceIdentifier) != nil" in r84_device_binding
+          and "liveIdentity.mainBundleIdentifier.caseInsensitiveCompare(mappedBundleIdentifier) != .orderedSame"
+              in r84_device_binding
+          and "signedDeviceIdentifier" not in r84_device_binding,
+          "R84⑤: 使用本轮设备标识及实时 Bundle ID 核验；不把旧设备快照当额外门槛 ✗ —— "
+          "换设备时由 Apple 当前设备注册状态和新描述文件决定")
     # ⚠️ 这一段守的是**反向**契约（2026-09-26，构建 47 真机）：R84 第一版在这里加了
     # 「剔除运行中 Seal 的证书」的闸门，结果免费账号（只有一个活动槽位，而 Seal 自己的
     # 证书在覆盖安装后必然丢失本机私钥）**彻底死锁** —— 签任何 App 都报
@@ -5328,48 +5351,23 @@ def violations(load=read):
           "候选**不得**为空（它排最后但仍可撤）。源码断言只能证明「结构在」，"
           "证明不了「真的放行」")
 
-    # R85: 本机证书材料状态 —— 「第一次装 Seal 后续签被 334 拦死」的闭环
-    #（2026-09-26 构建 48 真机，用户需求①）。
-    #
-    # 用户原话：「第一次签名 Seal 到手机…第一次没办法自己重新申请证书签名重装一次直接被拦截了，
-    # 可以在第一次安装手机设备证书没有或者与远端不同时，证书序列号那可以写一句
-    # 需要重新签名一次获取本机证书」。
-    #
-    # 现象：Seal 第一次装到设备后，本机没有它正在用的那张证书的私钥
-    #（重装 Seal 会清 Keychain；免费账号只有一个活动槽位，覆盖安装后必然丢本机私钥）。
-    # 于是点续签 ⇒ 准入宣布「仅更新描述文件」⇒ 执行侧 `existingProfileOnlyCertificate`
-    # 抛 `SEAL-PROFILE-334` ⇒ **用户被拦死**，而界面一个字都没解释
-    #（构建 48 日志里 334 出现 4 次，批量续签因此被记成失败 1）。
-    #
-    # 修法分两半，缺一半都不成立：
-    # ① 准入提前判定「本机有没有这张证书的私钥」，没有就**回落完整重签**
-    #   （重签会拿到一张本机有私钥的证书并写回记录 ⇒ 下一次准入自然又走 profile-only）；
-    # ② 界面上「证书序列号」那一行下面写清**为什么这一次要重签**。
-    #
-    # ⚠️ 判据必须**同源**：界面与准入都用 `localCertificateMaterialBlock`
-    #   （它内部是 `SigningCertificateMaterialPolicy.availableCertificate` ＋
-    #   `reuseStatus == .reusable`，正是执行侧 `certificateReusable(_:)` 那条），
-    #   否则会出现「界面说没事、一点却抛 334」。
-    # ⚠️ 必须是**三态**：读不到账号密钥时不能替用户断言「缺证书」——
-    #   那会把「Keychain 暂时读不到」说成「证书没了」，把用户送去重签一次本来不需要重签的续签。
+    # R85: profile-only 续签由 Apple 当前证书与描述文件状态裁决；本机私钥仅用于说明。
     r85_policy = load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift")
     r85_coord = load("Seal/Core/Signing/SigningCoordinator.swift")
     r85_present = load("Seal/Features/Apps/AppPresentation.swift")
-    r85_vm = load("Seal/Features/Apps/AppsViewModel.swift")
     r85_progress = strip_comments(load("Seal/Features/Apps/SigningProgressView.swift"))
     r85_detail = load("Seal/Features/Apps/AppDetailView.swift")
     r85_sheet = load("Seal/Features/Apps/InstalledAppActionSheet.swift")
     r85_policy_tests = load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift")
     r85_present_tests = load("SealTests/Apps/AppPresentationTests.swift")
-    r85_index = load("docs/qa/log-code-index.md")
+    r85_portal = load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift")
 
     check("enum LocalCertificateAvailability" in r85_policy
           and "case undetermined" in r85_policy
           and "case ready" in r85_policy
-          and "case needsFullResign" in r85_policy,
-          "R85①: 本机证书状态必须是**三态**（`undetermined` / `ready` / `needsFullResign`）✗ —— "
-          "折成 Bool 时「读不到账号密钥」会被说成「证书没了」，"
-          "把用户送去重签一次本来不需要重签的续签")
+          and "case missingPrivateKey" in r85_policy
+          and "needsFullResign" not in r85_policy,
+          "R85①: 本机私钥状态只用于说明；缺私钥不能被定义成必须完整重签")
 
     r85_availability = section_or_empty(
         r85_policy,
@@ -5378,83 +5376,62 @@ def violations(load=read):
     )
     check("guard let secret, nonBlank(certificateSerialNumber) != nil else { return .undetermined }"
           in squash(strip_comments(r85_availability))
-          and "localCertificateMaterialBlock(" in r85_availability,
-          "R85②: 界面状态必须与准入**同源**（都走 `localCertificateMaterialBlock`），"
-          "且密钥 / 序列号读不到时一律 `.undetermined` ✗ —— "
-          "另写一套判据必然漂移成「界面说没事、一点却抛 SEAL-PROFILE-334」")
+          and "SigningCertificateMaterialPolicy.availableCertificate(" in r85_availability
+          and "? .missingPrivateKey : .ready" in squash(r85_availability),
+          "R85②: 私钥状态需区分读不到与确认缺失，但不得决定续签路径")
 
     check("for app in apps where app.belongsInInstalledList {" in r85_policy
           and "certificateSerialNumber: app.certificateSerialNumber" in r85_policy,
-          "R85③: 只算**已安装**应用（未安装的还没走到续签，提示只会让列表变吵），"
-          "且必须用 `app.certificateSerialNumber` ✗ —— 执行侧 `renewProfilesOnly` 用的就是它，"
-          "换成带兜底的 `effectiveCertificateSerialNumber` 会变成「准入查 A、执行用 B」")
+          "R85③: 本机私钥状态只展示在已安装应用，并按该应用记录读取")
 
-    check('static let localCertificateRebuildNote = "需要重新签名一次获取本机证书"' in r85_present
+    check('static let localCertificateRebuildNote = "本机未保存此证书私钥"' in r85_present
           and "static let localCertificateRebuildDetail" in r85_present,
-          "R85④: 「证书序列号」那一行的说明文案必须只有一份真源"
-          "（`AppSigningPresentationHelpers`）✗ —— 三个界面各写一份必然漂移成三种说法")
+          "R85④: 私钥说明文案必须统一维护")
 
     r85_note_fn = section_or_empty(
         r85_present,
         "    static func localCertificateNote(",
         "\n    /// 证书序列号展示值"
     )
-    check(r85_note_fn.count("availability == .needsFullResign ?") == 2,
-          "R85⑤: 两个 helper（完整版 / 紧凑版）都必须**只在 `.needsFullResign` 时说话** ✗ —— "
-          "`.ready` 是正常状态（说了就是噪音），`.undetermined` 更不能替用户下结论")
+    check(r85_note_fn.count("availability == .missingPrivateKey ?") == 2,
+          "R85⑤: 详情与进度文案只说明确认缺少私钥，不暗示一定要完整重签")
 
     check("AppSigningPresentationHelpers.localCertificateCompactNote(" in r85_progress
           and "AppSigningPresentationHelpers.localCertificateNote(" in r85_detail
           and 'metadataRow("Apple 证书", certificateStatus' in r85_sheet
-          # 2026-10-04 文案优化："需重签"→"需重新签名"（用户更易懂）
-          and 'case .needsFullResign: "需重新签名"' in r85_sheet,
-          "R85⑥: 进度卡片必须给紧凑原因、详情页必须给完整原因；操作抽屉只保留五项事实摘要时，"
-          "至少要把 Apple 证书明确标成「需重签」✗ —— "
-          "恢复抽屉里的长篇技术说明会违背已确认的精简设计，但隐藏「需重签」又会让用户不知为何走完整签名")
+          and 'case .missingPrivateKey: "本机无私钥"' in r85_sheet,
+          "R85⑥: 进度、详情和操作抽屉展示一致的本机私钥状态")
 
     r85_gate = section_or_empty(
         r85_coord,
         "    private func shouldUseProfileOnlyRenewal(",
         "\n    private func renewProfilesOnly("
     )
-    # ⚠️ 必须 `strip_comments` 之后再判：这段代码里有**注释**写着 `SEAL-PROFILE-364`
-    # （2026-09-26 R89 新增的那句「与 `SEAL-PROFILE-364` 同一条纪律」）——
-    # 直接用 `in` 会被注释满足，把「把 364 改成 363」的变异判成有判别力，
-    # 而真正的留痕已经没了（2026-09-26 实测：变异 ⑥ `Guard failed mutation check`）。
-    # 与 R89⑤ 是同一个坑：**判据串必须落在代码上，不能落在注释上**。
     r85_gate_code = strip_comments(r85_gate)
-    check('code: "SEAL-PROFILE-364"' in r85_gate_code
-          and "ProfileOnlyRenewalPolicy.localCertificateMaterialBlock(" in r85_gate_code
-          and "certificateSerialNumber: app.certificateSerialNumber" in r85_gate_code
-          and "return false" in r85_gate_code,
-          "R85⑦: 准入必须**提前**判定本机有没有这张证书的私钥，没有就 `return false`"
-          "（回落完整重签）并留痕 `SEAL-PROFILE-364` ✗ —— "
-          "否则执行侧会抛 `SEAL-PROFILE-334`，而准入已经宣布「仅更新描述文件」")
+    check("effectiveCertificateSerialNumber(" in r85_gate_code
+          and "localCertificateMaterialBlock(" not in r85_gate_code
+          and "SigningCertificateMaterialPolicy" not in r85_gate_code
+          and "SEAL-PROFILE-364" not in r85_gate_code,
+          "R85⑦: profile-only 准入不得因本机私钥缺失而降级完整重签")
 
-    check("effectiveCertificateSerialNumber(" in r85_gate
-          and r85_gate.index("effectiveCertificateSerialNumber(")
-              < r85_gate.index("localCertificateMaterialBlock("),
-          "R85⑦b: 私钥判据必须排在**最后**（前几条判据都放行之后）✗ —— "
-          "顺序反了会把「被别的判据拦下的」归因成「本机缺私钥」，"
-          "而代码看起来仍然有这条判据（`in` 判不出顺序，必须比下标）")
+    r85_certificate = section_or_empty(
+        r85_portal,
+        "    private func existingProfileOnlyCertificate(",
+        "\n    private static func shouldRetryWithFreshSigningCertificate("
+    )
+    check("fetchCertificates(team: team, session: session)" in r85_certificate
+          and "SigningCertificateSelectionPolicy.normalizedSerialNumber($0.serialNumber)" in r85_certificate
+          and "== SigningCertificateSelectionPolicy.normalizedSerialNumber(expectedSerialNumber)" in r85_certificate
+          and "SigningCertificateMaterialPolicy.availableCertificate" not in r85_certificate,
+          "R85⑧: profile-only 证书必须按 Apple 当前清单核验，不要求本机持有私钥")
 
-    check("SEAL-PROFILE-364" in r85_index,
-          "R85⑧: 新日志码必须登记进 `docs/qa/log-code-index.md` 的**主表** ✗ —— "
-          "用户发来日志时第一件事就是查码表；不登记等于这条降级在日志里没有解释")
-
-    check("func missingLocalPrivateKeyIsReportedAsNeedingAFullResign()" in r85_policy_tests
-          and "func unreadableSecretOrMissingSerialIsNeverReportedAsMissingPrivateKey()"
-              in r85_policy_tests
-          and "func availabilityIsComputedOnlyForInstalledAppsAndByTheirOwnAccount()"
-              in r85_policy_tests,
-          "R85⑨: 必须有三个方向的单测 —— ① 缺私钥 ⇒ `.needsFullResign`；"
-          "② 密钥 / 序列号读不到 ⇒ `.undetermined`（**不得**报缺私钥）；"
-          "③ 只算已安装应用、且按应用自己的账号取密钥。"
-          "源码断言只能证明「结构在」，证明不了「判对了」")
+    check("func missingLocalPrivateKeyDoesNotImplyProfileRenewalNeedsAFullResign()" in r85_policy_tests
+          and "func unreadableSecretOrMissingSerialIsNeverReportedAsMissingPrivateKey()" in r85_policy_tests
+          and "func availabilityIsComputedOnlyForInstalledAppsAndByTheirOwnAccount()" in r85_policy_tests,
+          "R85⑨: 覆盖缺私钥不拦续签、未知状态不误报及只展示已安装应用")
     check("func localCertificateNoteOnlySpeaksWhenTheDeviceIsReallyMissingTheKey()"
           in r85_present_tests,
-          "R85⑩: 文案 helper 必须有单测 —— `.ready` / `.undetermined` 都必须返回 `nil`"
-          "（「只在真的缺私钥时才说话」这件事只在界面上可见）")
+          "R85⑩: 私钥状态文案 helper 必须有单测")
 
     # R86: 子流程的阶段**不得覆盖父会话**（2026-09-26 构建 48 真机，用户需求②）。
     #
@@ -7939,10 +7916,10 @@ def main():
          "            guard ALTFeature(entitlement: entitlement) != nil else { continue }",
          "            guard ALTFeature(entitlement: entitlement) == nil else { continue }",
          "R65⑲"),
-        # 把 App Group ID 退回「不映射」：请求集用原始 group ID 对「映射后描述文件」⇒ 402。
+        # App Group 标识是 IPA 声明的真实值；若重新套用 Seal 自定义映射，签名请求将与 IPA 权限不符。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         "                    signingWorkspace.bundleIDMapper.appGroupID(",
-         "                    signingWorkspace.rawIdentity(",
+         "                filtered[entitlement] = AppGroupOrderingPolicy.canonicalize(groups)",
+         "                filtered[entitlement] = groups.map { signingWorkspace.bundleIDMapper.appGroupID($0) }",
          "R65⑲"),
         # ── R25：同步阻塞 FFI 的每一处等待都要有界（2026-09-17 审计）──
         # 把设备核验退回「只 Task.detached、无超时」：死会话上它会永久阻塞。
@@ -8762,14 +8739,14 @@ def main():
          "return [originalMainBundleID: mappedMainBundleID]",
          "return mappings",
          "R65②: 共享策略只创建主 App ID"),
+        ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
+         "func missingLegacyExtensionStrategyDoesNotBlockProfileOnlyRenewal()",
+         "func legacyStrategyBypassTest()",
+         "R65⑧: 不强制依赖旧策略记录"),
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "guard let recorded = app.extensionProfileStrategy else { return true }",
-         "guard let recorded = app.extensionProfileStrategy else { return nil }",
-         "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑"),
-        ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) == .orderedSame",
-         "extProfileUUID.caseInsensitiveCompare(targetProfileUUID) != .orderedSame",
-         "R65⑧: 续签前必须核对记录的共享、独立及混合描述文件拓扑"),
+         "targetBundleIdentifiers.count == app.extensions.count + 1",
+         "targetBundleIdentifiers.count == app.extensions.count",
+         "R65⑧: 不强制依赖旧策略记录"),
         ("Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift",
          "signedBundleIdentifier: bundleIdentifier,",
          "signedBundleIdentifier: binding.bundleIdentifier,",
@@ -8781,7 +8758,7 @@ def main():
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count",
          "let expectedProfileCount = 1",
-         "R65⑦: 续签必须沿用已记录策略及实际描述文件数量"),
+         "R65⑦: 续签应根据 IPA 实际能力共享可共享扩展"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "app.extensionProfileStrategy = result.extensionProfileStrategy",
          "app.extensionProfileStrategy = nil",
@@ -8794,6 +8771,10 @@ def main():
          "func sharedProfileBlockerReportsTheFirstUncoveredExtensionDeterministically()",
          "func sharedProfileBlockerLegacy()",
          "R65⑪: 必须覆盖默认策略、共享阻塞和共享描述文件的能力降级范围"),
+        ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
+         "func missingExtensionEntitlementRecordIsRebuiltWithoutFullResigning()",
+         "func legacyExtensionEntitlementTest()",
+         "R65⑫: 共享续签支持从旧记录恢复目标能力"),
         ("Seal/Features/Apps/AppSigningSheet.swift",
          "        return presentation.primaryAction",
          "        presentation.primaryAction",
@@ -9345,11 +9326,10 @@ def main():
          "func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp()",
          "func sealEligibilityLegacy()",
          "R82④: 必须有**两个方向**的单测"),
-        # ⑤ 把「记录不完整仍回落完整重签」那条单测改名 ⇒ R82④ 报红
-        #    （只守一个方向的话，「去掉身份豁免」就可能悄悄变成后门）。
+        # ⑤ 把「实时身份恢复不完整记录」那条单测改名 ⇒ R82④ 报红。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
-         "func sealWithIncompleteRecordStillRequiresFullResign()",
-         "func sealIncompleteLegacy()",
+         "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",
+         "func incompleteIdentityLegacy()",
          "R82④: 必须有**两个方向**的单测"),
         # ⑥ 结算退回「只看身份」⇒ R82⑤ 报红。**这正是本轮修的真问题**：
         #    准入放行了，结算侧却仍假定「Seal 续签 = 自替换」⇒ 成功项永远停在等待确认。
@@ -9438,14 +9418,14 @@ def main():
          '                recovery: "检查是否打开 LocalDevVPN",\n',
          "R83③b: 「recovery 文案在引导用户去检查 LocalDevVPN」的每一条失败"),
         # ── R84：续签「全部不重装」的闭环（2026-09-26 构建 46 真机）──
-        # ① 去掉「身份完整」这道门槛（半份身份也能当准入门票）⇒ R84① 报红。
+        # ① 去掉 CMS 签名者可安全读取判据 ⇒ R84① 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "              installedIdentity.isComplete,\n",
+         "              installedIdentity.canSafelyIdentifySigners,\n",
          "",
          "R84①: 续签准入必须有"),
         # ② 让实时身份命中后仍走记录判据 ⇒ R84② 报红（新通道变成装饰）。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "            return .eligible(targetBundleIdentifiers: liveIdentity.targetBundleIdentifiers)\n",
+         "            return .eligible(targetBundleIdentifiers: liveTargets)\n",
          "            return evaluate(app: app)\n",
          "R84②: 实时身份命中时必须直接判"),
         # ③ 算了实时身份却不传下去 ⇒ R84③ 报红（「上游算好了、下游又退回」）。
@@ -9461,11 +9441,11 @@ def main():
          "                    useProfileOnlyRenewal = false\n"
          "                    try? await logStore?.append(\n",
          "R84④: `SEAL-PROFILE-363` 只能**留痕**"),
-        # ⑤ 把设备绑定判据放松成「总是通过」⇒ R84⑤ 报红。
+        # ⑤ 把当前设备 ID 核验放松成「总是通过」⇒ R84⑤ 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "        return liveIdentity != nil\n    }\n",
+         "        return nonBlank(deviceIdentifier) != nil\n    }\n",
          "        return true\n    }\n",
-         "R84⑤: 设备绑定必须**双通道**"),
+         "R84⑤: 使用本轮设备标识及实时 Bundle ID 核验"),
         # ⑥ 把候选换回「剔除运行中 Seal」的形态 ⇒ R84⑥ 报红（免费账号又会被死锁）。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "                candidates: candidates,\n",
@@ -9506,70 +9486,53 @@ def main():
          "        let ordered = ordinaryCandidates\n",
          "Takeover: decision policy must cover"),
 
-        # ── R85：本机证书材料状态（2026-09-26 构建 48 真机，用户需求①）──
-        # ① 把三态里的 `.ready` 改名 ⇒ R85① 报红（枚举少了一态）。
+        # ── R85：本机私钥状态仅作说明，续签由 Apple 当前状态决定 ──
+        # ① 删除 `.missingPrivateKey` 状态 ⇒ R85① 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "        case ready\n        /// 本机没有该证书的私钥",
-         "        case usable\n        /// 本机没有该证书的私钥",
-         "R85①: 本机证书状态必须是**三态**"),
-        # ② 把「读不到密钥」也判成缺私钥 ⇒ R85② 报红。**这正是最毒的一种退化**：
-        #    它把「Keychain 暂时读不到」说成「证书没了」，把用户送去重签一次不需要重签的续签。
+         "        case missingPrivateKey\n",
+         "        case absentLocalKey\n",
+         "R85①: 本机私钥状态只用于说明"),
+        # ② 把确认缺私钥误报成状态未知 ⇒ R85② 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
-         "        guard let secret, nonBlank(certificateSerialNumber) != nil else { return .undetermined }\n",
-         "        guard let secret, nonBlank(certificateSerialNumber) != nil else { return .needsFullResign }\n",
-         "R85②: 界面状态必须与准入**同源**"),
-        # ③ 把「只算已安装应用」去掉 ⇒ R85③ 报红（未安装的也会被提示，列表变吵）。
+         "        ) == nil ? .missingPrivateKey : .ready\n",
+         "        ) == nil ? .undetermined : .ready\n",
+         "R85②: 私钥状态需区分读不到与确认缺失"),
+        # ③ 把未安装应用也纳入本机私钥提示 ⇒ R85③ 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
          "        for app in apps where app.belongsInInstalledList {\n",
          "        for app in apps {\n",
-         "R85③: 只算**已安装**应用"),
-        # ④ 让完整版 helper 在「读不到」时也说话 ⇒ R85⑤ 报红。
+         "R85③: 本机私钥状态只展示在已安装应用"),
+        # ④ 让私钥状态文案在正常状态下出现 ⇒ R85⑤ 报红。
         ("Seal/Features/Apps/AppPresentation.swift",
-         "        availability == .needsFullResign ? localCertificateRebuildDetail : nil",
-         "        availability == .undetermined ? localCertificateRebuildDetail : nil",
-         "R85⑤: 两个 helper"),
-        # ⑤ 把进度卡片那处换成完整版 helper ⇒ R85⑥ 报红（紧凑版没人用）。
+         "        availability == .missingPrivateKey ? localCertificateRebuildDetail : nil",
+         "        availability == .ready ? localCertificateRebuildDetail : nil",
+         "R85⑤: 详情与进度文案只说明确认缺少私钥"),
+        # ⑤ 把进度卡片换成完整版文案 ⇒ R85⑥ 报红。
         ("Seal/Features/Apps/SigningProgressView.swift",
          "            if let note = AppSigningPresentationHelpers.localCertificateCompactNote(\n",
          "            if let note = AppSigningPresentationHelpers.localCertificateNote(\n",
-         "R85⑥: 进度卡片必须给紧凑原因"),
-        # ⑥ 把 364 的码改成 363 ⇒ R85⑦ 报红（这条降级在日志里就没法归因了）。
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         '                code: "SEAL-PROFILE-364"',
-         '                code: "SEAL-PROFILE-363"',
-         "R85⑦: 准入必须**提前**判定"),
-        # ⑦ 把私钥判据用的序列号换成带兜底的 `storedSerial` ⇒ R85⑦ 报红
-        #    （「准入查 A、执行用 B」= `SEAL-PROFILE-361` 那个洞的同一种错法）。
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         "            certificateSerialNumber: app.certificateSerialNumber\n",
-         "            certificateSerialNumber: storedSerial\n",
-         "R85⑦: 准入必须**提前**判定"),
-        # ⑧ 把私钥判据**挪到最前面** ⇒ R85⑦b 报红。这正是「顺序就是安全本身」那条：
-        #    排到前面时「被别的判据拦下的」会被归因成「本机缺私钥」，
-        #    而代码看起来仍然有这条判据。
+         "R85⑥: 进度、详情和操作抽屉展示一致的本机私钥状态"),
+        # ⑥ 在 profile-only 准入重新引入本机私钥 gate ⇒ R85⑦ 报红。
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "        guard forceResign,\n              installAfterSigning,\n",
-         "        if ProfileOnlyRenewalPolicy.localCertificateMaterialBlock(\n"
-         "            secret: secret,\n"
-         "            certificateSerialNumber: app.certificateSerialNumber\n"
-         "        ) != nil { return false }\n"
+         "        if SigningCertificateMaterialPolicy.isReusable(secret) == false { return false }\n"
          "        guard forceResign,\n              installAfterSigning,\n",
-         "R85⑦b: 私钥判据必须排在**最后**"),
-        # ⑨ 把索引里的 364 改名 ⇒ R85⑧ 报红（用户查码表查不到）。
-        ("docs/qa/log-code-index.md",
-         "| `SEAL-PROFILE-364` |",
-         "| `SEAL-PROFILE-365` |",
-         "R85⑧: 新日志码必须登记进"),
-        # ⑩ 把「缺私钥 ⇒ needsFullResign」那条单测改名 ⇒ R85⑨ 报红。
+         "R85⑦: profile-only 准入不得因本机私钥缺失而降级完整重签"),
+        # ⑦ 移除 Apple 证书清单中的序列号匹配 ⇒ R85⑧ 报红。
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         "== SigningCertificateSelectionPolicy.normalizedSerialNumber(expectedSerialNumber)",
+         "!= SigningCertificateSelectionPolicy.normalizedSerialNumber(expectedSerialNumber)",
+         "R85⑧: profile-only 证书必须按 Apple 当前清单核验"),
+        # ⑧ 把缺私钥续签测试改名 ⇒ R85⑨ 报红。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
-         "func missingLocalPrivateKeyIsReportedAsNeedingAFullResign()",
+         "func missingLocalPrivateKeyDoesNotImplyProfileRenewalNeedsAFullResign()",
          "func legacyMissingKeyTest()",
-         "R85⑨: 必须有三个方向的单测"),
-        # ⑪ 把文案 helper 的单测改名 ⇒ R85⑩ 报红。
+         "R85⑨: 覆盖缺私钥不拦续签"),
+        # ⑨ 把私钥状态文案测试改名 ⇒ R85⑩ 报红。
         ("SealTests/Apps/AppPresentationTests.swift",
          "func localCertificateNoteOnlySpeaksWhenTheDeviceIsReallyMissingTheKey()",
          "func legacyNoteTest()",
-         "R85⑩: 文案 helper 必须有单测"),
+         "R85⑩: 私钥状态文案 helper 必须有单测"),
 
         # ── R86：子流程的阶段不得覆盖父会话（2026-09-26 构建 48 真机，用户需求②）──
         # ① 把纯判据的入口改名 ⇒ R86① 报红。

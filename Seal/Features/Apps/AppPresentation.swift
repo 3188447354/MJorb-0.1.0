@@ -188,7 +188,7 @@ enum AppSigningPresentationHelpers {
     ///   · `localCertificateNote(for:)` → **完整版**，用于详情页 / 操作抽屉（有空间折行读全，
     ///     用户在这里做「要不要点续签」的决定，需要知道「之后会怎样」）；
     ///   · `localCertificateCompactNote(for:)` → **紧凑版**，用于签名进度卡片
-    ///     （那一段正在跑、卡片窄，一行说清「这次为什么要重签」即可）。
+    ///     （那一段正在跑、卡片窄，一行说明本机私钥状态即可）。
     static func localCertificateNote(
         for availability: ProfileOnlyRenewalPolicy.LocalCertificateAvailability
     ) -> String? {

@@ -1,3 +1,17 @@
+## 2026-10-19 13:52:08 发布守卫按当前续签与标识符规则校准
+
+- **问题**：CI #54 的 R85 旧规则修正后，快速静态检查又发现 8 项守卫仍按旧策略拦截：强制读取旧扩展分配记录、把 App Group ID 再映射、把旧设备标识当续签门槛，以及要求 Seal 记录不完整就必须重签。它们与现在按 Apple 当前状态和 IPA 实际权限续签的实现不一致。
+- **修改**：更新发布守卫与对应变异用例，使共享/独立分配由 IPA 当前权限决定、profile-only 续签可从旧记录恢复目标、App Group 保留 IPA 原始值、Seal 可用实时签名身份补足记录、设备核验使用本轮设备标识。将已停用的 `SEAL-PROFILE-364` 从活动码表移到历史码表；重命名旧策略测试以准确表达当前行为。
+- **验证**：发布守卫 835 项静态检查 0 失败；针对本轮修改的 10 个守卫变异均被正确拦截；Python 语法检查与 `git diff --check` 通过。Swift/Xcode 构建由 GitHub CI 验证。
+- **文件**：`Scripts/verify-release-safety.py`、`SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift`、`docs/qa/log-code-index.md`、`docs/qa/generated/error-code-inventory.json`、本日志。
+
+## 2026-10-19 13:40:19 CI 发布守卫与 Swift 编译错误修复
+
+- **问题**：CI #54 的 `build-package` 在 Swift 编译前被发布守卫拦截。日志指向 `Scripts/verify-release-safety.py` 的 R85 检查仍要求 `localCertificateMaterialBlock()` 和错误码 `SEAL-PROFILE-364`；另一个并行测试发现两处默认参数使用 `Self.minimumFreshProfileLifetime`，Swift 报 covariant `Self` 不能用于默认值。
+- **修改**：把 R85 静态检查与变异用例改为验证新规则：本机私钥仅用于状态说明；profile-only 准入不因缺少本机私钥降级；证书按 Apple 当前证书清单核验。`SEAL-PROFILE-364` 标为停用历史码。两处默认参数改为类型限定的 `ApplePortalSigningService.minimumFreshProfileLifetime`。
+- **验证**：Python 守卫脚本语法检查与 `git diff --check` 通过；CI #54 的签名器测试通过，Swift 编译和发布守卫失败，修复后需再次推送触发完整 CI。
+- **文件**：`Scripts/verify-release-safety.py`、`docs/qa/log-code-index.md`、本日志及续签状态文案注释。
+
 ## 2026-10-19 13:26:25 IPA 资源、标识符与更新版本规则对齐 Apple
 
 - **问题**：Seal 对 IPA 解压总量设 8 GB 默认上限，Bundle ID / App Group ID 会被写入 Seal 自定义格式；更新版本过滤规则也需要明确按 Apple 的版本格式执行。

@@ -93,10 +93,8 @@ enum ProfileOnlyRenewalPolicy {
     /// 前者（Keychain 暂时读不到 / 账号已删）**不能**凭空断言「缺私钥」，只能什么都不说；
     /// 后者只说明本机没有私钥；描述文件续签仍由 Apple 门户里的证书状态决定。
     ///
-    /// 用户 2026-09-26 明确要求：首次把 Seal 装到手机上时，本机没有该证书的私钥，
-    /// 要在「证书序列号」那里写一句「需要重新签名一次获取本机证书」，
-    /// 并让**匹配之后**的续签回到「只更新描述文件、不重装」。
-    /// 这条状态就是那句文案的唯一判据（见 `AppSigningPresentationHelpers.localCertificateNote(for:)`）。
+    /// 本机没有该证书私钥时可以提示这一事实，但不据此强制完整重签；Apple 门户仍可能
+    /// 接受该证书并签发更新后的描述文件。提示由 `AppSigningPresentationHelpers` 统一提供。
     enum LocalCertificateAvailability: Equatable, Sendable {
         /// 没有记录序列号、或读不到该账号的密钥 ⇒ **不显示任何话**（不能凭空断言缺私钥）。
         case undetermined

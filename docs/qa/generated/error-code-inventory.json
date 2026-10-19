@@ -5894,7 +5894,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 150,
+          "line": 148,
           "path": "Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11216,27 +11216,6 @@
         "internal_event_or_log": 1
       }
     },
-    "SEAL-PROFILE-364": {
-      "auditStatus": "reference_only",
-      "identifierKinds": {
-        "standard_error_code": 1
-      },
-      "locations": [
-        {
-          "identifierKind": "standard_error_code",
-          "line": 1067,
-          "path": "Seal/Core/Signing/SigningCoordinator.swift",
-          "role": "comment_reference",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "// 不能把「别的判据拦下的」也算到它头上（与 `SEAL-PROFILE-364` 同一条纪律）。"
-        }
-      ],
-      "occurrenceCount": 1,
-      "roles": {
-        "comment_reference": 1
-      }
-    },
     "SEAL-PROFILE-365": {
       "auditStatus": "reference_only",
       "identifierKinds": {
@@ -11400,7 +11379,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 148,
+          "line": 146,
           "path": "Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -12265,7 +12244,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 149,
+          "line": 147,
           "path": "Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13860,17 +13839,17 @@
       "contracted": 62,
       "diagnostic_only": 5,
       "mixed": 3,
-      "reference_only": 285,
+      "reference_only": 284,
       "unreviewed": 78
     },
     "identifierKinds": {
       "diagnostic_tag": 73,
       "legacy_error_identifier": 2,
-      "standard_error_code": 765
+      "standard_error_code": 764
     },
-    "occurrences": 840,
+    "occurrences": 839,
     "roles": {
-      "comment_reference": 123,
+      "comment_reference": 122,
       "executable_reference": 125,
       "failure_emission_candidate": 231,
       "internal_event_or_log": 204,
@@ -13881,6 +13860,6 @@
       "withExplicitSemantics": 73,
       "withoutExplicitSemantics": 84
     },
-    "uniqueIdentifiers": 434
+    "uniqueIdentifiers": 433
   }
 }
