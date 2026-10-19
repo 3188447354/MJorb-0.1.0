@@ -208,7 +208,8 @@ enum ProfileOnlyRenewalPolicy {
     /// 从「运行包身份」构造 `LiveProfileOnlyIdentity`。任何一项读不出来都返回 nil —— **绝不猜**。
     ///
     /// - Parameter installedIdentity: `SelfAppMetadata.current()?.installedIdentity`。
-    ///   要求每个当前安装目标的 Bundle ID 与 CMS 签名者可读；描述文件缺失或失效不阻止恢复。
+    ///   要求每个当前安装目标的 Bundle ID 与 CMS 签名者可读；扩展 Team 缺失时仅继承主程序 Team，
+    ///   且所有目标仍必须由同一证书签名。描述文件缺失或失效不阻止恢复。
     ///
     /// - Parameter runningVersion: `SelfAppMetadata.current()?.version` —— **正在运行的那个包**
     ///   的版本。它与记录里的 `version` 是两件事：记录描述「已导入的源包」，可能更新。
@@ -235,8 +236,9 @@ enum ProfileOnlyRenewalPolicy {
         }
         let normalizedMainSerial = normalizedSerialNumber(serialNumber)
         guard installedIdentity.targets.allSatisfy({
+            let targetTeamIdentifier = nonBlank($0.teamIdentifier) ?? teamIdentifier
             normalizedSerialNumber($0.signerSerialNumber) == normalizedMainSerial
-                && $0.teamIdentifier.caseInsensitiveCompare(teamIdentifier) == .orderedSame
+                && targetTeamIdentifier.caseInsensitiveCompare(teamIdentifier) == .orderedSame
         }) else { return nil }
         let targets = installedIdentity.targets.map(\.bundleIdentifier)
         guard targets.first?.caseInsensitiveCompare(mappedMainBundleIdentifier) == .orderedSame,

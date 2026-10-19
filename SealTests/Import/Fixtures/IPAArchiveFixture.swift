@@ -3,6 +3,10 @@ import ZIPFoundation
 @testable import Seal
 
 enum IPAArchiveFixture {
+    private enum FixtureError: Error {
+        case invalidZIP
+    }
+
     struct AppSpec {
         let directoryName: String
         let bundleIdentifier: String
@@ -129,6 +133,61 @@ enum IPAArchiveFixture {
         }
 
         return archiveURL
+    }
+
+    static func clearUTF8FilenameFlag(in archiveURL: URL) throws {
+        var data = try Data(contentsOf: archiveURL)
+        let minimumEndRecordSize = 22
+        let searchStart = max(0, data.count - minimumEndRecordSize - Int(UInt16.max))
+        let endRecordOffset = (searchStart...(data.count - minimumEndRecordSize))
+            .reversed()
+            .first { offset in
+                data[offset] == 0x50
+                    && data[offset + 1] == 0x4B
+                    && data[offset + 2] == 0x05
+                    && data[offset + 3] == 0x06
+                    && offset + minimumEndRecordSize + Int(readUInt16(data, at: offset + 20)) == data.count
+            }
+        guard let endRecordOffset else { throw FixtureError.invalidZIP }
+
+        let entryCount = Int(readUInt16(data, at: endRecordOffset + 10))
+        var centralOffset = Int(readUInt32(data, at: endRecordOffset + 16))
+        for _ in 0..<entryCount {
+            guard centralOffset + 46 <= data.count,
+                  data[centralOffset] == 0x50,
+                  data[centralOffset + 1] == 0x4B,
+                  data[centralOffset + 2] == 0x01,
+                  data[centralOffset + 3] == 0x02 else {
+                throw FixtureError.invalidZIP
+            }
+            clearUTF8Flag(in: &data, at: centralOffset + 8)
+            let localHeaderOffset = Int(readUInt32(data, at: centralOffset + 42))
+            guard localHeaderOffset + 8 <= data.count else { throw FixtureError.invalidZIP }
+            clearUTF8Flag(in: &data, at: localHeaderOffset + 6)
+
+            centralOffset += 46
+                + Int(readUInt16(data, at: centralOffset + 28))
+                + Int(readUInt16(data, at: centralOffset + 30))
+                + Int(readUInt16(data, at: centralOffset + 32))
+        }
+        try data.write(to: archiveURL)
+    }
+
+    private static func readUInt16(_ data: Data, at offset: Int) -> UInt16 {
+        UInt16(data[offset]) | (UInt16(data[offset + 1]) << 8)
+    }
+
+    private static func readUInt32(_ data: Data, at offset: Int) -> UInt32 {
+        UInt32(data[offset])
+            | (UInt32(data[offset + 1]) << 8)
+            | (UInt32(data[offset + 2]) << 16)
+            | (UInt32(data[offset + 3]) << 24)
+    }
+
+    private static func clearUTF8Flag(in data: inout Data, at offset: Int) {
+        let flags = readUInt16(data, at: offset) & ~0x0800
+        data[offset] = UInt8(truncatingIfNeeded: flags)
+        data[offset + 1] = UInt8(truncatingIfNeeded: flags >> 8)
     }
 
     private static func propertyListData(_ value: [String: Any]) throws -> Data {

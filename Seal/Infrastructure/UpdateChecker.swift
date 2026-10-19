@@ -343,6 +343,35 @@ struct UpdateNotice: Identifiable, Sendable {
     let sha256DownloadURL: URL?
 }
 
+enum UpdateNoticeContentPolicy {
+    static func changeItems(from message: String, version: String) -> [String] {
+        message.components(separatedBy: .newlines).compactMap { line in
+            let isHeading = line.range(
+                of: "^\\s*#{1,6}\\s+",
+                options: .regularExpression
+            ) != nil
+            var text = line.trimmingCharacters(in: .whitespaces)
+            text = text.replacingOccurrences(of: "^#{1,6}\\s+", with: "", options: .regularExpression)
+            text = text.replacingOccurrences(of: "^\\s*[-*•·]\\s+", with: "", options: .regularExpression)
+            text = text.replacingOccurrences(of: "^\\s*\\d+[.)]\\s+", with: "", options: .regularExpression)
+            text = text.replacingOccurrences(of: "\\*\\*(.+?)\\*\\*", with: "$1", options: .regularExpression)
+            text = text.replacingOccurrences(of: "`(.+?)`", with: "$1", options: .regularExpression)
+            text = text.replacingOccurrences(of: "\\[(.+?)\\]\\(.+?\\)", with: "$1", options: .regularExpression)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.isEmpty == false else { return nil }
+            guard isHeading == false || normalizedVersion(trimmed) != normalizedVersion(version) else {
+                return nil
+            }
+            return trimmed
+        }
+    }
+
+    private static func normalizedVersion(_ value: String) -> String {
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.hasPrefix("v") ? String(normalized.dropFirst()) : normalized
+    }
+}
+
 struct UpdateRelease: Equatable, Sendable {
     let tag: String
     let title: String

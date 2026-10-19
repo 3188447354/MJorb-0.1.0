@@ -1,5 +1,6 @@
 import ActivityKit
 import SwiftUI
+import UIKit
 import WidgetKit
 
 /// 灵动岛 / 锁屏上的 Seal 配对状态。系统决定是否展开和具体尺寸，界面只提供各状态内容。
@@ -34,7 +35,13 @@ struct PairingLiveActivityWidget: Widget {
     }
 
     private var sealMarkImage: Image {
-        Image("SealBrandIcon", bundle: .main)
+        if let imageURL = Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png"),
+           let image = UIImage(contentsOfFile: imageURL.path) {
+            return Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+        }
+        return Image("SealBrandIcon", bundle: .main)
             .renderingMode(.original)
             .resizable()
     }

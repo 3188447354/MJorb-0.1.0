@@ -34,23 +34,7 @@ struct UpdateNoticeView: View {
 
     /// Release 的 Markdown 正文转换为抽屉中的简洁更新条目。
     private var changeItems: [String] {
-        var items: [String] = []
-        for line in notice.message.components(separatedBy: .newlines) {
-            var text = line
-            text = text.replacingOccurrences(of: "^#{1,6}\\s+", with: "", options: .regularExpression)
-            text = text.replacingOccurrences(of: "^\\s*[-*•·]\\s+", with: "", options: .regularExpression)
-            text = text.replacingOccurrences(of: "^\\s*\\d+[.)]\\s+", with: "", options: .regularExpression)
-            text = text.replacingOccurrences(of: "\\*\\*(.+?)\\*\\*", with: "$1", options: .regularExpression)
-            text = text.replacingOccurrences(of: "`(.+?)`", with: "$1", options: .regularExpression)
-            text = text.replacingOccurrences(of: "\\[(.+?)\\]\\(.+?\\)", with: "$1", options: .regularExpression)
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { items.append(trimmed) }
-        }
-        return items
-    }
-
-    private var usesExpandedLayout: Bool {
-        changeItems.count > 3 || changeItems.contains { $0.count > 26 }
+        UpdateNoticeContentPolicy.changeItems(from: notice.message, version: notice.version)
     }
 
     var body: some View {
@@ -62,12 +46,13 @@ struct UpdateNoticeView: View {
 
                 sheetContent
                     .frame(maxWidth: 560)
-                    .frame(height: min(proxy.size.height * 0.9, 700))
+                    .frame(height: min(proxy.size.height * 0.92, 860))
                     .padding(.horizontal, 10)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 10))
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .ignoresSafeArea()
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phase)
         .onDisappear {
             downloadGeneration = UUID()
@@ -183,16 +168,7 @@ struct UpdateNoticeView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 10)
 
-                Group {
-                    if usesExpandedLayout {
-                        ScrollView(showsIndicators: false) {
-                            changesList
-                        }
-                        .frame(maxHeight: 190)
-                    } else {
-                        changesList
-                    }
-                }
+                changesList
             }
         }
         .padding(.top, 8)

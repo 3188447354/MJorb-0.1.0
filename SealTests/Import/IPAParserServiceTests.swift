@@ -47,6 +47,24 @@ struct IPAParserServiceTests {
     }
 
     @Test
+    func importsUTF8ExecutablePathWhenZIPFlagIsMissing() throws {
+        let url = try IPAArchiveFixture.make(apps: [
+            .init(
+                directoryName: "歌一刀.app",
+                bundleIdentifier: "com.example.chinese",
+                name: "歌一刀"
+            )
+        ])
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try IPAArchiveFixture.clearUTF8FilenameFlag(in: url)
+
+        let result = try IPAParserService().parse(url: url)
+
+        #expect(result.name == "歌一刀")
+        #expect(result.bundleIdentifier == "com.example.chinese")
+    }
+
+    @Test
     func locatesMainExecutableFromInfoPlistInsteadOfAppFolderName() throws {
         let url = try IPAArchiveFixture.make(apps: [
             .init(directoryName: "ContainerName.app", name: "ActualExecutable")

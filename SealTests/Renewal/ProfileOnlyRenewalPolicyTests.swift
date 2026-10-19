@@ -313,11 +313,22 @@ struct ProfileOnlyRenewalPolicyTests {
             signerCertificateSHA256: "sha",
             status: .signerIdentified
         )
+        let signerOnlyExtension = SignedTargetIdentity(
+            kind: .appExtension,
+            bundleIdentifier: "com.example.demo.extension",
+            teamIdentifier: "",
+            applicationIdentifier: "",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: "00AABB",
+            signerCertificateSHA256: "",
+            status: .signerIdentified
+        )
         let identity = InstalledIdentity(
             bundleURL: URL(fileURLWithPath: "/Applications/Seal.app"),
             version: app.version,
             buildNumber: app.buildNumber,
-            targets: [signerOnlyTarget],
+            targets: [signerOnlyTarget, signerOnlyExtension],
             readErrors: []
         )
         let live = ProfileOnlyRenewalPolicy.liveIdentity(
@@ -329,7 +340,62 @@ struct ProfileOnlyRenewalPolicyTests {
         #expect(live?.profileUUID == "")
         #expect(
             ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: live)
-                == .eligible(targetBundleIdentifiers: ["com.example.demo.TEAM123456"])
+                == .eligible(targetBundleIdentifiers: [
+                    "com.example.demo.TEAM123456",
+                    "com.example.demo.extension"
+                ])
+        )
+
+        let mismatchedExtension = SignedTargetIdentity(
+            kind: .appExtension,
+            bundleIdentifier: "com.example.demo.extension",
+            teamIdentifier: "TEAM999999",
+            applicationIdentifier: "",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: "00AABB",
+            signerCertificateSHA256: "",
+            status: .signerIdentified
+        )
+        let mismatchedIdentity = InstalledIdentity(
+            bundleURL: identity.bundleURL,
+            version: identity.version,
+            buildNumber: identity.buildNumber,
+            targets: [signerOnlyTarget, mismatchedExtension],
+            readErrors: []
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.liveIdentity(
+                installedIdentity: mismatchedIdentity,
+                runningVersion: app.version,
+                app: app
+            ) == nil
+        )
+
+        let mismatchedSignerExtension = SignedTargetIdentity(
+            kind: .appExtension,
+            bundleIdentifier: "com.example.demo.extension",
+            teamIdentifier: "",
+            applicationIdentifier: "",
+            profileUUID: "",
+            profileExpirationDate: .distantPast,
+            signerSerialNumber: "00CCDD",
+            signerCertificateSHA256: "",
+            status: .signerIdentified
+        )
+        let mismatchedSignerIdentity = InstalledIdentity(
+            bundleURL: identity.bundleURL,
+            version: identity.version,
+            buildNumber: identity.buildNumber,
+            targets: [signerOnlyTarget, mismatchedSignerExtension],
+            readErrors: []
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.liveIdentity(
+                installedIdentity: mismatchedSignerIdentity,
+                runningVersion: app.version,
+                app: app
+            ) == nil
         )
     }
 

@@ -48,7 +48,7 @@ struct IPAParserService: Sendable {
             )
         }
         let appInfoEntries = archive.filter { entry in
-            let components = entry.path.split(separator: "/")
+            let components = archivePath(for: entry).split(separator: "/")
             return components.count == 3
                 && components[0] == "Payload"
                 && components[1].hasSuffix(".app")
@@ -80,10 +80,10 @@ struct IPAParserService: Sendable {
         // A wrapper is not a signable IPA. Do not parse inner metadata while committing
         // the outer archive, or allocate the entire nested archive in memory.
         let hasPayload = entries.contains { entry in
-            entry.path.hasPrefix("Payload/")
+            archivePath(for: entry).hasPrefix("Payload/")
         }
         let nestedIPAEntries = entries.filter { entry in
-            entry.type == .file && entry.path.lowercased().hasSuffix(".ipa")
+            entry.type == .file && archivePath(for: entry).lowercased().hasSuffix(".ipa")
         }
         if hasPayload == false, nestedIPAEntries.isEmpty == false {
             throw failure(
@@ -95,7 +95,7 @@ struct IPAParserService: Sendable {
         }
 
         let appInfoEntries = entries.filter { entry in
-            let components = entry.path.split(separator: "/")
+            let components = archivePath(for: entry).split(separator: "/")
             return components.count == 3
                 && components[0] == "Payload"
                 && components[1].hasSuffix(".app")
@@ -148,7 +148,7 @@ struct IPAParserService: Sendable {
             )
         }
 
-        let appRoot = appInfoEntry.path
+        let appRoot = archivePath(for: appInfoEntry)
             .split(separator: "/")
             .dropLast()
             .joined(separator: "/")
@@ -206,10 +206,11 @@ struct IPAParserService: Sendable {
 
         var expandedSize: UInt64 = 0
         for entry in entries {
-            guard ArchivePathValidator.isSafe(entry.path) else {
+            let path = archivePath(for: entry)
+            guard ArchivePathValidator.isSafe(path) else {
                 throw failure(
                     title: "IPA 不安全",
-                    reason: "压缩包包含非法路径：\(entry.path)。",
+                    reason: "压缩包包含非法路径：\(path)。",
                     recovery: "选择其他 IPA",
                     code: "SEAL-IPA-104"
                 )
@@ -239,7 +240,7 @@ struct IPAParserService: Sendable {
         guard let dictionary = value as? [String: Any] else {
             throw failure(
                 title: "无法读取 IPA",
-                reason: "无法读取 \(entry.path) 里的应用信息。",
+                reason: "无法读取 \(archivePath(for: entry)) 里的应用信息。",
                 recovery: "选择其他 IPA",
                 code: "SEAL-IPA-102b"
             )
@@ -254,7 +255,7 @@ struct IPAParserService: Sendable {
     ) throws -> Data {
         guard entry.uncompressedSize <= maximumSize else {
             throw sizeFailure(
-                detail: "文件 \(entry.path) 的大小 \(entry.uncompressedSize) 字节超过单文件读取上限 \(maximumSize) 字节。"
+                detail: "文件 \(archivePath(for: entry)) 的大小 \(entry.uncompressedSize) 字节超过单文件读取上限 \(maximumSize) 字节。"
             )
         }
 
@@ -279,15 +280,16 @@ struct IPAParserService: Sendable {
     ) throws -> Data? {
         let iconNames = iconFileNames(from: info)
         let iconCandidateEntries = entries.filter { entry in
-            guard entry.type == .file, entry.path.hasPrefix("\(appRoot)/") else { return false }
-            let lowerName = URL(filePath: entry.path).lastPathComponent.lowercased()
+            let path = archivePath(for: entry)
+            guard entry.type == .file, path.hasPrefix("\(appRoot)/") else { return false }
+            let lowerName = URL(filePath: path).lastPathComponent.lowercased()
             return lowerName.hasSuffix(".png")
                 || lowerName == "itunesartwork"
                 || lowerName.hasPrefix("itunesartwork@")
         }
 
         let declared = iconCandidateEntries.filter { entry in
-            let fileName = URL(filePath: entry.path).deletingPathExtension().lastPathComponent
+            let fileName = URL(filePath: archivePath(for: entry)).deletingPathExtension().lastPathComponent
             return iconNames.contains { declaredName in
                 fileName.caseInsensitiveCompare(declaredName) == .orderedSame
                     || fileName.localizedCaseInsensitiveContains(declaredName)
@@ -296,7 +298,7 @@ struct IPAParserService: Sendable {
         }
 
         let fallbacks = iconCandidateEntries.filter { entry in
-            let lower = URL(filePath: entry.path).lastPathComponent.lowercased()
+            let lower = URL(filePath: archivePath(for: entry)).lastPathComponent.lowercased()
             return lower.hasPrefix("icon")
                 || lower.hasPrefix("appicon")
                 || lower.contains("appicon")
@@ -325,8 +327,9 @@ struct IPAParserService: Sendable {
         // 找 Assets.car
         guard let carEntry = entries.first(where: { entry in
             guard entry.type == .file else { return false }
-            let fileName = URL(filePath: entry.path).lastPathComponent
-            return fileName == "Assets.car" && entry.path.hasPrefix("\(appRoot)/")
+            let path = archivePath(for: entry)
+            let fileName = URL(filePath: path).lastPathComponent
+            return fileName == "Assets.car" && path.hasPrefix("\(appRoot)/")
         }) else {
             return nil
         }
@@ -357,8 +360,8 @@ struct IPAParserService: Sendable {
         archive: Archive
     ) throws -> [AppExtensionRecord] {
         let infoEntries = entries.filter { entry in
-            entry.path.hasPrefix("\(appRoot)/PlugIns/")
-                && entry.path.hasSuffix(".appex/Info.plist")
+            archivePath(for: entry).hasPrefix("\(appRoot)/PlugIns/")
+                && archivePath(for: entry).hasSuffix(".appex/Info.plist")
         }
 
         return try infoEntries.map { entry in
@@ -371,13 +374,13 @@ struct IPAParserService: Sendable {
                   bundleIdentifier.isEmpty == false else {
                 throw failure(
                     title: "无法读取 IPA",
-                    reason: "扩展 \(entry.path) 的 Info.plist 缺少有效的 Bundle ID。",
+                    reason: "扩展 \(archivePath(for: entry)) 的 Info.plist 缺少有效的 Bundle ID。",
                     recovery: "选择其他 IPA",
                     code: "SEAL-IPA-102c"
                 )
             }
             let name = displayName(from: info)
-                ?? URL(filePath: entry.path).deletingLastPathComponent().lastPathComponent
+                ?? URL(filePath: archivePath(for: entry)).deletingLastPathComponent().lastPathComponent
             let extensionInfo = info["NSExtension"] as? [String: Any]
             let pointIdentifier = extensionInfo?["NSExtensionPointIdentifier"] as? String
 
@@ -408,8 +411,8 @@ struct IPAParserService: Sendable {
         archive: Archive
     ) -> Set<String> {
         let entitlementEntries = entries.filter { entry in
-            entry.path.hasPrefix("\(appRoot)/")
-                && entry.path.hasSuffix(".xcent")
+            archivePath(for: entry).hasPrefix("\(appRoot)/")
+                && archivePath(for: entry).hasSuffix(".xcent")
                 && entry.uncompressedSize <= limits.maximumMetadataSize
         }
 
@@ -441,8 +444,8 @@ struct IPAParserService: Sendable {
 
         // Watch / App Clip 当前不由 Seal 签名器处理；签名阶段会在申请 Apple 资源前明确停止，绝不静默删掉组件。
         let hasUnsupportedPlatformTarget = entries.contains { entry in
-            entry.path.hasPrefix("\(appRoot)/Watch/")
-                || entry.path.hasPrefix("\(appRoot)/AppClips/")
+            archivePath(for: entry).hasPrefix("\(appRoot)/Watch/")
+                || archivePath(for: entry).hasPrefix("\(appRoot)/AppClips/")
         }
         if hasUnsupportedPlatformTarget {
             warnings.append("IPA 包含 Watch 或 App Clip 组件，Seal 当前不会删除这些组件；签名会在申请 Apple 资源前停止")
@@ -450,7 +453,7 @@ struct IPAParserService: Sendable {
 
         // 检测包内证书文件（可疑，可能导致签名问题）
         let hasEmbeddedCertificate = entries.contains { entry in
-            let lower = entry.path.lowercased()
+            let lower = archivePath(for: entry).lowercased()
             return lower.hasSuffix(".p12")
                 || lower.hasSuffix(".cer")
                 || lower.hasSuffix(".cert")
@@ -462,7 +465,7 @@ struct IPAParserService: Sendable {
 
         // 检测越狱运行时（substrate 等）
         let hasJailbreakRuntime = entries.contains { entry in
-            let lower = entry.path.lowercased()
+            let lower = archivePath(for: entry).lowercased()
             return lower.contains("substrate")
                 || lower.contains("cycript")
                 || lower.contains("rocketbootstrap")
@@ -474,8 +477,8 @@ struct IPAParserService: Sendable {
 
         // 检测扩展数量
         let extensionCount = entries.filter { entry in
-            entry.path.hasPrefix("\(appRoot)/PlugIns/")
-                && entry.path.hasSuffix(".appex/Info.plist")
+            archivePath(for: entry).hasPrefix("\(appRoot)/PlugIns/")
+                && archivePath(for: entry).hasSuffix(".appex/Info.plist")
         }.count
         if extensionCount > 3 {
             warnings.append("包含 \(extensionCount) 个应用扩展，部分扩展可能无法签名")
@@ -507,7 +510,7 @@ struct IPAParserService: Sendable {
         let binaryPath = "\(appRoot)/\(binaryName)"
 
         guard let binaryEntry = entries.first(where: {
-            $0.type == .file && $0.path == binaryPath
+            $0.type == .file && archivePath(for: $0) == binaryPath
         }) else {
             throw failure(
                 title: "无法读取 IPA 主程序",
@@ -623,6 +626,12 @@ struct IPAParserService: Sendable {
         }
 
         return false
+    }
+
+    /// IPA 包内路径统一按 UTF-8 读取。部分打包器写入 UTF-8 文件名却漏设 ZIP 的 UTF-8 标志位；
+    /// ZIPFoundation 的默认路径解码会按 CP437 解释，导致中文主程序名无法与 Info.plist 对上。
+    private func archivePath(for entry: Entry) -> String {
+        entry.path(using: .utf8)
     }
 
     private func sourceFileSize(at url: URL) throws -> Int64 {

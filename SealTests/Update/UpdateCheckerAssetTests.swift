@@ -7,6 +7,16 @@ import Testing
 struct UpdateCheckerAssetTests {
 
     @Test
+    func releaseVersionHeadingIsNotRepeatedInUpdateItems() {
+        let items = UpdateNoticeContentPolicy.changeItems(
+            from: "# v0.1.36\n- 修复续签\n\n### 界面\n- 调整更新抽屉",
+            version: "0.1.36"
+        )
+
+        #expect(items == ["修复续签", "界面", "调整更新抽屉"])
+    }
+
+    @Test
     func successfulLatestCheckIsReusedEvenForManualCheck() async {
         let cache = UpdateCheckCache()
         let counter = UpdateCheckLoadCounter()

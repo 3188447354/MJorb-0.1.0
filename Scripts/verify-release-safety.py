@@ -3762,6 +3762,12 @@ def violations(load=read):
     parser = load("Seal/Core/Import/IPAParserService.swift")
     check("nestedData" not in parser and 'code: "SEAL-IPA-101b"' in parser,
           "Import: nested wrappers must not be buffered or committed as inner IPAs")
+    ipa_import_tests = load("SealTests/Import/IPAParserServiceTests.swift")
+    check("entry.path(using: .utf8)" in strip_comments(parser)
+          and strip_comments(parser).count("entry.path") == 1
+          and "func importsUTF8ExecutablePathWhenZIPFlagIsMissing()" in ipa_import_tests
+          and "clearUTF8FilenameFlag(in: url)" in ipa_import_tests,
+          "R121: IPA 的 ZIP 路径必须统一按 UTF-8 解码，并覆盖标志位缺失的中文主程序导入")
     validator = load("Seal/Infrastructure/Installation/SignedArtifactValidator.swift")
     check('guard let executableName = plist["CFBundleExecutable"]' in validator
           and "$0.uncompressedSize > 0" in validator,
@@ -4702,11 +4708,30 @@ def violations(load=read):
           "R119③: 已签名 App 行只显示应用名，不得再显示「应用名称」标签")
     pairing_asset_json = load("SealLiveActivity/Assets.xcassets/SealBrandIcon.imageset/Contents.json")
     pairing_project = strip_yaml_comments(load("project.yml"))
-    check('Image("SealBrandIcon", bundle: .main)' in pairing_widget
+    check('Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")' in pairing_widget
+          and "UIImage(contentsOfFile: imageURL.path)" in pairing_widget
+          and 'Image("SealBrandIcon", bundle: .main)' in pairing_widget
           and ".widgetAccentedRenderingMode(.fullColor)" in pairing_widget
           and "SealLiveActivity/Assets.xcassets" in pairing_project
+          and "SealLiveActivity/Resources/SealBrandIcon.png" in pairing_project
+          and os.path.isfile(ROOT / "SealLiveActivity/Resources/SealBrandIcon.png")
           and '"filename" : "icon.png"' in pairing_asset_json,
-          "R119④: 灵动岛必须从扩展资源包加载真实 Seal 彩色图标，保留全彩渲染与图像资源")
+          "R119④: 灵动岛须从扩展包直接读取真实 Seal PNG，并保留资源目录回退与全彩渲染")
+
+    update_notice_view = strip_comments(load("Seal/Features/UpdateNoticeView.swift"))
+    update_notice_policy = strip_comments(load("Seal/Infrastructure/UpdateChecker.swift"))
+    update_notice_tests = load("SealTests/Update/UpdateCheckerAssetTests.swift")
+    check(".padding(.bottom, max(proxy.safeAreaInsets.bottom, 10))" in update_notice_view
+          and ".ignoresSafeArea()\n        .animation" in update_notice_view
+          and "frame(height: min(proxy.size.height * 0.92, 860))" in update_notice_view
+          and "usesExpandedLayout" not in update_notice_view
+          and update_notice_view.count("ScrollView(") == 1
+          and "UpdateNoticeContentPolicy.changeItems(from: notice.message, version: notice.version)"
+              in update_notice_view
+          and "enum UpdateNoticeContentPolicy" in update_notice_policy
+          and "normalizedVersion(trimmed) != normalizedVersion(version)" in update_notice_policy
+          and "func releaseVersionHeadingIsNotRepeatedInUpdateItems()" in update_notice_tests,
+          "R120: 更新抽屉须覆盖底部标签栏、由单一主滚动区承载内容，并过滤重复版本标题")
 
     # R70: 「悬空绑定」不得用裸 UUID 比较拦下续签（2026-09-25 真机，构建 37）。
     #
@@ -5323,6 +5348,7 @@ def violations(load=read):
     )
     check("static func liveIdentity(" in r84_policy
           and "installedIdentity.canSafelyIdentifySigners," in r84_live_identity
+          and "let targetTeamIdentifier = nonBlank($0.teamIdentifier) ?? teamIdentifier" in r84_live_identity
           and "mainTarget.bundleIdentifier.caseInsensitiveCompare(mappedMainBundleIdentifier) "
               "== .orderedSame" in r84_policy,
           "R84①: 续签准入必须有**记录之外的实时签名身份通道**，并验证签名者及目标身份 ✗ —— "
@@ -5393,6 +5419,13 @@ def violations(load=read):
           "（01:25:01 / 01:26:40 / 01:29:11）全落在续签与自替换进行中，"
           "既抢不到会话又把失败弹窗推给用户")
     check("func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()" in r84_policy_tests
+          and "teamIdentifier: \"\"" in section_or_empty(
+              r84_policy_tests,
+              "func liveSignerIdentityWithoutAProfileUUIDCanRenewProfiles()",
+              "// MARK: - 「已导入的更新源尚未安装」"
+          )
+          and "let mismatchedExtension = SignedTargetIdentity(" in r84_policy_tests
+          and "let mismatchedSignerExtension = SignedTargetIdentity(" in r84_policy_tests
           and "func liveIdentityForADifferentBundleIdentifierDoesNotAdmitTheRecord()"
               in r84_policy_tests
           and "func incompleteLiveIdentityIsNeverAnAdmissionTicket()" in r84_policy_tests
@@ -9531,6 +9564,10 @@ def main():
          "              installedIdentity.canSafelyIdentifySigners,\n",
          "",
          "R84①: 续签准入必须有"),
+        ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
+         "let targetTeamIdentifier = nonBlank($0.teamIdentifier) ?? teamIdentifier",
+         'let targetTeamIdentifier = nonBlank($0.teamIdentifier) ?? ""',
+         "R84①: 续签准入必须有"),
         # ② 让实时身份命中后仍走记录判据 ⇒ R84② 报红（新通道变成装饰）。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
          "            return .eligible(targetBundleIdentifiers: liveTargets)\n",
@@ -9582,6 +9619,10 @@ def main():
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",
          "func liveIdentityAdmitsLegacy()",
+         "R84⑧: 必须有两个方向的单测"),
+        ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
+         "func liveSignerIdentityWithoutAProfileUUIDCanRenewProfiles()",
+         "func liveSignerIdentityWithoutExtensionProfileCanRenewProfiles()",
          "R84⑧: 必须有两个方向的单测"),
         # ⑨ 把「Seal 的证书仍在候选里」那条单测改名 ⇒ R84⑧ 报红。
         ("SealTests/Signing/SigningCertificateMaterialPolicyTests.swift",
@@ -10735,13 +10776,35 @@ def main():
          '            Text("应用名称")',
          "R119③:"),
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
-         'Image("SealBrandIcon", bundle: .main)',
-         'Image("MissingBrandIcon", bundle: .main)',
+         "UIImage(contentsOfFile: imageURL.path)",
+         "UIImage()",
          "R119④:"),
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
          ".widgetAccentedRenderingMode(.fullColor)",
          ".widgetAccentedRenderingMode(.accented)",
          "R119④:"),
+        ("project.yml",
+         "- path: SealLiveActivity/Resources/SealBrandIcon.png",
+         "- path: SealLiveActivity/Resources/MissingBrandIcon.png",
+         "R119④:"),
+        # ── R120：更新抽屉铺满底部标签栏并让长内容在同一滚动区完整显示 ──
+        ("Seal/Features/UpdateNoticeView.swift",
+         "frame(height: min(proxy.size.height * 0.92, 860))",
+         "frame(height: min(proxy.size.height * 0.9, 700))",
+         "R120:"),
+        ("Seal/Features/UpdateNoticeView.swift",
+         "                changesList\n            }\n        }\n        .padding(.top, 8)",
+         "                ScrollView { changesList }.frame(maxHeight: 190)\n            }\n        }\n        .padding(.top, 8)",
+         "R120:"),
+        ("Seal/Infrastructure/UpdateChecker.swift",
+         "normalizedVersion(trimmed) != normalizedVersion(version)",
+         "normalizedVersion(trimmed) == normalizedVersion(version)",
+         "R120:"),
+        # ── R121：不带 ZIP UTF-8 标记的 IPA 路径仍按其 UTF-8 文件名导入 ──
+        ("Seal/Core/Import/IPAParserService.swift",
+         "entry.path(using: .utf8)",
+         "entry.path(using: .ascii)",
+         "R121:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在
