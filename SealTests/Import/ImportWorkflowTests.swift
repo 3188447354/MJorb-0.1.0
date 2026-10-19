@@ -915,7 +915,8 @@ private extension ImportWorkflowTests {
             size: 0,
             state: .installed,
             ipaRelativePath: "",
-            needsIPAImport: true
+            needsIPAImport: true,
+            importedAt: Date(timeIntervalSince1970: 100)
         ))
 
         let source = try IPAArchiveFixture.make()
