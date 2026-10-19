@@ -1299,7 +1299,8 @@ def violations(load=read):
     check('recovery: "前往「我的」页面重新登录该 Apple ID"' not in cert_failure,
           "R23: 不能退回「只让用户去重新验证」这一条路（那正是死循环的成因）")
 
-    # R24: **跑在 per-bundle-ID 循环里的**每一个 portal 写入都必须过 `withSessionRecovery`。
+    # R24: **跑在 per-bundle-ID 循环里的**每一个 portal 写入，以及 App Group 预检读取，
+    # 都必须过 `withSessionRecovery`。
     #
     # 为什么这条最要紧：多扩展 App 的 Phase 1 每个 bundle ID 要发**两次**写请求，
     # 抖音（主 App + 8 扩展）就是 18 次突发 ⇒ 撞上 Apple 的短时限流返回 1100 ⇒
@@ -1311,9 +1312,10 @@ def violations(load=read):
     # ① 主 App 撞 1100 ⇒ `guard ... else { throw error }` ⇒ **整个签名失败**；
     # ② 扩展撞 1100 ⇒ 走降级分支把 entitlements **清空**继续签 ⇒ 签名「成功」但扩展缺权限。
     #
-    # ⇒ 期望值改为**按操作逐个点名**（缺哪个报哪个），再用计数兜住「新增了第 6 类写入」。
-    # 刻意**不**覆盖的：`revoke`（证书轮换时单发一次）、`registerDevice`、`fetch*` 系列 ——
-    # 它们不在 per-bundle-ID 循环里，不构成突发。
+    # ⇒ 期望值改为**按操作逐个点名**（缺哪个报哪个），再用计数兜住新增的 Portal 调用。
+    # 刻意**不**覆盖的：`revoke`（证书轮换时单发一次）、`registerDevice` 及其他 `fetch*` ——
+    # 它们不在 per-bundle-ID 热路径里。本团队已有 App Groups 的预检读取是例外：必须可退避恢复，
+    # 否则读取一旦撞 1100，就无法计算映射后的权限并会让整轮签名失败。
     for label, why in (
         ('withSessionRecovery("创建 App ID \\(mappedBundleID)")',
          "创建 App ID"),
@@ -1327,6 +1329,8 @@ def violations(load=read):
          "漏掉它会让限流被误报成「账号需要重新验证」"),
         ('withSessionRecovery("分配 App Group \\(mappedBundleID)")',
          "分配 App Group（免费付费都走，对齐 SideStore freeFeatures）"),
+        ('withSessionRecovery("读取 App Groups")',
+         "读取 App Groups（签名前读取本团队已有组，识别可直接复用的团队后缀标识）"),
         ('withSessionRecovery("读取 App ID 列表", retriesOnTimeout: true)',
          "读取 App ID 列表（Phase 1 的**第一个**请求；2026-09-18 真机：它撞上 1100 时"
          "会直接让整轮签名失败，而失败点排在名额诊断之前 ⇒ 日志里连走到哪一步都看不出）"),
@@ -1344,9 +1348,9 @@ def violations(load=read):
     check("SealDidRebuildLC2AppIDForGroupOrder" not in portal_source,
           "R24: 不允许保留 App Group 顺序的一次性 App ID 删除迁移")
     # 注意：定义写的是 `withSessionRecovery<T>(`，不带 `<` 的计数只数得到**调用点**。
-    check(portal_source.count("withSessionRecovery(") == 8,
-          "R24: 退避重试的调用点数量变了（应为 8 个：创建 App ID / 更新应用能力 / 申请描述文件 / "
-          "创建证书 / 分配 App Group / 读取 App ID 列表 / 读取证书列表 / profile-only 当前证书核验）—— "
+    check(portal_source.count("withSessionRecovery(") == 9,
+          "R24: 退避重试的调用点数量变了（应为 9 个：创建 App ID / 更新应用能力 / 申请描述文件 / "
+          "创建证书 / 分配 App Group / 读取 App Groups / 读取 App ID 列表 / 读取证书列表 / profile-only 当前证书核验）—— "
           "新增或删除 portal 调用时请同步这里，别只改这个数字、先确认新调用是不是也在热路径上")
 
     # R24b: `applications` 字典的查询必须用 mapped ID（2026-09-18 真机日志实锤）。
@@ -8055,6 +8059,16 @@ def main():
          "                        session: session\n"
          "                    )",
          "R24: 分配 App Group（免费付费都走"),
+        # App Group 标识映射前必须以可重试读取取得本团队现有组，避免 Apple 1100 让整轮签名失败。
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         '            let availableAppGroups = try await withSessionRecovery("读取 App Groups") {\n'
+         '                try await fetchAppGroups(team: team, session: session)\n'
+         '            }',
+         '            let availableAppGroups = try await fetchAppGroups(\n'
+         '                team: team,\n'
+         '                session: session\n'
+         '            )',
+         "R24: 读取 App Groups（签名前读取本团队已有组"),
         # 把 filteredAppIDEntitlements 退回「不过滤 ALTFeature」：increased-memory-limit 等
         # 非 feature 能力会残留在期望授权集，描述文件不授予它们，签后必报 SEAL-ENTITLEMENT-401。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
