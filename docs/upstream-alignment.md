@@ -348,3 +348,11 @@ on 4.5.2」✗。
 
 - 本地真实定义 upstream/AltSign/Sources/ALTCapabilities.swift：ALTEntitlement 为仅含不可变 String 的值类型；ALTApplication.readEntitlements 已返回 [ALTEntitlement: any Sendable]。
 - CI #48 证实权限字典在异步恢复闭包中传递时键缺少 Sendable；补编译器检查的 Sendable 遵循，保持权限内容和所有认证请求不变。
+
+### 2026-10-19 Seal 实时身份缺失时的记录回退
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| profile-only 记录回退 | `VerifyCertificateOperation(willResign: false)` 从设备已安装应用读取签名证书，再与 Apple 门户活动证书核对；`CacheSigningCertOperation` 也以 `installedApp` 为身份来源。 | Seal 优先核对运行包 CMS 身份；实时身份缺失或不匹配时，只有持久签名身份、完整目标快照和已签名产物都齐全，才允许走记录通道。Seal 的部分自管理记录回落完整重签。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift` 与 `CacheSigningCertOperation.swift`。沿用“按已安装签名者核对”的边界；不把 SideStore 的 Core Data 表示直接搬入 Seal。

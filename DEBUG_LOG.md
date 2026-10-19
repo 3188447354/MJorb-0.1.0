@@ -1,3 +1,11 @@
+## 2026-10-19 CI #57 Seal 记录回退放行不完整身份
+
+- **现象**：CI #57 的 Swift 回归中，Seal 实时身份缺失或 Bundle ID 不匹配时，两个 `ProfileOnlyRenewalPolicyTests` 仍得到 `.eligible`，预期为完整重签；构建与签名器任务通过。
+- **根因**：实时身份通道拒绝后调用通用记录判定；该判定只要求安装状态、Team、证书序列号和主 Bundle ID，没有确认 Seal 记录中的签名设备标识、目标快照与已签名产物。
+- **修复**：Seal 的记录通道要求持久签名身份、已装签名产物及当前全部目标记录；缺字段时回落完整重签。实时身份完整时仍直接放行，普通应用的可清理 `Signed.ipa` 缓存规则不变。
+- **涉及文件**：`Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift`、`SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift`、`Scripts/verify-release-safety.py`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`、`project.yml`。
+- **验证状态**：CI #57 首次暴露，守卫通过；根因修复后待完整 iOS CI。Windows 无 Xcode/Swift 工具链，不在本机运行测试或项目守卫。
+
 ## 2026-10-19 14:51:16 CI #56 失败复盘：待提交签名快照未持久化
 
 - **现象**：CI #56 的发布守卫 R82④、R85② 使用了过期断言；Swift 回归中手动签名产物安装因 `SEAL-INSTALL-719` 被拒，待提交的 profile 到期日没有进入安装校验记录。协议页 UI 回归也失败，当前改动未涉及协议页，等待本轮新 CI 判断是否复现。

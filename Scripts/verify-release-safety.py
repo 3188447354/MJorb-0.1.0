@@ -5355,6 +5355,20 @@ def violations(load=read):
           "Bundle ID 对不上 ⇒ 照旧回落；③ 轮换候选**唯一**是运行中 Seal 的证书时，"
           "候选**不得**为空（它排最后但仍可撤）。源码断言只能证明「结构在」，"
           "证明不了「真的放行」")
+    r84_record_gate = strip_comments(section_or_empty(
+        r84_policy,
+        "static func evaluate(app: AppRecord) -> Decision {",
+        "\n    /// 从「运行包身份」"
+    ))
+    check("if app.isSeal {" in r84_record_gate
+          and "app.signedDeviceIdentifier" in r84_record_gate
+          and "app.hasSignedArtifact" in r84_record_gate
+          and "app.signingTargets" in r84_record_gate
+          and ".isSubset(of:" in r84_record_gate
+          and "func sealRecordFallbackRequiresPersistedIdentityTargetsAndArtifact()"
+              in r84_policy_tests,
+          "R84⑨: Seal 的实时身份缺失或不匹配时，记录回退必须核对完整签名身份、目标和已装产物 ✗ —— "
+          "部分记录不得继续放行 profile-only")
 
     # R85: profile-only 续签由 Apple 当前证书与描述文件状态裁决；本机私钥仅用于说明。
     r85_policy = load("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift")

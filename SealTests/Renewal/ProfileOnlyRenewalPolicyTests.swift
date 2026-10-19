@@ -24,6 +24,40 @@ struct ProfileOnlyRenewalPolicyTests {
                     ]
                 )
         )
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: nil)
+                == .eligible(
+                    targetBundleIdentifiers: [
+                        "com.example.demo.TEAM123456",
+                        "com.example.demo.TEAM123456.share"
+                    ]
+                )
+        )
+    }
+
+    @Test
+    func sealRecordFallbackRequiresPersistedIdentityTargetsAndArtifact() {
+        var missingDeviceIdentity = makeEligibleApp(isSeal: true)
+        missingDeviceIdentity.signedDeviceIdentifier = nil
+
+        var missingTargets = makeEligibleApp(isSeal: true)
+        missingTargets.signingTargets.removeAll()
+
+        var missingArtifact = makeEligibleApp(isSeal: true)
+        missingArtifact.clearSignedArtifact()
+
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: missingDeviceIdentity)
+                == .requiresFullResign(.incompleteSigningIdentity)
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: missingTargets)
+                == .requiresFullResign(.incompleteSigningIdentity)
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: missingArtifact)
+                == .requiresFullResign(.incompleteSigningIdentity)
+        )
     }
 
     @Test

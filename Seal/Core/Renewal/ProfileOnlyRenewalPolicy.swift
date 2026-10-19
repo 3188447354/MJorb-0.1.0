@@ -171,8 +171,8 @@ enum ProfileOnlyRenewalPolicy {
         guard app.removedExtensionBundleIdentifiers.isEmpty else {
             return .requiresFullResign(.incompleteExtensionSet)
         }
-        // `Signed.ipa` 与旧 profile UUID / target 快照都不是续签身份的准入条件：
-        // entitlements 缺失时可从原始 IPA 重建，Apple 会对本轮 profile 的实际配置裁决。
+        // 普通应用不依赖可清理的 `Signed.ipa` 缓存或完整旧 target 快照：缺少的
+        // entitlements 可从原始 IPA 重建，Apple 会对本轮 profile 的实际配置裁决。
         guard app.state == .installed,
               nonBlank(app.signingTeamID) != nil,
               effectiveCertificateSerialNumber(app: app, liveIdentity: nil) != nil,
@@ -186,6 +186,20 @@ enum ProfileOnlyRenewalPolicy {
         guard targetBundleIdentifiers.count == app.extensions.count + 1,
               Set(targetBundleIdentifiers.map { $0.lowercased() }).count == targetBundleIdentifiers.count else {
             return .requiresFullResign(.missingTargetRecord)
+        }
+
+        // Seal 的 SelfAppRegistrar 通常不写完整签名快照。它可以由上面的实时身份通道放行；
+        // 若实时身份缺失或与记录不匹配，记录通道必须有自己的完整证据，不能拿部分记录兜底。
+        if app.isSeal {
+            let recordedTargetBundleIdentifiers = Set(app.signingTargets.map {
+                $0.bundleIdentifier.lowercased()
+            })
+            guard nonBlank(app.signedDeviceIdentifier) != nil,
+                  app.hasSignedArtifact,
+                  Set(targetBundleIdentifiers.map { $0.lowercased() })
+                    .isSubset(of: recordedTargetBundleIdentifiers) else {
+                return .requiresFullResign(.incompleteSigningIdentity)
+            }
         }
 
         return .eligible(targetBundleIdentifiers: targetBundleIdentifiers)
