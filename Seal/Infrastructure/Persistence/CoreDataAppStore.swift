@@ -34,7 +34,7 @@ actor CoreDataAppStore: AppStore {
                         forEntityName: CoreDataModel.appEntityName,
                         into: context
                     )
-                Self.write(record, to: app, context: context)
+                try Self.write(record, to: app, context: context)
 
                 if context.hasChanges {
                     try context.save()
@@ -67,7 +67,7 @@ actor CoreDataAppStore: AppStore {
                     forEntityName: CoreDataModel.appEntityName,
                     into: context
                 )
-                Self.write(record, to: app, context: context)
+                try Self.write(record, to: app, context: context)
 
                 try context.save()
                 return replaced
@@ -95,7 +95,7 @@ actor CoreDataAppStore: AppStore {
                         forEntityName: CoreDataModel.appEntityName,
                         into: context
                     )
-                Self.write(record, to: replacement, context: context)
+                try Self.write(record, to: replacement, context: context)
                 try context.save()
             } catch {
                 context.rollback()
@@ -167,6 +167,7 @@ actor CoreDataAppStore: AppStore {
         }
 
         let candidateLegacyModels = [
+            CoreDataModel.makeLegacyV3(),
             CoreDataModel.makeLegacyV2(),
             CoreDataModel.makeLegacyV1()
         ]
@@ -309,7 +310,7 @@ actor CoreDataAppStore: AppStore {
         return try context.fetch(request).first
     }
 
-    private static func apply(_ record: AppRecord, to object: NSManagedObject) {
+    private static func apply(_ record: AppRecord, to object: NSManagedObject) throws {
         object.setValue(record.id, forKey: "id")
         object.setValue(record.originalBundleIdentifier, forKey: "originalBundleIdentifier")
         object.setValue(record.mappedBundleIdentifier, forKey: "mappedBundleIdentifier")
@@ -340,6 +341,10 @@ actor CoreDataAppStore: AppStore {
             try? JSONEncoder().encode(record.signingTargets),
             forKey: "signingTargetsData"
         )
+        object.setValue(
+            try record.pendingSignedSnapshot.map { try JSONEncoder().encode($0) },
+            forKey: "pendingSignedSnapshotData"
+        )
         object.setValue(record.ipaRelativePath, forKey: "ipaRelativePath")
         object.setValue(record.signedIPARelativePath, forKey: "signedIPARelativePath")
         object.setValue(record.signedIPASHA256, forKey: "signedIPASHA256")
@@ -363,8 +368,8 @@ actor CoreDataAppStore: AppStore {
         _ record: AppRecord,
         to app: NSManagedObject,
         context: NSManagedObjectContext
-    ) {
-        apply(record, to: app)
+    ) throws {
+        try apply(record, to: app)
         let oldExtensions = (app.value(forKey: "extensions") as? NSSet)?
             .allObjects as? [NSManagedObject] ?? []
         oldExtensions.forEach(context.delete)
@@ -420,6 +425,20 @@ actor CoreDataAppStore: AppStore {
                 return first.name < second.name
             }
 
+        let pendingSignedSnapshot: PendingSignedSnapshot?
+        if let data = object.value(forKey: "pendingSignedSnapshotData") as? Data {
+            do {
+                pendingSignedSnapshot = try JSONDecoder().decode(
+                    PendingSignedSnapshot.self,
+                    from: data
+                )
+            } catch {
+                throw AppStoreError.corruptRecord
+            }
+        } else {
+            pendingSignedSnapshot = nil
+        }
+
         let record = AppRecord(
             id: id,
             originalBundleIdentifier: originalBundleIdentifier,
@@ -472,11 +491,12 @@ actor CoreDataAppStore: AppStore {
             extensions: appExtensions,
             extensionProfileStrategy: (object.value(
                 forKey: "extensionProfileStrategyRaw"
-            ) as? String).flatMap(AppExtensionProfileStrategy.init(rawValue:))
+            ) as? String).flatMap(AppExtensionProfileStrategy.init(rawValue:)),
+            pendingSignedSnapshot: pendingSignedSnapshot
         )
         // 2026-10-09: replacesInstalledAppID 是 var，单独赋值。
-        // 不能放在 init 参数里，因为它在参数列表末尾，前面有 4 个非 CoreData 字段
-        //（installedFingerprint/needsIPAImport/importWarnings/pendingSignedSnapshot），
+        // 不能放在 init 参数里，因为它在参数列表末尾，前面有 3 个非 CoreData 字段
+        //（installedFingerprint/needsIPAImport/importWarnings），
         // 放在 init 里会导致 valueForUndefinedKey 崩溃。
         var mutableRecord = record
         mutableRecord.replacesInstalledAppID = object.value(forKey: "replacesInstalledAppID") as? UUID

@@ -311,6 +311,14 @@ on 4.5.2」✗。
 
 本轮首次审计未改 Seal 源码；后续已按逐扩展 profile 绑定方案实现，尚未推送 CI。2026-10-17 后续修订已在签名门户准备证书、App ID 和描述文件前等待安装通道就绪；并行预热仍保留，避免把连接等待全部移到串行路径。
 
+### 2026-10-19 — 待提交签名快照持久化
+
+| 环节 | 上游对照 | Seal 处理 |
+|---|---|---|
+| 安装后的签名元数据 | SideStore 的 `CacheResignedMetadataOperation` 将 profile、Info.plist 与 entitlement 写入应用目录，安装和续签流程均调用该步骤；它没有与 Seal 相同的 Core Data pending → committed 快照事务。 | **不跟**其存储表示：Seal 安装前必须保留候选快照，验证安装后再整体转正。本次 CI 暴露 Core Data 未保存 `pendingSignedSnapshot` 的缺口；将它作为可选二进制字段持久化，并沿用现有事务边界。 |
+
+对照源码：SideStore `d97ec133719d79916675bdaf722b82a8d091d545` 的 `upstream/SideStore/SideStore/Core/Operations/PipelineOperations/CacheResignedMetadataOperation.swift` 与 `OperationStepDefinition.swift`。
+
 ### 2026-10-17 — 前置设备检查、App ID 额度取证与设置文案
 
 | 项目 | 上游实际做法 | Seal 修改 |

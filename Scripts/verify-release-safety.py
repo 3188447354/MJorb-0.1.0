@@ -5379,7 +5379,7 @@ def violations(load=read):
         "    static func localCertificateAvailability(",
         "\n    /// 把「账号密钥表」"
     )
-    check("guard let secret, nonBlank(certificateSerialNumber) != nil else { return .undetermined }"
+    check("guard let secret, let serialNumber = nonBlank(certificateSerialNumber) else { return .undetermined }"
           in squash(strip_comments(r85_availability))
           and "SigningCertificateMaterialPolicy.availableCertificate(" in r85_availability
           and "? .missingPrivateKey : .ready" in squash(r85_availability),
@@ -9340,7 +9340,7 @@ def main():
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",
          "func incompleteIdentityLegacy()",
-         "R82④: 必须有**两个方向**的单测"),
+         "R82④: 必须覆盖记录完整时正常续签，以及记录不完整时由实时身份恢复；"),
         # ⑥ 结算退回「只看身份」⇒ R82⑤ 报红。**这正是本轮修的真问题**：
         #    准入放行了，结算侧却仍假定「Seal 续签 = 自替换」⇒ 成功项永远停在等待确认。
         ("Seal/Core/Renewal/RenewalCoordinator.swift",

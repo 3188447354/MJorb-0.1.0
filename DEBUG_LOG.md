@@ -1,3 +1,12 @@
+## 2026-10-19 14:51:16 CI #56 失败复盘：待提交签名快照未持久化
+
+- **现象**：CI #56 的发布守卫 R82④、R85② 使用了过期断言；Swift 回归中手动签名产物安装因 `SEAL-INSTALL-719` 被拒，待提交的 profile 到期日没有进入安装校验记录。协议页 UI 回归也失败，当前改动未涉及协议页，等待本轮新 CI 判断是否复现。
+- **根因**：`CoreDataAppStore` 从未编码或解码 `AppRecord.pendingSignedSnapshot`；保存后取出的记录丢失候选快照。两条守卫的生产规则已更新，但变异期望仍有一条旧文案，R85 还检查旧 Swift 绑定形式。
+- **修复**：在当前 Core Data 模型增加可选快照数据字段；保存时编码、读取时解码，损坏快照按损坏记录失败；补充 SQLite 重开持久化测试，为 0.1.32 旧模型加入 V3 迁移快照和迁移回归。更新两条守卫到当前生产实现，并将主 App 和 Live Activity 版本推进到 `0.1.33`。
+- **上游对照**：SideStore 在安装与续签流程中将 profile 等元数据写入应用目录，没有 Seal 的 pending → committed 快照事务；不照搬其存储形态，保留 Seal 的安装验证与两阶段提交边界。详见 `docs/upstream-alignment.md`。
+- **涉及**：`Seal/Infrastructure/Persistence/CoreDataModel.swift`、`Seal/Infrastructure/Persistence/CoreDataAppStore.swift`、Core Data 持久化和迁移测试、`Scripts/verify-release-safety.py`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`、`project.yml`、本日志。
+- **验证**：修复待由 GitHub CI 编译、守卫与回归测试验证；Windows 本机不运行 Swift 构建或项目守卫。之后按 CI 结果继续修复并推送。
+
 ## 2026-10-19 13:52:08 发布守卫按当前续签与标识符规则校准
 
 - **问题**：CI #54 的 R85 旧规则修正后，快速静态检查又发现 8 项守卫仍按旧策略拦截：强制读取旧扩展分配记录、把 App Group ID 再映射、把旧设备标识当续签门槛，以及要求 Seal 记录不完整就必须重签。它们与现在按 Apple 当前状态和 IPA 实际权限续签的实现不一致。

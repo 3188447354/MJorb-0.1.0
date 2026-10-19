@@ -56,7 +56,17 @@ struct CoreDataAppStoreTests {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let storeURL = directory.appending(path: "Seal.sqlite")
-        let record = makeRecord(name: "Persisted")
+        var record = makeRecord(name: "Persisted")
+        record.pendingSignedSnapshot = PendingSignedSnapshot(
+            expiryDate: Date(timeIntervalSince1970: 1_900_000_000),
+            provisioningProfileUUID: "PENDING-PROFILE",
+            provisioningProfileName: "Pending",
+            provisioningProfileCreationDate: Date(timeIntervalSince1970: 1_800_000_000),
+            provisioningProfileExpirationDate: Date(timeIntervalSince1970: 1_900_000_000),
+            certificateSerialNumber: "00AABBCCDDEEFF",
+            signingTargets: [],
+            extensionSnapshots: []
+        )
 
         do {
             let firstStore = try CoreDataAppStore(storeURL: storeURL)
