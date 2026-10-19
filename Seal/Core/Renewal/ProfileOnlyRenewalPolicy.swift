@@ -237,7 +237,7 @@ enum ProfileOnlyRenewalPolicy {
         let normalizedMainSerial = normalizedSerialNumber(serialNumber)
         guard installedIdentity.targets.allSatisfy({
             let targetTeamIdentifier = nonBlank($0.teamIdentifier) ?? teamIdentifier
-            normalizedSerialNumber($0.signerSerialNumber) == normalizedMainSerial
+            return normalizedSerialNumber($0.signerSerialNumber) == normalizedMainSerial
                 && targetTeamIdentifier.caseInsensitiveCompare(teamIdentifier) == .orderedSame
         }) else { return nil }
         let targets = installedIdentity.targets.map(\.bundleIdentifier)

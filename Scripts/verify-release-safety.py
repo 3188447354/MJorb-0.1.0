@@ -10794,7 +10794,7 @@ def main():
          "R120:"),
         ("Seal/Features/UpdateNoticeView.swift",
          "                changesList\n            }\n        }\n        .padding(.top, 8)",
-         "                ScrollView { changesList }.frame(maxHeight: 190)\n            }\n        }\n        .padding(.top, 8)",
+         "                ScrollView(showsIndicators: false) { changesList }.frame(maxHeight: 190)\n            }\n        }\n        .padding(.top, 8)",
          "R120:"),
         ("Seal/Infrastructure/UpdateChecker.swift",
          "normalizedVersion(trimmed) != normalizedVersion(version)",
