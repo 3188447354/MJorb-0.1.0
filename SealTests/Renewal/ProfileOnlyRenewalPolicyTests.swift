@@ -11,7 +11,7 @@ struct ProfileOnlyRenewalPolicyTests {
         // ⇒ Seal 续签**永远**走完整重签 + 自替换安装 ⇒ 进程被系统换掉：
         // 批量续签队列项留在 `running` 变成未知（`SEAL-RENEW-007`）、
         // 自替换安装报 `SEAL-SELF-109`、用户必须手动重试。
-        // 判定依据是当前可核验的签名身份和 Apple 门户结果，与「这是谁的应用」无关 —— 上游 SideStore 的
+        // 完整记录或可核验的实时身份都能放行，与「这是谁的应用」无关 —— 上游 SideStore 的
         // `refresh` 管线对它自己也只注入描述文件、从不重签重装。
         let app = makeEligibleApp(isSeal: true)
 

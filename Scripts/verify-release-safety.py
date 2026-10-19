@@ -4789,12 +4789,15 @@ def violations(load=read):
     r82_coordinator = load("Seal/Core/Signing/SigningCoordinator.swift")
     r82_renewal_coordinator = load("Seal/Core/Renewal/RenewalCoordinator.swift")
     r82_tests = load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift")
-    check("isSeal" not in r82_policy,
+    check("guard app.isSeal == false else" not in r82_policy
+          and "func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp()" in r82_tests
+          and "func sealRecordFallbackRequiresPersistedIdentityTargetsAndArtifact()"
+              in r82_tests,
           "R82①: 续签准入**不得**再按身份排除 Seal ✗ —— 2026-09-25 真机（构建 44）："
           "旧实现第一句 `guard app.isSeal == false else { … }` 让 Seal 续签**永远**走"
           "完整重签 + 自替换安装 ⇒ 批量续签跑到 Seal 那一项时进程被系统换掉、队列项留在 "
           "`running` ⇒ `SEAL-RENEW-007`「1 个应用的结果未知」＋ `SEAL-SELF-109`。"
-          "判定依据是**记录是否完整**，与「这是谁的应用」无关")
+          "允许完整记录续签，仅拒绝不完整回退；完整记录和缺字段的负向行为都必须有单测")
     check("sealSelfReplacement" not in r82_policy,
           "R82②: 那个「按身份一刀切」的枚举 case（`sealSelfReplacement`）不得复活 —— "
           "删掉它是为了让「Seal 必须走完整重签」不再是一个**恒真**的默认结论")
@@ -4813,8 +4816,9 @@ def violations(load=read):
           "`isSeal` 判据 —— 只要任一处按身份排除，Seal 就又回到自替换那条路 ✗"
           "（准入放行、执行侧又拦，等于没改）")
     check("func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp()" in r82_tests
-          and "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()" in r82_tests,
-          "R82④: 必须覆盖记录完整时正常续签，以及记录不完整时由实时身份恢复；"
+          and "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()" in r82_tests
+          and "func sealRecordFallbackRequiresPersistedIdentityTargetsAndArtifact()" in r82_tests,
+          "R82④: 必须覆盖完整记录正常续签、实时身份恢复，以及不完整记录回退；"
           "缺少实时身份时仍回落完整重签。"
           "源码断言只能证明「结构在」，证明不了「真的放行」")
 
