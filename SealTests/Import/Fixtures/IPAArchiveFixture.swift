@@ -121,11 +121,6 @@ enum IPAArchiveFixture {
                     path: "\(appRoot)/embedded.mobileprovision",
                     to: archive
                 )
-                try add(
-                    Data("main-executable".utf8),
-                    path: "\(appRoot)/\(app.name)",
-                    to: archive
-                )
             }
         }
 

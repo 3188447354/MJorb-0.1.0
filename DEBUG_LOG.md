@@ -1,3 +1,9 @@
+## 2026-10-19 09:19:27 CI #51 夹具重复主程序条目与错误码清单行号
+
+- **证据**：Swift 回归 968 项中 3 项失败，均在解压夹具时因 Payload/<App>.app/<Executable> 被写入两次而报 Cocoa 516；错误码清单检查另发现 AppExtensionProfileStrategy.swift 插入一行后两处引用行号仍旧。
+- **根因与修复**：IPAArchiveFixture.make 在 includeInfo 分支已加入主可执行文件，includeMobileProvision 分支又重复添加；移除第二次写入，描述文件逻辑不变。重新生成 error-code-inventory.json 同步实际行号。
+- **验证与版本**：0.1.29；本地差异检查通过，CI #51 的其余 965 项通过，修复后等待 CI 重跑完整回归。
+
 ## 2026-10-19 07:31:36 CI #50 共享权限比较 guard 缺少退出语句
 
 - **证据**：swift-regression 定位 AppExtensionProfileStrategy.swift:142，guard else 记录不兼容权限后未退出当前循环迭代。
