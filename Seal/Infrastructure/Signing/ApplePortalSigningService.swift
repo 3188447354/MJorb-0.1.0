@@ -2301,15 +2301,15 @@ actor ApplePortalSigningService {
                 )
             }
         }
-        var availableAppGroups: [ALTAppGroup] = []
+        var existingGroupIdentifiers: [String] = []
         let hasAppGroupEntitlements = cachedEntitlementsByBundleID.values.contains { entitlements in
             (entitlements[.appGroups] as? [String])?.isEmpty == false
         }
         if hasAppGroupEntitlements {
-            availableAppGroups = try await withSessionRecovery("读取 App Groups") {
+            let availableAppGroups = try await withSessionRecovery("读取 App Groups") {
                 try await fetchAppGroups(team: team, session: session)
             }
-            let existingGroupIdentifiers = availableAppGroups.map(\.groupIdentifier)
+            existingGroupIdentifiers = availableAppGroups.map(\.groupIdentifier)
             for bundleID in Array(cachedEntitlementsByBundleID.keys) {
                 guard var entitlements = cachedEntitlementsByBundleID[bundleID],
                       let groups = entitlements[.appGroups] as? [String] else { continue }
@@ -2681,18 +2681,15 @@ actor ApplePortalSigningService {
                     }
                     // 免费账号与付费账号同样分配 App Group（对齐 SideStore 上游：`Feature.freeFeatures`
                     // 含 `.appGroups`，`updateAppGroups` 对免费账号无条件执行）。
-                    let groupsAvailableBeforeAssignment = availableAppGroups
-                    let updatedAppGroups = try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
+                    try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
                         try await assignAppGroups(
                             appID: appID,
                             application: application,
                             cachedEntitlements: cachedEntitlements,
                             team: team,
-                            session: session,
-                            availableGroups: groupsAvailableBeforeAssignment
+                            session: session
                         )
                     }
-                    availableAppGroups = updatedAppGroups
                 } catch {
                     // 完整 IPA 的任一扩展无法完成 App ID / capability / App Group
                     // 准备时，不能把它清空后继续产出一个表面成功的包。
@@ -3277,11 +3274,9 @@ actor ApplePortalSigningService {
         application: ALTApplication,
         cachedEntitlements: [ALTEntitlement: any Sendable],
         team: ALTTeam,
-        session: ALTAppleAPISession,
-        availableGroups: [ALTAppGroup]
-    ) async throws -> [ALTAppGroup] {
-        var available = availableGroups
-        guard let appGroupsValue = cachedEntitlements[.appGroups] else { return available }
+        session: ALTAppleAPISession
+    ) async throws {
+        guard let appGroupsValue = cachedEntitlements[.appGroups] else { return }
         guard let mappedGroups = appGroupsValue as? [String] else {
             throw Self.failure(
                 title: "应用组权限格式无效",
@@ -3290,7 +3285,8 @@ actor ApplePortalSigningService {
                 code: "SEAL-ENTITLEMENT-403"
             )
         }
-        guard mappedGroups.isEmpty == false else { return available }
+        guard mappedGroups.isEmpty == false else { return }
+        var available = try await fetchAppGroups(team: team, session: session)
         // App Group 操作通过 actor 串行化；批量签名为串行循环，无并发创建风险
         // 2026-10-10：规范化后按默认字符串序排序，保证同一集合永远得到同一顺序。
         // 背景：原包 entitlement 里 app-groups 数组的顺序是任意的（不同构建可能不同，
@@ -3348,7 +3344,6 @@ actor ApplePortalSigningService {
                 }
             }
         }
-        return available
     }
 
     private func validateEmbeddedProfiles(
