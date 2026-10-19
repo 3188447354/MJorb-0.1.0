@@ -7529,3 +7529,10 @@ CMake Error at CMakeLists.txt:394 (message):
 **修复**：将 `labelSpacing` 改为等值实例常量，保留原有标签几何；重新生成 `docs/qa/generated/error-code-inventory.json`。
 
 **验证状态**：Windows 主机无法编译 Swift；已完成错误编号清单生成与差异检查，下一轮 iOS CI 负责 Swift 编译、回归测试及打包。
+
+## 2026-10-19 14:13:28 — 修复 CI #55 编译错误与过期守卫变异锚点
+
+- **现象**：Swift 回归构建因 `String?` 未解包失败；发布守卫的扩展拓扑、导入覆盖更新锚点和续签错误文案前缀与当前源码不一致，导致变异测试失败。
+- **修复**：在 `ProfileOnlyRenewalPolicy.swift` 显式绑定非空证书序列号；在 `verify-release-safety.py` 将扩展共享检查限定到 IPA 拓扑解析段，更新导入策略锚点与 R82/R84 预期文案前缀。应用签名和续签行为没有改变。版本推进到 `0.1.32`。
+- **验证**：仅运行本次修改相关的 Swift 源码/守卫锚点定向检查，全部通过；`python -m py_compile Scripts/verify-release-safety.py` 和 `git diff --check` 通过。Windows 无 Xcode/iOS SDK，Swift 编译由下一次 macOS CI 验证。
+- **修改路径**：`Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。

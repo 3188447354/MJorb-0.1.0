@@ -109,10 +109,10 @@ enum ProfileOnlyRenewalPolicy {
         secret: AccountSecret?,
         certificateSerialNumber: String?
     ) -> LocalCertificateAvailability {
-        guard let secret, nonBlank(certificateSerialNumber) != nil else { return .undetermined }
+        guard let secret, let serialNumber = nonBlank(certificateSerialNumber) else { return .undetermined }
         return SigningCertificateMaterialPolicy.availableCertificate(
             secret: secret,
-            serialNumber: certificateSerialNumber
+            serialNumber: serialNumber
         ) == nil ? .missingPrivateKey : .ready
     }
 

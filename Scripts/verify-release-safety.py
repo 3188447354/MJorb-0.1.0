@@ -4434,9 +4434,14 @@ def violations(load=read):
           "R65④: 已记录或用户明确选择的策略必须优先，默认策略必须识别 LiveContainer ✗")
 
     portal_source = strip_comments(load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift"))
-    check("let portalMappings = resolvedExtensionProfileStrategy.portalMappings(" in portal_source
-          and "AppExtensionProfileStrategy.independentBundleIdentifiers(" in portal_source
-          and "let independentExtensionBundleIdentifiers = detectedIndependentBundleIdentifiers" in portal_source,
+    r65_ipa_topology = section_or_empty(
+        portal_source,
+        "        let detectedIndependentBundleIdentifiers: Set<String>",
+        "        guard portalMappings[originalMainBundleID] == mappedMainBundleID"
+    )
+    check("AppExtensionProfileStrategy.independentBundleIdentifiers(" in r65_ipa_topology
+          and "let independentExtensionBundleIdentifiers = detectedIndependentBundleIdentifiers" in r65_ipa_topology
+          and "independentBundleIdentifiers: independentExtensionBundleIdentifiers" in r65_ipa_topology,
           "R65⑤: 只有不兼容扩展才单独申请 App ID ✗")
     check("expectedBundleID: extensionProfileStrategy.expectedProfileBundleID(" in portal_source
           and "profilePreparation.independentExtensionBundleIdentifiers.contains($0) == false" in portal_source,
@@ -8752,8 +8757,13 @@ def main():
          "signedBundleIdentifier: binding.bundleIdentifier,",
          "R65⑨: 共享描述文件续签后仍必须为每个实际目标保留独立记录键"),
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         "AppExtensionProfileStrategy.independentBundleIdentifiers(",
-         "Set<String>() /* no independent extensions */",
+         "            detectedIndependentBundleIdentifiers = AppExtensionProfileStrategy.independentBundleIdentifiers(\n"
+         "                mainBundleID: mappedMainBundleID,\n"
+         "                entitlementsByBundleID: entitlementsByBundleID,\n"
+         "                entitlementValuesByBundleID: entitlementValuesByBundleID,\n"
+         "                expectedBundleIdentifiers: expectedBundleIdentifiers\n"
+         "            )",
+         "            detectedIndependentBundleIdentifiers = []",
          "R65⑤: 只有不兼容扩展才单独申请 App ID"),
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
          "let expectedProfileCount = 1 + preparation.independentExtensionBundleIdentifiers.count",
@@ -9015,13 +9025,13 @@ def main():
         # ── R79：覆盖更新（2026-09-25 用户反馈「新导入的话就在待签页」）──
         # ① 候选不再要求「已安装」⇒ 待签名记录也会被当成覆盖目标 ✓ 报红。
         ("Seal/Core/Import/ImportReplacementPolicy.swift",
-         "                    && record.belongsInInstalledList",
-         "                    && true",
+         "record.isSeal == false, record.belongsInInstalledList",
+         "record.isSeal == false, true",
          "Import: 覆盖更新候选必须是已安装的第三方记录"),
         # ② 判据改去比「签名后的身份」⇒ 「同原始包、不同签名身份」的副本会被一并吞掉 ✓ 报红。
         ("Seal/Core/Import/ImportReplacementPolicy.swift",
-         "                    && normalizedBundleIdentifier(record.originalBundleIdentifier) == target",
-         "                    && normalizedBundleIdentifier(record.mappedBundleIdentifier ?? \"\") == target",
+         "normalizedBundleIdentifier(record.originalBundleIdentifier) == target",
+         "normalizedBundleIdentifier(record.mappedBundleIdentifier ?? \"\") == target",
          "Import: 覆盖更新判据必须只认导入包的原始 Bundle ID"),
         # ③ 去掉按 id 复核 ⇒ 确认页停留期间目标被换掉也会照着替换 ✓ 报红。
         ("Seal/Core/Import/ImportReplacementPolicy.swift",
@@ -9325,7 +9335,7 @@ def main():
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func sealIsEligibleForProfileOnlyLikeAnyThirdPartyApp()",
          "func sealEligibilityLegacy()",
-         "R82④: 必须有**两个方向**的单测"),
+         "R82④: 必须覆盖记录完整时正常续签，以及记录不完整时由实时身份恢复；"),
         # ⑤ 把「实时身份恢复不完整记录」那条单测改名 ⇒ R82④ 报红。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",
@@ -9427,7 +9437,7 @@ def main():
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
          "            return .eligible(targetBundleIdentifiers: liveTargets)\n",
          "            return evaluate(app: app)\n",
-         "R84②: 实时身份命中时必须直接判"),
+         "R84②: 实时身份命中并校验目标后必须直接判"),
         # ③ 算了实时身份却不传下去 ⇒ R84③ 报红（「上游算好了、下游又退回」）。
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "        let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: liveIdentity)\n",
