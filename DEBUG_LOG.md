@@ -1,3 +1,11 @@
+## 2026-10-19 更新 IPA 后恢复已安装应用图标
+
+- **现象**：设备扫描回来的已安装记录没有可读图标时显示默认图标；重新导入 IPA 后，待签名记录有新图标，但「应用-已安装」与证书页清单仍按旧记录 ID 取图，无法恢复。
+- **根因**：更新 IPA 与原已安装应用是两条记录，图标分别按记录 ID 加载；更新记录还可能继承已失效的自定义图标路径，遮住新 IPA 图标路径。
+- **修复**：图标加载在首选图标路径不可读时回退到 IPA 图标路径；当已安装记录无图时，用其 `replacesInstalledAppID` 对应的待签名更新记录补图。证书页显示对应图标，无图源时显示默认 App 图标。
+- **涉及文件**：`Seal/Core/Apps/AppIconDataResolver.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`SealTests/Apps/AppIconDataResolverTests.swift`。
+- **验证状态**：已添加映射、保留已有图标和失效首选路径回退的回归用例；Windows 无 Xcode/Swift 工具链，待 CI 编译、回归和守卫验证。
+
 ## 2026-10-19 CI #57 Seal 记录回退放行不完整身份
 
 - **现象**：CI #57 的 Swift 回归中，Seal 实时身份缺失或 Bundle ID 不匹配时，两个 `ProfileOnlyRenewalPolicyTests` 仍得到 `.eligible`，预期为完整重签；构建与签名器任务通过。

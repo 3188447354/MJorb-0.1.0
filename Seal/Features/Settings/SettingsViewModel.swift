@@ -1419,13 +1419,17 @@ final class SettingsViewModel: ObservableObject {
         guard let fileStore else { return [:] }
         var values: [UUID: Data] = [:]
         for app in apps {
-            guard let path = app.displayIconRelativePath,
-                  let data = try? await fileStore.read(relativePath: path) else {
-                continue
+            for path in AppIconDataResolver.iconRelativePaths(for: app) {
+                if let data = try? await fileStore.read(relativePath: path) {
+                    values[app.id] = data
+                    break
+                }
             }
-            values[app.id] = data
         }
-        return values
+        return AppIconDataResolver.fillingMissingInstalledIcons(
+            in: apps,
+            iconDataByAppID: values
+        )
     }
 
     func signingHistory(for accountID: UUID) -> [SigningHistoryRecord] {

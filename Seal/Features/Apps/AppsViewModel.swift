@@ -601,11 +601,18 @@ final class AppsViewModel: ObservableObject {
                 var icons: [UUID: Data] = [:]
                 if let fileStore = self.fileStore {
                     for app in fetched {
-                        guard let path = app.displayIconRelativePath,
-                              let data = try? await fileStore.read(relativePath: path) else { continue }
-                        icons[app.id] = data
+                        for path in AppIconDataResolver.iconRelativePaths(for: app) {
+                            if let data = try? await fileStore.read(relativePath: path) {
+                                icons[app.id] = data
+                                break
+                            }
+                        }
                     }
                 }
+                icons = AppIconDataResolver.fillingMissingInstalledIcons(
+                    in: fetched,
+                    iconDataByAppID: icons
+                )
                 guard await self.isCurrentLoad(generation) else { return }
                 await MainActor.run {
                     self.iconData = icons

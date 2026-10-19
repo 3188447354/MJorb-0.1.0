@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct SigningCertificateSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
@@ -279,12 +280,6 @@ struct SigningCertificateSettingsView: View {
                     .font(.title3.weight(.semibold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.88)
-                Text("本机在用")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(Color.sealSuccess)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.sealSuccess.opacity(0.14), in: Capsule())
                 Spacer(minLength: 12)
                 Text(certificateSummary(health))
                     .font(.subheadline.weight(.semibold))
@@ -624,7 +619,8 @@ struct SigningCertificateSettingsView: View {
                     .foregroundStyle(Color.sealTextSecondary)
             } else {
                 ForEach(installedApps) { app in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    HStack(alignment: .center, spacing: 10) {
+                        installedAppIcon(for: app)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(app.name)
                                 .font(.subheadline.weight(.medium))
@@ -640,6 +636,26 @@ struct SigningCertificateSettingsView: View {
             }
         }
         .padding(.vertical, 12)
+    }
+
+    @ViewBuilder
+    private func installedAppIcon(for app: AppRecord) -> some View {
+        ZStack {
+            if let data = viewModel.appIconData[app.id], let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.sealSurface)
+                Image(systemName: "app.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Color.sealTextSecondary)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private var noAccountCard: some View {
