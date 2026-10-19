@@ -1,3 +1,10 @@
+## 2026-10-19 CI 验收修正：闭包返回、守卫变异与 IPA 夹具编译
+
+- **现象**：首轮 CI（39258430026）Swift 回归编译失败；R120 守卫变异未能触发断言。修正后第二轮 CI（39261893803）再次在 IPA 测试夹具编译失败，并发现源错误码清单中的行号已过期。
+- **根因**：`ProfileOnlyRenewalPolicy.liveIdentity` 的 `allSatisfy` 闭包加入局部 `let` 后仍依赖单表达式隐式返回；R120 变异注入的 `ScrollView {}` 与守卫统计的 `ScrollView(` 形态不匹配；IPA fixture 的 ZIP 目录尾部搜索表达式过复杂，Swift 编译器无法完成类型检查；`IPAParserService.swift` 行数变化后未重生成错误码位置清单。
+- **修复**：在闭包中显式 `return`；变异用例改为 `ScrollView(showsIndicators: false)` 以确实增加嵌套滚动视图；将 ZIP 目录尾部查找拆成倒序循环；使用工作流同一命令重生成 `docs/qa/generated/error-code-inventory.json`（433 个标识、839 处）。
+- **验证状态**：第二轮 CI 的 R120 守卫已通过；错误码清单生成完成，`git diff --check` 通过。Swift fixture 编译修正和更新后的清单待下一轮 CI 验证；未在本机运行 Swift/Xcode 测试或项目守卫，尚未发布 Release。
+
 ## 2026-10-19 ZIP 编码、续签实时身份与更新抽屉布局回归
 
 - **现象**：0.1.35 的 `Seal-log(30)` 记录到设备已有当前签名私钥，但 Seal 续签仍出现完整重签；另有中文名称 IPA 提示 `CFBundleExecutable` 不存在、更新抽屉露出底部标签栏并截断长更新说明、配对灵动岛仍显示灰块图标。

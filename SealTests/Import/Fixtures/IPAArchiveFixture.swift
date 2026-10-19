@@ -139,15 +139,19 @@ enum IPAArchiveFixture {
         var data = try Data(contentsOf: archiveURL)
         let minimumEndRecordSize = 22
         let searchStart = max(0, data.count - minimumEndRecordSize - Int(UInt16.max))
-        let endRecordOffset = (searchStart...(data.count - minimumEndRecordSize))
-            .reversed()
-            .first { offset in
-                data[offset] == 0x50
-                    && data[offset + 1] == 0x4B
-                    && data[offset + 2] == 0x05
-                    && data[offset + 3] == 0x06
-                    && offset + minimumEndRecordSize + Int(readUInt16(data, at: offset + 20)) == data.count
+        var endRecordOffset: Int?
+        for offset in stride(from: data.count - minimumEndRecordSize, through: searchStart, by: -1) {
+            guard data[offset] == 0x50,
+                  data[offset + 1] == 0x4B,
+                  data[offset + 2] == 0x05,
+                  data[offset + 3] == 0x06 else {
+                continue
             }
+            let commentLength = Int(readUInt16(data, at: offset + 20))
+            guard offset + minimumEndRecordSize + commentLength == data.count else { continue }
+            endRecordOffset = offset
+            break
+        }
         guard let endRecordOffset else { throw FixtureError.invalidZIP }
 
         let entryCount = Int(readUInt16(data, at: endRecordOffset + 10))
