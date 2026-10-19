@@ -56,6 +56,24 @@ if grep -q '^Payload/Seal\.app/PlugIns/' <<<"$entries"; then
     echo "SealLiveActivity.appex is missing its compiled asset catalog" >&2
     exit 1
   fi
+  if grep -q '^Payload/Seal\.app/PlugIns/SealLiveActivity\.appex/' <<<"$entries"; then
+    if ! grep -Fxq "Payload/Seal.app/PlugIns/SealLiveActivity.appex/Info.plist" <<<"$entries"; then
+      echo "SealLiveActivity.appex is missing Info.plist" >&2
+      exit 1
+    fi
+    info_dir="$(mktemp -d)"
+    trap 'rm -rf "$info_dir"' EXIT
+    unzip -p "$ipa" Payload/Seal.app/Info.plist > "$info_dir/main.plist"
+    unzip -p "$ipa" Payload/Seal.app/PlugIns/SealLiveActivity.appex/Info.plist > "$info_dir/activity.plist"
+    main_version="$(plutil -extract CFBundleShortVersionString raw "$info_dir/main.plist")"
+    activity_version="$(plutil -extract CFBundleShortVersionString raw "$info_dir/activity.plist")"
+    main_build="$(plutil -extract CFBundleVersion raw "$info_dir/main.plist")"
+    activity_build="$(plutil -extract CFBundleVersion raw "$info_dir/activity.plist")"
+    if [[ "$main_version" != "$activity_version" || "$main_build" != "$activity_build" ]]; then
+      echo "Seal and SealLiveActivity versions must match (main: $main_version/$main_build; extension: $activity_version/$activity_build)" >&2
+      exit 1
+    fi
+  fi
 fi
 if grep -Eqi '\.(p12|mobileprovision)$|PairingFile\.plist$|Auth\.json$' <<<"$entries"; then
   echo "Sensitive signing material found in IPA" >&2

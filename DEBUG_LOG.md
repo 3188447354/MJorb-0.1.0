@@ -1,3 +1,10 @@
+## 2026-10-19 09:49:22 CI #52 IPA 版本校验未覆盖灵动岛扩展
+
+- **证据**：CI #52 的回归、签名器和打包任务均通过；解包其 IPA 后，主应用为 `0.1.29 (52)`，`SealLiveActivity.appex` 却为 `1.0`。
+- **根因**：XcodeGen 按 `project.yml` 的 `info.properties` 重新生成扩展 Info.plist；该列表只含 `NSExtension`，没有显式列出版本键，因此扩展使用默认版本。源 `SealLiveActivity/Info.plist` 中的变量声明不能补回未列入生成属性的键。
+- **修复**：在扩展生成属性中加入 `CFBundleShortVersionString` 和 `CFBundleVersion`；扩展已存在时，IPA 守卫解包双方 Info.plist 并核对营销版本与构建号，阻止版本不一致的产物通过。
+- **版本与验证**：推进到 `0.1.30`；待下一轮云 CI 验证编译、回归、打包及版本一致性守卫。
+
 ## 2026-10-19 09:19:27 CI #51 夹具重复主程序条目与错误码清单行号
 
 - **证据**：Swift 回归 968 项中 3 项失败，均在解压夹具时因 Payload/<App>.app/<Executable> 被写入两次而报 Cocoa 516；错误码清单检查另发现 AppExtensionProfileStrategy.swift 插入一行后两处引用行号仍旧。
