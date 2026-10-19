@@ -2681,6 +2681,7 @@ actor ApplePortalSigningService {
                     }
                     // 免费账号与付费账号同样分配 App Group（对齐 SideStore 上游：`Feature.freeFeatures`
                     // 含 `.appGroups`，`updateAppGroups` 对免费账号无条件执行）。
+                    let groupsAvailableBeforeAssignment = availableAppGroups
                     let updatedAppGroups = try await withSessionRecovery("分配 App Group \(mappedBundleID)") {
                         try await assignAppGroups(
                             appID: appID,
@@ -2688,7 +2689,7 @@ actor ApplePortalSigningService {
                             cachedEntitlements: cachedEntitlements,
                             team: team,
                             session: session,
-                            availableGroups: availableAppGroups
+                            availableGroups: groupsAvailableBeforeAssignment
                         )
                     }
                     availableAppGroups = updatedAppGroups
