@@ -220,7 +220,7 @@ private struct LogEntryCard: View {
         switch LogViewerPolicy.operationResult(for: entry) {
         case .success: return .green
         case .failure: return .sealDanger
-        case nil: break
+        case .notFinal, nil: break
         }
         return switch entry.level {
         case .info: .secondary
