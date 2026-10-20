@@ -50,14 +50,14 @@ struct LogViewerView: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.red)
                             .frame(width: 36, height: 36)
-                            .glassButton()
+                            .glassSurface(cornerRadius: 18)
                     }
                     Button(action: exportLogs) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.accentColor)
                             .frame(width: 36, height: 36)
-                            .glassButton()
+                            .glassSurface(cornerRadius: 18)
                     }
                 }
             }

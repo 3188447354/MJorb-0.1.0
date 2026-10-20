@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 编译失败：日志工具栏引用不存在的 glassButton
+
+- **现象**：CI `39459487200` 的 `swift-regression` 编译 `LogViewerView.swift:53` 时失败，错误为 `some View` 没有 `glassButton` 成员。
+- **根因**：日志工具栏调用了仓库中未定义的修饰符；现有玻璃表面入口是 `glassSurface(cornerRadius:)`，它已处理 iOS 26 系统玻璃与旧系统回退。
+- **修复**：删除两处未定义调用，改用现有 `glassSurface(cornerRadius: 18)`，保持 36pt 工具栏按钮的圆形外观。
+- **涉及文件**：`Seal/Features/Settings/LogViewerView.swift`、`DEBUG_LOG.md`。
+- **验证状态**：本轮签名器测试通过；Swift/UI 回归因缺少修饰符导致编译失败，构建安全守卫仍运行。Windows 无 Swift/Xcode，修复提交后需重新跑 CI。
+
 # 2026-10-21 — CI 编译失败：InstallFailureSettingsRoute switch 缺少返回值
 
 - **现象**：CI `39457230977` 的 `swift-regression` 在编译 `InstallFailureSettingsRoute.swift:42–46` 时失败，未执行测试。
