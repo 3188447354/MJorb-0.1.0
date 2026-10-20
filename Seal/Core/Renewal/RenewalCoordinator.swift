@@ -439,18 +439,20 @@ actor RenewalCoordinator {
             items: sortedItems
         )
         let hasFailure = summary.failedCount > 0 || summary.needsActionCount > 0
+        let operationResult: SealLogEntry.OperationResult
+        if summary.awaitingCount > 0 || summary.needsActionCount > 0 {
+            operationResult = .notFinal
+        } else if hasFailure {
+            operationResult = .failure
+        } else {
+            operationResult = .success
+        }
         try? await logStore?.append(
             category: .renewal,
             level: hasFailure ? .warning : .info,
             message: summary.humanReadableMessage(),
             code: "SEAL-RENEW-ROUND",
-            operationResult: if summary.awaitingCount > 0 || summary.needsActionCount > 0 {
-                .notFinal
-            } else if hasFailure {
-                .failure
-            } else {
-                .success
-            }
+            operationResult: operationResult
         )
 
         return BatchRefreshResult(

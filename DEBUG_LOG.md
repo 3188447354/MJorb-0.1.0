@@ -4,7 +4,7 @@
 - **根因**：日志页之前直接呈现普通事件与诊断事件，操作进度、账号/系统事件和最终结果混在一起；单靠日志分类无法区分过程与终态。
 - **修复**：日志事件增加可选终态字段；单项签名/续签、批量续签逐项结果、保存签名包安装与迟到安装结算明确写入成功/失败。页面按终态筛选、倒序取 20 条并显示结果标签；兼容升级前可识别的错误与成功结果。导出文件仍由完整日志缓冲生成。
 - **涉及文件**：`Seal/Core/Diagnostics/SealLogEntry.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Infrastructure/Diagnostics/SealLogStore.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Settings/LogViewerView.swift`、`SealTests/Diagnostics/LogRoundTests.swift`。
-- **验证状态**：未运行 Swift/Xcode 测试或源码守卫；等待 CI 编译与回归验证。
+- **验证状态**：CI 首轮 `swift-regression` 报错，批量轮次 `append` 参数不接受内联 `if` 表达式；改为先计算局部终态再写日志。签名器测试已通过，源码修复等待下一轮 CI 编译与回归验证。
 
 # 2026-10-20 — profile-only 结算、灵动岛图标、日志列表与 IPA 型号白名单
 
