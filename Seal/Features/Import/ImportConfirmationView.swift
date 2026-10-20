@@ -10,6 +10,7 @@ struct ImportConfirmationView: View {
     let isCommitting: Bool
     let failure: ImportFailure?
     let onCancel: () -> Void
+    let onDismissProgress: () -> Void
     let onPrimaryAction: () -> Void
     /// 「新建副本（不覆盖）」：放弃覆盖更新，按原行为新建一条待签名记录。
     let onCreateCopy: () -> Void
@@ -113,10 +114,16 @@ struct ImportConfirmationView: View {
                             .accessibilityIdentifier("import-confirmation-new-copy")
                     }
 
-                    Button(isSealUpdate || targetsSealUpdate ? "暂不更新" : "取消导入", action: onCancel)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                        .foregroundColor(Color.sealTextSecondary)
-                        .disabled(isCommitting)
+                    if isCommitting {
+                        Button("收起并继续", action: onDismissProgress)
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .foregroundColor(Color.sealTextSecondary)
+                            .accessibilityIdentifier("import-confirmation-dismiss-progress")
+                    } else {
+                        Button(isSealUpdate || targetsSealUpdate ? "暂不更新" : "取消导入", action: onCancel)
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .foregroundColor(Color.sealTextSecondary)
+                    }
                 }
             }
         }

@@ -281,7 +281,7 @@ final class AppsViewModel: ObservableObject {
         alertFailure = startupFailure
     }
 
-    private init(apps: [AppRecord], draft: ImportDraft?) {
+    private init(apps: [AppRecord], draft: ImportDraft?, phase: Phase = .idle) {
         alertFailure = nil
         workflow = nil
         appStore = nil
@@ -304,7 +304,7 @@ final class AppsViewModel: ObservableObject {
         iconData = [:]
         decodedIconCache.removeAllObjects()
         decodedIconOrder.removeAll()
-        phase = .idle
+        self.phase = phase
         sheetDraft = draft
         isImportSheetPresented = draft != nil
         hasLoaded = true
@@ -1310,6 +1310,21 @@ final class AppsViewModel: ObservableObject {
         phase = .idle
         if let cleanupFailure {
             alertFailure = cleanupFailure
+        }
+    }
+
+    /// 收起正在提交的导入抽屉，事务继续处理。
+    /// 不取消工作流，避免在文件与数据库提交之间拆开事务；根视图的
+    /// `cancelDraftIfNeeded()` 会因 `.committing` 保留工作流，完成或失败后照常结算。
+    func dismissImportProgress() {
+        guard phase == .committing else { return }
+        isImportSheetPresented = false
+        Task {
+            try? await logStore?.append(
+                category: .system,
+                level: .info,
+                message: "导入进度抽屉已收起，事务继续处理"
+            )
         }
     }
 
@@ -4022,7 +4037,8 @@ final class AppsViewModel: ObservableObject {
         if arguments.contains("--ui-testing-imported") {
             return AppsViewModel(apps: [record], draft: nil)
         }
-        if arguments.contains("--ui-testing-confirmation") {
+        if arguments.contains("--ui-testing-confirmation")
+            || arguments.contains("--ui-testing-import-committing") {
             let draft = ImportDraft(
                 appID: appID,
                 parsedIPA: ParsedIPA(
@@ -4048,7 +4064,8 @@ final class AppsViewModel: ObservableObject {
                 ),
                 versionCheck: .newApp
             )
-            return AppsViewModel(apps: [], draft: draft)
+            let phase: Phase = arguments.contains("--ui-testing-import-committing") ? .committing : .idle
+            return AppsViewModel(apps: [], draft: draft, phase: phase)
         }
         return nil
     }

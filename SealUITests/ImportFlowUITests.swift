@@ -33,6 +33,23 @@ final class ImportFlowUITests: XCTestCase {
     }
 
     @MainActor
+    func testStuckImportProgressCanBeDismissedAndRootNavigationRemainsAvailable() {
+        let app = launch(with: "--ui-testing-import-committing")
+        XCTAssertTrue(app.otherElements["import-confirmation"].waitForExistence(timeout: 10))
+        let dismissButton = app.buttons["import-confirmation-dismiss-progress"]
+        XCTAssertTrue(dismissButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(dismissButton.isEnabled)
+        dismissButton.tap()
+
+        XCTAssertFalse(app.otherElements["import-confirmation"].waitForExistence(timeout: 2))
+        let settingsTab = app.buttons["root-tab-settings"]
+        XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(settingsTab.isEnabled)
+        settingsTab.tap()
+        XCTAssertTrue(app.navigationBars["我的"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testTwoStageNavigationCanBeTappedWithoutChangingHeaderAlignment() {
         let app = launch(with: "--ui-testing-empty")
         XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))

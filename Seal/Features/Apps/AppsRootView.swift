@@ -57,6 +57,7 @@ struct AppsRootView: View {
                         isCommitting: viewModel.phase == .committing,
                         failure: viewModel.sheetFailure,
                         onCancel: { Task { await viewModel.cancelImport() } },
+                        onDismissProgress: { viewModel.dismissImportProgress() },
                         onPrimaryAction: {
                             Task {
                                 await viewModel.performImportPrimaryAction()

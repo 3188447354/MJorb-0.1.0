@@ -1,3 +1,11 @@
+# 2026-10-20 — 导入提交卡住时无法离开进度抽屉
+
+- **现象**：IPA 文件/数据库提交卡住时，用户无法切换页面或操作其他功能。
+- **根因**：导入提交阶段禁用了主操作和取消按钮，同时禁止下滑关闭；模态抽屉因此没有退出入口。
+- **修复**：增加“收起并继续”按钮，只收起进度抽屉，当前导入事务继续完成或失败结算；不取消文件/数据库事务，也不放开设备写操作的串行保护。
+- **涉及文件**：`Seal/Features/Import/ImportConfirmationView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`SealTests/Import/ImportProgressDismissalTests.swift`、`SealUITests/ImportFlowUITests.swift`。
+- **验证状态**：新增模型与 UI 回归用例，分别验证收起后事务状态保留、用户可切换到「我的」；等待 iOS CI 编译和运行。
+
 # 2026-10-20 — CI 修正日志结果文案的 Swift 编译错误
 
 - **现象**：提交 `0e76a9f` 的 Swift 回归在编译 `LogViewerView.swift` 时失败，报告 `itemResultText` 缺少返回值。
