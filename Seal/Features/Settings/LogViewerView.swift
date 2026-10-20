@@ -295,9 +295,9 @@ private struct LogEntryCard: View {
                 return "成功，有效期至 \(RenewalRoundSummary.formatExpirationDate(expiry))"
             }
             return "成功"
-        case .failed: "失败"
-        case .needsAction: "未执行"
-        case .awaitingConfirmation: "待确认"
+        case .failed: return "失败"
+        case .needsAction: return "未执行"
+        case .awaitingConfirmation: return "待确认"
         }
     }
 
