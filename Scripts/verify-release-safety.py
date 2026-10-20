@@ -4716,12 +4716,34 @@ def violations(load=read):
     check('Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")' in pairing_widget
           and "UIImage(contentsOfFile: imageURL.path)" in pairing_widget
           and 'Image("SealBrandIcon", bundle: .main)' in pairing_widget
+          and 0 <= pairing_widget.find('UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil)')
+              < pairing_widget.find('Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")')
           and ".widgetAccentedRenderingMode(.fullColor)" in pairing_widget
           and "SealLiveActivity/Assets.xcassets" in pairing_project
           and "SealLiveActivity/Resources/SealBrandIcon.png" in pairing_project
           and os.path.isfile(ROOT / "SealLiveActivity/Resources/SealBrandIcon.png")
           and '"filename" : "icon.png"' in pairing_asset_json,
-          "R119④: 灵动岛须从扩展包直接读取真实 Seal PNG，并保留资源目录回退与全彩渲染")
+          "R119④: 灵动岛优先读取扩展 Asset Catalog 图标，保留 PNG 文件回退与全彩渲染")
+
+    # R125: 重装后 CoreData / Accounts.json 中的 UUID 索引会消失；接管判定仍须查找
+    # 同一 Keychain service 下的旧账号条目，并按运行中的证书序列号验证私钥。
+    keychain_vault = strip_comments(load("Seal/Infrastructure/Security/KeychainVault.swift"))
+    signing_coordinator = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
+    settings_vm_self_management = section(
+        strip_comments(load("Seal/Features/Settings/SettingsViewModel.swift")),
+        "func refreshSelfManagementState() async {",
+        "func refreshCertificateInventory("
+    )
+    self_management_tests = load("SealTests/Settings/SelfManagementPresentationTests.swift")
+    check("func loadAllSecrets() throws -> [AccountSecret]" in keychain_vault
+          and "request[kSecMatchLimit as String] = kSecMatchLimitAll" in keychain_vault
+          and "if let unindexedSecrets = try? await keychain.loadAllSecrets() {" in signing_coordinator
+          and "LocalSigningCertificateLookup.hasMatchingPrivateKey(" in signing_coordinator
+          and "if let unindexedSecrets = try? await keychain.loadAllSecrets() {" in settings_vm_self_management
+          and "LocalSigningCertificateLookup.hasMatchingPrivateKey(" in settings_vm_self_management
+          and "func orphanedKeychainSecretStillProvesSealWasTakenOver()" in self_management_tests
+          and "func orphanedSecretWithoutMatchingPrivateKeyDoesNotSkipBootstrap()" in self_management_tests,
+          "R125: Seal 重装后须按当前签名者序列号检索旧 UUID 钥匙串私钥，并让续签与证书页共用判据")
 
     update_notice_view = strip_comments(load("Seal/Features/UpdateNoticeView.swift"))
     update_notice_policy = strip_comments(load("Seal/Infrastructure/UpdateChecker.swift"))
@@ -10833,6 +10855,10 @@ def main():
          "UIImage()",
          "R119④:"),
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
+         'if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {',
+         'if let image = UIImage(systemName: "SealBrandIcon") {',
+         "R119⑤:"),
+        ("SealLiveActivity/PairingLiveActivityWidget.swift",
          ".widgetAccentedRenderingMode(.fullColor)",
          ".widgetAccentedRenderingMode(.accented)",
          "R119④:"),
@@ -10840,6 +10866,18 @@ def main():
          "- path: SealLiveActivity/Resources/SealBrandIcon.png",
          "- path: SealLiveActivity/Resources/MissingBrandIcon.png",
          "R119④:"),
+        ("Seal/Infrastructure/Security/KeychainVault.swift",
+         "request[kSecMatchLimit as String] = kSecMatchLimitAll",
+         "request[kSecMatchLimit as String] = kSecMatchLimitOne",
+         "R125①:"),
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "if let unindexedSecrets = try? await keychain.loadAllSecrets() {",
+         "if false, let unindexedSecrets = try? await keychain.loadAllSecrets() {",
+         "R125②:"),
+        ("Seal/Features/Settings/SettingsViewModel.swift",
+         "if let unindexedSecrets = try? await keychain.loadAllSecrets() {",
+         "if false, let unindexedSecrets = try? await keychain.loadAllSecrets() {",
+         "R125③:"),
         # ── R120：更新抽屉共用 SealDrawer，呈现层必须在导航与 Tab 栏之上 ──
         ("Seal/Features/UpdateNoticeView.swift",
          "SealDrawer(title: drawerTitle, showsFooter: true)",

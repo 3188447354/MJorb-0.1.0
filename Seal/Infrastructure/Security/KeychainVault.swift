@@ -41,6 +41,24 @@ actor KeychainVault {
         return try decoder.decode(AccountSecret.self, from: data)
     }
 
+    /// App 容器删除后，账号 UUID 索引会丢失，但同一签名访问组下的钥匙串条目可能仍在。
+    /// Seal 接管判据按实际证书序列号验证这些材料，不能只遍历当前 Accounts.json 的 UUID。
+    func loadAllSecrets() throws -> [AccountSecret] {
+        var request = baseQuery()
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitAll
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess else { throw KeychainError(status: status) }
+
+        let dataItems = (result as? [Any])?.compactMap { $0 as? Data }
+            ?? (result as? Data).map { [$0] }
+            ?? []
+        return dataItems.compactMap { try? decoder.decode(AccountSecret.self, from: $0) }
+    }
+
     func delete(accountID: UUID) throws {
         let status = SecItemDelete(query(for: accountID) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -65,10 +83,15 @@ actor KeychainVault {
     }
 
     private func query(for accountID: UUID) -> [String: Any] {
+        var request = baseQuery()
+        request[kSecAttrAccount as String] = accountID.uuidString
+        return request
+    }
+
+    private func baseQuery() -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: accountID.uuidString,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any
         ]
     }

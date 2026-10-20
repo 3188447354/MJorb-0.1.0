@@ -184,3 +184,17 @@ enum SelfSigningBootstrapPolicy {
         return signerHasLocalPrivateKey == false
     }
 }
+
+enum LocalSigningCertificateLookup {
+    /// 证书材料可能属于已丢失的旧账号 UUID；只要钥匙串里的有效私钥序列号与运行包签名者相同，
+    /// 就能证明 Seal 已完成本机接管。
+    static func hasMatchingPrivateKey(
+        serialNumber: String,
+        in secrets: [AccountSecret],
+        isAvailable: (AccountSecret, String) -> Bool
+    ) -> Bool {
+        let normalizedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(serialNumber)
+        guard normalizedSerial.isEmpty == false else { return false }
+        return secrets.contains { isAvailable($0, normalizedSerial) }
+    }
+}
