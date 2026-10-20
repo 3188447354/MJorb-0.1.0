@@ -1,7 +1,7 @@
 import Foundation
 
 /// 续签触发来源（日志轮次头用）。
-enum RenewalTriggerSource: String, Sendable {
+enum RenewalTriggerSource: String, Codable, Sendable {
     /// 用户在 App 内手动点「续签全部」/ 单项续签
     case manual
     /// 快捷指令触发（后台或前台）
@@ -20,23 +20,44 @@ enum RenewalTriggerSource: String, Sendable {
 
 /// 日志轮次的操作类型。单项操作也使用与批量续签相同的卡片语法，
 /// 这样日志页和导出文件只需维护一套解析与呈现逻辑。
-enum RenewalRoundOperation: Equatable, Sendable {
+enum RenewalRoundOperation: String, Codable, Equatable, Sendable {
     case batchRenewal
     case singleRenewal
     case singleSigning
+    case singleInstallation
 
     var headerLabel: String? {
         switch self {
         case .batchRenewal: nil
         case .singleRenewal: "单独续签"
         case .singleSigning: "单独签名"
+        case .singleInstallation: "安装"
         }
+    }
+
+    func displayTitle(triggerSource: RenewalTriggerSource) -> String {
+        switch self {
+        case .batchRenewal:
+            switch triggerSource {
+            case .manual: return "手动续签"
+            case .shortcut: return "快捷指令"
+            case .background: return "后台续签"
+            }
+        case .singleRenewal:
+            return triggerSource == .shortcut ? "快捷指令" : "手动续签"
+        case .singleSigning: return "签名"
+        case .singleInstallation: return "安装"
+        }
+    }
+
+    var showsAppCount: Bool {
+        self != .singleSigning
     }
 }
 
 /// 轮次里单个 App 的结果（供轮次总结用）。
-struct RenewalRoundItem: Sendable {
-    enum Outcome: Equatable, Sendable {
+struct RenewalRoundItem: Codable, Equatable, Sendable {
+    enum Outcome: String, Codable, Equatable, Sendable {
         case succeeded
         case failed
         case needsAction
@@ -62,7 +83,7 @@ struct RenewalRoundItem: Sendable {
 ///
 /// 写入 `SealLogStore` 一条 `SEAL-RENEW-ROUND` 日志，App 内展示与导出文本
 /// 都从这条解析/渲染，共用一份底层数据。
-struct RenewalRoundSummary: Sendable {
+struct RenewalRoundSummary: Codable, Equatable, Sendable {
     let roundNumber: Int
     let triggerSource: RenewalTriggerSource
     let operation: RenewalRoundOperation
@@ -188,5 +209,9 @@ struct RenewalRoundSummary: Sendable {
         let m = Int(seconds / 60)
         let s = Int(seconds.truncatingRemainder(dividingBy: 60))
         return "\(m)分\(s)秒"
+    }
+
+    static func formatExpirationDate(_ date: Date) -> String {
+        expiryFormatter.string(from: date)
     }
 }

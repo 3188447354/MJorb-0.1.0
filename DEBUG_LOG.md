@@ -1,3 +1,11 @@
+# 2026-10-20 — Seal 续签状态闪烁与操作日志卡片
+
+- **现象**：Seal 描述文件续签后切换页面，列表短暂显示黄色“安装结果待确认”；诊断日志把轮次摘要和逐 App 技术明细混成大段文本，难以快速确认成功、失败、有效期和耗时。
+- **根因**：① 列表把 Seal 暂态 `.awaitingVerification` 一律当成待确认安装，即使该状态没有真实设备安装尝试 ID；② 日志页直接显示拼接消息，没有消费已有的结构化续签轮次结果；③ 批次含“本轮未执行”项目时被标为 `.notFinal`，导致已经结束的部分结果整条被隐藏。
+- **修复**：将安装反馈判据集中为纯展示策略：Seal 仅在存在 `installAttemptID` 时显示真实待确认，普通暂态不显示；失败与设备不可用提示保留。日志结果持久化结构化轮次，使用原生 SwiftUI 卡片显示记录时间、操作来源、App 名、结果、描述文件有效期和总耗时；隐藏与汇总重复的逐 App 续签诊断行。无待核验项目的部分结果按失败/未执行展示；Seal 自替换仍等待新进程核验，不提前报成功。兼容解析升级前的轮次文本。
+- **涉及文件**：`Seal/Features/Apps/AppPresentation.swift`、`Seal/Features/Apps/ImportedAppRow.swift`、`Seal/Features/Apps/AppDetailView.swift`、`Seal/Core/Diagnostics/SealLogEntry.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Core/Renewal/RenewalRoundSummary.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Infrastructure/Diagnostics/SealLogStore.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Settings/LogViewerView.swift`、`SealTests/Apps/AppPresentationTests.swift`、`SealTests/Diagnostics/LogRoundTests.swift`。
+- **验证状态**：补充了 Seal 暂态/真实安装尝试及部分续签轮次的回归用例；未运行 Swift/Xcode、测试或 CI，待云端编译和真机确认。
+
 # 2026-10-20 — CI 错误码清单未随源码行号更新
 
 - **现象**：静态安全守卫通过后，`build-package` 的 `Audit source error identifiers` 因生成文件 diff 失败。

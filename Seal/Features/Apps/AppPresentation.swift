@@ -13,6 +13,29 @@ struct AppValidityPresentation: Equatable, Sendable {
     let tone: AppValidityTone
 }
 
+struct InstalledAppFeedbackPresentation: Equatable, Sendable {
+    let title: String
+    let tone: AppValidityTone
+}
+
+enum InstalledAppFeedbackPolicy {
+    static func presentation(for app: AppRecord) -> InstalledAppFeedbackPresentation? {
+        if app.pendingSignedSnapshot?.installAttemptID != nil {
+            return InstalledAppFeedbackPresentation(title: "安装结果待确认", tone: .warning)
+        }
+        return switch app.signedArtifactStatus {
+        case .awaitingVerification where app.isSeal: nil
+        case .awaitingVerification:
+            InstalledAppFeedbackPresentation(title: "安装结果待确认", tone: .warning)
+        case .installFailed:
+            InstalledAppFeedbackPresentation(title: "安装失败", tone: .danger)
+        case .deviceUnavailable:
+            InstalledAppFeedbackPresentation(title: "设备不可用", tone: .warning)
+        default: nil
+        }
+    }
+}
+
 enum AppOperationKind: Equatable, Sendable {
     case signing
     case renewal

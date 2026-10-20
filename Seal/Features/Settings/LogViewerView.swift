@@ -83,13 +83,12 @@ struct LogViewerView: View {
         )) {
             Button("复制错误信息") {
                 if let err = selectedError {
-                    let info = (err.code.map { "错误码：\($0)\n" } ?? "") + err.message
-                    UIPasteboard.general.string = info
+                    UIPasteboard.general.string = errorDetails(for: err)
                 }
             }
         } message: {
             if let err = selectedError {
-                Text(err.message)
+                Text(errorDetails(for: err))
             }
         }
         .alert(item: $exportFailure) { failure in
@@ -170,11 +169,28 @@ struct LogViewerView: View {
         await viewModel.clearLogs()
         await loadEntries()
     }
+
+    private func errorDetails(for entry: SealLogEntry) -> String {
+        var details = entry.message
+        if let summary = LogViewerPolicy.operationSummary(for: entry) {
+            let technicalSummary = summary.technicalSummary()
+            if technicalSummary.isEmpty == false {
+                details += "\n\n诊断码：\n\(technicalSummary)"
+            }
+        } else if let code = entry.code {
+            details = "错误码：\(code)\n" + details
+        }
+        return details
+    }
 }
 
 private struct LogEntryCard: View {
     let entry: SealLogEntry
     let onSelectError: () -> Void
+
+    private var summary: RenewalRoundSummary? {
+        LogViewerPolicy.operationSummary(for: entry)
+    }
 
     var body: some View {
         Group {
@@ -188,32 +204,141 @@ private struct LogEntryCard: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Text(SealSettingsDateFormatter.string(from: entry.timestamp))
-                Spacer(minLength: 4)
-                Text(LogViewerPolicy.operationResult(for: entry)?.displayName ?? entry.level.displayName)
-                Text(entry.category.displayName)
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(levelColor)
+        VStack(alignment: .leading, spacing: 12) {
+            if let summary {
+                operationSummaryCard(summary)
+            } else {
+                HStack(spacing: 8) {
+                    Text(SealSettingsDateFormatter.string(from: entry.timestamp))
+                    Spacer(minLength: 4)
+                    resultBadge(LogViewerPolicy.operationResult(for: entry)?.displayName ?? entry.level.displayName)
+                }
+                .font(.caption.weight(.semibold))
 
-            if let code = entry.code {
-                Text(code)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(levelColor)
+                Text(cleanMessage)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
-
-            Text(entry.message)
-                .font(.system(size: 14))
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
+        .padding(16)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func operationSummaryCard(_ summary: RenewalRoundSummary) -> some View {
+        VStack(alignment: .leading, spacing: 11) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(operationHeading(summary))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                resultBadge(operationResult(for: summary).displayName)
+            }
+
+            ForEach(summary.items.indices, id: \.self) { index in
+                if index > 0 { Divider() }
+                operationItem(summary.items[index])
+            }
+
+            Divider()
+            Text(operationFooter(summary))
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func operationItem(_ item: RenewalRoundItem) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol(for: item.outcome))
+                .font(.body.weight(.semibold))
+                .foregroundStyle(color(for: item.outcome))
+                .frame(width: 18)
+            Text(item.appName)
+                .font(.body)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(itemResultText(item))
+                .font(.body)
+                .foregroundStyle(color(for: item.outcome))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func operationHeading(_ summary: RenewalRoundSummary) -> String {
+        let date = SealSettingsDateFormatter.string(from: entry.timestamp)
+        let title = summary.operation.displayTitle(triggerSource: summary.triggerSource)
+        guard summary.operation.showsAppCount else { return "\(date) · \(title)" }
+        return "\(date) · \(title) · \(summary.items.count)个App"
+    }
+
+    private func operationFooter(_ summary: RenewalRoundSummary) -> String {
+        let duration = RenewalRoundSummary.formatDuration(summary.totalDuration)
+        if summary.operation == .singleSigning {
+            return "\(summary.failedCount == 0 ? "完成" : "失败") · 共计 \(duration)"
+        }
+
+        var parts = ["\(summary.succeededCount)/\(summary.items.count) 成功"]
+        if summary.failedCount > 0 { parts.append("\(summary.failedCount)失败") }
+        if summary.needsActionCount > 0 { parts.append("\(summary.needsActionCount)未执行") }
+        if summary.awaitingCount > 0 { parts.append("\(summary.awaitingCount)待确认") }
+        return "完成 · 共计 \(duration) · " + parts.joined(separator: " · ")
+    }
+
+    private func itemResultText(_ item: RenewalRoundItem) -> String {
+        switch item.outcome {
+        case .succeeded:
+            if let expiry = item.profileExpirationDate {
+                return "成功，有效期至 \(RenewalRoundSummary.formatExpirationDate(expiry))"
+            }
+            return "成功"
+        case .failed: "失败"
+        case .needsAction: "未执行"
+        case .awaitingConfirmation: "待确认"
+        }
+    }
+
+    private func operationResult(for summary: RenewalRoundSummary) -> SealLogEntry.OperationResult {
+        if summary.awaitingCount > 0 { return .notFinal }
+        return summary.failedCount + summary.needsActionCount > 0 ? .failure : .success
+    }
+
+    private func resultBadge(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(levelColor)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(levelColor.opacity(0.12), in: Capsule())
+    }
+
+    private var cleanMessage: String {
+        entry.message
+            .components(separatedBy: .newlines)
+            .filter { line in
+                !line.contains("━━━━━━━━") && !line.contains("────────────────")
+            }
+            .joined(separator: "\n")
+    }
+
+    private func symbol(for outcome: RenewalRoundItem.Outcome) -> String {
+        switch outcome {
+        case .succeeded: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .needsAction: "exclamationmark.circle.fill"
+        case .awaitingConfirmation: "clock.fill"
+        }
+    }
+
+    private func color(for outcome: RenewalRoundItem.Outcome) -> Color {
+        switch outcome {
+        case .succeeded: .sealSuccess
+        case .failed: .sealDanger
+        case .needsAction, .awaitingConfirmation: .sealWarning
+        }
     }
 
     private var levelColor: Color {

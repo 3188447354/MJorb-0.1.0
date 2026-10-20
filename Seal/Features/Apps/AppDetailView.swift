@@ -96,15 +96,10 @@ struct AppDetailView: View {
     private func installedStateText(_ app: AppRecord) -> String {
         guard app.belongsInInstalledList else { return app.state.title }
         if app.needsIPAImport { return "已安装·待导入 IPA" }
-        if app.pendingSignedSnapshot?.installAttemptID != nil {
-            return "安装结果待确认"
+        if let feedback = InstalledAppFeedbackPolicy.presentation(for: app) {
+            return feedback.tone == .danger ? "最近一次安装失败" : feedback.title
         }
-        switch app.signedArtifactStatus {
-        case .awaitingVerification: return "安装结果待确认"
-        case .installFailed: return "最近一次安装失败"
-        case .deviceUnavailable: return "设备不可用"
-        default: return "已安装"
-        }
+        return "已安装"
     }
 
     private func infoCard(_ app: AppRecord) -> some View {

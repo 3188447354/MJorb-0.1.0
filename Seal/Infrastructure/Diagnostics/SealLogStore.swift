@@ -42,7 +42,8 @@ actor SealLogStore {
         level: SealLogEntry.Level = .info,
         message: String,
         code: String? = nil,
-        operationResult: SealLogEntry.OperationResult? = nil
+        operationResult: SealLogEntry.OperationResult? = nil,
+        operationSummary: RenewalRoundSummary? = nil
     ) throws {
         loadBufferIfNeeded()
         buffer.append(
@@ -51,7 +52,8 @@ actor SealLogStore {
                 level: level,
                 message: LogPrivacyRedactor.redact(message),
                 code: code.map(LogPrivacyRedactor.redact),
-                operationResult: operationResult
+                operationResult: operationResult,
+                operationSummary: operationSummary.map(Self.redacted)
             )
         )
         if buffer.count > maximumEntries {
@@ -103,7 +105,29 @@ actor SealLogStore {
             level: entry.level,
             message: LogPrivacyRedactor.redact(entry.message),
             code: entry.code.map(LogPrivacyRedactor.redact),
-            operationResult: entry.operationResult
+            operationResult: entry.operationResult,
+            operationSummary: entry.operationSummary.map(Self.redacted)
+        )
+    }
+
+    private static func redacted(_ summary: RenewalRoundSummary) -> RenewalRoundSummary {
+        RenewalRoundSummary(
+            roundNumber: summary.roundNumber,
+            triggerSource: summary.triggerSource,
+            operation: summary.operation,
+            startedAt: summary.startedAt,
+            endedAt: summary.endedAt,
+            items: summary.items.map { item in
+                RenewalRoundItem(
+                    appName: LogPrivacyRedactor.redact(item.appName),
+                    outcome: item.outcome,
+                    duration: item.duration,
+                    profileExpirationDate: item.profileExpirationDate,
+                    failureCode: item.failureCode.map(LogPrivacyRedactor.redact),
+                    failureReason: item.failureReason.map(LogPrivacyRedactor.redact),
+                    failureRecovery: item.failureRecovery.map(LogPrivacyRedactor.redact)
+                )
+            }
         )
     }
 

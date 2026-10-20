@@ -440,7 +440,7 @@ actor RenewalCoordinator {
         )
         let hasFailure = summary.failedCount > 0 || summary.needsActionCount > 0
         let operationResult: SealLogEntry.OperationResult
-        if summary.awaitingCount > 0 || summary.needsActionCount > 0 {
+        if summary.awaitingCount > 0 {
             operationResult = .notFinal
         } else if hasFailure {
             operationResult = .failure
@@ -452,7 +452,8 @@ actor RenewalCoordinator {
             level: hasFailure ? .warning : .info,
             message: summary.humanReadableMessage(),
             code: "SEAL-RENEW-ROUND",
-            operationResult: operationResult
+            operationResult: operationResult,
+            operationSummary: summary
         )
 
         return BatchRefreshResult(

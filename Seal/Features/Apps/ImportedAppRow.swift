@@ -212,15 +212,8 @@ struct ImportedAppRow: View {
     }
 
     private var installedInstallFeedback: (title: String, color: Color)? {
-        if app.pendingSignedSnapshot?.installAttemptID != nil {
-            return ("安装结果待确认", .sealWarning)
-        }
-        return switch app.signedArtifactStatus {
-        case .awaitingVerification: ("安装结果待确认", .sealWarning)
-        case .installFailed: ("安装失败", .sealDanger)
-        case .deviceUnavailable: ("设备不可用", .sealWarning)
-        default: nil
-        }
+        guard let presentation = InstalledAppFeedbackPolicy.presentation(for: app) else { return nil }
+        return (presentation.title, color(for: presentation.tone))
     }
 
     private func color(for tone: AppValidityTone?) -> Color {

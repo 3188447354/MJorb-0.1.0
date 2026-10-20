@@ -37,6 +37,7 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
     let message: String
     let code: String?
     let operationResult: OperationResult?
+    let operationSummary: RenewalRoundSummary?
 
     init(
         id: UUID = UUID(),
@@ -45,7 +46,8 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         level: Level = .info,
         message: String,
         code: String? = nil,
-        operationResult: OperationResult? = nil
+        operationResult: OperationResult? = nil,
+        operationSummary: RenewalRoundSummary? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -54,6 +56,7 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         self.message = message
         self.code = code
         self.operationResult = operationResult
+        self.operationSummary = operationSummary
     }
 }
 

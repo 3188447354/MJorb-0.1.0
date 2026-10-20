@@ -861,11 +861,19 @@ final class AppsViewModel: ObservableObject {
             items: [item]
         )
         let hasFailure = outcome == .failed || outcome == .needsAction
+        let category: SealLogEntry.Category
+        switch operation {
+        case .singleSigning: category = .signing
+        case .singleInstallation: category = .installation
+        case .singleRenewal, .batchRenewal: category = .renewal
+        }
         try? await logStore?.append(
-            category: operation == .singleSigning ? .signing : .renewal,
+            category: category,
             level: hasFailure ? .warning : .info,
             message: summary.humanReadableMessage(),
-            operationResult: outcome == .succeeded ? .success : outcome == .failed ? .failure : nil
+            code: failure?.code,
+            operationResult: outcome == .succeeded ? .success : outcome == .failed ? .failure : nil,
+            operationSummary: summary
         )
     }
 
@@ -2031,6 +2039,7 @@ final class AppsViewModel: ObservableObject {
         defer { releaseOperation(operationLease) }
         installingCachedPackageAppID = app.id
         defer { installingCachedPackageAppID = nil }
+        let operationStartedAt = Date()
         do {
             let installed = try await signingCoordinator.installSignedArtifact(
                 appID: app.id,
@@ -2041,29 +2050,37 @@ final class AppsViewModel: ObservableObject {
                     await self?.updateSigningStage(update.stage, subject: update.subject)
                 }
             )
-            try? await logStore?.append(
-                category: .signing,
-                message: "已使用本机保存的签名包完成安装：\(installed.displayName)",
-                operationResult: .success
+            await appendSingleOperationRound(
+                operation: .singleInstallation,
+                app: installed,
+                startedAt: operationStartedAt,
+                outcome: .succeeded
             )
             await cleanTemporaryFilesIfNeeded(appID: app.id)
             await load(force: true)
             return true
         } catch let failure as ImportFailure {
             alertFailure = failure
-            try? await logStore?.append(
-                category: .signing,
-                level: .error,
-                message: "签名包安装失败：\(failure.reason)",
-                code: failure.code,
-                operationResult: .failure
+            await appendSingleOperationRound(
+                operation: .singleInstallation,
+                app: app,
+                startedAt: operationStartedAt,
+                outcome: .failed,
+                failure: failure
             )
         } catch {
             try? await logStore?.append(category: .signing, level: .error,
                 message: "SEAL-SIGN-500 底层诊断：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
-                code: "SEAL-SIGN-500",
-                operationResult: .failure)
-            alertFailure = Self.unexpectedSigningFailure(error)
+                code: "SEAL-SIGN-500")
+            let failure = Self.unexpectedSigningFailure(error)
+            await appendSingleOperationRound(
+                operation: .singleInstallation,
+                app: app,
+                startedAt: operationStartedAt,
+                outcome: .failed,
+                failure: failure
+            )
+            alertFailure = failure
         }
         await load(force: true)
         return false

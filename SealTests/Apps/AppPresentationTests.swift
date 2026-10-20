@@ -15,6 +15,41 @@ struct AppPresentationTests {
     }
 
     @Test
+    func sealDoesNotShowTransientVerificationFeedbackAfterProfileOnlyRenewal() {
+        var app = makeApp(
+            state: .installed,
+            expiryDate: now.addingTimeInterval(7 * 86_400),
+            isSeal: true
+        )
+        app.signedArtifactStatus = .awaitingVerification
+
+        #expect(InstalledAppFeedbackPolicy.presentation(for: app) == nil)
+    }
+
+    @Test
+    func realSealInstallAttemptStillShowsVerificationFeedback() {
+        var app = makeApp(
+            state: .installed,
+            expiryDate: now.addingTimeInterval(7 * 86_400),
+            isSeal: true
+        )
+        app.signedArtifactStatus = .installed
+        app.pendingSignedSnapshot = PendingSignedSnapshot(
+            expiryDate: app.expiryDate,
+            provisioningProfileUUID: nil,
+            provisioningProfileName: nil,
+            provisioningProfileCreationDate: nil,
+            provisioningProfileExpirationDate: nil,
+            certificateSerialNumber: nil,
+            signingTargets: [],
+            extensionSnapshots: [],
+            installAttemptID: UUID()
+        )
+
+        #expect(InstalledAppFeedbackPolicy.presentation(for: app)?.title == "安装结果待确认")
+    }
+
+    @Test
     func installedAppsUseNeutralRemainingDayPresentation() {
         let app = makeApp(
             state: .installed,
