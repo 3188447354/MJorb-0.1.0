@@ -442,7 +442,7 @@ enum AppleAccountAppNamePolicy {
             .lazy
             .flatMap(\.signingTargets)
             .first(where: { normalize($0.bundleIdentifier) == target }) {
-            if let expiry = exactTarget.profileExpirationDate { return expiry }
+            return exactTarget.profileExpirationDate
         }
 
         for app in relatedApps where app.accountID == accountID {

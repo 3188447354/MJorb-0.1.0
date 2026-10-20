@@ -1,3 +1,9 @@
+# 2026-10-20 — CI 修正 Apple ID 到期日展示编译错误
+
+- **现象**：修复 AltSign 重复静态链接后，CI run `39375671383` 的 Swift 回归继续报错：`AppleAccountDetailView.swift:445` 对非 Optional `Date` 使用 `if let`。
+- **根因与修复**：`SigningTargetRecord.profileExpirationDate` 定义为必填 `Date`；页面逻辑误把它当成可选值。精确匹配目标后直接返回其有效期即可；缺少签名目标的 fallback 仍按原顺序查本地 App 记录与 Apple 返回值。
+- **验证状态**：签名器测试通过；Swift 回归失败已定位并修正，等待新 CI 编译验证。包构建 job 尚未结束；本地不运行 Swift/Xcode 或源码守卫。
+
 # 2026-10-20 — CI 修正 AltSign 静态库重复链接
 
 - **现象**：CI `swift-regression` 在 SwiftPM/Xcode 构建阶段以 exit 65 失败，提示 `AltSign-Static` 同时由 `SealTests` 和 `Seal` 静态链接，导致库代码重复。
