@@ -5,7 +5,7 @@
 - **修复**：`KeychainVault.loadAllSecrets()` 枚举当前应用可读的账号条目；续签预测/执行与证书页都按 Seal 运行签名者的序列号验证 P12，旧 UUID 不再导致重复接管。灵动岛图标改为优先从扩展 Asset Catalog 加载，原始 PNG 仍作回退。新增两条纯策略回归用例覆盖旧 UUID 下有/无匹配私钥；发布守卫 R125 钉住全量查询及两个消费点，R119 加入 Asset Catalog 优先级检查。
 - **上游对照**：SideStore 的 profile-only refresh 依据已安装应用签名身份，不要求本地 P12；Seal 保留首次接管的一次完整重签，只修正重装后账号 UUID 索引丢失造成的假阴性，详见 `docs/upstream-alignment.md`。
 - **涉及文件**：`Seal/Infrastructure/Security/KeychainVault.swift`、`Seal/Core/Renewal/SelfSigningIdentity.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、对应回归测试、发布守卫、版本、`RELEASE_NOTES.md`、上游对照台账与本日志。
-- **验证状态**：已检查桌面 0.1.37 IPA，扩展目录确实同时含 `SealBrandIcon.png` 与 `Assets.car`；源 PNG 正确显示 Seal 图案。已推送 0.1.39；CI #77 的 Swift 回归、签名器测试和发布安全守卫通过，错误标识清单已按工作流命令更新；CI 清单审计只剩 Windows CRLF 与 macOS LF 换行差异，现改为上传 LF 规范化内容；图标真机显示和重装后续签仍待设备验收。
+- **验证状态**：已检查桌面 0.1.37 IPA，扩展目录确实同时含 `SealBrandIcon.png` 与 `Assets.car`；源 PNG 正确显示 Seal 图案。CI #78 的 Swift 回归、签名器测试、发布安全守卫、错误标识审计及 IPA 构建/校验均通过；IPA 上传因远端 `project.yml` 保留 CRLF、版本生成文件名带 `\r` 失败，现将配置 blob 规范化为 LF 后重跑。图标真机显示和重装后续签仍待设备验收。
 
 ## 2026-10-20 CI 修正 About 更新抽屉编译
 
@@ -14,7 +14,8 @@
 - **CI #75**：Swift 回归与签名器测试通过。发布守卫仍按 About 页旧式单行 `.sheet` 匹配；`R119⑤` 变异检查期望了不存在的编号，`R125①–③` 期望子编号但共用 `R125` 断言，且 R120 变异锚点也未随 sheet 语法更新。同步修改源码断言、变异锚点与预期编号。
 - **CI #76**：Swift 回归、签名器测试及发布安全守卫通过；错误标识审计失败，因为改动让 `SigningCoordinator.swift` 与 `SettingsViewModel.swift` 中多处标识的行号后移。按工作流精确命令重新生成清单，现为 431 个标识、835 处。
 - **CI #77**：Swift 回归、签名器测试及发布安全守卫通过；错误标识审计仍失败，远端清单 blob 保留了 Windows CRLF，而 macOS 生成器输出 LF，导致 `git diff --exit-code` 把整份文件判为变化。错误行号已对齐；上传前将日志与清单统一转为 LF。
-- **验证状态**：等待下一轮 CI 验证 LF 规范化的错误标识清单；本机没有 Swift/Xcode 工具链。
+- **CI #78**：Swift 回归、签名器测试、发布安全守卫、错误标识审计及 IPA 构建/校验通过；两个 artifact 上传步骤失败，远端 `project.yml` blob 中的 CRLF 使版本提取值带尾随 `\r`，生成 `/Seal_0.1.39\r.ipa`，与实际产物名不符。修复是将该配置 blob 统一为 LF，再重跑完整工作流。
+- **验证状态**：等待 CI 验证规范化后的 IPA artifact 上传；本机没有 Swift/Xcode 工具链。
 
 ## 2026-10-20 更新抽屉改用签名抽屉容器
 
