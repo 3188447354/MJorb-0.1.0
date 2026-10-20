@@ -1,10 +1,10 @@
-# 2026-10-21 — CI 编译失败：MainActor.run 闭包调用形式不匹配
+# 2026-10-21 — CI 编译失败：MainActor.run 闭包参数标签与 guard 语法
 
-- **现象**：CI `39453521987` 的 `swift-regression` 在编译 `SigningCoordinator.swift:360` 时失败，随后测试未执行。
-- **根因**：`MainActor.run({ ... })` 把闭包作为无标签的首个实参传入；当前 Swift 并发 API 要求 `body` 闭包标签或尾随闭包，导致 `T` 无法推断并连带报缺少 `body` 参数。
-- **修复**：改用项目内已有的 `await MainActor.run { ... }` 尾随闭包写法；不改变 Seal 当前 Team / Bundle ID 身份核验逻辑。
+- **现象**：CI `39453521987` 与 `39455566660` 的 `swift-regression` 都在编译 `SigningCoordinator.swift:360` 时失败，测试未执行。
+- **根因**：`MainActor.run` 的首个参数是 `resultType`，直接写 `MainActor.run({ ... })` 会把闭包传给错误参数而无法推断 `T`。仅改成尾随闭包后，在 `guard` 的逗号条件列表里又无法被正确解析。
+- **修复**：显式使用 `MainActor.run(body: { ... })`，匹配当前 Swift 并发 API 的参数标签并保持 `guard` 语法明确；不改变 Seal 当前 Team / Bundle ID 身份核验逻辑。
 - **涉及文件**：`Seal/Core/Signing/SigningCoordinator.swift`、`DEBUG_LOG.md`。
-- **验证状态**：首轮完整 CI 的签名器测试通过，Swift/UI 回归因编译错误失败，构建安全守卫仍在运行；Windows 无 Swift/Xcode。修复提交后需重新跑 CI，未发布。
+- **验证状态**：两轮完整 CI 的签名器测试通过；Swift/UI 回归均因该调用语法失败，构建安全守卫仍在运行；Windows 无 Swift/Xcode。显式 `body:` 修复提交后需重新跑 CI，未发布。
 
 # 2026-10-20 — 批量续签误纳入设备扫回的第三方应用
 

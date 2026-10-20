@@ -357,9 +357,9 @@ actor SigningCoordinator {
             )
         }
         if app.isSeal {
-            guard let currentSeal = await MainActor.run {
+            guard let currentSeal = await MainActor.run(body: {
                 SelfAppMetadata.current(includeIcon: false)
-            },
+            }),
             let currentSealTeam = currentSeal.signingTeamIdentifier,
             currentSealTeam.isEmpty == false,
             currentSeal.bundleIdentifier.isEmpty == false else {
