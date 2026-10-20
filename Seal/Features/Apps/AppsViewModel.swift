@@ -130,14 +130,6 @@ final class AppsViewModel: ObservableObject {
     @Published private(set) var signingChannelStatus: SigningChannelStatus = .idle
     @Published private(set) var installingCachedPackageAppID: UUID?
 
-    private struct PendingTeamSwitch {
-        let app: AppRecord
-        let account: AppleAccountRecord
-        let requestedBundleIdentifier: String?
-        let completionMode: SigningCompletionMode
-    }
-    private var pendingTeamSwitch: PendingTeamSwitch?
-
     private let workflow: ImportWorkflow?
     private let appStore: (any AppStore)?
     private let fileStore: AppFileStore?
@@ -689,7 +681,7 @@ final class AppsViewModel: ObservableObject {
     ///
     /// 新安装时这是已安装列表有数据的唯一来源，必须在首屏前完成；
     /// 孤儿清理与描述文件清理不阻塞首屏，走 `runDeferredMaintenanceIfIdle()`。
-    /// 返回 true 表示补回了记录，调用方应当重新 `load()`。
+    /// 返回 true 表示补回了记录或图标，调用方应当重新 `load()`。
     func runEssentialMaintenanceIfIdle() async -> Bool {
         guard let maintenanceJob else { return false }
         return await maintenanceJob.restoreRecordsIfIdle()
@@ -1403,18 +1395,6 @@ final class AppsViewModel: ObservableObject {
 
     func performAlertRecovery(for failure: ImportFailure) {
         alertFailure = nil
-        if failure.code == "SEAL-AUTH-115",
-           let pending = pendingTeamSwitch {
-            pendingTeamSwitch = nil
-            let isRenewal = pending.app.belongsInInstalledList
-            startSigning(
-                app: pending.app,
-                account: pending.account,
-                requestedBundleIdentifier: isRenewal ? nil : pending.requestedBundleIdentifier,
-                completionMode: pending.completionMode
-            )
-            return
-        }
         let recovery = failure.recovery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard recovery != "知道了" else { return }
         if failure.hasStructuredSemantics {
@@ -1612,37 +1592,89 @@ final class AppsViewModel: ObservableObject {
             account = picked
         }
 
-        // Seal 覆盖安装自己（内部更新/自续签）的签名身份 = TeamID + Bundle ID；Bundle ID 由
-        // isSeal 分支保留，但 TeamID 取决于所选账号。若 Team 变化，iOS 判为全新应用，清空本地
-        // 容器（Accounts.json / Seal.sqlite）并使 Keychain 访问组失配 —— 即「更新后 Apple ID
-        // 失效需重新添加」。这里按当前运行 Seal 的真实签名 Team 纠正账号，保住身份；只有找不到
-        // 同 Team 账号（如首次从他人账号切到自己账号）才允许切换并提示会重置本地数据。
-        if app.isSeal,
-           let currentSealTeam = SelfAppMetadata.current()?.signingTeamIdentifier,
-           currentSealTeam.isEmpty == false,
-           account.teamID.caseInsensitiveCompare(currentSealTeam) != .orderedSame {
-            if let sameTeamAccount = verifiedAccounts.first(where: {
-                $0.teamID.caseInsensitiveCompare(currentSealTeam) == .orderedSame
-            }) {
-                account = sameTeamAccount
-                try? await logStore?.append(
-                    category: .signing,
-                    message: "Seal 自更新沿用同 Team 账号 \(sameTeamAccount.maskedEmail)，避免更新后 Apple ID 失效"
-                )
-            } else {
-                pendingTeamSwitch = PendingTeamSwitch(
-                    app: app,
-                    account: account,
-                    requestedBundleIdentifier: requestedBundleIdentifier,
-                    completionMode: completionMode
-                )
+        // Seal 覆盖安装必须保留运行包的 Team 与 Bundle ID：两者共同决定应用容器和
+        // Keychain 访问组。身份读不到或目标不一致时停止，避免更新后 Apple ID 与本机数据丢失。
+        if app.isSeal {
+            guard let currentSeal = SelfAppMetadata.current(includeIcon: false),
+                  let currentSealTeam = currentSeal.signingTeamIdentifier,
+                  currentSealTeam.isEmpty == false,
+                  currentSeal.bundleIdentifier.isEmpty == false else {
                 alertFailure = ImportFailure(
-                    title: "更新将重置本地数据",
-                    reason: "当前 Seal 由另一个团队的账号签名，改用所选 Apple ID 覆盖安装会清空已添加的 Apple ID 与已安装应用，需重新添加。",
-                    recovery: "继续签名",
-                    code: "SEAL-AUTH-115"
+                    title: "无法确认当前 Seal 身份",
+                    reason: "Seal 无法读取当前安装包的 Team ID 或 Bundle ID。为保护 Apple ID、证书和本机数据，本次更新已停止。",
+                    recovery: "重新打开 Seal 后重试",
+                    code: "SEAL-SELF-116",
+                    condition: .unexpected,
+                    action: .restartSeal,
+                    retryDisposition: .manual,
+                    operation: .sign,
+                    origin: .signing
                 )
                 return
+            }
+
+            let targetBundleIdentifier: String
+            do {
+                targetBundleIdentifier = try BundleIDPolicy.targetBundleIdentifier(
+                    for: app,
+                    requestedBundleIdentifier: requestedBundleIdentifier
+                )
+            } catch let failure as ImportFailure {
+                alertFailure = failure
+                return
+            } catch {
+                alertFailure = ImportFailure(
+                    title: "无法确认 Seal 更新包",
+                    reason: "Seal 更新记录中的 Bundle ID 无法读取，不能确认它会覆盖当前应用。为保护 Apple ID 和本机数据，本次更新已停止。",
+                    recovery: "重新导入与当前 Seal 相同的更新包",
+                    code: "SEAL-SELF-117",
+                    condition: .signedArtifactInvalid,
+                    action: .reimportIPA,
+                    retryDisposition: .manual,
+                    operation: .sign,
+                    origin: .signing
+                )
+                return
+            }
+            guard targetBundleIdentifier.caseInsensitiveCompare(currentSeal.bundleIdentifier) == .orderedSame else {
+                alertFailure = ImportFailure(
+                    title: "Seal 更新包身份不一致",
+                    reason: "当前 Seal 的 Bundle ID 是 \(currentSeal.bundleIdentifier)，更新包是 \(targetBundleIdentifier)。不同 Bundle ID 会被系统视为另一款 App，原有 Apple ID 和本机数据无法迁移。",
+                    recovery: "重新导入与当前 Seal Bundle ID 相同的更新包",
+                    code: "SEAL-SELF-117",
+                    condition: .signedArtifactInvalid,
+                    action: .reimportIPA,
+                    retryDisposition: .manual,
+                    operation: .sign,
+                    origin: .signing
+                )
+                return
+            }
+
+            if account.teamID.caseInsensitiveCompare(currentSealTeam) != .orderedSame {
+                if let sameTeamAccount = verifiedAccounts.first(where: {
+                    $0.teamID.caseInsensitiveCompare(currentSealTeam) == .orderedSame
+                }) {
+                    account = sameTeamAccount
+                    try? await logStore?.append(
+                        category: .signing,
+                        message: "Seal 自更新沿用同 Team 账号 \(sameTeamAccount.maskedEmail)，保留原应用数据与 Keychain 访问组"
+                    )
+                } else {
+                    alertFailure = ImportFailure(
+                        title: "无法跨团队更新 Seal",
+                        reason: "当前 Seal 属于团队 \(currentSealTeam)，所选账号属于团队 \(account.teamID)。跨团队签名会让 iOS 将 Seal 视为另一款应用，原有 Apple ID、应用记录和本机数据无法迁移。请添加或验证当前团队的 Apple ID 后重试。",
+                        recovery: "前往「我的」",
+                        code: "SEAL-AUTH-115",
+                        condition: .accountVerificationRequired,
+                        action: .addAccount,
+                        route: .account,
+                        retryDisposition: .manual,
+                        operation: .sign,
+                        origin: .authentication
+                    )
+                    return
+                }
             }
         }
 
@@ -2585,6 +2617,7 @@ final class AppsViewModel: ObservableObject {
             return
         }
         defer { releaseOperation(operationLease) }
+        var shouldPostRenewalCompleted = false
         // 批量续签只使用已保存会话；会话过期会快速失败，并统一引导到「我的」页重新验证。
         do {
             // 局部闭包变量默认逃逸，可直接传给 @escaping 参数的 refreshAll/refreshFailedItems；
@@ -2625,6 +2658,7 @@ final class AppsViewModel: ObservableObject {
                     )
                 }
             } else {
+                shouldPostRenewalCompleted = true
                 if result.awaitingConfirmation > 0 {
                     // 不能让旧进程关闭并清掉载荷。Seal 的结果只能由下一次启动中
                     // `SelfAppRegistrar` 读真实运行包身份后结算。
@@ -2663,8 +2697,6 @@ final class AppsViewModel: ObservableObject {
                 // 同时刷新内存中的应用列表，让已安装页立即显示新日期
                 // 两阶段提交：重排完成后再发 .sealRenewalCompleted，观察者读到的是新状态，不用睡2秒碰运气
                 await self.rescheduleNotificationsAfterRenewal()
-                // 通知停止后台保活（省电）：快捷指令触发的续签已完成，不需要再占后台
-                NotificationCenter.default.post(name: .sealRenewalCompleted, object: nil)
                 // 轮次总结已由 RenewalCoordinator 写入 SEAL-RENEW-ROUND
                 //（人话层：每 App 结果+耗时、本轮总耗时、成功/失败数），
                 // 这里不再重复写 SEAL-RENEW-009，避免一轮两条总结。
@@ -2717,6 +2749,10 @@ final class AppsViewModel: ObservableObject {
         }
         batchRefreshTask = nil
         isBackgroundBatchRefresh = false
+        if shouldPostRenewalCompleted {
+            // 结果载荷和后台运行状态都已结算，前台现在可以安全恢复结果抽屉。
+            NotificationCenter.default.post(name: .sealRenewalCompleted, object: nil)
+        }
     }
 
     /// 读一次并清位。**在 `runBatchRefresh` 入口处调用**（拿到 `result` 之前）——

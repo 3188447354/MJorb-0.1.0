@@ -2,57 +2,50 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// 续签完成通知：AppsViewModel 发出，AppContainer 监听并停止后台保活（省电）
+/// 续签完成通知：AppsViewModel 发出，AppContainer 监听并停止后台保活（省电）。
 extension Notification.Name {
     static let sealRenewalCompleted = Notification.Name("sealRenewalCompleted")
-    /// Seal 自身记录更新完成（自安装重启后的结算）：应用页收到后刷新列表，
-    /// "有新版本待安装"标签自动消失，不用手动切页面。
     static let sealSelfRecordUpdated = Notification.Name("sealSelfRecordUpdated")
 }
 
-/// 日志查看页：只显示人话卡片，不显示原始日志。
-/// 导出按钮在右上角（毛玻璃圆按钮，无文字）。
+private struct LogFailureDetail: Identifiable {
+    let id = UUID()
+    let title: String
+    let reason: String
+}
+
+/// 仅显示签名、续签和安装的最终结果；完整诊断仍保留在导出日志中。
 struct LogViewerView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var entries: [SealLogEntry] = []
     @State private var exportDocument: LogExportDocument?
     @State private var showClearConfirm = false
-    @State private var selectedError: SealLogEntry?
+    @State private var selectedFailure: LogFailureDetail?
     @State private var exportFailure: ImportFailure?
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
-                diagnosticGuide
-
-                Text("显示最近 \(entries.count) / \(LogViewerPolicy.maximumVisibleEntries) 条签名、续签和安装结果，最新记录在顶部。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                if entries.isEmpty {
-                    Text("暂无签名、续签或安装结果")
-                        .foregroundColor(.secondary)
-                        .padding(.top, 40)
-                } else {
-                    ForEach(entries) { entry in
-                        LogEntryCard(entry: entry) {
-                            selectedError = entry
-                        }
+            LazyVStack(spacing: 0) {
+                ForEach(entries) { entry in
+                    LogEntryRow(entry: entry) { title, reason in
+                        selectedFailure = LogFailureDetail(title: title, reason: reason)
                     }
+                    .padding(.vertical, 10)
+                    Divider()
                 }
             }
-            .padding()
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+            .padding(.bottom, 20)
         }
-        .refreshable {
-            await loadEntries()
-        }
+        .background(Color(.systemBackground))
+        .refreshable { await loadEntries() }
         .navigationTitle("日志")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 8) {
-                    Button(action: { showClearConfirm = true }) {
+                    Button { showClearConfirm = true } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.red)
@@ -71,25 +64,9 @@ struct LogViewerView: View {
         }
         .alert("清空日志？", isPresented: $showClearConfirm) {
             Button("取消", role: .cancel) {}
-            Button("清空", role: .destructive) {
-                Task { await clearLogs() }
-            }
+            Button("清空", role: .destructive) { Task { await clearLogs() } }
         } message: {
             Text("将删除所有本地日志，此操作不可恢复。")
-        }
-        .alert("解决办法", isPresented: Binding(
-            get: { selectedError != nil },
-            set: { if !$0 { selectedError = nil } }
-        )) {
-            Button("复制错误信息") {
-                if let err = selectedError {
-                    UIPasteboard.general.string = errorDetails(for: err)
-                }
-            }
-        } message: {
-            if let err = selectedError {
-                Text(errorDetails(for: err))
-            }
         }
         .alert(item: $exportFailure) { failure in
             Alert(
@@ -98,9 +75,10 @@ struct LogViewerView: View {
                 dismissButton: .default(Text("好的"))
             )
         }
-        .task {
-            await loadEntries()
+        .sheet(item: $selectedFailure) { detail in
+            LogFailureReasonSheet(detail: detail)
         }
+        .task { await loadEntries() }
         .onReceive(NotificationCenter.default.publisher(for: .sealRenewalCompleted)) { _ in
             Task { await loadEntries() }
         }
@@ -109,58 +87,33 @@ struct LogViewerView: View {
         }
     }
 
-    private var diagnosticGuide: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label("开发者排障", systemImage: "stethoscope")
-                .font(.system(size: 15, weight: .semibold))
-            Text("这里只显示签名、续签和安装的成功或失败结果，不显示过程日志。")
-            Text("页面保留最新 20 条，列表可上下滑动查看；点击失败记录可复制内容。")
-            Text("导出 Seal-log.txt 可查看完整诊断日志，并把错误码、操作名称和大致时间一并发给开发者。")
-        }
-        .font(.system(size: 13))
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(
-            Color(.secondarySystemBackground),
-            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
-        )
-    }
-
     private func loadEntries() async {
-        let loaded = await viewModel.logEntriesForViewing()
-        await MainActor.run {
-            entries = loaded
-        }
+        entries = await viewModel.logEntriesForViewing()
     }
 
     private func exportLogs() {
         Task {
             do {
                 let url = try await viewModel.materializeLogExport()
-                await MainActor.run {
-                    guard let document = LogExportDocument(url: url) else {
-                        exportFailure = ImportFailure(
-                            title: "无法导出日志",
-                            reason: "日志文件写入后未找到。",
-                            recovery: "稍后重试",
-                            code: "SEAL-LOG-002"
-                        )
-                        return
-                    }
-                    exportDocument = document
-                }
-            } catch let failure as ImportFailure {
-                await MainActor.run { exportFailure = failure }
-            } catch {
-                await MainActor.run {
+                guard let document = LogExportDocument(url: url) else {
                     exportFailure = ImportFailure(
                         title: "无法导出日志",
-                        reason: error.localizedDescription,
+                        reason: "日志文件写入后未找到。",
                         recovery: "稍后重试",
                         code: "SEAL-LOG-002"
                     )
+                    return
                 }
+                exportDocument = document
+            } catch let failure as ImportFailure {
+                exportFailure = failure
+            } catch {
+                exportFailure = ImportFailure(
+                    title: "无法导出日志",
+                    reason: error.localizedDescription,
+                    recovery: "稍后重试",
+                    code: "SEAL-LOG-002"
+                )
             }
         }
     }
@@ -169,191 +122,242 @@ struct LogViewerView: View {
         await viewModel.clearLogs()
         await loadEntries()
     }
-
-    private func errorDetails(for entry: SealLogEntry) -> String {
-        var details = entry.message
-        if let summary = LogViewerPolicy.operationSummary(for: entry) {
-            let technicalSummary = summary.technicalSummary()
-            if technicalSummary.isEmpty == false {
-                details += "\n\n诊断码：\n\(technicalSummary)"
-            }
-        } else if let code = entry.code {
-            details = "错误码：\(code)\n" + details
-        }
-        return details
-    }
 }
 
-private struct LogEntryCard: View {
+private struct LogEntryRow: View {
     let entry: SealLogEntry
-    let onSelectError: () -> Void
+    let onSelectFailure: (String, String) -> Void
 
     private var summary: RenewalRoundSummary? {
         LogViewerPolicy.operationSummary(for: entry)
     }
 
     var body: some View {
-        Group {
-            if LogViewerPolicy.operationResult(for: entry) == .failure {
-                Button(action: onSelectError) { content }
-                    .buttonStyle(.plain)
-            } else {
-                content
-            }
-        }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 5) {
             if let summary {
-                operationSummaryCard(summary)
-            } else {
                 HStack(spacing: 8) {
-                    Text(SealSettingsDateFormatter.string(from: entry.timestamp))
-                    Spacer(minLength: 4)
-                    resultBadge(LogViewerPolicy.operationResult(for: entry)?.displayName ?? entry.level.displayName)
+                    Text(heading(summary))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .singleLine()
+                    Spacer(minLength: 2)
+                    Text(statusTitle(summary))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(statusColor(summary))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(statusColor(summary).opacity(0.12), in: Capsule())
                 }
-                .font(.caption.weight(.semibold))
 
-                Text(cleanMessage)
-                    .font(.system(size: 15))
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                ForEach(summary.items.indices, id: \.self) { index in
+                    itemRow(summary.items[index])
+                }
+
+                Text(footer(summary))
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .singleLine()
+                    .padding(.top, 1)
+            } else {
+                fallbackRow
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func operationSummaryCard(_ summary: RenewalRoundSummary) -> some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(operationHeading(summary))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                resultBadge(operationResult(for: summary).displayName)
-            }
+    private func itemRow(_ item: RenewalRoundItem) -> some View {
+        HStack(spacing: 7) {
+            Text(marker(item.outcome))
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(outcomeColor(item.outcome))
+                .frame(width: 14, alignment: .leading)
 
-            ForEach(summary.items.indices, id: \.self) { index in
-                if index > 0 { Divider() }
-                operationItem(summary.items[index])
-            }
-
-            Divider()
-            Text(operationFooter(summary))
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func operationItem(_ item: RenewalRoundItem) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: symbol(for: item.outcome))
-                .font(.body.weight(.semibold))
-                .foregroundStyle(color(for: item.outcome))
-                .frame(width: 18)
             Text(item.appName)
-                .font(.body)
+                .font(.system(size: 14))
                 .foregroundStyle(.primary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(itemResultText(item))
-                .font(.body)
-                .foregroundStyle(color(for: item.outcome))
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 2)
+
+            switch item.outcome {
+            case .succeeded:
+                Text(item.profileExpirationDate.map {
+                    "有效期至 \(RenewalRoundSummary.formatExpirationDate($0))"
+                } ?? "成功")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .singleLine()
+            case .failed:
+                Button("查看失败原因") {
+                    let reason = item.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onSelectFailure(
+                        "\(item.appName) 失败原因",
+                        reason?.isEmpty == false ? reason! : entry.message
+                    )
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.sealAccent)
+                .lineLimit(1)
+                .fixedSize()
+            case .needsAction:
+                Button("查看原因") {
+                    let reason = item.failureReason?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    onSelectFailure(
+                        "\(item.appName) 未执行原因",
+                        reason?.isEmpty == false ? reason! : entry.message
+                    )
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.sealAccent)
+                .lineLimit(1)
+                .fixedSize()
+            case .awaitingConfirmation:
+                Text("等待确认")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.sealWarning)
+                    .singleLine()
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 23)
     }
 
-    private func operationHeading(_ summary: RenewalRoundSummary) -> String {
+    private var fallbackRow: some View {
+        HStack(spacing: 7) {
+            Text(SealSettingsDateFormatter.string(from: entry.timestamp))
+                .font(.system(size: 13, weight: .semibold))
+                .singleLine()
+            Text("· \(categoryTitle(entry.category))")
+                .font(.system(size: 13, weight: .semibold))
+                .singleLine()
+            Spacer(minLength: 2)
+            if LogViewerPolicy.operationResult(for: entry) == .failure {
+                Text("×")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.sealDanger)
+                Button("查看失败原因") {
+                    onSelectFailure("失败原因", entry.message)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.sealAccent)
+                .lineLimit(1)
+                .fixedSize()
+            } else {
+                Text("✓ 成功")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.sealSuccess)
+                    .singleLine()
+            }
+        }
+        .frame(height: 23)
+    }
+
+    private func heading(_ summary: RenewalRoundSummary) -> String {
         let date = SealSettingsDateFormatter.string(from: entry.timestamp)
         let title = summary.operation.displayTitle(triggerSource: summary.triggerSource)
-        guard summary.operation.showsAppCount else { return "\(date) · \(title)" }
-        return "\(date) · \(title) · \(summary.items.count)个App"
+        if summary.operation == .batchRenewal {
+            return "\(date) · \(title) · \(summary.items.count)个App"
+        }
+        return "\(date) · \(title)"
     }
 
-    private func operationFooter(_ summary: RenewalRoundSummary) -> String {
+    private func categoryTitle(_ category: SealLogEntry.Category) -> String {
+        switch category {
+        case .signing: "签名"
+        case .renewal: "续签"
+        case .installation: "安装"
+        case .account, .pairing, .system: "操作"
+        }
+    }
+
+    private func statusTitle(_ summary: RenewalRoundSummary) -> String {
+        if summary.awaitingCount > 0 { return "待确认" }
+        if summary.failedCount > 0 {
+            return summary.succeededCount > 0 ? "部分失败" : "失败"
+        }
+        if summary.needsActionCount > 0 {
+            return summary.succeededCount > 0 ? "部分未执行" : "未执行"
+        }
+        return "成功"
+    }
+
+    private func statusColor(_ summary: RenewalRoundSummary) -> Color {
+        if summary.failedCount > 0 { return .sealDanger }
+        if summary.needsActionCount > 0 || summary.awaitingCount > 0 { return .sealWarning }
+        return .sealSuccess
+    }
+
+    private func footer(_ summary: RenewalRoundSummary) -> String {
         let duration = RenewalRoundSummary.formatDuration(summary.totalDuration)
-        if summary.operation == .singleSigning {
-            return "\(summary.failedCount == 0 ? "完成" : "失败") · 共计 \(duration)"
+        if summary.operation == .singleSigning || summary.operation == .singleRenewal {
+            let failed = summary.failedCount + summary.needsActionCount > 0
+            return "共计 \(duration) · \(failed ? "失败" : "成功")"
         }
-
-        var parts = ["\(summary.succeededCount)/\(summary.items.count) 成功"]
-        if summary.failedCount > 0 { parts.append("\(summary.failedCount)失败") }
-        if summary.needsActionCount > 0 { parts.append("\(summary.needsActionCount)未执行") }
-        if summary.awaitingCount > 0 { parts.append("\(summary.awaitingCount)待确认") }
-        return "完成 · 共计 \(duration) · " + parts.joined(separator: " · ")
-    }
-
-    private func itemResultText(_ item: RenewalRoundItem) -> String {
-        switch item.outcome {
-        case .succeeded:
-            if let expiry = item.profileExpirationDate {
-                return "成功，有效期至 \(RenewalRoundSummary.formatExpirationDate(expiry))"
-            }
-            return "成功"
-        case .failed: return "失败"
-        case .needsAction: return "未执行"
-        case .awaitingConfirmation: return "待确认"
+        if summary.failedCount + summary.needsActionCount == 0 {
+            return "共计 \(duration) · \(summary.succeededCount)/\(summary.items.count) 成功"
         }
+        return "完成 · 共计 \(duration) · \(summary.succeededCount) 成功 · \(summary.failedCount + summary.needsActionCount)失败"
     }
 
-    private func operationResult(for summary: RenewalRoundSummary) -> SealLogEntry.OperationResult {
-        if summary.awaitingCount > 0 { return .notFinal }
-        return summary.failedCount + summary.needsActionCount > 0 ? .failure : .success
-    }
-
-    private func resultBadge(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(levelColor)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(levelColor.opacity(0.12), in: Capsule())
-    }
-
-    private var cleanMessage: String {
-        entry.message
-            .components(separatedBy: .newlines)
-            .filter { line in
-                !line.contains("━━━━━━━━") && !line.contains("────────────────")
-            }
-            .joined(separator: "\n")
-    }
-
-    private func symbol(for outcome: RenewalRoundItem.Outcome) -> String {
+    private func marker(_ outcome: RenewalRoundItem.Outcome) -> String {
         switch outcome {
-        case .succeeded: "checkmark.circle.fill"
-        case .failed: "xmark.circle.fill"
-        case .needsAction: "exclamationmark.circle.fill"
-        case .awaitingConfirmation: "clock.fill"
+        case .succeeded: "√"
+        case .failed: "×"
+        case .needsAction: "!"
+        case .awaitingConfirmation: "·"
         }
     }
 
-    private func color(for outcome: RenewalRoundItem.Outcome) -> Color {
+    private func outcomeColor(_ outcome: RenewalRoundItem.Outcome) -> Color {
         switch outcome {
         case .succeeded: .sealSuccess
         case .failed: .sealDanger
-        case .needsAction, .awaitingConfirmation: .sealWarning
-        }
-    }
-
-    private var levelColor: Color {
-        switch LogViewerPolicy.operationResult(for: entry) {
-        case .success: return .green
-        case .failure: return .sealDanger
-        case .notFinal, nil: break
-        }
-        return switch entry.level {
-        case .info: .secondary
-        case .warning: .sealWarning
-        case .error: .sealDanger
+        case .needsAction: .sealWarning
+        case .awaitingConfirmation: .sealWarning
         }
     }
 }
+
+private struct LogFailureReasonSheet: View {
+    let detail: LogFailureDetail
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Text(detail.reason)
+                    .font(.body)
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(20)
+            }
+            .background(Color(.systemBackground))
+            .navigationTitle(detail.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = detail.reason
+                    } label: {
+                        Label("复制", systemImage: "doc.on.doc")
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+private extension View {
+    func singleLine() -> some View {
+        lineLimit(1).minimumScaleFactor(0.72)
+    }
+}
+
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 
@@ -362,21 +366,4 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-/// iOS 26 原生毛玻璃按钮：直接作用在内容上，不套多余层级，低版本自动降级
-struct GlassButtonModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: Circle())
-        } else {
-            content.background(.ultraThinMaterial, in: Circle())
-        }
-    }
-}
-
-extension View {
-    func glassButton() -> some View {
-        modifier(GlassButtonModifier())
-    }
 }

@@ -270,8 +270,8 @@ struct SigningCertificateSettingsView: View {
                 localCertificateSection(account: account)
             } else {
                 missingCertificateHeader
+                otherCertificatesSection(account: account)
             }
-            otherCertificatesSection(account: account)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -398,8 +398,6 @@ struct SigningCertificateSettingsView: View {
             labels.append(.currentSealSigner)
         } else if certificate.hasLocalPrivateKey {
             labels.append(.locallyUsable)
-        } else {
-            labels.append(.external)
         }
         if CertificateRevocationImpact.associatedApps(
             serialNumber: certificate.serialNumber,
@@ -457,28 +455,6 @@ struct SigningCertificateSettingsView: View {
                             .background(Color.sealDanger.opacity(0.12), in: Capsule())
                     }
                     .buttonStyle(.plain)
-                    // Apple 侧删不掉的孤儿证书（如已撤销但列表仍返回），允许用户本地隐藏。
-                    if labels.contains(.external) {
-                        Button {
-                            if let account = activeAccount {
-                                Task {
-                                    await viewModel.dismissCertificate(
-                                        serialNumber: certificate.serialNumber,
-                                        accountID: account.id,
-                                        persistent: true
-                                    )
-                                }
-                            }
-                        } label: {
-                            Text("从列表移除")
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(Color.sealTextSecondary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Color.sealTextSecondary.opacity(0.1), in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                    }
                 }
             }
         }

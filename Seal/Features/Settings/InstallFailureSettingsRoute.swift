@@ -35,6 +35,9 @@ enum InstallFailureSettingsRoute {
     /// 新失败合同的唯一导航入口。UI 只消费 `ImportFailure.route`，不再从 `code`
     /// 反推问题类别；错误码仍会保留在日志中，供兼容旧记录和技术诊断使用。
     static func route(for failure: ImportFailure) -> SettingsRoute? {
+        // 2FA / 验证码失败需要进入已有的账号认证表单，不能只停在账号列表；
+        // 表单认证同一 Apple ID + Team 时会合并原记录并保留签名材料。
+        if failure.action == .enterNewVerificationCode { return .addAccount }
         switch failure.route {
         case .account: .account
         case .certificates: .certificates

@@ -27,6 +27,8 @@ struct InstalledRecordRecoverySummary: Equatable, Sendable {
     var candidates = 0
     /// 真正补回已安装列表的记录数。
     var recovered = 0
+    /// 从设备扫描并持久化图标的记录数。
+    var iconsUpdated = 0
     /// 候选里「设备上其实没装」而跳过的份数。
     var notInstalled = 0
     /// `done` / `skipped-*` / `failed-*`。
@@ -34,14 +36,14 @@ struct InstalledRecordRecoverySummary: Equatable, Sendable {
     var firstError: String?
     var samples: [String] = []
 
-    /// 是否值得写日志：**没有候选就不写**。每次启动都留一条「扫了 0 个」
+    /// 是否值得写日志：**没有候选、补回或补图标就不写**。每次启动都留一条「扫了 0 个」
     /// 只会把真实信号挤出环形缓冲（本仓已有的教训，见 R12 轮询降噪）。
     var shouldLog: Bool {
-        candidates > 0 || recovered > 0 || stage.hasPrefix("failed")
+        candidates > 0 || recovered > 0 || iconsUpdated > 0 || stage.hasPrefix("failed")
     }
 
     var logMessage: String {
-        var text = "设备端扫回已安装应用：候选 \(candidates)，补回 \(recovered)，"
+        var text = "设备端扫回已安装应用：候选 \(candidates)，补回 \(recovered)，补图标 \(iconsUpdated)，"
             + "设备上未安装 \(notInstalled)，阶段 \(stage)"
         if let firstError {
             text += "，首个错误 \(firstError)"

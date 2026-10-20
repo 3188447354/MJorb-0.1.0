@@ -120,6 +120,7 @@ struct PredictiveRenewalPolicyTests {
     ) -> AppRecord {
         AppRecord(
             originalBundleIdentifier: "com.example.\(name.lowercased())",
+            mappedBundleIdentifier: "com.example.\(name.lowercased()).TEAM000001",
             name: name,
             version: "1",
             buildNumber: "1",
@@ -127,6 +128,10 @@ struct PredictiveRenewalPolicyTests {
             state: state,
             expiryDate: expiry,
             accountID: accountID,
+            signingTeamID: "TEAM000001",
+            certificateSerialNumber: "ABC123",
+            signedDeviceIdentifier: "DEVICE-1",
+            provisioningProfileExpirationDate: expiry ?? Date(timeIntervalSince1970: 2_100_000_000),
             ipaRelativePath: "Apps/\(UUID().uuidString)/Original.ipa",
             importedAt: Date()
         )

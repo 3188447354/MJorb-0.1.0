@@ -40,12 +40,21 @@ enum RenewalRoundOperation: String, Codable, Equatable, Sendable {
         case .batchRenewal:
             switch triggerSource {
             case .manual: return "手动续签"
-            case .shortcut: return "快捷指令"
+            case .shortcut: return "快捷指令续签"
             case .background: return "后台续签"
             }
         case .singleRenewal:
-            return triggerSource == .shortcut ? "快捷指令" : "手动续签"
-        case .singleSigning: return "签名"
+            switch triggerSource {
+            case .manual: return "手动续签"
+            case .shortcut: return "快捷指令续签"
+            case .background: return "后台续签"
+            }
+        case .singleSigning:
+            switch triggerSource {
+            case .manual: return "签名"
+            case .shortcut: return "快捷指令签名"
+            case .background: return "后台签名"
+            }
         case .singleInstallation: return "安装"
         }
     }
@@ -195,20 +204,19 @@ struct RenewalRoundSummary: Codable, Equatable, Sendable {
         return f
     }()
 
-    /// 时长人话格式：4.2秒 / 1分23秒
+    /// 时长按真实起止时间四舍五入到 0.1 秒：4.2秒 / 1分23.4秒
     static func formatDuration(_ interval: TimeInterval) -> String {
-        let seconds = max(0, interval)
-        if seconds < 60 {
-            // 1 位小数，去掉 ".0"
-            let v = (seconds * 10).rounded() / 10
-            if v == v.rounded() {
-                return "\(Int(v))秒"
-            }
-            return "\(v)秒"
-        }
-        let m = Int(seconds / 60)
-        let s = Int(seconds.truncatingRemainder(dividingBy: 60))
-        return "\(m)分\(s)秒"
+        let roundedTenths = Int((max(0, interval) * 10).rounded())
+        let minutes = roundedTenths / 600
+        let remainingTenths = roundedTenths % 600
+        let wholeSeconds = remainingTenths / 10
+        let fractionalDigit = remainingTenths % 10
+        let secondsText = fractionalDigit == 0
+            ? "\(wholeSeconds)"
+            : "\(wholeSeconds).\(fractionalDigit)"
+        return minutes == 0
+            ? "\(secondsText)秒"
+            : "\(minutes)分\(secondsText)秒"
     }
 
     static func formatExpirationDate(_ date: Date) -> String {

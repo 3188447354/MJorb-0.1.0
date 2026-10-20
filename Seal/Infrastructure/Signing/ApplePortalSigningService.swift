@@ -411,6 +411,14 @@ actor ApplePortalSigningService {
         now.timeIntervalSince(fetchedAt) < ttl
     }
 
+    static func shouldUseCachedTeams(
+        bypassCache: Bool,
+        fetchedAt: Date,
+        now: Date = Date()
+    ) -> Bool {
+        bypassCache == false && isPortalReadCacheFresh(fetchedAt: fetchedAt, now: now)
+    }
+
     /// App ID 写操作成功后调用：对应 Team 的列表缓存立即失效。
     private func invalidateAppIDsCache(forTeamIdentifier teamIdentifier: String) {
         cachedAppIDsByTeamIdentifier.removeValue(forKey: teamIdentifier)
@@ -434,6 +442,98 @@ actor ApplePortalSigningService {
 
     private func diagnostic(_ message: String, level: SealLogEntry.Level = .info) async {
         try? await logStore?.append(category: .signing, level: level, message: message)
+    }
+
+    /// Expired portal sessions are recovered before signing or renewal can perform writes.
+    /// The Team lookup is read-only; only after its bounded 1100 retries fail do we use the
+    /// password already stored in Keychain, then verify the same account and Team again.
+    func ensureCurrentSession(
+        account: AppleAccountRecord,
+        secret: AccountSecret,
+        operation: FailureOperation = .sign
+    ) async throws -> AccountSecret {
+        let altAccount = ALTAccount()
+        altAccount.appleID = secret.email
+        altAccount.identifier = secret.accountIdentifier
+
+        let initialAnisette = try await anisetteProvider.fetch()
+        let initialSession = ALTAppleAPISession(
+            dsid: secret.dsid,
+            authToken: secret.authToken,
+            anisetteData: initialAnisette,
+            xcodeVersion: AppleAccountClient.xcodeVersion
+        )
+        do {
+            let teams = try await withSessionRecovery("验证 Apple ID 会话", retriesOnTimeout: true) {
+                try await self.fetchTeams(
+                    account: altAccount,
+                    session: initialSession,
+                    bypassCache: true
+                )
+            }
+            guard teams.contains(where: { $0.identifier == account.teamID }) else {
+                throw Self.failure(
+                    title: "Apple ID 团队不可用",
+                    reason: "Apple 返回的团队列表中找不到当前账号保存的 Team。账号记录和本机证书没有被删除。",
+                    recovery: "检查 Apple ID 团队状态后重试",
+                    code: "SEAL-AUTH-112d"
+                )
+            }
+            return secret
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            guard Self.isSessionExpiredError(error) else { throw error }
+            guard let password = secret.password, password.isEmpty == false else {
+                throw ImportFailure(
+                    title: "Apple ID 需要重新验证",
+                    reason: "本机保存的登录会话已失效，但此账号没有可用于自动恢复的已保存密码。账号记录和签名证书仍保留。",
+                    recovery: "到「我的」重新验证一次；之后 Seal 会保存登录凭据用于恢复会话",
+                    code: "SEAL-AUTH-107",
+                    condition: .accountVerificationRequired,
+                    action: .reauthenticateAccount,
+                    route: .account,
+                    retryDisposition: .manual,
+                    operation: operation,
+                    origin: .authentication
+                )
+            }
+
+            await diagnostic("Apple 会话重试后仍失效，尝试用钥匙串中已保存的凭据恢复", level: .warning)
+            let authenticated = try await accountClient.reauthenticate(
+                email: secret.email,
+                password: password,
+                verificationCode: { nil }
+            )
+            guard authenticated.accountIdentifier == secret.accountIdentifier else {
+                throw ImportFailure(
+                    title: "Apple ID 不匹配",
+                    reason: "自动恢复返回了不同的 Apple ID；Seal 保留原账号和本机签名材料，没有替换账号记录。",
+                    recovery: "到「我的」确认并重新验证原 Apple ID",
+                    code: "SEAL-AUTH-108",
+                    condition: .accountVerificationRequired,
+                    action: .reauthenticateAccount,
+                    route: .account,
+                    retryDisposition: .manual,
+                    operation: operation,
+                    origin: .authentication
+                )
+            }
+            guard authenticated.teams.contains(where: { $0.id == account.teamID }) else {
+                throw Self.failure(
+                    title: "Apple ID 团队不可用",
+                    reason: "重新登录成功，但 Apple 返回的团队列表中找不到原 Team。Seal 保留了原账号记录和本机证书。",
+                    recovery: "到「我的」检查 Apple ID 团队状态",
+                    code: "SEAL-AUTH-112d"
+                )
+            }
+            let refreshedSecret = secret.withNewSession(
+                dsid: authenticated.secret.dsid,
+                authToken: authenticated.secret.authToken
+            )
+            await diagnostic("Apple ID 会话已自动恢复，原有本机签名证书材料已保留")
+            return refreshedSecret
+        }
     }
 
     /// 签名器诊断的**过滤规则**（见 `signApp` 里 `onDiagnostic` 的注释）。
@@ -1404,11 +1504,12 @@ actor ApplePortalSigningService {
 
     private func fetchTeams(
         account: ALTAccount,
-        session: ALTAppleAPISession
+        session: ALTAppleAPISession,
+        bypassCache: Bool = false
     ) async throws -> [ALTTeam] {
         // 批量缓存：同一账号的团队列表一轮批量里不变（见文件头 MARK 注释）。
         if let cached = cachedTeamsByAccountIdentifier[account.identifier],
-           Self.isPortalReadCacheFresh(fetchedAt: cached.fetchedAt) {
+           Self.shouldUseCachedTeams(bypassCache: bypassCache, fetchedAt: cached.fetchedAt) {
             return cached.teams
         }
         let box: LegacyBox<[ALTTeam]> = try await withAppleTimeout {
@@ -1420,7 +1521,9 @@ actor ApplePortalSigningService {
                 }
             }
         }
-        cachedTeamsByAccountIdentifier[account.identifier] = (box.value, Date())
+        if bypassCache == false {
+            cachedTeamsByAccountIdentifier[account.identifier] = (box.value, Date())
+        }
         return box.value
     }
 

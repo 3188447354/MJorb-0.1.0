@@ -99,7 +99,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
         return copy
     }
 
-    /// 用新的 authToken 和 dsid 创建副本（自动重登时使用）。
+    /// 用新会话凭据创建副本；保留已保存密码与全部本机签名材料。
     func withNewSession(dsid: String, authToken: String) -> AccountSecret {
         AccountSecret(
             email: email,

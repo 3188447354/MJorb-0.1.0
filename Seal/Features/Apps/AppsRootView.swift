@@ -161,18 +161,20 @@ struct AppsRootView: View {
                 // 后台续签已经得到终态时，通知进入必须先展示结果；不能被启动维护、
                 // 设备核验或列表加载拖住，造成用户得点几次应用才看到抽屉。
                 requestSettledBackgroundBatchResultPresentation()
+                await viewModel.syncSelfRecordOnLaunch()
+                await viewModel.reloadSelfRecordSnapshot()
                 await settingsViewModel.load()
                 // ── 启动关键路径（阻塞首屏，只做最少必要）──
                 // 记录恢复（设备扫描发现 App）是新安装时列表有数据的唯一来源，
                 // 必须在首屏前完成。孤儿清理 / 描述文件清理 / 设备核验不阻塞首屏，
                 // 放后台延迟执行（用户操作开始时自动中止，下次再跑）。
-                let recoveredRecords = await viewModel.runEssentialMaintenanceIfIdle()
+                await viewModel.runEssentialMaintenanceIfIdle()
                 // 再恢复其余被中断项：上一轮留下的 running 项必须在任何新一轮续签覆盖队列文件之前
                 // 降级为 unknown，否则它们既不会被重试也不会被清理，永久停在「运行中」。
                 await viewModel.recoverInterruptedQueueIfNeeded()
-                // 恢复出了记录就强制重载：`.onAppear` 可能并发先刷出空列表，
-                // 不 force 的话恢复的记录要等后台核验才出现。
-                await viewModel.load(force: recoveredRecords)
+                // Seal 自替换会更新本机记录、证书身份和应用版本；启动时统一强制重载，
+                // 避免新进程先展示旧快照，等用户手动刷新才纠正。
+                await viewModel.load(force: true)
                 resolveInitialModeIfNeeded()
                 // ── 非关键路径（后台，不阻塞首屏）──
                 Task {
@@ -202,6 +204,9 @@ struct AppsRootView: View {
                 // 变化（冷启动和从通知中心回到已在后台的进程时序不同）。
                 requestSettledBackgroundBatchResultPresentation()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .sealRenewalCompleted)) { _ in
+                requestSettledBackgroundBatchResultPresentation()
+            }
             // 真正要导入时才切到待签名页：
             // 2026-10-09 重设计：覆盖更新（含 Seal 自更新）也进待签名页，不再留在已安装页。
             .onChange(of: viewModel.isImportSheetPresented) { isPresented in
@@ -222,11 +227,6 @@ struct AppsRootView: View {
             .onAppear {
                 isResultPresentationHostReady = true
                 requestSettledBackgroundBatchResultPresentation()
-                // 安装后重开 App，提示不消失，要点别的页再回来才刷——强制重载
-                Task {
-                    await viewModel.syncSelfRecordOnLaunch()
-                    await viewModel.load(force: true)
-                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .sealSelfRecordUpdated)) { _ in
                 // 自安装重启后，记录与证书派生状态必须同一轮发布。
@@ -451,8 +451,8 @@ struct AppsRootView: View {
                 isHostReady: isResultPresentationHostReady,
                 isAppActive: scenePhase == .active
             ) else { return }
+            guard viewModel.presentSettledBackgroundBatchResultIfNeeded() else { return }
             hasPendingBackgroundResultPresentation = false
-            _ = viewModel.presentSettledBackgroundBatchResultIfNeeded()
         }
     }
 

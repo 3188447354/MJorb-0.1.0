@@ -31,6 +31,9 @@ protocol InstalledAppScanning: Sendable {
     /// `nil` 表示设备清单无法读取；空数组表示已成功读取但没有匹配应用。
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]?
 
+    /// 按归一化 Bundle ID 读取本机 LaunchServices 图标；失败或不可用时返回空字典。
+    func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data]
+
     /// 阳性对照 ＋ 逐条设备核验，**先问完再动手**。
     /// `nil` = 通道不可信（**一条记录都不许建**）。
     func scanConfirmedInstalledBundleIdentifiers(
@@ -41,6 +44,7 @@ protocol InstalledAppScanning: Sendable {
 
 extension InstalledAppScanning {
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+    func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] { [:] }
 }
 
 /// 设备端「已验证侧载应用」的只读扫描：读取描述文件和安装代理的用户应用清单。
@@ -61,6 +65,10 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
 
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
         await Self.validatedUserApplications()
+    }
+
+    func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
+        await InstalledAppScanner().scanIconData(for: normalizedBundleIdentifiers)
     }
 
     func scanConfirmedInstalledBundleIdentifiers(

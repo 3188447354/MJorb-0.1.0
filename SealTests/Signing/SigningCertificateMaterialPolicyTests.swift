@@ -143,16 +143,38 @@ struct SigningCertificateMaterialPolicyTests {
 
     @Test
     func reauthenticationPreservesHistoricalSigningMaterial() {
-        var old = AccountSecret(email: "test@example.invalid", accountIdentifier: "test", dsid: "old", authToken: "old", password: nil)
+        var old = AccountSecret(email: "test@example.invalid", accountIdentifier: "test", dsid: "old", authToken: "old", password: "stored-password")
         old.storeCertificateMaterial(p12: Data([1]), serialNumber: "AA11", machineIdentifier: "a")
         old.storeCertificateMaterial(p12: Data([2]), serialNumber: "BB22", machineIdentifier: "b")
-        let authenticated = AccountSecret(email: "test@example.invalid", accountIdentifier: "test", dsid: "new", authToken: "new", password: nil)
+        let authenticated = AccountSecret(email: "test@example.invalid", accountIdentifier: "test", dsid: "new", authToken: "new", password: "stored-password")
         let merged = authenticated.preservingSigningMaterial(from: old)
         #expect(merged.authToken == "new")
+        #expect(merged.password == "stored-password")
         #expect(merged.p12(for: "0AA11") == Data([1]))
         #expect(merged.p12(for: "BB22") == Data([2]))
         #expect(merged.machineIdentifier(for: "AA11") == "a")
         let other = AccountSecret(email: "other@example.invalid", accountIdentifier: "other", dsid: "new", authToken: "new", password: nil)
         #expect(other.preservingSigningMaterial(from: old).certificateP12BySerial.isEmpty)
+    }
+
+    @Test
+    func refreshedSessionRetainsPasswordAndHistoricalCertificates() {
+        var old = AccountSecret(
+            email: "test@example.invalid",
+            accountIdentifier: "test",
+            dsid: "old",
+            authToken: "old",
+            password: "stored-password"
+        )
+        old.storeCertificateMaterial(p12: Data([1]), serialNumber: "AA11", machineIdentifier: "a")
+        old.storeCertificateMaterial(p12: Data([2]), serialNumber: "BB22", machineIdentifier: "b")
+
+        let refreshed = old.withNewSession(dsid: "new", authToken: "new")
+
+        #expect(refreshed.dsid == "new")
+        #expect(refreshed.authToken == "new")
+        #expect(refreshed.password == "stored-password")
+        #expect(refreshed.p12(for: "AA11") == Data([1]))
+        #expect(refreshed.p12(for: "BB22") == Data([2]))
     }
 }

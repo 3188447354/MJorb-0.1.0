@@ -867,6 +867,18 @@ actor AppFileStore {
         return relativePath
     }
 
+    func storeIcon(data: Data, appID: UUID) throws -> String {
+        let relativePath = "Apps/\(appID.uuidString)/Icon.png"
+        let destination = try fileURL(relativePath: relativePath)
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: destination, options: .atomic)
+        try protect(destination)
+        return relativePath
+    }
+
     func removePreferredIcon(appID: UUID) throws {
         let relativePath = "Apps/\(appID.uuidString)/PreferredIcon.png"
         let url = try fileURL(relativePath: relativePath)

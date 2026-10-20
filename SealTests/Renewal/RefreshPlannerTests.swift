@@ -61,8 +61,8 @@ struct RefreshPlannerTests {
     /// 旧实现在这里 `return nil`，于是「批量续签完成」看起来一切正常，实际有应用
     /// 根本没被处理，用户既看不到它、也不知道为什么。现在必须显式进队列并带上原因。
     @Test
-    func appsWithoutBoundAccountsBecomeExplicitRequiresAction() {
-        let app = app(name: "Unsigned", expiry: nil, accountID: nil)
+    func managedAppsWithoutBoundAccountsBecomeExplicitRequiresAction() {
+        let app = app(name: "Managed", expiry: nil, accountID: nil)
 
         let queue = RefreshPlanner().makeQueue(apps: [app])
 
@@ -75,16 +75,26 @@ struct RefreshPlannerTests {
     }
 
     @Test
-    func recoveredInstalledAppWithoutSourceIPAIsReportedAsNeedsAction() {
+    func deviceRecoveredNonSealSignedAppRemainsInstalledButIsExcludedFromRenewal() {
         var app = app(name: "Recovered", expiry: nil, accountID: UUID())
         app.needsIPAImport = true
+        app.certificateSerialNumber = nil
+        app.signedDeviceIdentifier = nil
 
         let queue = RefreshPlanner().makeQueue(apps: [app])
 
-        #expect(queue.count == 1)
+        #expect(app.belongsInInstalledList)
+        #expect(queue.isEmpty)
+    }
+
+    @Test
+    func previouslySealSignedAppWithoutAccountRemainsVisibleAsRequiresAction() {
+        let app = app(name: "Managed", expiry: nil, accountID: nil)
+
+        let queue = RefreshPlanner().makeQueue(apps: [app])
+
+        #expect(queue.map(\.appID) == [app.id])
         #expect(queue.first?.state == .requiresAction)
-        #expect(queue.first?.accountID == nil)
-        #expect(queue.first?.requiresActionReason?.contains("导入 IPA") == true)
     }
 
     @Test("完整签名身份可只续描述文件时，不因缺少源 IPA 而拦截")
@@ -200,6 +210,7 @@ struct RefreshPlannerTests {
     ) -> AppRecord {
         AppRecord(
             originalBundleIdentifier: "com.example.\(name.lowercased())",
+            mappedBundleIdentifier: "com.example.\(name.lowercased()).TEAM000001",
             name: name,
             version: "1",
             buildNumber: "1",
@@ -207,6 +218,10 @@ struct RefreshPlannerTests {
             state: .installed,
             expiryDate: expiry,
             accountID: accountID,
+            signingTeamID: "TEAM000001",
+            certificateSerialNumber: "ABC123",
+            signedDeviceIdentifier: "DEVICE-1",
+            provisioningProfileExpirationDate: expiry ?? Date(timeIntervalSince1970: 2_100_000_000),
             ipaRelativePath: "Apps/\(UUID().uuidString)/Original.ipa",
             isSeal: isSeal,
             importedAt: Date()

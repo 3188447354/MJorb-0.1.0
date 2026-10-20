@@ -728,7 +728,7 @@ struct SigningProgressView: View {
         case .retry: "重新签名"
         case .addAccount: "添加 Apple ID"
         case .reauthenticateAccount: "重新验证 Apple ID"
-        case .enterNewVerificationCode: "输入新验证码"
+        case .enterNewVerificationCode: "重新验证 Apple ID"
         case .reimportIPA: "重新选择 IPA"
         case .waitThenRetry, .trustDevice, .freeDeviceStorage,
              .removeInstalledApp, .checkInstallationResult, .restartSeal, .copyDiagnostics:

@@ -60,7 +60,6 @@ struct SelfManagementPresentation: Equatable, Sendable {
 enum CertificateRoleLabel: Equatable, Sendable {
     case currentSealSigner       // 当前 Seal 实际使用
     case locallyUsable           // 本机持有匹配私钥
-    case external                // Apple 端存在但本机没有私钥
     case associatedOnThisDevice  // 只统计本机已安装 App
     case associationUnknown      // 无法确认
 
@@ -68,7 +67,6 @@ enum CertificateRoleLabel: Equatable, Sendable {
         switch self {
         case .currentSealSigner: return "当前 Seal 实际使用"
         case .locallyUsable: return "本机可用于签名"
-        case .external: return "只存在于 Apple 服务器"
         case .associatedOnThisDevice: return "本机已安装 App 在用"
         case .associationUnknown: return "关联状态无法确认"
         }
@@ -181,6 +179,7 @@ final class SettingsViewModel: ObservableObject {
     private let accountRepository: (any AccountRepository)?
     private let keychain: KeychainVault?
     private let accountClient: AppleAccountClient?
+    private let portalSessionService: ApplePortalSigningService?
     private let pairingStore: PairingStore?
     private let installChannel: (any InstallChannel)?
     private let pairingTunnelProbe: any VPNOnDemandActivating
@@ -214,6 +213,7 @@ final class SettingsViewModel: ObservableObject {
         accountRepository: any AccountRepository,
         keychain: KeychainVault,
         accountClient: AppleAccountClient,
+        portalSessionService: ApplePortalSigningService? = nil,
         pairingStore: PairingStore,
         installChannel: any InstallChannel,
         appStore: any AppStore,
@@ -232,6 +232,7 @@ final class SettingsViewModel: ObservableObject {
         self.accountRepository = accountRepository
         self.keychain = keychain
         self.accountClient = accountClient
+        self.portalSessionService = portalSessionService
         self.pairingStore = pairingStore
         self.installChannel = installChannel
         self.pairingTunnelProbe = pairingTunnelProbe
@@ -264,6 +265,7 @@ final class SettingsViewModel: ObservableObject {
         accountRepository = nil
         keychain = nil
         accountClient = nil
+        portalSessionService = nil
         pairingStore = nil
         installChannel = nil
         pairingTunnelProbe = LocalDevVPNOnDemandActivator()
@@ -287,6 +289,7 @@ final class SettingsViewModel: ObservableObject {
         accountRepository = nil
         keychain = nil
         accountClient = nil
+        portalSessionService = nil
         pairingStore = nil
         installChannel = nil
         pairingTunnelProbe = LocalDevVPNOnDemandActivator()
@@ -573,7 +576,7 @@ final class SettingsViewModel: ObservableObject {
         defer { isCertificateOperationRunning = false }
 
         do {
-            guard let originalSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "无法创建证书",
@@ -582,6 +585,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-AUTH-105b"
                 )
             }
+            let originalSecret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
 
             let material = try await applePortalCertificateService.createLocalCertificate(
                 account: account,
@@ -666,7 +674,7 @@ final class SettingsViewModel: ObservableObject {
         var remoteRevocationConfirmed = false
         var recoveryJournalSaved = true
         do {
-            guard let originalSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "无法撤销证书",
@@ -675,6 +683,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-AUTH-105c"
                 )
             }
+            let originalSecret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
 
             // 真实签名者 A 永远不可撤销：撤了当前运行的 Seal 立刻「不再可用」。
             // 身份读不出来时无法证明目标不是 A，一律拒绝（只相信真实 CMS 签名者）。
@@ -801,7 +814,7 @@ final class SettingsViewModel: ObservableObject {
         var remoteRevocationConfirmed = false
         var recoveryJournalSaved = true
         do {
-            guard let originalSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "无法更换证书",
@@ -810,6 +823,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-AUTH-105d"
                 )
             }
+            let originalSecret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
 
             // 用户确认后、撤销前：重新拉远端清单 + 重新读取真实签名者 A。
             // 确认与执行之间状态可能已变化，撤销不可逆，绝不复用旧快照。
@@ -978,7 +996,7 @@ final class SettingsViewModel: ObservableObject {
         defer { isCertificateOperationRunning = false }
 
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 throw Self.failure(
                     title: "无法分析证书",
                     reason: "本机没有当前 Apple ID 的登录凭据。",
@@ -986,6 +1004,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-AUTH-105g"
                 )
             }
+            let secret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
             // 撤销决策必须基于当下远端清单，不能用缓存。
             let inventory = try await applePortalInventoryService.fetchInventory(
                 account: account,
@@ -1070,7 +1093,7 @@ final class SettingsViewModel: ObservableObject {
         defer { isCertificateOperationRunning = false }
 
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 throw Self.failure(
                     title: "无法清理证书",
                     reason: "本机没有当前 Apple ID 的登录凭据。",
@@ -1078,6 +1101,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-AUTH-105h"
                 )
             }
+            let secret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
 
             // 复核：只对「仍在最新计划的可撤销集合里」的证书执行撤销。
             let freshInventory = try await applePortalInventoryService.fetchInventory(
@@ -1498,7 +1526,7 @@ final class SettingsViewModel: ObservableObject {
         defer { finishCertificateInventoryRefresh(ticket) }
 
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 throw Self.failure(
                     title: "Apple ID 同步失败",
                     reason: "本机没有此 Apple ID 的登录凭据。",
@@ -1506,6 +1534,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-INVENTORY-100b"
                 )
             }
+            let secret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
             // 证书页只关心证书：只拉 certificates（省掉 teams/appIDs 两次请求），
             // App ID 列表复用缓存（与 refreshCertificateInventory 同一做法）。
             // 无缓存时才拉全量（.all）把 App ID 列表也补上，避免计数显示 0。
@@ -1553,7 +1586,7 @@ final class SettingsViewModel: ObservableObject {
             certificateInventoryFailures[account.id] = failure
             let health = await localCertificateHealthStatus(
                 account: account,
-                portalState: failure.code == "SEAL-AUTH-107" ? .invalid : .unknown
+                portalState: .unknown
             )
             guard acceptsCertificateInventoryRefresh(ticket) else { return }
             certificateHealthStatuses[account.id] = health
@@ -1594,7 +1627,7 @@ final class SettingsViewModel: ObservableObject {
         defer { finishCertificateInventoryRefresh(ticket) }
 
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 // 后台同步不改变账号验证状态：Keychain 瞬时不可读不应把 ID 标为失效。
                 // 凭据缺失只记录同步失败，用户主动验证时才会标记 needsVerification。
                 throw Self.failure(
@@ -1604,6 +1637,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-INVENTORY-100"
                 )
             }
+            let secret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
             let fetched = try await applePortalInventoryService.fetchInventory(
                 account: account,
                 secret: secret,
@@ -1711,7 +1749,7 @@ final class SettingsViewModel: ObservableObject {
         defer { finishCertificateInventoryRefresh(ticket) }
 
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 // 后台同步不改变账号验证状态，同上。
                 throw Self.failure(
                     title: "Apple 侧同步失败",
@@ -1720,6 +1758,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-INVENTORY-100a"
                 )
             }
+            let secret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
             let fetched = try await applePortalInventoryService.fetchInventory(
                 account: account,
                 secret: secret,
@@ -1752,12 +1795,9 @@ final class SettingsViewModel: ObservableObject {
         } catch let failure as ImportFailure {
             guard acceptsCertificateInventoryRefresh(ticket) else { return }
             certificateInventoryFailures[account.id] = failure
-            // authToken失效(SEAL-AUTH-107)时证书标无效，避免显示"有效但实际用不了"的矛盾
-            let portalState: CertificateHealthStatus.CheckState =
-                failure.code == "SEAL-AUTH-107" ? .invalid : .unknown
             let health = await localCertificateHealthStatus(
                 account: account,
-                portalState: portalState
+                portalState: .unknown
             )
             guard acceptsCertificateInventoryRefresh(ticket) else { return }
             certificateHealthStatuses[account.id] = health
@@ -2309,6 +2349,39 @@ final class SettingsViewModel: ObservableObject {
         return true
     }
 
+    private func ensurePortalSession(
+        account: AppleAccountRecord,
+        secret: AccountSecret,
+        operation: FailureOperation
+    ) async throws -> AccountSecret {
+        guard let portalSessionService else { return secret }
+        let refreshed = try await portalSessionService.ensureCurrentSession(
+            account: account,
+            secret: secret,
+            operation: operation
+        )
+        if refreshed.authToken != secret.authToken || refreshed.dsid != secret.dsid {
+            guard let keychain else { return refreshed }
+            try await keychain.save(refreshed, for: account.id)
+            try? await logStore?.append(
+                category: .account,
+                message: "Apple ID 会话已更新并保存；账号记录和本机签名证书保留"
+            )
+        }
+        if let accountRepository,
+           var stored = (try? await accountRepository.fetchAll())?.first(where: { $0.id == account.id }),
+           (stored.status != .verified || stored.verificationFailureReason != nil) {
+            stored.status = .verified
+            stored.verificationFailureReason = nil
+            stored.lastVerifiedAt = Date()
+            try await accountRepository.save(stored)
+            if let index = accounts.firstIndex(where: { $0.id == stored.id }) {
+                accounts[index] = stored
+            }
+        }
+        return refreshed
+    }
+
     func deleteAccount(_ account: AppleAccountRecord) async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 删除账号: \(account.id.uuidString.prefix(8))")
         guard let accountRepository, let keychain else { return }
@@ -2831,7 +2904,7 @@ final class SettingsViewModel: ObservableObject {
 
         diagnosticState = .running
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "账号需要验证",
@@ -2840,6 +2913,11 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-AUTH-105e"
                 )
             }
+            let secret = try await ensurePortalSession(
+                account: account,
+                secret: storedSecret,
+                operation: .validateAccount
+            )
 
             do {
                 try await accountClient.validate(account: account, secret: secret)

@@ -565,6 +565,9 @@ struct InstalledRecordRecoveryPolicyTests {
         #expect(summary.shouldLog == false)
         summary.candidates = 2
         #expect(summary.shouldLog)
+        var iconsUpdated = InstalledRecordRecoverySummary()
+        iconsUpdated.iconsUpdated = 1
+        #expect(iconsUpdated.shouldLog)
         var failed = InstalledRecordRecoverySummary()
         failed.stage = "failed-save"
         #expect(failed.shouldLog)
@@ -575,12 +578,14 @@ struct InstalledRecordRecoveryPolicyTests {
         var summary = InstalledRecordRecoverySummary()
         summary.candidates = 3
         summary.recovered = 2
+        summary.iconsUpdated = 1
         summary.notInstalled = 1
         summary.stage = "done"
         summary.samples = ["com.example.demo.seal.ABCDE12345"]
         let message = summary.logMessage
         #expect(message.contains("候选 3"))
         #expect(message.contains("补回 2"))
+        #expect(message.contains("补图标 1"))
         #expect(message.contains("阶段 done"))
         #expect(message.contains("com.example.demo.seal.ABCDE12345"))
     }

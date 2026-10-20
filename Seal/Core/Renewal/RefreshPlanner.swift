@@ -15,6 +15,7 @@ struct RefreshPlanner: Sendable {
     ) -> [RefreshQueueItem] {
         apps
             .filter { $0.belongsInInstalledList }
+            .filter(\.isSealManagedRenewalCandidate)
             .filter { app in
                 predictiveWindow.map {
                     PredictiveRenewalPolicy.needsBackgroundRenewal(app: app, now: now, window: $0)

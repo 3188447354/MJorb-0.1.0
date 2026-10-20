@@ -235,20 +235,11 @@ final class AppleAccountClient {
         email: String,
         password: String,
         verificationCode: @escaping @MainActor @Sendable () async -> String?
-    ) async throws -> AccountSecret {
-        let anisetteData = try await anisetteProvider.fetchForAuthentication()
-        let auth = try await authenticate(
+    ) async throws -> AuthenticatedAppleAccount {
+        try await authenticate(
             email: email,
             password: password,
-            anisetteData: anisetteData,
             verificationCode: verificationCode
-        ).value
-        return AccountSecret(
-            email: email,
-            accountIdentifier: auth.account.identifier,
-            dsid: auth.session.dsid,
-            authToken: auth.session.authToken,
-            password: password
         )
     }
 

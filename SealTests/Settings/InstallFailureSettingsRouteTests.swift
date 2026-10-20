@@ -48,6 +48,24 @@ struct InstallFailureSettingsRouteTests {
         #expect(InstallFailureSettingsRoute.route(for: failure) == nil)
     }
 
+    @Test
+    func verificationCodeFailureOpensAccountAuthenticationForm() {
+        let failure = ImportFailure(
+            title: "Apple ID 需要双重认证",
+            reason: "Apple 要求输入验证码。",
+            recovery: "输入 Apple 发来的验证码。",
+            code: "SEAL-AUTH-101a",
+            condition: .twoFactorAuthenticationRequired,
+            action: .enterNewVerificationCode,
+            route: .account,
+            retryDisposition: .manual,
+            operation: .authenticateAccount,
+            origin: .authentication
+        )
+
+        #expect(InstallFailureSettingsRoute.route(for: failure) == .addAccount)
+    }
+
     // MARK: - 通道 / 本地隧道类：只有这些才进入设备页中的连接诊断
 
     @Test(arguments: [

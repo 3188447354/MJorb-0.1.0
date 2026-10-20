@@ -7,7 +7,7 @@ struct AboutView: View {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.1.0"
     }
 
-    @State private var updateFailure: UpdateCheckFailure?
+    @State private var updateAlert: UpdateAlert?
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -27,14 +27,21 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
-        .alert(updateFailure?.statusText ?? "暂时无法检查更新", isPresented: Binding(
-            get: { updateFailure != nil },
-            set: { if !$0 { updateFailure = nil } }
-        )) {
-            Button("重试") { checkUpdate() }
-            Button("关闭", role: .cancel) {}
-        } message: {
-            Text(updateFailure?.detail ?? "请检查网络后重试")
+        .alert(item: $updateAlert) { alert in
+            if alert.canRetry {
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    primaryButton: .default(Text("重试"), action: checkUpdate),
+                    secondaryButton: .cancel(Text("关闭"))
+                )
+            } else {
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("好"))
+                )
+            }
         }
     }
 
@@ -177,11 +184,24 @@ struct AboutView: View {
     }
 
     private func checkUpdate() {
-        updateFailure = nil
+        updateAlert = nil
         Task {
             guard let result = await updateCoordinator.checkManually() else { return }
-            if case .unavailable(let failure) = result {
-                updateFailure = failure
+            switch result {
+            case .unavailable(let failure):
+                updateAlert = UpdateAlert(
+                    title: failure.statusText,
+                    message: failure.detail,
+                    canRetry: true
+                )
+            case .latest:
+                updateAlert = UpdateAlert(
+                    title: "已是最新版本",
+                    message: "当前版本 \(version) 已是最新版本。",
+                    canRetry: false
+                )
+            case .available:
+                break
             }
         }
     }
@@ -195,5 +215,12 @@ struct AboutView: View {
         else { return nil }
         return UIImage(named: iconName)
     }
+}
+
+private struct UpdateAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+    let canRetry: Bool
 }
 

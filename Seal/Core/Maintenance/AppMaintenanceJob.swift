@@ -114,13 +114,13 @@ final class AppMaintenanceJob {
     ///
     /// 新安装时这是已安装列表有数据的唯一来源，必须在首屏前完成；
     /// 孤儿清理与描述文件清理不阻塞首屏，走 `sweepIfIdle()` 延迟到后台。
-    /// 返回 true 表示补回了记录，调用方应当重新 load。
+    /// 返回 true 表示补回了记录或图标，调用方应当重新 load。
     func restoreRecordsIfIdle() async -> Bool {
         guard let token = gate.tryAcquire() else { return false }
         defer { gate.end(token) }
         let result = await performRecordRecovery(token: token)
         if case .completed(let summary) = result {
-            return summary.recovered > 0
+            return summary.recovered > 0 || summary.iconsUpdated > 0
         }
         return false
     }

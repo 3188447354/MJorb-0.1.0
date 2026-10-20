@@ -356,6 +356,59 @@ actor SigningCoordinator {
                 code: "SEAL-AUTH-105"
             )
         }
+        if app.isSeal {
+            guard let currentSeal = await MainActor.run({
+                SelfAppMetadata.current(includeIcon: false)
+            }),
+            let currentSealTeam = currentSeal.signingTeamIdentifier,
+            currentSealTeam.isEmpty == false,
+            currentSeal.bundleIdentifier.isEmpty == false else {
+                throw ImportFailure(
+                    title: "无法确认当前 Seal 身份",
+                    reason: "Seal 无法读取当前安装包的 Team ID 或 Bundle ID。为保护 Apple ID、证书和本机数据，本次更新已停止。",
+                    recovery: "重新打开 Seal 后重试",
+                    code: "SEAL-SELF-116",
+                    condition: .unexpected,
+                    action: .restartSeal,
+                    retryDisposition: .manual,
+                    operation: .sign,
+                    origin: .signing
+                )
+            }
+            let targetBundleIdentifier = try BundleIDPolicy.targetBundleIdentifier(
+                for: app,
+                requestedBundleIdentifier: requestedBundleIdentifier
+            )
+            guard targetBundleIdentifier.caseInsensitiveCompare(
+                currentSeal.bundleIdentifier
+            ) == .orderedSame else {
+                throw ImportFailure(
+                    title: "Seal 更新包身份不一致",
+                    reason: "当前 Seal 的 Bundle ID 是 \(currentSeal.bundleIdentifier)，更新包是 \(targetBundleIdentifier)。不同 Bundle ID 会被系统视为另一款 App，原有 Apple ID 和本机数据无法迁移。",
+                    recovery: "重新导入与当前 Seal Bundle ID 相同的更新包",
+                    code: "SEAL-SELF-117",
+                    condition: .signedArtifactInvalid,
+                    action: .reimportIPA,
+                    retryDisposition: .manual,
+                    operation: .sign,
+                    origin: .signing
+                )
+            }
+            guard account.teamID.caseInsensitiveCompare(currentSealTeam) == .orderedSame else {
+                throw ImportFailure(
+                    title: "无法跨团队更新 Seal",
+                    reason: "当前 Seal 属于团队 \(currentSealTeam)，所选账号属于团队 \(account.teamID)。跨团队签名会改变应用容器与 Keychain 访问组，原有 Apple ID 和本机数据无法迁移。",
+                    recovery: "添加或验证当前团队的 Apple ID 后重试",
+                    code: "SEAL-AUTH-115",
+                    condition: .accountVerificationRequired,
+                    action: .addAccount,
+                    route: .account,
+                    retryDisposition: .manual,
+                    operation: .sign,
+                    origin: .authentication
+                )
+            }
+        }
         let knownAccountIDs = Set(knownAccounts.map(\.id))
         guard var secret = try await keychain.load(accountID: accountID) else {
             account.status = .needsVerification
@@ -390,6 +443,14 @@ actor SigningCoordinator {
             secret: secret,
             selectedAccountID: accountID
         )
+        secret = try await ensurePortalSession(
+            account: account,
+            secret: secret,
+            operation: app.isSeal ? .renew : .sign
+        )
+        if let verifiedAccount = try await accountRepository.fetchAll().first(where: { $0.id == accountID }) {
+            account = verifiedAccount
+        }
         let normalizedSigningMaterial = try await normalizeCachedCertificateState(
             account: account,
             secret: secret
@@ -1342,13 +1403,18 @@ actor SigningCoordinator {
                 code: "SEAL-AUTH-105"
             )
         }
-        guard let secret = try await keychain.load(accountID: accountID) else {
+        guard let storedSecret = try await keychain.load(accountID: accountID) else {
             throw Self.failure(
                 reason: "本机 Keychain 中缺少当前 Apple ID 的登录凭据。",
                 recovery: "重新验证 Apple ID",
                 code: "SEAL-AUTH-105a"
             )
         }
+        let secret = try await ensurePortalSession(
+            account: account,
+            secret: storedSecret,
+            operation: .validateAccount
+        )
         let inventoryService = ApplePortalInventoryService()
         let inventory = try await inventoryService.fetchInventory(
             account: account,
@@ -1434,13 +1500,18 @@ actor SigningCoordinator {
             )
         }
         guard let account = try await accountRepository.fetchAll().first(where: { $0.id == accountID }),
-              let secret = try await keychain.load(accountID: accountID) else {
+              let storedSecret = try await keychain.load(accountID: accountID) else {
             throw Self.failure(
                 reason: "无法读取 Apple ID 或本机登录凭据。",
                 recovery: "重新验证 Apple ID",
                 code: "SEAL-AUTH-105a"
             )
         }
+        let secret = try await ensurePortalSession(
+            account: account,
+            secret: storedSecret,
+            operation: .validateAccount
+        )
         let certificateService = ApplePortalCertificateService(logStore: logStore)
         do {
             try await certificateService.revokeCertificate(
@@ -2730,6 +2801,41 @@ actor SigningCoordinator {
                 code: "SEAL-AUTH-109"
             )
         }
+    }
+
+    private func ensurePortalSession(
+        account: AppleAccountRecord,
+        secret: AccountSecret,
+        operation: FailureOperation
+    ) async throws -> AccountSecret {
+        let refreshed = try await portal.ensureCurrentSession(
+            account: account,
+            secret: secret,
+            operation: operation
+        )
+        guard refreshed.authToken != secret.authToken || refreshed.dsid != secret.dsid else {
+            if account.status != .verified || account.verificationFailureReason != nil {
+                var verifiedAccount = account
+                verifiedAccount.status = .verified
+                verifiedAccount.verificationFailureReason = nil
+                verifiedAccount.lastVerifiedAt = Date()
+                try await accountRepository.save(verifiedAccount)
+            }
+            return secret
+        }
+        try await keychain.save(refreshed, for: account.id)
+        if account.status != .verified || account.verificationFailureReason != nil {
+            var verifiedAccount = account
+            verifiedAccount.status = .verified
+            verifiedAccount.verificationFailureReason = nil
+            verifiedAccount.lastVerifiedAt = Date()
+            try await accountRepository.save(verifiedAccount)
+        }
+        try? await logStore?.append(
+            category: .account,
+            message: "Apple ID 会话已恢复并保存；原有本机签名证书材料保留"
+        )
+        return refreshed
     }
 
     private func normalizeCachedCertificateState(

@@ -84,6 +84,7 @@ struct AppleAuthenticationDiagnosisTests {
         #expect(failure.retryDisposition == .manual)
         #expect(failure.operation == .authenticateAccount)
         #expect(failure.origin == .authentication)
+        #expect(failure.recovery.contains("保留已有账号和签名证书"))
     }
 
     /// 原始 Apple 现场必须留在文案里 —— 排障时导出的日志只有这一处能看到

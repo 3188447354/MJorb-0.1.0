@@ -62,4 +62,23 @@ struct PortalReadCacheTests {
             )
         )
     }
+
+    @Test
+    func sessionValidationBypassesFreshTeamsCache() {
+        let fetchedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        #expect(
+            !ApplePortalSigningService.shouldUseCachedTeams(
+                bypassCache: true,
+                fetchedAt: fetchedAt,
+                now: fetchedAt.addingTimeInterval(1)
+            )
+        )
+        #expect(
+            ApplePortalSigningService.shouldUseCachedTeams(
+                bypassCache: false,
+                fetchedAt: fetchedAt,
+                now: fetchedAt.addingTimeInterval(1)
+            )
+        )
+    }
 }

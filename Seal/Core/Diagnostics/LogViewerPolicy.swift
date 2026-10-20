@@ -49,8 +49,17 @@ enum LogViewerPolicy {
     }
 
     private static func isSummaryEntry(_ entry: SealLogEntry) -> Bool {
-        // These per-App renewal diagnostics are represented in the round card.
-        entry.code != "SEAL-RENEW-020" && entry.code != "SEAL-RENEW-030"
+        // Per-App renewal diagnostics and raw signing errors are already represented by the
+        // operation summary, whose failure reason is shown only when the user taps the row.
+        guard entry.code != "SEAL-RENEW-020", entry.code != "SEAL-RENEW-030" else { return false }
+        if operationSummary(for: entry) != nil { return true }
+        if entry.category == .installation {
+            return entry.operationResult != nil
+                || entry.message.contains("设备核验通过")
+                || entry.message.contains("自替换结算确认")
+        }
+        guard entry.code == nil, entry.level != .error else { return false }
+        return entry.message.contains("✓ ") || entry.message.contains("✗ ")
     }
 
     private static func legacyOperationSummary(for entry: SealLogEntry) -> RenewalRoundSummary? {

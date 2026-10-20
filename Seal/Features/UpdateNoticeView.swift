@@ -197,15 +197,10 @@ struct UpdateNoticeView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-            Group {
-                if let progress {
-                    ProgressView(value: progress)
-                } else {
-                    ProgressView()
-                }
-            }
-            .tint(Color.sealAccent)
-            .padding(.top, 22)
+            ProgressView(value: progress)
+                .progressViewStyle(.linear)
+                .tint(Color.sealAccent)
+                .padding(.top, 14)
         }
         .padding(.top, 12)
     }

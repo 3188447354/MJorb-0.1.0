@@ -295,12 +295,22 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var hasPersistedSigningIdentity: Bool {
+        accountID != nil && hasPersistedSealSigningEvidence
+    }
+
+    private var hasPersistedSealSigningEvidence: Bool {
         mappedBundleIdentifier?.isEmpty == false
-            && accountID != nil
             && signingTeamID?.isEmpty == false
             && certificateSerialNumber?.isEmpty == false
             && signedDeviceIdentifier?.isEmpty == false
             && provisioningProfileExpirationDate != nil
+    }
+
+    /// 批量续签只纳入 Seal 有签名记录可核验的应用。
+    /// 账号可能已被用户删除，因此签名归属证据不要求 accountID；设备扫描恢复的记录
+    /// 没有实际证书序列号和签名设备标识，不能仅凭描述文件授权信息认作 Seal 签名。
+    var isSealManagedRenewalCandidate: Bool {
+        isSeal || hasPersistedSealSigningEvidence
     }
 
     /// 已记录或用户明确选择的策略优先；默认共享，能力不兼容的扩展单独申请 profile。

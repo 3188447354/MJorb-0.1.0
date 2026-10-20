@@ -107,12 +107,9 @@ actor AppRecordRecovery {
             summary.stage = "skipped-not-wired"
             return summary
         }
-        // 先 dump（候选只能从它推出来）；拿不到就整轮结束 —— 「读不到」绝不能当成
-        // 「设备上没有」，否则扫回会静默失效，用户永远等不到他的应用回来。
-        guard let profiles = await deviceScanner.scanProfileSummaries() else {
-            summary.stage = "skipped-dump-unavailable"
-            return summary
-        }
+        // 先 dump（新记录候选需要它）；拿不到时仍可为已存在的记录补图标，
+        // 但绝不能把「读不到」当成「设备上没有」并创建新记录。
+        let profiles = await deviceScanner.scanProfileSummaries()
         let records = (try? await appStore.fetchAll()) ?? []
         var accounts: [AppleAccountRecord] = []
         if let accountsProvider {
@@ -128,23 +125,96 @@ actor AppRecordRecovery {
             summary.stage = "skipped-app-list-unavailable"
             return summary
         }
-        let drafts = InstalledRecordRecoveryPolicy.drafts(
-            installedApplications: installedApplications,
-            profiles: profiles,
-            context: context
-        )
+        let drafts = profiles.map {
+            InstalledRecordRecoveryPolicy.drafts(
+                installedApplications: installedApplications,
+                profiles: $0,
+                context: context
+            )
+        } ?? []
         summary.candidates = drafts.count
         summary.samples = drafts.prefix(3).map(\.bundleIdentifier)
-        // 候选为空 ⇒ **一次设备查询都不发**（常见情况：记录齐全，只多花一次 dump）。
-        guard drafts.isEmpty == false else {
-            summary.stage = "skipped-no-candidates"
+        let installedBundleIdentifiers = Set(installedApplications.map {
+            InstalledRecordRecoveryPolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+        })
+        var recordsNeedingIcons: [AppRecord] = []
+        for record in records where record.isSeal == false && record.belongsInInstalledList {
+            let bundleIdentifier = record.mappedBundleIdentifier
+                ?? record.preferredBundleIdentifier
+                ?? record.originalBundleIdentifier
+            let normalizedBundleIdentifier = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(
+                bundleIdentifier
+            )
+            guard installedBundleIdentifiers.contains(normalizedBundleIdentifier) else { continue }
+
+            var hasReadableIcon = false
+            for iconPath in AppIconDataResolver.iconRelativePaths(for: record) {
+                if (try? await fileStore.read(relativePath: iconPath)) != nil {
+                    hasReadableIcon = true
+                    break
+                }
+            }
+            if hasReadableIcon == false {
+                recordsNeedingIcons.append(record)
+            }
+        }
+
+        let candidateBundleIdentifiers = Set(drafts.map {
+            InstalledRecordRecoveryPolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+        } + recordsNeedingIcons.map { record in
+            InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(
+                record.mappedBundleIdentifier
+                    ?? record.preferredBundleIdentifier
+                    ?? record.originalBundleIdentifier
+            )
+        })
+        // 没有新记录，也没有缺失图标的已安装记录时，不再请求 LaunchServices。
+        guard candidateBundleIdentifiers.isEmpty == false else {
+            summary.stage = profiles == nil ? "skipped-dump-unavailable" : "skipped-no-candidates"
+            return summary
+        }
+        let iconDataByBundleIdentifier = await deviceScanner.scanIconData(
+            for: candidateBundleIdentifiers
+        )
+        for var record in recordsNeedingIcons {
+            let bundleIdentifier = record.mappedBundleIdentifier
+                ?? record.preferredBundleIdentifier
+                ?? record.originalBundleIdentifier
+            let normalizedBundleIdentifier = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(
+                bundleIdentifier
+            )
+            guard let iconData = iconDataByBundleIdentifier[normalizedBundleIdentifier],
+                  let iconPath = try? await fileStore.storeIcon(data: iconData, appID: record.id) else {
+                continue
+            }
+            record.iconRelativePath = iconPath
+            do {
+                try await appStore.save(record)
+                summary.iconsUpdated += 1
+            } catch {
+                continue
+            }
+        }
+        guard profiles != nil else {
+            summary.stage = "skipped-dump-unavailable"
             return summary
         }
         for draft in drafts {
             let accountID = draft.teamIdentifier.flatMap { teamID in
                 accounts.first { $0.teamID.caseInsensitiveCompare(teamID) == .orderedSame }?.id
             }
-            let record = InstalledRecordRecoveryPolicy.makeRecord(from: draft, accountID: accountID)
+            let recordID = UUID()
+            var record = InstalledRecordRecoveryPolicy.makeRecord(
+                from: draft,
+                accountID: accountID,
+                id: recordID
+            )
+            let normalizedBundleID = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(
+                draft.bundleIdentifier
+            )
+            if let iconData = iconDataByBundleIdentifier[normalizedBundleID] {
+                record.iconRelativePath = try? await fileStore.storeIcon(data: iconData, appID: recordID)
+            }
             do {
                 try await appStore.save(record)
                 summary.recovered += 1

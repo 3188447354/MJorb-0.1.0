@@ -148,16 +148,17 @@ struct AppContainer {
                 processID: SelfReplacementProcess.currentID,
                 logStore: logStore
             )
+            let portalSessionService = ApplePortalSigningService(
+                anisetteProvider: anisetteProvider,
+                logStore: logStore
+            )
             let signingCoordinator = SigningCoordinator(
                 appStore: appStore,
                 accountRepository: accountRepository,
                 keychain: keychain,
                 fileStore: fileStore,
                 installChannel: installChannel,
-                portal: ApplePortalSigningService(
-                    anisetteProvider: anisetteProvider,
-                    logStore: logStore
-                ),
+                portal: portalSessionService,
                 logStore: logStore,
                 selfReplacement: selfReplacement,
                 certificateRecoveryJournal: certificateRecoveryJournal
@@ -264,6 +265,7 @@ struct AppContainer {
                         anisetteProvider: anisetteProvider,
                         logStore: logStore
                     ),
+                    portalSessionService: portalSessionService,
                     pairingStore: pairingStore,
                     installChannel: installChannel,
                     appStore: appStore,

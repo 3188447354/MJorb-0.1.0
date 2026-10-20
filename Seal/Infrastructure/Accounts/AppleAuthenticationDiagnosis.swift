@@ -87,7 +87,7 @@ enum AppleAuthenticationDiagnosis {
             reason: "Apple 要求这个 Apple ID 用双重认证登录，但本次认证没有走完第二步。\n"
                 + "常见原因：验证码输入被取消或超时；或这台设备还不是该 Apple ID 的受信任设备，收不到验证码。\n"
                 + detail(for: error),
-            recovery: "重新添加账号，在弹出的「输入验证码」里填 Apple 发来的六位数字；"
+            recovery: "在账号验证页输入 Apple 发来的六位验证码；Seal 会保留已有账号和签名证书。"
                 + "若始终收不到验证码，先到系统「设置 → 你的名字」用这个 Apple ID 登录一次，再回来重试",
             code: "SEAL-AUTH-101a",
             condition: .twoFactorAuthenticationRequired,

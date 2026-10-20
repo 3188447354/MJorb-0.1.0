@@ -1,3 +1,33 @@
+# 2026-10-20 — 批量续签误纳入设备扫回的第三方应用
+
+- **现象**：重装 Seal 后由设备扫描恢复的第三方应用仍显示在“已安装”列表，但批量续签会把它们放入续签队列，并因缺 IPA 显示需要处理。
+- **根因**：`RefreshPlanner.makeQueue` 只按 `belongsInInstalledList` 筛选；扫描恢复记录带有设备实际安装状态和 Apple 描述文件授权信息，却没有 Seal 签名提交时记录的实际证书序列号、签名设备标识。
+- **修复**：新增 Seal 续签管理资格判据：Seal 自身，或同时具有映射 Bundle ID、Team ID、实际证书序列号、签名设备标识和 profile 到期时间的持久化签名记录。规划队列时先按该判据过滤；不依赖当前账号 UUID，因此原账号已删除但签名证据仍在的项目会留在队列并显示恢复账号操作。设备扫回应用仍按 `belongsInInstalledList` 留在已安装列表。
+- **图标恢复**：设备扫描确认候选记录后，使用 LaunchServices 应用代理的 `iconDataForVariant:` 读取候选图标，只查询本轮扫回的 Bundle ID；将可解码图像写入对应 `Apps/<记录 ID>/Icon.png` 并保存 `iconRelativePath`。同时为已安装列表中图标路径缺失、文件丢失或不可读的记录补取图标，不要求本地 IPA；已有可读图标和手动选图不覆盖。补图标计入恢复摘要，启动维护在图标变更后重新加载应用记录。接口或数据格式不支持时只缺图标，不阻断记录恢复；之后重新导入 IPA 仍可用 IPA 图标补齐。
+- **上游对照**：按 AltStore / SideStore 的管理列表边界，只续签 Seal 能确认归属的记录；见 `docs/upstream-alignment.md`。
+- **回归覆盖**：更新续签规划测试，验证无签名证据的设备恢复记录仍属于已安装列表但不进入续签队列；缺少账号但保留完整 Seal 签名证据时仍显示为待处理。新增恢复集成用例，验证新扫回记录和已有无 IPA 记录都能从设备读取图标并持久化。
+- **涉及文件**：`Seal/Core/Apps/AppRecord.swift`、`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Renewal/RefreshPlanner.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Core/Maintenance/AppMaintenanceJob.swift`、`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`Seal/Infrastructure/Storage/AppFileStore.swift`、`SealTests/Renewal/RefreshPlannerTests.swift`、`SealTests/Renewal/PredictiveRenewalPolicyTests.swift`、`SealTests/Recovery/AppRecordRecoveryTests.swift`、`SealTests/Recovery/InstalledRecordRecoveryPolicyTests.swift`、`SealTests/Recovery/InstalledAppScannerTests.swift`、`docs/upstream-alignment.md`。
+- **验证状态**：本机 Windows 无 Swift/Xcode；未运行测试或源码守卫，未推送、未启动 CI。图标读取走 iOS LaunchServices 私有接口，需在 iOS 17.4+ 真机确认能返回可解码数据；不可用时记录恢复仍继续，图标保留默认占位。
+
+# 2026-10-20 — Apple ID 会话过期后没有接入已保存凭据恢复
+
+- **现象**：Seal 更新后遇到 Apple 会话失效时，仍要求用户到「我的」重新验证；用户担心 Apple ID 登录资料在更新、签名或续签后丢失。
+- **根因**：Apple ID 记录保存在应用容器，密码、authToken 与证书 P12 保存在系统 Keychain；`AccountSecret.password` 已加密保存，但 `AppleAccountClient.reauthenticate` 与 `AccountSecret.withNewSession` 没有生产调用点。签名 / 描述文件续签的只读 Team 请求在会话失效后仅退避并向上报错，没有尝试恢复已保存会话；团队查询还有 5 分钟缓存，可能把旧会话误判为有效；部分证书状态页还把会话失效误显示成证书无效。
+- **修复**：签名、Seal/应用续签、Apple 证书与 App ID 同步及证书维护共用门户会话预检。预检绕过团队缓存，只读 Team 查询确认旧会话持续失效后，才用 Keychain 中已保存密码重新认证；验证仍是原 Apple ID 和原 Team 后，把新 token 写回 Keychain，并保留全部 P12、证书序列号和密码。2FA 不在签名/续签流程中等待验证码；Apple 要求验证码时，恢复按钮直达已有的账号验证表单。用户输入 Apple 六位码后，同一 Apple ID + Team 会合并到原账号记录、保留签名证书并更新会话。会话失效改为证书状态未知，不伪报证书无效。有效会话也会把遗留的瞬态 `needsVerification` 状态恢复为已验证。
+- **上游对照**：AltStore / SideStore 未接入 1100 自动登录；Seal 按用户要求采用“Keychain 保存密码 + 只读校验后恢复”的路径，并避免重放已经进行过门户写入的签名事务。见 `docs/upstream-alignment.md`。
+- **回归覆盖**：扩展重认证材料测试，核验新 token 与已保存密码更新时历史证书 P12 仍完整保留；新增 Team 列表缓存绕过测试；新增 2FA 失败必须打开账号验证表单的路由测试。
+- **涉及文件**：`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`Seal/Infrastructure/Accounts/AppleAccountClient.swift`、`Seal/Infrastructure/Accounts/AppleAuthenticationDiagnosis.swift`、`Seal/Core/Accounts/AccountSecret.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Features/Settings/InstallFailureSettingsRoute.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`Seal/Application/AppContainer.swift`、`SealTests/Signing/SigningCertificateMaterialPolicyTests.swift`、`SealTests/Signing/PortalReadCacheTests.swift`、`SealTests/Settings/InstallFailureSettingsRouteTests.swift`、`SealTests/Accounts/AppleAuthenticationDiagnosisTests.swift`、`docs/upstream-alignment.md`。
+- **验证状态**：本机 Windows 无 Swift/Xcode；未运行测试、源码守卫或 CI，未推送。需要 CI 编译回归及真机验证 1100 恢复、2FA 回退、签名/描述文件续签和 P12 保留。
+
+# 2026-10-20 — Seal 更新身份丢失数据、启动状态未刷新与结果抽屉卡住
+
+- **现象**：Seal 自更新重新签名安装后 Apple ID 列表丢失；重开后仍显示旧版本和“本机无私钥”，需要手动刷新；快捷指令续签完成后结果抽屉迟迟不显示，页面操作似乎被占用。更新下载缺少进度条；手动检查已是最新时无反馈。
+- **根因**：① Seal 自更新只约束 Team ID，未核验目标 Bundle ID，且当前运行身份读取失败时会跳过约束；跨 Team 或 Bundle ID 的覆盖会改变 iOS 应用容器 / Keychain 访问组，既有账号与本机数据无法迁移。② 启动时自身记录、证书快照、设置和列表加载存在顺序空隙；③ 前台对快捷指令结果的打开请求在批次尚未结束时就被清除，之后没有可靠重试；④ 更新下载仅在服务器提供总长度时显示确定进度，缺少可见的进度条框架；⑤ 最新版本分支没有弹出确认。
+- **修复**：Seal 自更新要求当前运行 Team ID、Bundle ID 可读，且签名账号 Team 与目标 Bundle ID都和运行包一致；同 Team 账号可用时自动沿用，否则阻止跨团队覆盖。新进程启动先同步自身记录并重载证书/账号快照，再加载设置与列表。快捷指令结果请求只有在抽屉成功呈现后才清除，批次结束后再发通知重试呈现。更新下载始终显示线性进度条；检查更新弹出“已是最新版本”。日志界面改为白底、最近 20 条终态结果和单行展示；“签名”“手动续签”“快捷指令续签”分别标记，标题右侧显示状态；成功标记为绿色、失败标记为红色 ×、未执行为橙色，有效期日期用中性色；总耗时按真实起止时间显示到 0.1 秒，失败详情可复制，原始错误不再单独重复显示。本机证书存在时隐藏其他证书及 Apple 服务器标签。新增 `SEAL-SELF-116`（运行身份无法读取）与 `SEAL-SELF-117`（更新包 Bundle ID 不一致）。
+- **上游对照**：SideStore 的 `ResignAppOperation` 使用 `targetBundleIdentifier` 作为实际签名目标，并在重签 SideStore 自身时更新其证书材料；Seal 保留该身份驱动做法，同时在覆盖安装前增加当前运行 Team ID / Bundle ID 一致性门槛。详情见 `docs/upstream-alignment.md`。
+- **涉及文件**：`Seal/Features/UpdateNoticeView.swift`、`Seal/Features/Settings/AboutView.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Features/Settings/LogViewerView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`project.yml`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`、`docs/qa/generated/error-code-inventory.json`。
+- **验证状态**：未运行 Swift/Xcode、测试或源码守卫；未推送、未启动 CI。仅做本地源码与差异审查；完整 CI 和真机确认待后续执行。
+
 # 2026-10-20 — 导入提交卡住时无法离开进度抽屉
 
 - **现象**：IPA 文件/数据库提交卡住时，用户无法切换页面或操作其他功能。
