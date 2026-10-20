@@ -38,21 +38,12 @@ struct UpdateNoticeView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .bottom) {
-                Color.black.opacity(0.34)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
-
-                sheetContent
-                    .frame(maxWidth: 560)
-                    .frame(height: min(proxy.size.height * 0.92, 860))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, max(proxy.safeAreaInsets.bottom, 10))
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+        SealDrawer(title: drawerTitle, showsFooter: true) {
+            phaseContent.padding(.bottom, 12)
+        } footer: {
+            footer
         }
-        .ignoresSafeArea()
+        .interactiveDismissDisabled(isDismissible == false)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phase)
         .onDisappear {
             downloadGeneration = UUID()
@@ -61,39 +52,23 @@ struct UpdateNoticeView: View {
         }
     }
 
-    private var sheetContent: some View {
-        VStack(spacing: 0) {
-            SealSheetGrabber()
-                .padding(.top, 10)
-                .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 16).onEnded { value in
-                    guard isDismissible, value.translation.height > 80 else { return }
-                    onDismiss()
-                })
-
-            ScrollView(showsIndicators: false) {
-                phaseContent
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 22)
-                    .padding(.top, 12)
-                    .padding(.bottom, 16)
+    private var drawerTitle: String {
+        switch phase {
+        case .available:
+            "发现新版本"
+        case .downloading:
+            "正在下载更新包"
+        case .verifying:
+            "正在验证更新包"
+        case .ready:
+            "更新包验证通过"
+        case .failed(let failure):
+            switch failure {
+            case .download: "下载未完成"
+            case .verification: "更新包校验失败"
+            case .storage: "存储空间不足"
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider().overlay(Color.sealHairline.opacity(0.65))
-
-            footer
-                .padding(.horizontal, 22)
-                .padding(.top, 8)
-                .padding(.bottom, 10)
         }
-        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .stroke(Color.sealHairline.opacity(0.52), lineWidth: 0.8)
-        }
-        .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: -3)
-        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
@@ -104,7 +79,7 @@ struct UpdateNoticeView: View {
         case .downloading(let received, let total):
             downloadingContent(received: received, total: total)
         case .verifying:
-            progressContent(title: "正在验证更新包", detail: "核对版本与文件完整性")
+            progressContent(detail: "核对版本与文件完整性")
         case .ready:
             readyContent
         case .failed(let failure):
@@ -146,19 +121,15 @@ struct UpdateNoticeView: View {
 
     private var availableContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("发现新版本")
-                    .font(.title3.weight(.bold))
-                HStack(spacing: 4) {
-                    Text("当前 \(displayVersion(currentVersion))  →")
-                        .foregroundStyle(Color.sealTextSecondary)
-                    Text("新版 \(displayVersion(notice.version))")
-                        .foregroundStyle(Color.sealAccent)
-                }
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+            HStack(spacing: 4) {
+                Text("当前 \(displayVersion(currentVersion))  →")
+                    .foregroundStyle(Color.sealTextSecondary)
+                Text("新版 \(displayVersion(notice.version))")
+                    .foregroundStyle(Color.sealAccent)
             }
+            .font(.system(size: 15, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if changeItems.isEmpty == false {
@@ -194,9 +165,6 @@ struct UpdateNoticeView: View {
     private func downloadingContent(received: Int64, total: Int64?) -> some View {
         let progress = UpdateDownloadProgress.fraction(received: received, total: total)
         return VStack(alignment: .leading, spacing: 0) {
-            Text("正在下载更新包")
-                .font(.title3.weight(.bold))
-                .frame(maxWidth: .infinity, alignment: .leading)
             Text(downloadDetail(received: received, total: total))
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
@@ -214,52 +182,41 @@ struct UpdateNoticeView: View {
         .padding(.top, 12)
     }
 
-    private func progressContent(title: String, detail: String) -> some View {
+    private func progressContent(detail: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ProgressView()
                 .controlSize(.regular)
                 .tint(Color.sealAccent)
                 .frame(maxWidth: .infinity)
-            Text(title)
-                .font(.title3.weight(.bold))
-                .padding(.top, 14)
             Text(detail)
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
-                .padding(.top, 8)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 14)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 18)
     }
 
     private var readyContent: some View {
-        VStack(spacing: 0) {
-            Text("更新包验证通过")
-                .font(.title3.weight(.bold))
-            Text("正在打开更新确认")
-                .font(.subheadline)
-                .foregroundStyle(Color.sealTextSecondary)
-                .padding(.top, 8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 22)
+        Text("正在打开更新确认")
+            .font(.subheadline)
+            .foregroundStyle(Color.sealTextSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 22)
     }
 
     private func failureContent(_ failure: DownloadFailure) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(failure == .verification ? "更新包校验失败" : failure == .storage ? "存储空间不足" : "下载未完成")
-                .font(.title3.weight(.bold))
-            Text(failure == .verification
-                 ? "此更新包未通过校验，Seal 已停止使用它。\n当前 Seal 未更改"
-                 : failure == .storage
-                    ? "释放设备空间后，再下载更新包"
-                    : "更新包未下载完整，当前 Seal 未更改")
-                .font(.subheadline)
-                .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 18)
+        Text(failure == .verification
+             ? "此更新包未通过校验，Seal 已停止使用它。\n当前 Seal 未更改"
+             : failure == .storage
+                ? "释放设备空间后，再下载更新包"
+                : "更新包未下载完整，当前 Seal 未更改")
+            .font(.subheadline)
+            .foregroundStyle(Color.sealTextSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 18)
     }
 
     private func primaryButton(_ title: String, action: @escaping () -> Void) -> some View {

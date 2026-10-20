@@ -1,3 +1,12 @@
+## 2026-10-20 更新抽屉改用签名抽屉容器
+
+- **现象**：0.1.37“关于 Seal”页打开更新抽屉时，导航栏遮住抽屉标题，底部标签栏盖住下载按钮。
+- **根因**：手动更新路径在 `AboutView` 内容内部用自绘 `.overlay`；系统导航栏与 Tab 栏位于它上层。启动更新虽在 `RootTabView`，也使用不同的 overlay 抽屉实现。0.1.37 只调整几何与滚动内容，没有统一呈现容器。
+- **修复**：更新内容改为复用签名抽屉使用的 `SealDrawer`；手动检查与启动检查均由原生大尺寸 `.sheet` 呈现，使用同一滚动区、固定底部操作区和圆角背景。下载、验证及自动交接阶段禁止手势收起，下载取消按钮保持可用；IPA 导入等抽屉完整收起后再开始。
+- **回归守卫**：更新抽屉必须实例化 `SealDrawer`；About 页和启动更新都必须用大尺寸原生 sheet 呈现。为两处旧 overlay 与私有自绘容器添加 R120 变异检查。
+- **涉及文件**：`Seal/Features/UpdateNoticeView.swift`、`Seal/Features/Settings/AboutView.swift`、`Seal/App/RootTabView.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：待 CI 编译、Swift 回归及 R120 守卫验证；真机需确认更新抽屉与签名抽屉的层级、滚动、下载取消和下载完成交接一致。未声称已通过。
+
 ## 2026-10-20 更新下载进度、跨团队 App Group 与设备兼容性拦截
 
 - **现象**：更新抽屉下载时没有之前设计的传输进度；0.1.36 日志中 LiveContainer 的历史 App ID 可复用且无需新建，但完整签名仍失败；“歌一刀”被签名前置检查以设备型号不匹配拒绝。

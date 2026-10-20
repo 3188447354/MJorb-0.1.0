@@ -4726,17 +4726,27 @@ def violations(load=read):
     update_notice_view = strip_comments(load("Seal/Features/UpdateNoticeView.swift"))
     update_notice_policy = strip_comments(load("Seal/Infrastructure/UpdateChecker.swift"))
     update_notice_tests = load("SealTests/Update/UpdateCheckerAssetTests.swift")
-    check(".padding(.bottom, max(proxy.safeAreaInsets.bottom, 10))" in update_notice_view
-          and ".ignoresSafeArea()\n        .animation" in update_notice_view
-          and "frame(height: min(proxy.size.height * 0.92, 860))" in update_notice_view
-          and "usesExpandedLayout" not in update_notice_view
-          and update_notice_view.count("ScrollView(") == 1
+    about_view = strip_comments(load("Seal/Features/Settings/AboutView.swift"))
+    root_tab_view = strip_comments(load("Seal/App/RootTabView.swift"))
+    seal_drawer = strip_comments(load("Seal/DesignSystem/SealDrawer.swift"))
+    check("SealDrawer(title: drawerTitle, showsFooter: true)" in update_notice_view
+          and ".interactiveDismissDisabled(isDismissible == false)" in update_notice_view
+          and "ScrollView {" in seal_drawer
+          and "footer()" in seal_drawer
+          and ".sheet(item: $presentedUpdate, onDismiss: installPendingUpdateIfNeeded) { notice in" in about_view
+          and ".presentationDetents([.large])" in about_view
+          and "pendingUpdateInstallURL = localURL" in about_view
+          and "onInstall?(localURL)" in about_view
+          and ".background {\n            Color.clear\n                .sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded)" in root_tab_view
+          and ".presentationDetents([.large])" in root_tab_view
+          and "pendingUpdateInstallURL = localURL" in root_tab_view
+          and "installSelfUpdate(localURL)" in root_tab_view
           and "UpdateNoticeContentPolicy.changeItems(from: notice.message, version: notice.version)"
               in update_notice_view
           and "enum UpdateNoticeContentPolicy" in update_notice_policy
           and "normalizedVersion(trimmed) != normalizedVersion(version)" in update_notice_policy
           and "func releaseVersionHeadingIsNotRepeatedInUpdateItems()" in update_notice_tests,
-          "R120: 更新抽屉须覆盖底部标签栏、由单一主滚动区承载内容，并过滤重复版本标题")
+          "R120: 更新抽屉须与签名抽屉共用 SealDrawer，并由原生大尺寸抽屉覆盖导航栏和底部标签栏")
 
     update_downloader = strip_comments(load("Seal/Infrastructure/UpdateIPADownloader.swift"))
     check("session.download(for: request, delegate: delegate)" in update_downloader
@@ -10830,14 +10840,18 @@ def main():
          "- path: SealLiveActivity/Resources/SealBrandIcon.png",
          "- path: SealLiveActivity/Resources/MissingBrandIcon.png",
          "R119④:"),
-        # ── R120：更新抽屉铺满底部标签栏并让长内容在同一滚动区完整显示 ──
+        # ── R120：更新抽屉共用 SealDrawer，呈现层必须在导航与 Tab 栏之上 ──
         ("Seal/Features/UpdateNoticeView.swift",
-         "frame(height: min(proxy.size.height * 0.92, 860))",
-         "frame(height: min(proxy.size.height * 0.9, 700))",
+         "SealDrawer(title: drawerTitle, showsFooter: true)",
+         "VStack(spacing: 0) {",
          "R120:"),
-        ("Seal/Features/UpdateNoticeView.swift",
-         "                changesList\n            }\n        }\n        .padding(.top, 8)",
-         "                ScrollView(showsIndicators: false) { changesList }.frame(maxHeight: 190)\n            }\n        }\n        .padding(.top, 8)",
+        ("Seal/Features/Settings/AboutView.swift",
+         ".sheet(item: $presentedUpdate, onDismiss: installPendingUpdateIfNeeded) { notice in",
+         ".overlay {",
+         "R120:"),
+        ("Seal/App/RootTabView.swift",
+         ".sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded) { notice in",
+         ".overlay {",
          "R120:"),
         ("Seal/Infrastructure/UpdateChecker.swift",
          "normalizedVersion(trimmed) != normalizedVersion(version)",

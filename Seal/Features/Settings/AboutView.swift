@@ -19,6 +19,7 @@ struct AboutView: View {
     @State private var isCheckingUpdate = false
     @State private var updateStatus: UpdateStatus = .latest
     @State private var presentedUpdate: UpdateNotice?
+    @State private var pendingUpdateInstallURL: URL?
     @State private var updateFailure: UpdateCheckFailure?
 
     init(onInstall: ((URL) -> Void)? = nil) {
@@ -43,18 +44,15 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
-        .overlay {
-            if let notice = presentedUpdate {
-                UpdateNoticeView(
-                    notice: notice,
-                    onDismiss: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            presentedUpdate = nil
-                        }
-                    },
-                    onInstall: installCallback
-                )
+        .sheet(item: $presentedUpdate, onDismiss: installPendingUpdateIfNeeded) { notice in
+            UpdateNoticeView(
+                notice: notice,
+                onDismiss: {
+                    presentedUpdate = nil
+                },
+                onInstall: installCallback
             }
+            .presentationDetents([.large])
         }
         .alert(updateFailure?.statusText ?? "暂时无法检查更新", isPresented: Binding(
             get: { updateFailure != nil },
@@ -233,15 +231,18 @@ struct AboutView: View {
         }
     }
 
-    /// 下载完成后先收起弹窗，再交给上层执行导入安装。
     private var installCallback: ((URL) -> Void)? {
-        guard let onInstall else { return nil }
+        guard onInstall != nil else { return nil }
         return { localURL in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                presentedUpdate = nil
-            }
-            onInstall(localURL)
+            pendingUpdateInstallURL = localURL
+            presentedUpdate = nil
         }
+    }
+
+    private func installPendingUpdateIfNeeded() {
+        guard let localURL = pendingUpdateInstallURL else { return }
+        pendingUpdateInstallURL = nil
+        onInstall?(localURL)
     }
 
     private static func currentAppIcon() -> UIImage? {
