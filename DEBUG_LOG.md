@@ -1,10 +1,17 @@
+# 2026-10-20 — CI 静态守卫误拒绝设备白名单清理
+
+- **现象**：新 CI 的 Swift 回归、签名器测试通过，但 `build-package` 的 `R91⑨b` 失败。
+- **根因**：签名路径新增主 App 和扩展的 `UISupportedDevices` 清理条件后，旧守卫仍要求 `purpose == .signing` 只出现两次；这两处清理只改变 IPA 设备白名单，不改变 App/扩展目标集合。
+- **修复**：守卫现在精确允许瘦身、归一化和两处设备白名单清理；现有变异检查仍会拦住把目标筛选/映射步骤包入 `purpose` 的改动。
+- **验证状态**：CI 的 Swift 回归和签名器测试通过；`build-package` 仅因守卫契约过时失败。更新守卫后等待下一轮 CI；按项目约定不在本地运行守卫。
+
 # 2026-10-20 — Seal 内日志页仅显示最近 20 条签名续签安装结果
 
 - **需求**：Seal 内日志页只显示签名、续签、安装的成功与失败结果，最多最新 20 条；完整 `Seal-log.txt` 继续供开发者排障。
 - **根因**：日志页之前直接呈现普通事件与诊断事件，操作进度、账号/系统事件和最终结果混在一起；单靠日志分类无法区分过程与终态。
 - **修复**：日志事件增加可选终态字段；单项签名/续签、批量续签逐项结果、保存签名包安装与迟到安装结算明确写入成功/失败。页面按终态筛选、倒序取 20 条并显示结果标签；兼容升级前可识别的错误与成功结果。导出文件仍由完整日志缓冲生成。
 - **涉及文件**：`Seal/Core/Diagnostics/SealLogEntry.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Infrastructure/Diagnostics/SealLogStore.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Settings/LogViewerView.swift`、`SealTests/Diagnostics/LogRoundTests.swift`。
-- **验证状态**：CI 首轮发现批量轮次 `append` 参数不接受内联 `if` 表达式，已改为局部终态；第二轮又指出结果颜色 `switch` 未处理 `.notFinal`，已补分支。签名器测试通过，Swift 回归因第二个编译错误失败；继续等待下一轮 CI。
+- **验证状态**：前两轮 CI 编译发现批量轮次 `append` 参数表达式及颜色 `switch` 漏处理 `.notFinal`，均已修复；最近一轮 Swift 回归和签名器测试通过，静态守卫误拒绝另一项合法改动，见紧邻台账条目。无需本地 Swift/Xcode 验证。
 
 # 2026-10-20 — profile-only 结算、灵动岛图标、日志列表与 IPA 型号白名单
 

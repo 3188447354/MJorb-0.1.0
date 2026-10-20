@@ -6205,11 +6205,13 @@ def violations(load=read):
           "这两步只为「产物能装能跑」服务，而 profile-only 续签不产出新 IPA ⇒ 纯浪费"
           "（归一化在根目录有 `.framework`/`.dylib` 时要遍历全树，抖音实测 30–35 秒）")
 
-    check(r91_ws_code.count("if purpose == .signing {") == 2,
-          "R91⑨b: `purpose` 开关**只允许**包住「瘦身」与「归一化」这两步 ✗ —— "
-          "多包一步（`removeUnsupportedBundles` / `removeMissingAppExtensionReferences` / "
-          "bundle ID 改写 / 扩展映射）就会让两种用途看到**不同的目标集合** ⇒ "
-          "申请到的描述文件与设备记录对不上 ⇒ 每次续签都退化成完整重签（`SEAL-PROFILE-331a`）")
+    check(r91_ws_code.count("if purpose == .signing {") == 4
+          and "if purpose == .signing {\n                try removeDeviceThinningWhitelist(at: appURL)\n            }" in r91_ws_code
+          and "if purpose == .signing {\n                    try removeDeviceThinningWhitelist(at: extensionURL)\n                }" in r91_ws_code,
+          "R91⑨b: `purpose` 只能控制瘦身、归一化和主 App / 扩展的设备白名单清理 ✗ —— "
+          "不能把 `removeUnsupportedBundles` / `removeMissingAppExtensionReferences` / "
+          "bundle ID 改写 / 扩展映射包进条件，否则两种用途会看到不同目标集合，"
+          "描述文件与设备记录对不上，续签退化成完整重签（`SEAL-PROFILE-331a`）")
 
     check("private func machOStripScan(of url: URL) -> Arm64eStripScan {" in r91_ws_code
           and "return (cpusubtype & 0x00FFFFFF) == 2 ? .blocksStripping : .alreadyPlainArm64"
