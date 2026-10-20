@@ -132,6 +132,29 @@ struct AppleAccountAppNamePolicyTests {
     }
 
     @Test
+    func expirationOrderingPutsSoonestFirstAndUndatedLast() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(AppleAccountAppNamePolicy.expirationComesBefore(
+            now.addingTimeInterval(3_600), now.addingTimeInterval(86_400)
+        ))
+        #expect(AppleAccountAppNamePolicy.expirationComesBefore(now, nil))
+        #expect(AppleAccountAppNamePolicy.expirationComesBefore(nil, now) == false)
+    }
+
+    @Test
+    func highlightsExpirationsWithinOneDayAndAlreadyExpired() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(AppleAccountAppNamePolicy.shouldHighlightExpiration(
+            now.addingTimeInterval(86_400), now: now
+        ))
+        #expect(AppleAccountAppNamePolicy.shouldHighlightExpiration(
+            now.addingTimeInterval(86_401), now: now
+        ) == false)
+        #expect(AppleAccountAppNamePolicy.shouldHighlightExpiration(now.addingTimeInterval(-1), now: now))
+        #expect(AppleAccountAppNamePolicy.shouldHighlightExpiration(nil, now: now) == false)
+    }
+
+    @Test
     func parsesAppleJSONExpirationDateFromISO8601String() throws {
         for rawDate in ["2026-10-25T10:35:09Z", "2026-10-25T10:35:09.125Z"] {
             let appID = try #require(ALTAppID(responseDictionary: [

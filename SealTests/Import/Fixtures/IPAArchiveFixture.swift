@@ -37,6 +37,7 @@ enum IPAArchiveFixture {
         includeInfo: Bool = true,
         includeIcon: Bool = true,
         includeShareExtension: Bool = false,
+        supportedDevices: [String]? = nil,
         includeEntitlements: Bool = false,
         includeMobileProvision: Bool = false,
         extraEntries: [(path: String, data: Data)] = [],
@@ -58,18 +59,23 @@ enum IPAArchiveFixture {
                 if app.malformedInfo {
                     infoData = Data("not a property list".utf8)
                 } else {
-                    let info: [String: Any] = [
+                    var info: [String: Any] = [
                         "CFBundleDisplayName": app.name,
                         "CFBundleIdentifier": app.bundleIdentifier,
                         "CFBundleShortVersionString": app.version,
                         "CFBundleVersion": app.buildNumber,
                         "CFBundleExecutable": app.name,
+                        "UIDeviceFamily": [1, 2],
+                        "MinimumOSVersion": "14.0",
                         "CFBundleIcons": [
                             "CFBundlePrimaryIcon": [
                                 "CFBundleIconFiles": ["AppIcon60x60"]
                             ]
                         ]
                     ]
+                    if let supportedDevices {
+                        info["UISupportedDevices"] = supportedDevices
+                    }
                     infoData = try propertyListData(info)
                 }
                 try add(infoData, path: "\(appRoot)/Info.plist", to: archive)
@@ -92,16 +98,22 @@ enum IPAArchiveFixture {
             }
 
             if includeShareExtension {
-                let extensionInfo = try propertyListData([
+                var extensionInfo: [String: Any] = [
                     "CFBundleDisplayName": "Share",
                     "CFBundleIdentifier": "\(app.bundleIdentifier).share",
                     "CFBundleExecutable": "Share",
+                    "UIDeviceFamily": [1, 2],
+                    "MinimumOSVersion": "14.0",
                     "NSExtension": [
                         "NSExtensionPointIdentifier": "com.apple.share-services"
                     ]
-                ])
+                ]
+                if let supportedDevices {
+                    extensionInfo["UISupportedDevices"] = supportedDevices
+                }
+                let extensionInfoData = try propertyListData(extensionInfo)
                 try add(
-                    extensionInfo,
+                    extensionInfoData,
                     path: "\(appRoot)/PlugIns/Share.appex/Info.plist",
                     to: archive
                 )

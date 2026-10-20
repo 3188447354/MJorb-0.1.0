@@ -358,7 +358,8 @@ actor SelfAppRegistrar {
                 try? await logStore?.append(
                     category: .installation,
                     message: "自替换结算确认：运行包身份与候选一致；Bundle=\(main.bundleIdentifier)，描述文件 \(main.profileUUID)，到期 \(expiry)，证书末尾 …\(main.signerSerialNumber.suffix(8))",
-                    code: "SEAL-SELF-113"
+                    code: "SEAL-SELF-113",
+                    operationResult: .success
                 )
             }
             if let existing {
@@ -412,7 +413,8 @@ actor SelfAppRegistrar {
             try? await logStore?.append(
                 category: .renewal,
                 message: "批量续签：Seal 已由新进程身份核验结算为\(conclusion)",
-                code: "SEAL-RENEW-028"
+                code: "SEAL-RENEW-028",
+                operationResult: state == .completed ? .success : .failure
             )
         } catch {
             try? await logStore?.append(

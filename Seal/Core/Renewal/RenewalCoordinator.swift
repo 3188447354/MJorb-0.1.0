@@ -443,7 +443,14 @@ actor RenewalCoordinator {
             category: .renewal,
             level: hasFailure ? .warning : .info,
             message: summary.humanReadableMessage(),
-            code: "SEAL-RENEW-ROUND"
+            code: "SEAL-RENEW-ROUND",
+            operationResult: if summary.awaitingCount > 0 || summary.needsActionCount > 0 {
+                .notFinal
+            } else if hasFailure {
+                .failure
+            } else {
+                .success
+            }
         )
 
         return BatchRefreshResult(
@@ -728,7 +735,8 @@ actor RenewalCoordinator {
             try? await logStore?.append(
                 category: .renewal,
                 message: "批量续签：第 \(offset + 1)/\(total) 项成功 —— \(updated.mappedBundleIdentifier ?? updated.preferredBundleIdentifier ?? updated.originalBundleIdentifier)，描述文件 \(Self.describeProfile(updated))",
-                code: "SEAL-RENEW-020"
+                code: "SEAL-RENEW-020",
+                operationResult: .success
             )
             await progress(
                 .appSucceeded(
@@ -863,7 +871,8 @@ actor RenewalCoordinator {
             category: .renewal,
             level: .error,
             message: "批量续签：第 \(offset + 1)/\(total) 项未成功 —— \(app?.name ?? "记录已不存在")，[\(failure.code)] \(failure.title)：\(failure.reason)",
-            code: "SEAL-RENEW-030"
+            code: "SEAL-RENEW-030",
+            operationResult: failure.code == Self.requiresActionCode ? .notFinal : .failure
         )
         if let app {
             await progress(

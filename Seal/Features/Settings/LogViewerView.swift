@@ -14,10 +14,10 @@ extension Notification.Name {
 /// 导出按钮在右上角（毛玻璃圆按钮，无文字）。
 struct LogViewerView: View {
     @ObservedObject var viewModel: SettingsViewModel
-    @State private var rounds: [LogRound] = []
+    @State private var entries: [SealLogEntry] = []
     @State private var exportDocument: LogExportDocument?
     @State private var showClearConfirm = false
-    @State private var selectedError: LogRound.LogRoundItem?
+    @State private var selectedError: SealLogEntry?
     @State private var exportFailure: ImportFailure?
 
     var body: some View {
@@ -25,14 +25,19 @@ struct LogViewerView: View {
             LazyVStack(spacing: 12) {
                 diagnosticGuide
 
-                if rounds.isEmpty {
-                    Text("暂无日志")
+                Text("显示最近 \(entries.count) / \(LogViewerPolicy.maximumVisibleEntries) 条签名、续签和安装结果，最新记录在顶部。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if entries.isEmpty {
+                    Text("暂无签名、续签或安装结果")
                         .foregroundColor(.secondary)
                         .padding(.top, 40)
                 } else {
-                    ForEach(rounds) { round in
-                        RoundCard(round: round) { item in
-                            selectedError = item
+                    ForEach(entries) { entry in
+                        LogEntryCard(entry: entry) {
+                            selectedError = entry
                         }
                     }
                 }
@@ -40,7 +45,7 @@ struct LogViewerView: View {
             .padding()
         }
         .refreshable {
-            await loadRounds()
+            await loadEntries()
         }
         .navigationTitle("日志")
         .navigationBarTitleDisplayMode(.inline)
@@ -78,14 +83,13 @@ struct LogViewerView: View {
         )) {
             Button("复制错误信息") {
                 if let err = selectedError {
-                    let info = (err.code.map { "错误码：\($0)\n" } ?? "")
-                        + err.text + (err.reason.map { "\n原因：\($0)" } ?? "")
+                    let info = (err.code.map { "错误码：\($0)\n" } ?? "") + err.message
                     UIPasteboard.general.string = info
                 }
             }
         } message: {
             if let err = selectedError {
-                Text((err.reason ?? "暂无具体解决办法，可复制错误信息到社群求助。"))
+                Text(err.message)
             }
         }
         .alert(item: $exportFailure) { failure in
@@ -96,10 +100,10 @@ struct LogViewerView: View {
             )
         }
         .task {
-            await loadRounds()
+            await loadEntries()
         }
         .onReceive(NotificationCenter.default.publisher(for: .sealRenewalCompleted)) { _ in
-            Task { await loadRounds() }
+            Task { await loadEntries() }
         }
         .sheet(item: $exportDocument) { document in
             ShareSheet(activityItems: [document.url])
@@ -110,9 +114,9 @@ struct LogViewerView: View {
         VStack(alignment: .leading, spacing: 7) {
             Label("开发者排障", systemImage: "stethoscope")
                 .font(.system(size: 15, weight: .semibold))
-            Text("先记下失败时间和当时执行的操作，再点失败记录中的“查看错误信息”复制错误码。")
-            Text("点右上角导出 Seal-log.txt，并把错误码、操作名称和大致时间一并发给开发者。")
-            Text("导出文件头包含 Seal 版本与 CI 构建号，日志最多保留最近 1000 条。")
+            Text("这里只显示签名、续签和安装的成功或失败结果，不显示过程日志。")
+            Text("页面保留最新 20 条，列表可上下滑动查看；点击失败记录可复制内容。")
+            Text("导出 Seal-log.txt 可查看完整诊断日志，并把错误码、操作名称和大致时间一并发给开发者。")
         }
         .font(.system(size: 13))
         .foregroundStyle(.secondary)
@@ -124,12 +128,10 @@ struct LogViewerView: View {
         )
     }
 
-    private func loadRounds() async {
-        let text = await viewModel.logTextForViewing()
-        let parsed = LogRound.parse(from: text)
+    private func loadEntries() async {
+        let loaded = await viewModel.logEntriesForViewing()
         await MainActor.run {
-            // 日志文件是最新的在前面，取前 50 轮直接显示（不反转）
-            rounds = Array(parsed.prefix(50))
+            entries = loaded
         }
     }
 
@@ -166,254 +168,67 @@ struct LogViewerView: View {
 
     private func clearLogs() async {
         await viewModel.clearLogs()
-        await loadRounds()
+        await loadEntries()
     }
 }
 
-/// 一轮续签的人话卡片数据
-struct LogRound: Identifiable {
-    let id = UUID()
-    let title: String      // "第4轮 · 23:36:39 · 手动 · 3个App"
-    let items: [LogRoundItem]
-    let footer: String     // "共用6.6秒 · 3/3 成功"
-
-    struct LogRoundItem: Identifiable {
-        let id = UUID()
-        let succeeded: Bool
-        let text: String       // "LiveContainer 成功，用了5.9秒"
-        let reason: String?    // 失败原因（人话）
-        let code: String?      // 仅从日志提取，缺失时不猜测
-    }
-
-    /// 从日志文本解析轮次块（━ 分隔）
-    static func parse(from text: String) -> [LogRound] {
-        var rounds: [LogRound] = []
-        var currentLines: [String] = []
-        var currentDate: Date?
-        var inBlock = false
-
-        for line in text.components(separatedBy: "\n") {
-            let message = extractMessage(from: line)
-
-            if message.hasPrefix("━") {
-                if inBlock && !currentLines.isEmpty {
-                    if let round = buildRound(from: currentLines, date: currentDate) {
-                        rounds.append(round)
-                    }
-                    currentLines = []
-                    currentDate = nil
-                } else if !inBlock {
-                    // 块开头：从 ━ 行的时间戳拿日期（▶ 行本身没有日期前缀）
-                    currentDate = extractDate(from: line)
-                }
-                inBlock.toggle()
-                continue
-            }
-            if inBlock {
-                currentLines.append(message)
-            }
-        }
-        // 收尾：文件尾部未闭合的块（崩溃/被杀时最后一轮没写完）也要拼出来，
-        // 否则"死在哪一步"的那轮在日志页根本看不到。
-        if inBlock && !currentLines.isEmpty {
-            if let round = buildRound(from: currentLines, date: currentDate) {
-                rounds.append(LogRound(
-                    title: round.title + "（未完成）",
-                    items: round.items,
-                    footer: round.footer.isEmpty ? "App 异常退出，该轮未完成" : round.footer
-                ))
-            } else {
-                rounds.append(LogRound(
-                    title: "未完成",
-                    items: [],
-                    footer: "App 异常退出，最后一轮日志不完整"
-                ))
-            }
-        }
-        return rounds
-    }
-
-    /// 从日志行提取日期（格式：2026-10-05 00:33:19）
-    private static func extractDate(from line: String) -> Date? {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        // 取前 19 个字符：yyyy-MM-dd HH:mm:ss
-        guard trimmed.count >= 19 else { return nil }
-        let dateStr = String(trimmed.prefix(19))
-        let fmt = DateFormatter()
-        fmt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        fmt.timeZone = TimeZone(identifier: "Asia/Shanghai")
-        return fmt.date(from: dateStr)
-    }
-
-    private static func extractMessage(from line: String) -> String {
-        // 日志格式：2026-10-05 00:33:19  信息  系统  [CODE] 消息
-        // 轮次总结行是直接写入的，可能没有标准前缀，尽量提取
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        // 如果包含 ▶/✓/✗/■/─/━，直接返回该部分
-        for marker in ["▶", "✓", "✗", "○", "◷", "■", "─", "━"] {
-            if let range = trimmed.range(of: marker) {
-                let message = String(trimmed[range.lowerBound...]).trimmingCharacters(in: .whitespaces)
-                if let code = errorCode(in: trimmed) {
-                    return "\(message) [\(code)]"
-                }
-                return message
-            }
-        }
-        // 原因行
-        if trimmed.contains("原因：") {
-            if let range = trimmed.range(of: "原因：") {
-                return "原因：" + String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespaces)
-            }
-        }
-        return ""
-    }
-
-    private static func errorCode(in text: String) -> String? {
-        let pattern = #"SEAL-[A-Z]+-[0-9]+[a-z]?"#
-        guard let range = text.range(of: pattern, options: .regularExpression) else { return nil }
-        return String(text[range])
-    }
-
-    private static func buildRound(from lines: [String], date: Date?) -> LogRound? {
-        var rawTitle = ""
-        var items: [LogRoundItem] = []
-        var footer = ""
-        var pendingReason: String?
-
-        for line in lines {
-            if line.hasPrefix("▶") {
-                rawTitle = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            } else if line.hasPrefix("✓") {
-                let text = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                items.append(LogRoundItem(succeeded: true, text: text, reason: nil, code: nil))
-            } else if line.hasPrefix("✗") {
-                let text = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                items.append(LogRoundItem(
-                    succeeded: false,
-                    text: text,
-                    reason: pendingReason,
-                    code: errorCode(in: text) ?? pendingReason.flatMap(errorCode)
-                ))
-                pendingReason = nil
-            } else if line.hasPrefix("○") || line.hasPrefix("◷") {
-                let text = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-                items.append(LogRoundItem(succeeded: true, text: text, reason: nil, code: nil))
-            } else if line.hasPrefix("原因：") {
-                pendingReason = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                // 关联到最后一个失败项
-                if let last = items.last, !last.succeeded {
-                    items[items.count - 1] = LogRoundItem(
-                        succeeded: false,
-                        text: last.text,
-                        reason: pendingReason,
-                        code: last.code ?? pendingReason.flatMap(errorCode)
-                    )
-                    pendingReason = nil
-                }
-            } else if line.hasPrefix("■") {
-                footer = String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            }
-            // 跳过 ─ 分隔线和 → 指引行
-        }
-
-        guard !rawTitle.isEmpty else { return nil }
-        // 日期拿不到时保留原标题，不用今天冒充（假数据）
-        let title = formatTitle(rawTitle, date: date)
-        return LogRound(title: title, items: items, footer: footer)
-    }
-
-    /// 格式化标题：只把"第X轮"换成相对日期，其余不动
-    /// "第4轮 · 23:36:39 · 快捷指令 · 3个App" → "今天 · 23:36:39 · 快捷指令 · 3个App"
-    private static func formatTitle(_ raw: String, date: Date?) -> String {
-        let parts = raw.components(separatedBy: "·").map { $0.trimmingCharacters(in: .whitespaces) }
-        guard parts.count >= 4 else { return raw }
-
-        // 相对日期替换第X轮
-        let dateStr: String
-        if let d = date {
-            let cal = Calendar.current
-            if cal.isDateInToday(d) {
-                dateStr = "今天"
-            } else if cal.isDateInYesterday(d) {
-                dateStr = "昨天"
-            } else if let dayBefore = cal.date(byAdding: .day, value: -2, to: Date()),
-                      cal.isDate(d, inSameDayAs: dayBefore) {
-                dateStr = "前天"
-            } else {
-                let fmt = DateFormatter()
-                fmt.dateFormat = "M月d日"
-                dateStr = fmt.string(from: d)
-            }
-        } else {
-            dateStr = parts[0]  // 拿不到日期就保留原样
-        }
-
-        var newParts = parts
-        if parts[0].hasPrefix("第") {
-            newParts[0] = dateStr
-            return newParts.joined(separator: " · ")
-        }
-        // 单项签名/续签也采用同一张轮次卡片；保留操作名，避免它被日期替换掉。
-        newParts.removeFirst()
-        newParts.insert(dateStr, at: 0)
-        newParts.insert(parts[0], at: 3)
-        return newParts.joined(separator: " · ")
-    }
-}
-
-/// 轮次卡片
-struct RoundCard: View {
-    let round: LogRound
-    var onSelectError: (LogRound.LogRoundItem) -> Void = { _ in }
+private struct LogEntryCard: View {
+    let entry: SealLogEntry
+    let onSelectError: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(round.title)
-                .font(.system(size: 15, weight: .semibold))
-
-            ForEach(round.items) { item in
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(item.succeeded ? "✓" : "✗")
-                            .foregroundColor(item.succeeded ? .green : .red)
-                            .font(.system(size: 14, weight: .medium))
-                        Text(item.text)
-                            .font(.system(size: 14))
-                            .foregroundColor(item.succeeded ? .primary : .red)
-                    }
-                    if let reason = item.reason, !reason.isEmpty {
-                        Text("原因：" + reason)
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .padding(.leading, 20)
-                    }
-                    if !item.succeeded {
-                        Button {
-                            onSelectError(item)
-                        } label: {
-                            Text("查看错误信息 →")
-                                .font(.system(size: 13))
-                                .foregroundColor(.accentColor)
-                        }
-                        .padding(.leading, 20)
-                    }
-                }
-            }
-
-            if !round.footer.isEmpty {
-                Divider()
-                Text(round.footer)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(round.items.allSatisfy(\.succeeded) ? .primary : .red)
+        Group {
+            if LogViewerPolicy.operationResult(for: entry) == .failure {
+                Button(action: onSelectError) { content }
+                    .buttonStyle(.plain)
+            } else {
+                content
             }
         }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text(SealSettingsDateFormatter.string(from: entry.timestamp))
+                Spacer(minLength: 4)
+                Text(LogViewerPolicy.operationResult(for: entry)?.displayName ?? entry.level.displayName)
+                Text(entry.category.displayName)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(levelColor)
+
+            if let code = entry.code {
+                Text(code)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(levelColor)
+                    .textSelection(.enabled)
+            }
+
+            Text(entry.message)
+                .font(.system(size: 14))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 4, x: 0, y: 2)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var levelColor: Color {
+        switch LogViewerPolicy.operationResult(for: entry) {
+        case .success: return .green
+        case .failure: return .sealDanger
+        case nil: break
+        }
+        return switch entry.level {
+        case .info: .secondary
+        case .warning: .sealWarning
+        case .error: .sealDanger
+        }
     }
 }
-
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
 

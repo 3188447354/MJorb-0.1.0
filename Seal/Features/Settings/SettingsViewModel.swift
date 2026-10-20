@@ -3444,6 +3444,16 @@ final class SettingsViewModel: ObservableObject {
         return text
     }
 
+    func logEntriesForViewing() async -> [SealLogEntry] {
+        let entries: [SealLogEntry]
+        if let logStore, let stored = try? await logStore.entries() {
+            entries = stored
+        } else {
+            entries = logs.sorted { $0.timestamp > $1.timestamp }
+        }
+        return LogViewerPolicy.visibleEntries(entries)
+    }
+
     func resetCertificate(for account: AppleAccountRecord) async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 重置证书: 账号 \(account.id.uuidString.prefix(8))")
         guard let accountRepository else { return }

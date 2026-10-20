@@ -41,7 +41,8 @@ actor SealLogStore {
         category: SealLogEntry.Category,
         level: SealLogEntry.Level = .info,
         message: String,
-        code: String? = nil
+        code: String? = nil,
+        operationResult: SealLogEntry.OperationResult? = nil
     ) throws {
         loadBufferIfNeeded()
         buffer.append(
@@ -49,7 +50,8 @@ actor SealLogStore {
                 category: category,
                 level: level,
                 message: LogPrivacyRedactor.redact(message),
-                code: code.map(LogPrivacyRedactor.redact)
+                code: code.map(LogPrivacyRedactor.redact),
+                operationResult: operationResult
             )
         )
         if buffer.count > maximumEntries {
@@ -100,7 +102,8 @@ actor SealLogStore {
             category: entry.category,
             level: entry.level,
             message: LogPrivacyRedactor.redact(entry.message),
-            code: entry.code.map(LogPrivacyRedactor.redact)
+            code: entry.code.map(LogPrivacyRedactor.redact),
+            operationResult: entry.operationResult
         )
     }
 

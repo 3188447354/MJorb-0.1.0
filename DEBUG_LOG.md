@@ -1,3 +1,21 @@
+# 2026-10-20 — Seal 内日志页仅显示最近 20 条签名续签安装结果
+
+- **需求**：Seal 内日志页只显示签名、续签、安装的成功与失败结果，最多最新 20 条；完整 `Seal-log.txt` 继续供开发者排障。
+- **根因**：日志页之前直接呈现普通事件与诊断事件，操作进度、账号/系统事件和最终结果混在一起；单靠日志分类无法区分过程与终态。
+- **修复**：日志事件增加可选终态字段；单项签名/续签、批量续签逐项结果、保存签名包安装与迟到安装结算明确写入成功/失败。页面按终态筛选、倒序取 20 条并显示结果标签；兼容升级前可识别的错误与成功结果。导出文件仍由完整日志缓冲生成。
+- **涉及文件**：`Seal/Core/Diagnostics/SealLogEntry.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Infrastructure/Diagnostics/SealLogStore.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Settings/LogViewerView.swift`、`SealTests/Diagnostics/LogRoundTests.swift`。
+- **验证状态**：未运行 Swift/Xcode 测试或源码守卫；等待 CI 编译与回归验证。
+
+# 2026-10-20 — profile-only 结算、灵动岛图标、日志列表与 IPA 型号白名单
+
+- **现象**：描述文件续签已由设备逐份读回确认，但已安装列表继续显示“安装结果待确认”；灵动岛展开态仍显示灰色图标；日志页只呈现续签轮次；Apple ID 的已签名 App 信息难读且按名称排序；歌一刀在 iPhone 上签名后仍被安装服务以设备型号不匹配拒绝。
+- **根因**：① profile-only 路径提交了 pending 快照，却没有把安装记录状态从 `.awaitingVerification` 结算为 `.installed`；② 现有日志没有记录 Widget 对图片资源的运行时解析结果，虽然扩展资源已打包，实际读取仍落到灰色占位；③ 页面解析文本轮次并截取前 50 轮，普通事件日志不进入列表；④ App ID 行按名称排序且头部同时展示有效数与新建额度；⑤ 歌一刀虽声明 iPhone+iPad，`UISupportedDevices` 却只有 iPad 型号，导致 iPhone 安装被系统拒绝。
+- **修复**：profile-only 确认后统一提交快照并将 `AppRecord.state` 与 `signedArtifactStatus` 设为 `.installed`；开始 Live Activity 时从主 App 的正式 `SealBrandIcon` 取最多 32px 图像并随静态 attributes 传给 Widget，必要时缩至 24px，保持 ActivityKit 数据限制内并保留扩展资源回退；日志页改为直接显示最近最多 1000 条事件并按时间倒序滚动；Apple ID 页面改成简短名额说明、按有效期升序、24 小时内日期标红；完整签名前从主 App 和 `.appex` 的 Info.plist 移除 App Store thinning 的 `UISupportedDevices`，保持设备系列、最低系统版本、架构和权限原样。若真实架构或系统版本不兼容，仍由 iOS 系统拒绝。
+- **上游对照**：SideStore `RefreshAppOperation` 注入新 profiles 后更新已安装记录；上游不维护 `UISupportedDevices` 型号拒绝分支。Seal 保持设备安装服务的真实兼容判定，但不把 App Store 型号白名单带进自签产物。对照记录追加在 `docs/upstream-alignment.md`。
+- **回归覆盖**：profile-only 续签从 `.awaitingVerification` 提交后转为已安装；IPA 主包与扩展移除型号白名单并保留 `UIDeviceFamily` / `MinimumOSVersion`；日志选择策略覆盖 1005 条混合普通与错误事件并只呈现最新 1000 条；Apple ID 过期排序与 24 小时标红；Live Activity 属性图标编码及旧活动无图标数据的兼容。
+- **涉及文件**：`Seal/Core/Renewal/ProfileOnlyRenewalRecordUpdater.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Infrastructure/Signing/SigningWorkspace.swift`、`Seal/Features/Settings/LogViewerView.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Features/Settings/AppleAccountDetailView.swift`、`Shared/PairingActivityAttributes.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、`SealTests/`、`Scripts/verify-release-safety.py`、`docs/upstream-alignment.md`。
+- **验证状态**：新增 Swift 回归测试并更新 R123 源码守卫；未在 Windows 本机运行 Swift/Xcode 或守卫。待 CI 编译/回归以及真机重新开始一轮配对、profile-only 续签和歌一刀当前设备安装验证；尚未推送。
+
 # 2026-10-20 — CI 对齐 IPA 路径与更新抽屉源码守卫
 
 - **现象**：CI run `39377682080` 的 release-safety guard 有两项源码断言失败，并报告三个 mutation anchor missing。

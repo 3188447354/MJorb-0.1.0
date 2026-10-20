@@ -864,7 +864,8 @@ final class AppsViewModel: ObservableObject {
         try? await logStore?.append(
             category: operation == .singleSigning ? .signing : .renewal,
             level: hasFailure ? .warning : .info,
-            message: summary.humanReadableMessage()
+            message: summary.humanReadableMessage(),
+            operationResult: outcome == .succeeded ? .success : outcome == .failed ? .failure : nil
         )
     }
 
@@ -2042,7 +2043,8 @@ final class AppsViewModel: ObservableObject {
             )
             try? await logStore?.append(
                 category: .signing,
-                message: "已使用本机保存的签名包完成安装：\(installed.displayName)"
+                message: "已使用本机保存的签名包完成安装：\(installed.displayName)",
+                operationResult: .success
             )
             await cleanTemporaryFilesIfNeeded(appID: app.id)
             await load(force: true)
@@ -2053,12 +2055,14 @@ final class AppsViewModel: ObservableObject {
                 category: .signing,
                 level: .error,
                 message: "签名包安装失败：\(failure.reason)",
-                code: failure.code
+                code: failure.code,
+                operationResult: .failure
             )
         } catch {
             try? await logStore?.append(category: .signing, level: .error,
                 message: "SEAL-SIGN-500 底层诊断：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
-                code: "SEAL-SIGN-500")
+                code: "SEAL-SIGN-500",
+                operationResult: .failure)
             alertFailure = Self.unexpectedSigningFailure(error)
         }
         await load(force: true)

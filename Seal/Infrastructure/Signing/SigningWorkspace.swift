@@ -124,6 +124,9 @@ struct SigningWorkspace: Sendable {
             var mappings = [originalBundleID: mappedMain]
             let rewriteStartedAt = Date()
             try updateBundleIdentifier(at: appURL, to: mappedMain)
+            if purpose == .signing {
+                try removeDeviceThinningWhitelist(at: appURL)
+            }
             // 对齐 SideStore 官方：添加新 Bundle ID 对应的 URL Scheme（保留原始 scheme 不变）
             try updateURLSchemes(in: appURL, originalBundleID: originalBundleID, newBundleID: mappedMain)
             // 对齐 SideStore：添加已安装应用 UTI
@@ -192,6 +195,9 @@ struct SigningWorkspace: Sendable {
                     mappedMainBundleID: mappedMain
                 )
                 try updateBundleIdentifier(at: extensionURL, to: mapped)
+                if purpose == .signing {
+                    try removeDeviceThinningWhitelist(at: extensionURL)
+                }
                 mappings[original] = mapped
             }
             // 移除旧的 _CodeSignature 目录（不修改 Mach-O 里的 LC_CODE_SIGNATURE）。
@@ -645,6 +651,14 @@ struct SigningWorkspace: Sendable {
             options: 0
         )
         try updated.write(to: infoURL, options: .atomic)
+    }
+
+    /// 移除 App Store 瘦身产物限定的设备白名单，让签名包可在声明的设备系列上安装。
+    /// UIDeviceFamily、MinimumOSVersion、架构和签名权限保持原样，最终安装兼容性仍由 iOS 判定。
+    private func removeDeviceThinningWhitelist(at bundleURL: URL) throws {
+        try mutateInfoPlist(at: bundleURL.appending(path: "Info.plist")) { info in
+            info.removeValue(forKey: "UISupportedDevices")
+        }
     }
 
     // MARK: - Exported UTIs (对齐 SideStore)

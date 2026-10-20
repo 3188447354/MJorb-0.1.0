@@ -1,20 +1,39 @@
+import Foundation
 import Testing
 @testable import Seal
 
-struct LogRoundTests {
+struct LogViewerPolicyTests {
     @Test
-    func failedItemRetainsItsSourceErrorCode() throws {
-        let rounds = LogRound.parse(from: """
-        2026-10-10 10:00:00 信息 Seal ━━━━━━━
-        ▶ 第1轮 · 10:00:00 · 手动 · 1个App
-        2026-10-10 10:00:03 错误 Seal [SEAL-INSTALL-702s] ✗ Example 安装失败
-        原因：设备空间不足
-        ■ 共用3秒 · 0/1 成功
-        ━━━━━━━
-        """)
+    func displaysOnlyLatestTwentyOperationResults() throws {
+        let entries = (0..<60).map { index in
+            SealLogEntry(
+                timestamp: Date(timeIntervalSince1970: TimeInterval(index)),
+                category: index.isMultiple(of: 2) ? .installation : .renewal,
+                level: .info,
+                message: "操作结果 \(index)",
+                operationResult: index.isMultiple(of: 2)
+                    ? (index.isMultiple(of: 4) ? .success : .failure)
+                    : nil
+            )
+        }
+        let unrelated = SealLogEntry(
+            category: .account,
+            message: "账号登录",
+            operationResult: .failure
+        )
+        let pending = SealLogEntry(
+            category: .renewal,
+            message: "等待新进程核验",
+            operationResult: .notFinal
+        )
 
-        let item = try #require(rounds.first?.items.first)
-        #expect(item.succeeded == false)
-        #expect(item.code == "SEAL-INSTALL-702s")
+        let visible = LogViewerPolicy.visibleEntries(entries + [unrelated, pending])
+
+        #expect(visible.count == 20)
+        #expect(visible.first?.message == "操作结果 58")
+        #expect(visible.last?.message == "操作结果 20")
+        #expect(visible.contains(where: { $0.operationResult == .success }))
+        #expect(visible.contains(where: { $0.operationResult == .failure }))
+        #expect(visible.allSatisfy { $0.category == .installation || $0.category == .renewal })
     }
 }

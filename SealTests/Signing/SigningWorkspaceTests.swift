@@ -74,6 +74,39 @@ struct SigningWorkspaceTests {
     }
 
     @Test
+    func removesAppStoreDeviceThinningWhitelistFromEverySignedTarget() throws {
+        let source = try IPAArchiveFixture.make(
+            includeShareExtension: true,
+            supportedDevices: ["iPad14,1", "iPad14,2"]
+        )
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "SealDeviceThinningTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let prepared = try SigningWorkspace().prepare(
+            ipaURL: source,
+            workspaceRoot: root.appending(path: "Work"),
+            originalBundleID: "com.example.demo",
+            teamID: "TEAMID"
+        )
+
+        for bundleURL in [prepared.appURL, prepared.appURL.appending(path: "PlugIns/Share.appex")] {
+            let data = try Data(contentsOf: bundleURL.appending(path: "Info.plist"))
+            let info = try #require(try PropertyListSerialization.propertyList(
+                from: data,
+                options: [],
+                format: nil
+            ) as? [String: Any])
+            #expect(info["UISupportedDevices"] == nil)
+            #expect(info["UIDeviceFamily"] as? [Int] == [1, 2])
+            #expect(info["MinimumOSVersion"] as? String == "14.0")
+        }
+    }
+
+    @Test
     func recoversUTF8ExecutableNameWhenZIPFlagIsMissing() throws {
         let source = try IPAArchiveFixture.make(
             apps: [.init(directoryName: "歌一刀.app", bundleIdentifier: "com.example.song", name: "歌一刀")],

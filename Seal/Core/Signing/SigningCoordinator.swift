@@ -1239,7 +1239,7 @@ actor SigningCoordinator {
             to: &renewedApp
         )
         // 两阶段提交：设备端已逐份读回确认（注入阶段），现在把 pending 转正
-        renewedApp.commitPendingSnapshot()
+        ProfileOnlyRenewalRecordUpdater.commitVerifiedRenewal(to: &renewedApp)
         renewedApp.lastInstallFailureCode = nil
         renewedApp.lastInstallFailureReason = nil
         try await appStore.save(renewedApp)
@@ -2560,7 +2560,8 @@ actor SigningCoordinator {
             try? await logStore?.append(
                 category: .installation,
                 level: .info,
-                message: "安装命令迟到完成且设备核验通过：\(app.name)（\(bundleIdentifier)）"
+                message: "安装命令迟到完成且设备核验通过：\(app.name)（\(bundleIdentifier)）",
+                operationResult: .success
             )
         } catch {
             guard var current = try? await appStore.fetchAll().first(where: { $0.id == appID }),
@@ -2577,7 +2578,8 @@ actor SigningCoordinator {
                 category: .installation,
                 level: .error,
                 message: "安装命令迟到结果未能结算为成功：\(bundleIdentifier)，\(ErrorDiagnosticFormatter.diagnostic(for: error))",
-                code: current.lastInstallFailureCode
+                code: current.lastInstallFailureCode,
+                operationResult: .failure
             )
         }
     }

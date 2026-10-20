@@ -35,9 +35,12 @@ struct PairingActivityAttributes: ActivityAttributes {
     }
 
     var deviceName: String
+    /// 小尺寸 Seal 标志随活动属性保存，避免 Widget 扩展因资源包解析失败而显示灰色占位图。
+    var sealIconPNG: Data?
 
-    init(deviceName: String) {
+    init(deviceName: String, sealIconPNG: Data? = nil) {
         self.deviceName = deviceName
+        self.sealIconPNG = sealIconPNG
     }
 }
 

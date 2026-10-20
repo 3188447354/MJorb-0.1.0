@@ -1,6 +1,14 @@
 import Foundation
 
 enum ProfileOnlyRenewalRecordUpdater {
+    /// 设备已逐份读回新描述文件后提交快照，并结算当前已安装产物。
+    /// profile-only 不触发安装或重启；保留 awaitingVerification 会让应用列表永久显示待确认。
+    static func commitVerifiedRenewal(to app: inout AppRecord) {
+        app.commitPendingSnapshot()
+        app.state = .installed
+        app.signedArtifactStatus = .installed
+    }
+
     /// - Parameter resolvedBindings: **键是「实际目标」Bundle ID**，值是**该目标依赖的那一份**描述文件。
     ///   共享主描述文件时多个目标会指向同一个值 —— 这是对的（它们真的共用一份），
     ///   调用方必须先用 `ProfileOnlyPortalResult.resolvedBindings(forBundleIdentifiers:)` 解析，

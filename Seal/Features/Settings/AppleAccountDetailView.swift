@@ -48,7 +48,6 @@ struct AppleAccountDetailView: View {
         AppleAccountAppListView(
             state: contentState,
             quota: inventory?.appIDQuota,
-            visibleAppIDCount: inventory?.usedBundleIDCount ?? 0,
             onRetry: refreshButtonTapped
         )
         .navigationTitle("已签名 App")
@@ -88,7 +87,10 @@ struct AppleAccountDetailView: View {
             )
         }
         return items.sorted { first, second in
-            first.name.localizedStandardCompare(second.name) == .orderedAscending
+            if first.expiryDate != second.expiryDate {
+                return AppleAccountAppNamePolicy.expirationComesBefore(first.expiryDate, second.expiryDate)
+            }
+            return first.name.localizedStandardCompare(second.name) == .orderedAscending
         }
     }
 
@@ -151,7 +153,6 @@ private enum AppleAccountAppListState: Equatable {
 private struct AppleAccountAppListView: View {
     let state: AppleAccountAppListState
     let quota: ApplePortalAppIDQuotaSnapshot?
-    let visibleAppIDCount: Int
     let onRetry: () -> Void
 
     var body: some View {
@@ -171,21 +172,21 @@ private struct AppleAccountAppListView: View {
     private var appIDQuotaCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Apple 返回的可新建额度")
+                Text("App ID 名额")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.primary)
                 Spacer(minLength: 8)
                 if let available = quota?.availableQuantity, available >= 0 {
-                    Text("\(available) 个")
+                    Text("\(available) 个可新建")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.sealAccent)
                 } else {
-                    Text("未提供")
+                    Text("Apple 未提供")
                         .font(.subheadline)
                         .foregroundStyle(Color.sealTextSecondary)
                 }
             }
-            Text("Apple 列表返回 \(quota?.returnedCount ?? visibleAppIDCount) 项，当前有效 \(visibleAppIDCount) 个\(quota?.maxQuantity.map { " · Apple 返回上限 \($0) 个" } ?? "")。列表数量与可新建额度不同。")
+            Text("已有的 App ID 仍可继续用于签名。")
                 .font(.footnote)
                 .foregroundStyle(Color.sealTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -250,7 +251,13 @@ private struct AppleAccountAppRowView: View {
                 .textSelection(.enabled)
             accountDetailRow("App ID", item.appIdentifier)
             accountDetailRow("Bundle ID", item.bundleIdentifier, monospaced: true)
-            accountDetailRow("有效期至", item.expirationText)
+            accountDetailRow(
+                "有效期至",
+                item.expirationText,
+                valueColor: AppleAccountAppNamePolicy.shouldHighlightExpiration(item.expiryDate, now: Date())
+                    ? .sealDanger
+                    : .sealTextSecondary
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 14)
@@ -259,7 +266,8 @@ private struct AppleAccountAppRowView: View {
     private func accountDetailRow(
         _ title: String,
         _ value: String,
-        monospaced: Bool = false
+        monospaced: Bool = false,
+        valueColor: Color = .sealTextSecondary
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(title)
@@ -267,7 +275,7 @@ private struct AppleAccountAppRowView: View {
                 .foregroundStyle(Color.sealTextSecondary)
             Text(value)
                 .font(monospaced ? .caption.monospaced() : .caption)
-                .foregroundStyle(Color.sealTextSecondary)
+                .foregroundStyle(valueColor)
                 .lineLimit(1)
                 .truncationMode(monospaced ? .middle : .tail)
                 .textSelection(.enabled)
@@ -376,6 +384,19 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
 }
 
 enum AppleAccountAppNamePolicy {
+    static func expirationComesBefore(_ first: Date?, _ second: Date?) -> Bool {
+        switch (first, second) {
+        case let (first?, second?): first < second
+        case (_?, nil): true
+        default: false
+        }
+    }
+
+    static func shouldHighlightExpiration(_ expirationDate: Date?, now: Date) -> Bool {
+        guard let expirationDate else { return false }
+        return expirationDate.timeIntervalSince(now) <= 86_400
+    }
+
     static func name(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
         displayName(for: bundleIdentifier, accountID: accountID, relatedApps: relatedApps)
     }

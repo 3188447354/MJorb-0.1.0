@@ -92,7 +92,9 @@ struct ProfileOnlyRenewalRecordUpdaterTests {
 
         // ── 第二阶段：设备端逐份读回确认后由调用方转正 ──
         // （生产上的调用点在 `SigningCoordinator.renewProfilesOnly`，紧跟在注入成功之后。）
-        app.commitPendingSnapshot()
+        app.state = .signed
+        app.signedArtifactStatus = .awaitingVerification
+        ProfileOnlyRenewalRecordUpdater.commitVerifiedRenewal(to: &app)
 
         #expect(app.provisioningProfileUUID == "NEW-MAIN")
         #expect(app.provisioningProfileExpirationDate == newExpiry)
@@ -100,6 +102,7 @@ struct ProfileOnlyRenewalRecordUpdaterTests {
         #expect(app.signingTargets.compactMap(\.profileUUID).sorted() == ["NEW-EXTENSION", "NEW-MAIN"])
         #expect(app.extensions.first?.provisioningProfileUUID == "NEW-EXTENSION")
         #expect(app.pendingSignedSnapshot == nil, "转正后草稿必须清空")
+        #expect(app.state == .installed)
         #expect(app.signedArtifactStatus == .installed)
     }
 

@@ -373,5 +373,14 @@ on 4.5.2」✗。
 | 对照项 | SideStore 实际做法 | Seal 处置 |
 |---|---|---|
 | profile-only 准入状态 | `VerifyCertificateOperation(willResign: false)` 以设备上实际安装包的签名身份验证续签对象；数据库里的签名中间态不能覆盖“当前运行包已安装”这一事实。 | **跟其事实来源，不照搬存储模型**：`SelfAppRegistrar` 只有在启动时读到当前运行 Seal，或自替换后确认新运行身份时，才将 `AppRecord.state` 写为 `.installed`。续签仍执行原有实时签名者、Team、扩展、版本和待更新源判定；不因状态修复放宽身份准入。 |
+| profile-only 结果提交 | `RefreshAppOperation` 将新 profiles 注入设备，并在 `updateInstalledApp` 中更新已安装记录的 profile 后返回原 App。 | **跟随设备端已确认事实**：Seal 逐份读回确认后提交新快照，并保持 `AppRecord.state` 与 `signedArtifactStatus` 为 `.installed`；不等待一个不会发生的重装进程来结算。 |
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift`。
+
+### 2026-10-20 App Store 瘦身设备白名单
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 同设备系列 IPA 安装 | SideStore 的重签路径没有按 `UISupportedDevices` 建立应用层设备型号拒绝规则；该键只会随输入 Info.plist 进入产物。 | 跟随“不加 Seal 设备型号拦截”的边界：完整签名前从主 App 和扩展 Info.plist 移除 App Store 瘦身白名单；保留 `UIDeviceFamily`、最低系统版本、架构和 entitlements，由 iOS 检查真实兼容性。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/RefreshAppOperation.swift`。这里采取的是移除仅由 App Store thinning 生成的型号白名单，不仿造或修改系统安装服务的兼容性判定。

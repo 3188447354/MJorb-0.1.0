@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import UIKit
 
 /// 控制手机配对的 Live Activity 生命周期。
 ///
@@ -39,10 +40,12 @@ final class PairingLiveActivityController {
         guard isEnabled else { return false }
 
         let expiry = Date().addingTimeInterval(Self.preparationLifetime)
-        let attributes = PairingActivityAttributes(deviceName: deviceName)
         do {
             activity = try Activity.request(
-                attributes: attributes,
+                attributes: PairingActivityAttributes(
+                    deviceName: deviceName,
+                    sealIconPNG: Self.sealIconPNG
+                ),
                 content: .init(state: Self.preparingState, staleDate: expiry),
                 pushType: nil
             )
@@ -194,4 +197,20 @@ final class PairingLiveActivityController {
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
         .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口输入此码")
     }
+
+    /// 取主 App 的正式品牌图标并缩到 32 px，随活动属性交给 Widget，避免只依赖扩展 Asset Catalog。
+    private static let sealIconPNG: Data? = {
+        guard let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) else { return nil }
+        for pixels in [32, 24] {
+            let size = CGSize(width: pixels, height: pixels)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            let iconData = UIGraphicsImageRenderer(size: size, format: format).pngData { _ in
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+            if iconData.count <= 1_800 { return iconData }
+        }
+        return nil
+    }()
 }

@@ -4708,7 +4708,7 @@ def violations(load=read):
     pairing_widget = squash(strip_comments(load("SealLiveActivity/PairingLiveActivityWidget.swift")))
     check("DynamicIslandExpandedRegion(.leading) { EmptyView() }" in pairing_widget
           and "DynamicIslandExpandedRegion(.trailing) { EmptyView() }" in pairing_widget
-          and "DynamicIslandExpandedRegion(.bottom) { VStack(spacing: 8) { brandingRow(context.state) pairingDetails(context.state, codeSize: 30) } }" in pairing_widget
+          and "DynamicIslandExpandedRegion(.bottom) { VStack(spacing: 8) { brandingRow(context.state, iconData: context.attributes.sealIconPNG) pairingDetails(context.state, codeSize: 30) } }" in pairing_widget
           and "} compactLeading: { EmptyView() }" in pairing_widget
           and "} minimal: { statusIcon(for: context.state.stage) }" in pairing_widget,
           "R119①: 灵动岛胶囊不得承载 Seal 品牌图标或状态文案；展开内容区必须显示品牌状态行")
@@ -4731,17 +4731,23 @@ def violations(load=read):
           "R119③: 已签名 App 行只显示应用名，不得再显示「应用名称」标签")
     pairing_asset_json = load("SealLiveActivity/Assets.xcassets/SealBrandIcon.imageset/Contents.json")
     pairing_project = strip_yaml_comments(load("project.yml"))
-    check('Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")' in pairing_widget
+    pairing_controller = strip_comments(load("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift"))
+    check('sealIconPNG: Self.sealIconPNG' in pairing_controller
+          and 'UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil)' in pairing_controller
+          and 'if let iconData, let image = UIImage(data: iconData)' in pairing_widget
+          and 'context.attributes.sealIconPNG' in pairing_widget
+          and 'Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")' in pairing_widget
           and "UIImage(contentsOfFile: imageURL.path)" in pairing_widget
-          and 'Image("SealBrandIcon", bundle: .main)' in pairing_widget
-          and 0 <= pairing_widget.find('UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil)')
+          and 'Image(systemName: "seal.fill")' in pairing_widget
+          and 0 <= pairing_widget.find('if let iconData, let image = UIImage(data: iconData)')
+              < pairing_widget.find('UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil)')
               < pairing_widget.find('Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")')
           and ".widgetAccentedRenderingMode(.fullColor)" in pairing_widget
           and "SealLiveActivity/Assets.xcassets" in pairing_project
           and "SealLiveActivity/Resources/SealBrandIcon.png" in pairing_project
           and os.path.isfile(ROOT / "SealLiveActivity/Resources/SealBrandIcon.png")
           and '"filename" : "icon.png"' in pairing_asset_json,
-          "R119④: 灵动岛优先读取扩展 Asset Catalog 图标，保留 PNG 文件回退与全彩渲染")
+          "R119④: 灵动岛优先使用主 App 随活动传入的品牌图标，保留扩展资源回退与全彩渲染")
 
     # R125: 重装后 CoreData / Accounts.json 中的 UUID 索引会消失；接管判定仍须查找
     # 同一 Keychain service 下的旧账号条目，并按运行中的证书序列号验证私钥。
@@ -4798,11 +4804,17 @@ def violations(load=read):
 
     signing_coordinator = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
     ipa_parser = strip_comments(load("Seal/Core/Import/IPAParserService.swift"))
+    signing_workspace = strip_comments(load("Seal/Infrastructure/Signing/SigningWorkspace.swift"))
+    signing_workspace_tests = load("SealTests/Signing/SigningWorkspaceTests.swift")
     check("IPADeviceCompatibility" not in signing_coordinator
           and "compatibilityMetadata" not in ipa_parser
           and not os.path.exists(ROOT / "Seal/Core/Signing/IPADeviceCompatibility.swift")
-          and not os.path.exists(ROOT / "SealTests/Signing/IPADeviceCompatibilityTests.swift"),
-          "R123: UISupportedDevices 与 MinimumOSVersion 不得作为 Seal 的签名前置拒绝条件")
+          and not os.path.exists(ROOT / "SealTests/Signing/IPADeviceCompatibilityTests.swift")
+          and "try removeDeviceThinningWhitelist(at: appURL)" in signing_workspace
+          and "try removeDeviceThinningWhitelist(at: extensionURL)" in signing_workspace
+          and 'info.removeValue(forKey: "UISupportedDevices")' in signing_workspace
+          and "func removesAppStoreDeviceThinningWhitelistFromEverySignedTarget()" in signing_workspace_tests,
+          "R123: 不得签名前置拒绝设备；重签时清除 App Store 型号白名单并保留系统安装判定")
 
     app_group_policy = strip_comments(load("Seal/Core/Signing/AppGroupOrderingPolicy.swift"))
     app_group_tests = load("SealTests/Signing/AppGroupOrderingPolicyTests.swift")

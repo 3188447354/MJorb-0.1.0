@@ -16,12 +16,27 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         case error
     }
 
+    enum OperationResult: String, Codable, Sendable {
+        case success
+        case failure
+        case notFinal
+
+        var displayName: String {
+            switch self {
+            case .success: "成功"
+            case .failure: "失败"
+            case .notFinal: "处理中"
+            }
+        }
+    }
+
     let id: UUID
     let timestamp: Date
     let category: Category
     let level: Level
     let message: String
     let code: String?
+    let operationResult: OperationResult?
 
     init(
         id: UUID = UUID(),
@@ -29,7 +44,8 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         category: Category,
         level: Level = .info,
         message: String,
-        code: String? = nil
+        code: String? = nil,
+        operationResult: OperationResult? = nil
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -37,6 +53,7 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         self.level = level
         self.message = message
         self.code = code
+        self.operationResult = operationResult
     }
 }
 
