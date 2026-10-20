@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 安全守卫 R24 未登记新增的会话预检重试
+
+- **现象**：CI `39463871785` 第 2 次尝试的 `build-package` 在 R24 失败：`withSessionRecovery` 调用数为 10，守卫仍要求 9。
+- **根因**：本批新增签名/续签前的只读 Apple ID 会话核验，并正确通过 `withSessionRecovery(..., retriesOnTimeout: true)`；R24 逐操作列表和调用点总数未登记这条新读路径。
+- **修复**：R24 明确点名“验证 Apple ID 会话”这一只读预检，并将核验后的调用点数更新为 10；保留原有九项 Portal 操作各自的断言。
+- **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：本机按项目规则不运行源码守卫；本轮签名器通过，R24 失败，Swift/UI 回归仍运行。补充断言后需 CI 验证。
+
 # 2026-10-21 — CI 测试失败：图标样本 PNG 无效，导入抽屉覆盖子控件标识
 
 - **现象**：CI `39460933848` 的 Swift/UI 回归中，图标解码用例因 PNG IDAT CRC 错误返回 `nil`；导入忙碌态 UI 用例找不到 `import-confirmation-dismiss-progress`。

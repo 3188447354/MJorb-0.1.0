@@ -1299,8 +1299,8 @@ def violations(load=read):
     check('recovery: "前往「我的」页面重新登录该 Apple ID"' not in cert_failure,
           "R23: 不能退回「只让用户去重新验证」这一条路（那正是死循环的成因）")
 
-    # R24: **跑在 per-bundle-ID 循环里的**每一个 portal 写入，以及 App Group 预检读取，
-    # 都必须过 `withSessionRecovery`。
+    # R24: **跑在 per-bundle-ID 循环里的**每一个 portal 写入、App Group 预检读取，
+    # 以及签名/续签写操作前的只读会话核验，都必须过 `withSessionRecovery`。
     #
     # 为什么这条最要紧：多扩展 App 的 Phase 1 每个 bundle ID 要发**两次**写请求，
     # 抖音（主 App + 8 扩展）就是 18 次突发 ⇒ 撞上 Apple 的短时限流返回 1100 ⇒
@@ -1338,6 +1338,8 @@ def violations(load=read):
          "读取证书列表（慢速路径；读操作，2026-09-18 补）"),
         ('withSessionRecovery("核验当前签名证书", retriesOnTimeout: true)',
          "profile-only 的当前签名证书核验（读操作；不确认远端仍有效就不许注入新 profile）"),
+        ('withSessionRecovery("验证 Apple ID 会话", retriesOnTimeout: true)',
+         "签名/续签写操作前的只读会话核验（允许安全地重试超时，不让一次瞬态读取失败漏过凭据恢复）"),
     ):
         check(label in portal_source, "R24: " + why + " 必须过退避重试")
 
@@ -1348,9 +1350,9 @@ def violations(load=read):
     check("SealDidRebuildLC2AppIDForGroupOrder" not in portal_source,
           "R24: 不允许保留 App Group 顺序的一次性 App ID 删除迁移")
     # 注意：定义写的是 `withSessionRecovery<T>(`，不带 `<` 的计数只数得到**调用点**。
-    check(portal_source.count("withSessionRecovery(") == 9,
-          "R24: 退避重试的调用点数量变了（应为 9 个：创建 App ID / 更新应用能力 / 申请描述文件 / "
-          "创建证书 / 分配 App Group / 读取 App Groups / 读取 App ID 列表 / 读取证书列表 / profile-only 当前证书核验）—— "
+    check(portal_source.count("withSessionRecovery(") == 10,
+          "R24: 退避重试的调用点数量变了（应为 10 个：创建 App ID / 更新应用能力 / 申请描述文件 / "
+          "创建证书 / 分配 App Group / 读取 App Groups / 读取 App ID 列表 / 读取证书列表 / profile-only 当前证书核验 / 签名前只读会话核验）—— "
           "新增或删除 portal 调用时请同步这里，别只改这个数字、先确认新调用是不是也在热路径上")
 
     # R24b: `applications` 字典的查询必须用 mapped ID（2026-09-18 真机日志实锤）。
