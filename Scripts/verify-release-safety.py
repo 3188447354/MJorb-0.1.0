@@ -4755,7 +4755,7 @@ def violations(load=read):
           and ".interactiveDismissDisabled(isDismissible == false)" in update_notice_view
           and "ScrollView {" in seal_drawer
           and "footer()" in seal_drawer
-          and ".sheet(item: $presentedUpdate, onDismiss: installPendingUpdateIfNeeded) { notice in" in about_view
+          and ".sheet(\n            item: $presentedUpdate,\n            onDismiss: installPendingUpdateIfNeeded,\n            content: { notice in" in about_view
           and ".presentationDetents([.large])" in about_view
           and "pendingUpdateInstallURL = localURL" in about_view
           and "onInstall?(localURL)" in about_view
@@ -10857,7 +10857,7 @@ def main():
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
          'if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {',
          'if let image = UIImage(systemName: "SealBrandIcon") {',
-         "R119⑤:"),
+         "R119④:"),
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
          ".widgetAccentedRenderingMode(.fullColor)",
          ".widgetAccentedRenderingMode(.accented)",
@@ -10869,23 +10869,23 @@ def main():
         ("Seal/Infrastructure/Security/KeychainVault.swift",
          "request[kSecMatchLimit as String] = kSecMatchLimitAll",
          "request[kSecMatchLimit as String] = kSecMatchLimitOne",
-         "R125①:"),
+         "R125:"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "if let unindexedSecrets = try? await keychain.loadAllSecrets() {",
          "if false, let unindexedSecrets = try? await keychain.loadAllSecrets() {",
-         "R125②:"),
+         "R125:"),
         ("Seal/Features/Settings/SettingsViewModel.swift",
          "if let unindexedSecrets = try? await keychain.loadAllSecrets() {",
          "if false, let unindexedSecrets = try? await keychain.loadAllSecrets() {",
-         "R125③:"),
+         "R125:"),
         # ── R120：更新抽屉共用 SealDrawer，呈现层必须在导航与 Tab 栏之上 ──
         ("Seal/Features/UpdateNoticeView.swift",
          "SealDrawer(title: drawerTitle, showsFooter: true)",
          "VStack(spacing: 0) {",
          "R120:"),
         ("Seal/Features/Settings/AboutView.swift",
-         ".sheet(item: $presentedUpdate, onDismiss: installPendingUpdateIfNeeded) { notice in",
-         ".overlay {",
+         ".sheet(\n            item: $presentedUpdate,",
+         ".overlay {\n            item: $presentedUpdate,",
          "R120:"),
         ("Seal/App/RootTabView.swift",
          ".sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded) { notice in",
