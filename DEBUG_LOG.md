@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 编译失败：InstallFailureSettingsRoute switch 缺少返回值
+
+- **现象**：CI `39457230977` 的 `swift-regression` 在编译 `InstallFailureSettingsRoute.swift:42–46` 时失败，未执行测试。
+- **根因**：`route(for:)` 在前面执行了验证码路由判断后，末尾的 `switch` 不再是函数唯一表达式；分支只写枚举表达式，没有显式 `return`，因此每个成员及 `nil` 都失去返回类型上下文。
+- **修复**：给每个 `failure.route` 分支补显式 `return`，保留现有导航映射与验证码优先路由。
+- **涉及文件**：`Seal/Features/Settings/InstallFailureSettingsRoute.swift`、`DEBUG_LOG.md`。
+- **验证状态**：本轮签名器测试通过；Swift/UI 回归因该编译错误失败，构建安全守卫仍运行。Windows 无 Swift/Xcode，修复提交后需重新跑 CI。
+
 # 2026-10-21 — CI 编译失败：MainActor.run 闭包参数标签与 guard 语法
 
 - **现象**：CI `39453521987` 与 `39455566660` 的 `swift-regression` 都在编译 `SigningCoordinator.swift:360` 时失败，测试未执行。

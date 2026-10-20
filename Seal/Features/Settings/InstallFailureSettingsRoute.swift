@@ -39,11 +39,11 @@ enum InstallFailureSettingsRoute {
         // 表单认证同一 Apple ID + Team 时会合并原记录并保留签名材料。
         if failure.action == .enterNewVerificationCode { return .addAccount }
         switch failure.route {
-        case .account: .account
-        case .certificates: .certificates
-        case .pairing: .pairing
-        case .localDevVPN: .pairingDiagnostic
-        case nil: nil
+        case .account: return .account
+        case .certificates: return .certificates
+        case .pairing: return .pairing
+        case .localDevVPN: return .pairingDiagnostic
+        case nil: return nil
         }
     }
 
