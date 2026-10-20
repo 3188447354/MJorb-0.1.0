@@ -1,3 +1,9 @@
+# 2026-10-20 — CI 修正 AltSign 静态库重复链接
+
+- **现象**：CI `swift-regression` 在 SwiftPM/Xcode 构建阶段以 exit 65 失败，提示 `AltSign-Static` 同时由 `SealTests` 和 `Seal` 静态链接，导致库代码重复。
+- **根因与修复**：为直接测试 `ALTAppID` JSON 日期解析而给 `SealTests` 新增了 AltSign 静态产品依赖；`SealTests` 本来依赖 `Seal`，而 `Seal` 已链接该产品。移除测试 target 上重复的 AltSign 链接，保留回归用例和 `import AltSign`，避免重复打包同一静态库。
+- **验证状态**：签名器测试已通过；当前 CI 的 Swift 回归失败已定位，修复待下一次 CI 验证。构建/发布 job 尚未结束；本地不运行 Swift/Xcode 或源码守卫。
+
 # 2026-10-20 — 日志排障规范与 CI 发布门
 
 - **需求**：用户要求日志内容按企业级规范设计，明确应记录什么、开发者如何定位错误，以及是否记录每次点击。

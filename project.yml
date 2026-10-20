@@ -289,8 +289,6 @@ targets:
     dependencies:
       - target: Seal
       - package: ZIPFoundation
-      - package: AltSign
-        product: AltSign-Static
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.tests
