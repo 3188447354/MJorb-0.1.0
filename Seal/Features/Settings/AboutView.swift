@@ -44,16 +44,20 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
-        .sheet(item: $presentedUpdate, onDismiss: installPendingUpdateIfNeeded) { notice in
-            UpdateNoticeView(
-                notice: notice,
-                onDismiss: {
-                    presentedUpdate = nil
-                },
-                onInstall: installCallback
+        .sheet(
+            item: $presentedUpdate,
+            onDismiss: installPendingUpdateIfNeeded,
+            content: { notice in
+                UpdateNoticeView(
+                    notice: notice,
+                    onDismiss: {
+                        presentedUpdate = nil
+                    },
+                    onInstall: installCallback
+                )
+                .presentationDetents([.large])
             }
-            .presentationDetents([.large])
-        }
+        )
         .alert(updateFailure?.statusText ?? "暂时无法检查更新", isPresented: Binding(
             get: { updateFailure != nil },
             set: { if !$0 { updateFailure = nil } }

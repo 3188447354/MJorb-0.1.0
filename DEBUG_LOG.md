@@ -5,7 +5,13 @@
 - **修复**：`KeychainVault.loadAllSecrets()` 枚举当前应用可读的账号条目；续签预测/执行与证书页都按 Seal 运行签名者的序列号验证 P12，旧 UUID 不再导致重复接管。灵动岛图标改为优先从扩展 Asset Catalog 加载，原始 PNG 仍作回退。新增两条纯策略回归用例覆盖旧 UUID 下有/无匹配私钥；发布守卫 R125 钉住全量查询及两个消费点，R119 加入 Asset Catalog 优先级检查。
 - **上游对照**：SideStore 的 profile-only refresh 依据已安装应用签名身份，不要求本地 P12；Seal 保留首次接管的一次完整重签，只修正重装后账号 UUID 索引丢失造成的假阴性，详见 `docs/upstream-alignment.md`。
 - **涉及文件**：`Seal/Infrastructure/Security/KeychainVault.swift`、`Seal/Core/Renewal/SelfSigningIdentity.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、对应回归测试、发布守卫、版本、`RELEASE_NOTES.md`、上游对照台账与本日志。
-- **验证状态**：已检查桌面 0.1.37 IPA，扩展目录确实同时含 `SealBrandIcon.png` 与 `Assets.car`；源 PNG 正确显示 Seal 图案。尚未运行 Swift/Xcode、发布守卫、CI 或真机验证；Windows 无 Xcode 工具链。当前修改只在本地，未推送，图标真机显示和重装后续签路径仍待验证。
+- **验证状态**：已检查桌面 0.1.37 IPA，扩展目录确实同时含 `SealBrandIcon.png` 与 `Assets.car`；源 PNG 正确显示 Seal 图案。已推送 0.1.39，首轮 CI #74 的签名器测试通过，Swift 回归发现更新抽屉编译错误并正在修复；图标真机显示和重装后续签仍待设备验收。
+
+## 2026-10-20 CI 修正 About 更新抽屉编译
+
+- **现象**：CI #74 的 `swift-regression` 在 `AboutView.swift` 报 `Expected ')' in expression list`，并连带把后续静态图标方法解析成类型外声明。
+- **根因与修复**：诊断落在更新 sheet 的视图内容闭包。将尾随 `content` 闭包改为显式 `content:` 参数，保留与启动更新一致的 `UpdateNoticeView` 和大尺寸 sheet 呈现。
+- **验证状态**：等待下一轮 CI 验证该编译修正；本机没有 Swift/Xcode 工具链。
 
 ## 2026-10-20 更新抽屉改用签名抽屉容器
 
