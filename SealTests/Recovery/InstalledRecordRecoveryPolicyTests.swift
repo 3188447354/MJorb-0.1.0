@@ -209,11 +209,7 @@ struct InstalledRecordRecoveryPolicyTests {
             ],
             context: makeContext(teams: [])
         ).first)
-        let recovered = try #require(InstalledRecordRecoveryPolicy.makeRecord(
-            from: draft,
-            installedOnDevice: true,
-            accountID: nil
-        ))
+        let recovered = InstalledRecordRecoveryPolicy.makeRecord(from: draft, accountID: nil)
         let parsed = ParsedIPA(
             name: "Demo",
             bundleIdentifier: "com.example.demo",

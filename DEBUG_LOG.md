@@ -1,3 +1,9 @@
+# 2026-10-20 — CI 修正重导入覆盖回归测试的草稿类型
+
+- **现象**：CI run `39376489641` 编译回归测试时，`InstalledRecordRecoveryPolicyTests.swift` 把 `InstalledAppDraft` 传给只接受 profile `Draft` 的 `makeRecord(..., installedOnDevice:)` 重载，类型不匹配。
+- **根因与修复**：该用例的草稿来自已安装设备清单，且测试夹具已标记为 profile validated；应调用接收 `InstalledAppDraft` 的记录恢复重载。保留重导入后命中原记录的断言，删除不适用的 `installedOnDevice` 参数。
+- **验证状态**：之前的签名器测试通过；本次 Swift 回归在该编译错误处失败。修复待后续 CI 验证；本地不运行 Swift/Xcode 或源码守卫。
+
 # 2026-10-20 — CI 修正 Apple ID 到期日展示编译错误
 
 - **现象**：修复 AltSign 重复静态链接后，CI run `39375671383` 的 Swift 回归继续报错：`AppleAccountDetailView.swift:445` 对非 Optional `Date` 使用 `if let`。
