@@ -4169,9 +4169,22 @@ def violations(load=read):
         check("inputs.publish_release == true" in text
               and re.search(r"publish_release:[\s\S]*?default: false", text) is not None,
               workflow + ": publishing must be explicit and default off")
-        check(re.search(r"\n  publish-release:[\s\S]{0,600}?\n    if: github\.event_name == 'workflow_dispatch'",
-                        text) is not None,
-              workflow + ": publish job must stay gated to workflow_dispatch (never run on push)")
+        publish_body = strip_yaml_comments(text)
+        if workflow == "ios.yml":
+            check(re.search(
+                r"\n  publish-release:[\s\S]{0,600}?\n    if: github\.event_name == 'push' \|\| "
+                r"\(github\.event_name == 'workflow_dispatch' && inputs\.publish_release == true\)",
+                publish_body) is not None,
+                workflow + ": publish must run after successful push gates and remain manually opt-in on dispatch")
+            check('gh release view "$TAG" --repo 3188447354/MJorb-0.1.0' in publish_body
+                  and "Bump MARKETING_VERSION" in publish_body,
+                  workflow + ": duplicate release tags must require a version bump")
+        else:
+            check(re.search(
+                r"\n  publish-release:[\s\S]{0,600}?\n    if: github\.event_name == 'workflow_dispatch' "
+                r"&& inputs\.publish_release == true",
+                publish_body) is not None,
+                workflow + ": fast release workflow must remain manually gated")
         check('${TAG#v}' in text and '!= "$VER"' in text,
               workflow + ": release tag must match built IPA version")
 
@@ -7211,9 +7224,9 @@ def main():
          "            try await persistRevokedSigningMaterial(updatedSecret, [candidate.serialNumber])\n            // 加入 dismissal",
          "            // revoked state persistence removed\n            // 加入 dismissal", "R03:"),
         (".github/workflows/ios.yml",
-         "if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true",
+         "if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)",
          "if: inputs.publish_release == true",
-         "ios.yml: publish job"),
+         "ios.yml: publish must run after successful push gates"),
         (".github/workflows/ios.yml",
          "needs: [build-package, signer-tests, swift-regression]",
          "needs: [build-package, signer-tests]",
