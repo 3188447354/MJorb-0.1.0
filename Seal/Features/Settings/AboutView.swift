@@ -2,29 +2,12 @@ import SwiftUI
 import UIKit
 
 struct AboutView: View {
-    private enum UpdateStatus: Equatable {
-        case checking
-        case latest
-        case available(String)
-        case unavailable(UpdateCheckFailure)
-    }
-
+    @ObservedObject var updateCoordinator: UpdatePresentationCoordinator
     private var version: String {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.1.0"
     }
 
-    /// 应用内更新安装回调（下载完成后触发）；为 nil 时回退跳转浏览器。
-    private let onInstall: ((URL) -> Void)?
-
-    @State private var isCheckingUpdate = false
-    @State private var updateStatus: UpdateStatus = .latest
-    @State private var presentedUpdate: UpdateNotice?
-    @State private var pendingUpdateInstallURL: URL?
     @State private var updateFailure: UpdateCheckFailure?
-
-    init(onInstall: ((URL) -> Void)? = nil) {
-        self.onInstall = onInstall
-    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -44,20 +27,6 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
-        .sheet(
-            item: $presentedUpdate,
-            onDismiss: installPendingUpdateIfNeeded,
-            content: { notice in
-                UpdateNoticeView(
-                    notice: notice,
-                    onDismiss: {
-                        presentedUpdate = nil
-                    },
-                    onInstall: installCallback
-                )
-                .presentationDetents([.large])
-            }
-        )
         .alert(updateFailure?.statusText ?? "暂时无法检查更新", isPresented: Binding(
             get: { updateFailure != nil },
             set: { if !$0 { updateFailure = nil } }
@@ -94,7 +63,7 @@ struct AboutView: View {
                     Text("检查更新")
                         .foregroundStyle(.primary)
                     Spacer(minLength: 12)
-                    if isCheckingUpdate {
+                    if updateCoordinator.isChecking {
                         ProgressView()
                             .scaleEffect(0.8)
                     } else {
@@ -110,7 +79,7 @@ struct AboutView: View {
                 .frame(minHeight: 54)
             }
             .buttonStyle(.plain)
-            .disabled(isCheckingUpdate)
+            .disabled(updateCoordinator.isChecking)
         }
     }
 
@@ -198,7 +167,8 @@ struct AboutView: View {
     }
 
     private var updateStatusText: String {
-        switch updateStatus {
+        switch updateCoordinator.status {
+        case .unchecked: return "点击检查更新"
         case .checking: return "正在检查"
         case .latest: return "已是最新版本"
         case .available(let version): return "\(version) 可更新"
@@ -207,46 +177,13 @@ struct AboutView: View {
     }
 
     private func checkUpdate() {
-        Task { await refreshUpdateStatus(presentUpdate: true) }
-    }
-
-    private func refreshUpdateStatus(presentUpdate: Bool) async {
-        guard isCheckingUpdate == false else { return }
-        isCheckingUpdate = true
-        updateStatus = .checking
-        let result = await UpdateChecker.shared.check(force: presentUpdate)
-        let notice: UpdateNotice?
-        switch result {
-        case .unavailable(let failure):
-            notice = nil
-            updateStatus = .unavailable(failure)
-        case .latest, .suppressed:
-            notice = nil
-            updateStatus = .latest
-        case .available(let update):
-            notice = update
-            updateStatus = .available(update.version)
+        updateFailure = nil
+        Task {
+            guard let result = await updateCoordinator.checkManually() else { return }
+            if case .unavailable(let failure) = result {
+                updateFailure = failure
+            }
         }
-        isCheckingUpdate = false
-        if presentUpdate, let notice {
-            presentedUpdate = notice
-        } else if presentUpdate, case .unavailable(let failure) = result {
-            updateFailure = failure
-        }
-    }
-
-    private var installCallback: ((URL) -> Void)? {
-        guard onInstall != nil else { return nil }
-        return { localURL in
-            pendingUpdateInstallURL = localURL
-            presentedUpdate = nil
-        }
-    }
-
-    private func installPendingUpdateIfNeeded() {
-        guard let localURL = pendingUpdateInstallURL else { return }
-        pendingUpdateInstallURL = nil
-        onInstall?(localURL)
     }
 
     private static func currentAppIcon() -> UIImage? {

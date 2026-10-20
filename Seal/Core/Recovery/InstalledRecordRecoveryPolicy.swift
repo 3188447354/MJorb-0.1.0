@@ -341,8 +341,8 @@ enum InstalledRecordRecoveryPolicy {
     }
 
     /// Rebuilds records from the actual user-app inventory. InstallationProxy's
-    /// ProfileValidated flag is the sideload signal; profile data is attached only
-    /// when one unambiguous device profile covers the app.
+    /// ProfileValidated flag is the sideload signal. Exact App ID profiles take
+    /// precedence over wildcard coverage; ambiguous profile fields require consensus.
     static func drafts(
         installedApplications: [DeviceInstalledApplicationSummary],
         profiles: [DeviceProvisioningProfileSummary],
@@ -363,7 +363,13 @@ enum InstalledRecordRecoveryPolicy {
             let matchingProfiles = profiles.filter {
                 profile($0, covers: bundleID)
             }
-            let matchedProfile = matchingProfiles.count == 1 ? matchingProfiles.first : nil
+            let exactProfiles = matchingProfiles.filter {
+                normalizedBundleIdentifier($0.bundleIdentifier) == normalized
+            }
+            // An exact App ID profile is stronger evidence than a wildcard profile that
+            // happens to cover the same installed Bundle ID.
+            let profileCandidates = exactProfiles.isEmpty ? matchingProfiles : exactProfiles
+            let matchedProfile = profileCandidates.count == 1 ? profileCandidates.first : nil
             let isSeal = isSealBundleIdentifier(
                 bundleID,
                 canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier,
@@ -377,28 +383,48 @@ enum InstalledRecordRecoveryPolicy {
             }
             guard isSeal == false else { return nil }
 
-            // 设备清单只提供签名后的 ID。还原原始 ID 时只用唯一匹配的 profile Team，
-            // 或与本机已知 Team 精确匹配的后缀；证据不足就保留设备实际 ID。
+            // 设备清单只提供签名后的 ID。优先使用精确 App ID profile；没有精确项时，
+            // 多份 wildcard profile 只有 Team 全部一致才能共享身份。资料字段按候选值共识恢复。
             let profileTeam = matchedProfile.flatMap { normalizedTeamIdentifier($0.teamIdentifier) }
+                ?? consensus(profileCandidates.map { normalizedTeamIdentifier($0.teamIdentifier) })
             let teamIdentifier = profileTeam
                 ?? teamIdentifierForMappedBundle(bundleID, knownTeams: context.knownTeamIdentifiers)
             let originalBundleIdentifier = Self.originalBundleIdentifier(
                 fromMapped: bundleID,
                 teamIdentifier: teamIdentifier
             ) ?? bundleID
+            var profileMetadataCandidates = matchedProfile.map { [$0] } ?? []
+            if profileMetadataCandidates.isEmpty,
+               let profileTeam,
+               profileCandidates.isEmpty == false,
+               profileCandidates.allSatisfy({
+                   normalizedTeamIdentifier($0.teamIdentifier) == profileTeam
+               }) {
+                profileMetadataCandidates = profileCandidates
+            }
+            let profileUUID = consensus(profileMetadataCandidates.map(\.uuid))
+            let profileName = consensus(profileMetadataCandidates.map(\.name))
+            let profileCreationDate = consensus(profileMetadataCandidates.map(\.creationDate))
+            let profileExpirationDate = consensus(profileMetadataCandidates.map(\.expirationDate))
             return InstalledAppDraft(
                 bundleIdentifier: bundleID,
                 originalBundleIdentifier: originalBundleIdentifier,
                 teamIdentifier: teamIdentifier,
-                profileUUID: matchedProfile?.uuid,
-                profileName: matchedProfile?.name,
-                profileCreationDate: matchedProfile?.creationDate,
-                profileExpirationDate: matchedProfile?.expirationDate,
+                profileUUID: profileUUID,
+                profileName: profileName,
+                profileCreationDate: profileCreationDate,
+                profileExpirationDate: profileExpirationDate,
                 displayName: application.displayName.isEmpty ? bundleID : application.displayName,
                 version: application.shortVersion,
                 buildNumber: application.buildNumber
             )
         }.sorted { $0.bundleIdentifier.localizedCaseInsensitiveCompare($1.bundleIdentifier) == .orderedAscending }
+    }
+
+    private static func consensus<Value: Equatable>(_ values: [Value?]) -> Value? {
+        guard let first = values.first.flatMap({ $0 }),
+              values.allSatisfy({ $0 == first }) else { return nil }
+        return first
     }
 
     private static func profile(_ profile: DeviceProvisioningProfileSummary, covers bundleIdentifier: String) -> Bool {

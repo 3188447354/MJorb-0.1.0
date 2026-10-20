@@ -1,3 +1,28 @@
+# 2026-10-20 — 日志排障规范与 CI 发布门
+
+- **需求**：用户要求日志内容按企业级规范设计，明确应记录什么、开发者如何定位错误，以及是否记录每次点击。
+- **结论**：日志是本地排障事件流，不是点击遥测。记录有业务结果的操作开始/结束、关键状态与路线决策、外部边界结果/耗时、重试/取消/恢复和失败诊断；不记录页面导航、键盘输入、重复进度回调或每次轮询。导出需包含构建标识、稳定错误码、操作时间和脱敏底层原因；用户反馈附操作名称与大致时间。
+- **修改**：新增 `docs/qa/logging-standard.md` 规定记录边界、字段、级别、脱敏和排查顺序；日志页增加导出与错误码使用指引。现有 `SealLogEntry` 仍以文本为主，`ImportFailure.diagnosticID` 尚未贯穿全部日志，文档将其明确列为按主链路增量接入的缺口，不声称已完成结构化关联。
+- **CI 安全门**：用户当前提供的项目规则要求 push 只跑 CI、发布仅由人工 dispatch 显式触发；检查发现 `ios.yml` 仍会在 push 全绿后自动发布并同步官网。已恢复手动发布门，同步调整发布守卫与 `AGENTS.md`，让本次 push 不会触发 Release 或官网同步。
+- **验证状态**：待 CI 执行工作流守卫、Swift 回归、签名器测试与 IPA 构建；本机 Windows 不运行 Swift/Xcode 或发布守卫。源码 ZIP 备份留在工作区，不纳入提交。
+
+# 2026-10-20 — 重装恢复、IPA 路径、Apple App ID、缓存清理与 Seal 续签闭环
+
+- **现象**：Seal 重装后扫回的已安装 App 缺少身份资料，重导入原 IPA 被当成 Bundle ID 冲突；部分 ZIP 路径的 IPA 在导入阶段找不到主程序；Apple ID 已签名 App 列表漏掉 Apple 返回的 App ID/名称；缓存清理后签名工作区仍占用统计空间；Seal 已完成本机接管后仍反复完整重签。
+- **根因与修复**：① 多份设备描述文件匹配同一应用时，旧恢复逻辑把精确 App ID profile 与覆盖范围更广的 wildcard profile 一起算成歧义；现在优先精确 profile，再对剩余候选按 Team 及每个字段分别求一致值。映射 Bundle ID 可还原并命中重导入覆盖策略，不会从不同 profile 拼出一份虚构身份。② IPA 解析器与签名解包器原先独立选择 ZIP 路径编码；现在共用 `IPAArchivePathPolicy`，依据 `CFBundleExecutable` 是否命中选择同一编码，并限制预读 Info.plist 的实际解压字节数。③ Apple 返回的 `expirationDate` 在日志中的 JSON 响应是 ISO-8601 字符串，AltSign 的 `ALTAppID` 只尝试 `Date` cast，导致日期变成 nil；App ID 同步和页面随后又把 nil 当成过期而过滤。现在 AltSign 同时解析 plist Date 与 JSON ISO-8601 字符串，Seal 保留 Apple 未给日期的 App ID，名称/门户 App ID 使用 Apple 原值，签名身份和有效期优先用本地真实 profile。④ 统计把 `Caches/Seal` 全部计入临时缓存，清理只删 `Temp`；设置清理现在清同一缓存根，安装后清理按 app ID 只删当前工作区和共享暂存区。⑤ 自替换确认和运行包对账只写 `signedArtifactStatus`，没有把 `AppRecord.state` 从 `.signed` 转成 `.installed`；准入因此以“缺少已安装产物”持续回落。Log34 先报本机无私钥，之后又报本机有私钥但仍选完整重签；这说明钥匙获取与续签准入状态是两个问题。现在确认运行中的 Seal 后恢复 `.installed`，新结算也同步写状态；不放宽身份、扩展或待更新源准入。
+- **设备兼容与样本复核**：当前源码没有按 `UIDeviceFamily`、`UISupportedDevices` 或最低系统版本在签名前拦截的逻辑；已提供的歌一刀 IPA 声明 `UIDeviceFamily = [1, 2]`、最低系统版本 14.0。直接检查 ZIP 中心目录发现包内路径是 UTF-8 但未设置 UTF-8 标志，Info.plist 指定的中文主程序条目实际存在且路径字节吻合；`Seal-log(34)` 没有导入失败码或设备族拒绝记录。因此没有证据支持设备族规则导致失败，iOS 负责最终安装兼容性判断。其他导入失败也未出现在该日志，仍需对应 IPA 和失败提示才能定根因。
+- **回归覆盖**：精确 profile 优先于 wildcard；同 Team 多个精确 profile 只恢复彼此一致的字段，并可按原始 Bundle ID 命中重导入覆盖记录。Seal 启动对账与自替换结算把 `.signed` 变为 `.installed` 并允许 live identity 走 profile-only；Apple JSON ISO-8601 到期日解析、nil 到期 App ID 保留、门户名称/ID/日期回显；清理统计中的 Signing/Exports 缓存，并验证安装后只清当前 app 工作区。中文 ZIP 未标 UTF-8 用例继续覆盖导入与解包共享策略，另覆盖没有 UTF-8 Archive 时的默认路径选择。
+- **涉及文件**：`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Core/Import/IPAParserService.swift`、`Seal/Core/Import/IPAArchivePathPolicy.swift`、`Seal/Infrastructure/Signing/SigningWorkspace.swift`、`upstream/AltSign/Sources/Model/ALTAppID.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Infrastructure/Signing/ApplePortalInventoryService.swift`、`Seal/Features/Settings/AppleAccountDetailView.swift`、`Seal/Infrastructure/Storage/AppFileStore.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`project.yml`、`docs/upstream-alignment.md` 与对应测试。
+- **验证状态**：回归用例已补；本机 Windows 无 Swift/Xcode 工具链，不运行本地测试；`git diff --check` 已通过，待 CI 验证。指定 IPA 的实际导入和设备续签仍待真机复验。
+
+# 2026-10-20 更新检查优先级与抽屉按内容适配
+
+- **现象**：启动 Seal 后有新版时不会稳定自动弹出；“关于 Seal”页有独立检查状态，和启动更新抽屉不是同一条呈现链路；更新抽屉高度固定，短内容留白、长内容可能占满屏幕并影响操作区。
+- **根因**：启动检查等待页面与签名/导入状态，检查结果还可能在 sheet 真正呈现前被记录为已通知；About 页另有独立状态。更新抽屉虽复用 `SealDrawer`，但 sheet 高度仍使用固定大尺寸。
+- **修复**：新增共享更新协调器，启动和 About 共用检查状态与抽屉；只在抽屉实际出现后记录版本，失败时前台退避重试。更新抽屉优先于外观设置呈现并隐藏底部标签栏；基于共享抽屉的标题、内容和 footer 实测高度选择 detent，超出屏幕上限时保留滚动内容区。
+- **涉及文件**：`Seal/Infrastructure/UpdateChecker.swift`、`Seal/Infrastructure/UpdatePresentationCoordinator.swift`、`Seal/DesignSystem/SealDrawer.swift`、`Seal/Features/UpdateNoticeView.swift`、`Seal/Features/Settings/AboutView.swift`、`Seal/Features/Settings/SettingsRootView.swift`、`Seal/App/RootTabView.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：`git diff --check` 通过，旧启动检查状态和 `.suppressed` 引用已清除；本机 Windows 不支持 Swift/Xcode 编译，待 CI 验证。真机自动弹出、抽屉高度与滚动仍待验收。
+
 # 2026-10-20 CI 全绿后自动发布 Release
 
 - **需求**：用户明确要求当前成功构建要发布，今后完整 CI 通过后自动发布。

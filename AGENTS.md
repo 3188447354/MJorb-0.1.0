@@ -284,8 +284,9 @@ Windows 本机**无法编译**，一切以云 CI 编译 + 真机回归为准。
   `ios-release.yml` 发布档：Release 编译 + 发布。`ios-fast.yml` 是 `main` 的快速出包档
   （注意它用 **Debug** 配置且不跑守卫与测试）。
 - **触发方式**：`ios.yml` 除 PR 外，推到非 `main` 分支且改动命中相关路径会自动跑完整 CI；
-  `build-package`、`swift-regression`、`signer-tests` 全部通过后自动发布与 IPA 版本一致的 GitHub Release，并同步官网。
-  手动 `workflow_dispatch` 仍需显式设 `publish_release=true`；`ios-release.yml` 快速发布档仍为手动触发。
+  push 只运行 CI，**不发布 Release、不同步官网**。只有手动 `workflow_dispatch` 并显式设
+  `publish_release=true`，且 `build-package`、`swift-regression`、`signer-tests` 全部通过后才发布并同步官网；
+  `ios-release.yml` 快速发布档也只允许手动触发。
   每次要发布的新版本先递增 `MARKETING_VERSION` 并更新 `RELEASE_NOTES.md`；重复 tag 会由发布步骤拒绝。
   这些条件由 `Scripts/verify-release-safety.py` 静态守护（含变异自检）。
 - **时间预算**：`ios.yml` 拆成 3 个并行 job —— `build-package` / `swift-regression` / `signer-tests`，

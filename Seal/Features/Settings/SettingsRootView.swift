@@ -6,7 +6,7 @@ struct SettingsRootView: View {
     let relatedApps: [AppRecord]
     let certificateExportHandler: CertificateExportHandler
     let onAppearanceThemeRequested: () -> Void
-    let onSelfUpdateInstall: ((URL) -> Void)?
+    @ObservedObject var updateCoordinator: UpdatePresentationCoordinator
 
     @State private var navigationPath = NavigationPath()
     @State private var isAddingAccount = false
@@ -156,7 +156,7 @@ struct SettingsRootView: View {
                     }
 
                     settingsSection("关于") {
-                        NavigationLink { AboutView(onInstall: onSelfUpdateInstall) } label: {
+                        NavigationLink { AboutView(updateCoordinator: updateCoordinator) } label: {
                             settingsRow(
                                 title: "关于 Seal",
                                 value: "版本 \(appVersion)",

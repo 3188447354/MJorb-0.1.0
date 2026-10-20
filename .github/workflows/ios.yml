@@ -4,7 +4,7 @@ on:
   pull_request:
   # 特性/发布分支推送即自动跑完整门（PR 驱动之外的第二条通路）。
   # 排除 main：main 由 ios-fast.yml 负责出包。
-  # push 完整门全绿后自动发布 Release；workflow_dispatch 仍可通过输入手动发布。
+  # push 只跑 CI；发布仅由 workflow_dispatch 显式勾选 publish_release 后触发。
   #
   # 时间预算（2026-09-14 实测调整）：原先测试步骤嵌在 build-package 里，同一份代码被全量构建两遍
   # （xcodebuild test 走 Debug、build-unsigned-ipa 走 Release，DerivedData 增量互相用不上），
@@ -411,13 +411,13 @@ jobs:
         working-directory: Vendor/SideSign
         run: swift test
 
-  # 全绿后自动发布 GitHub Release；手动 dispatch 时仍需勾选 publish_release。
+  # 仅手动 dispatch 并显式勾选 publish_release 后发布 GitHub Release。
   # Release 资产永久保留，弥补 upload-artifact 30 天自动过期；只下载+上传，用 ubuntu 即可。
   publish-release:
     # swift-regression 必须在 needs 里：测试已从 build-package 拆出，
     # 否则发布可能在 UI 回归还没跑完时就发出去。
     needs: [build-package, signer-tests, swift-regression]
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_release == true
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

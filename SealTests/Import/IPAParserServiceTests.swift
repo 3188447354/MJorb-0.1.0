@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import ZIPFoundation
 @testable import Seal
 
 struct IPAParserServiceTests {
@@ -62,6 +63,19 @@ struct IPAParserServiceTests {
 
         #expect(result.name == "歌一刀")
         #expect(result.bundleIdentifier == "com.example.chinese")
+    }
+
+    @Test
+    func selectsArchiveDefaultWhenUTF8ArchiveIsUnavailable() throws {
+        let url = try IPAArchiveFixture.make()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let defaultArchive = try Archive(url: url, accessMode: .read)
+
+        #expect(IPAArchivePathPolicy.selectEncoding(
+            utf8Archive: nil,
+            defaultArchive: defaultArchive,
+            maximumMetadataSize: ArchiveLimits().maximumMetadataSize
+        ) == .archiveDefault)
     }
 
     @Test

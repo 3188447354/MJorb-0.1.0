@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 应用内更新抽屉。
 ///
@@ -13,6 +14,9 @@ struct UpdateNoticeView: View {
     @State private var phase: DownloadPhase = .available
     @State private var downloadTask: Task<Void, Never>?
     @State private var downloadGeneration = UUID()
+    @State private var fittedDetentHeight: CGFloat?
+    @State private var selectedDetent: PresentationDetent = .medium
+    @State private var didMeasureInitialDetent = false
 
     private enum DownloadFailure: Equatable {
         case download
@@ -43,13 +47,37 @@ struct UpdateNoticeView: View {
         } footer: {
             footer
         }
+        .presentationDetents(availableDetents, selection: $selectedDetent)
+        .presentationContentInteraction(.scrolls)
         .interactiveDismissDisabled(isDismissible == false)
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phase)
+        .onPreferenceChange(SealDrawerLayoutMeasurementsPreferenceKey.self) { measurements in
+            updateFittedDetent(using: measurements)
+        }
         .onDisappear {
             downloadGeneration = UUID()
             downloadTask?.cancel()
             downloadTask = nil
         }
+    }
+
+    private var availableDetents: Set<PresentationDetent> {
+        guard let fittedDetentHeight else { return [.medium, .large] }
+        return [.height(fittedDetentHeight), .large]
+    }
+
+    private func updateFittedDetent(using measurements: SealDrawerLayoutMeasurements) {
+        guard measurements.totalHeight > 0 else { return }
+        let screenLimit = max(320, UIScreen.main.bounds.height - 80)
+        let fittedHeight = min(max(measurements.totalHeight + 36, 320), screenLimit)
+        guard abs((self.fittedDetentHeight ?? 0) - fittedHeight) > 1 else { return }
+
+        let isExpanded = selectedDetent == .large
+        self.fittedDetentHeight = fittedHeight
+        if didMeasureInitialDetent == false || isExpanded == false {
+            selectedDetent = .height(fittedHeight)
+        }
+        didMeasureInitialDetent = true
     }
 
     private var drawerTitle: String {

@@ -7,23 +7,24 @@ struct UpdateChecker {
     static let shared = UpdateChecker()
 
     private let repo = "3188447354/MJorb-0.1.0"
-    private let lastNotifiedVersionKey = "update_notifier.last_notified_version"
+    private let lastNotifiedVersionKey = "update_notifier.last_presented_version.v2"
     private static let cache = UpdateCheckCache()
 
     /// 成功结果在本次进程内复用；新启动重新检查。手动重试只重试失败请求，
     /// 已是最新版或已有更新时不重复请求网络。
     func check(force: Bool = false) async -> UpdateCheckResult {
         let repository = repo
-        let result = await Self.cache.result(force: force) {
+        return await Self.cache.result(force: force) {
             await Self.fetchLatest(repo: repository)
         }
-        guard force == false else { return result }
-        if case .available(let notice) = result {
-            let lastNotified = UserDefaults.standard.string(forKey: lastNotifiedVersionKey)
-            if lastNotified == notice.version { return .suppressed }
-            UserDefaults.standard.set(notice.version, forKey: lastNotifiedVersionKey)
-        }
-        return result
+    }
+
+    func wasNotified(version: String) -> Bool {
+        UserDefaults.standard.string(forKey: lastNotifiedVersionKey) == version
+    }
+
+    func markNotified(version: String) {
+        UserDefaults.standard.set(version, forKey: lastNotifiedVersionKey)
     }
 
     private static func fetchLatest(repo: String) async -> UpdateCheckResult {
@@ -303,7 +304,6 @@ struct UpdateChecker {
 enum UpdateCheckResult: Sendable {
     case unavailable(UpdateCheckFailure)
     case latest
-    case suppressed
     case available(UpdateNotice)
 }
 

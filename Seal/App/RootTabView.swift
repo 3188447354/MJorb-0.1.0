@@ -19,15 +19,13 @@ struct RootTabView: View {
     @State private var isAppearanceThemePresented = false
     @State private var isCustomAccentColorPresented = false
     @State private var shouldPresentCustomAccentColorAfterThemeDismiss = false
-    @State private var didCheckUpdatesThisLaunch = false
     @State private var launchCheckInProgress = false
     @State private var lastLaunchCheckAt: Date?
+    @StateObject private var updateCoordinator = UpdatePresentationCoordinator()
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
-    @State private var updateNotice: UpdateNotice?
     @State private var pendingUpdateInstallURL: URL?
-    @State private var updateCheckInProgress = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -46,9 +44,7 @@ struct RootTabView: View {
                 relatedApps: appsViewModel.apps,
                 certificateExportHandler: certificateExportHandler,
                 onAppearanceThemeRequested: { isAppearanceThemePresented = true },
-                onSelfUpdateInstall: { localURL in
-                    installSelfUpdate(localURL)
-                }
+                updateCoordinator: updateCoordinator
             )
             .tabItem {
                 Label(AppSection.settings.title, systemImage: AppSection.settings.systemImage)
@@ -58,21 +54,24 @@ struct RootTabView: View {
         }
         .tint(.sealAccent)
         .preferredColorScheme(SealAppearance(rawValue: appearanceRawValue)?.colorScheme)
+        .toolbar(updateCoordinator.presentedNotice == nil ? .visible : .hidden, for: .tabBar)
         .sealScreenBackground()
         .background {
             Color.clear
-                .sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded) { notice in
+                .sheet(item: $updateCoordinator.presentedNotice, onDismiss: installPendingUpdateIfNeeded) { notice in
                     UpdateNoticeView(
                         notice: notice,
                         onDismiss: {
-                            updateNotice = nil
+                            updateCoordinator.dismissNotice()
                         },
                         onInstall: { localURL in
                             pendingUpdateInstallURL = localURL
-                            updateNotice = nil
+                            updateCoordinator.dismissNotice()
                         }
                     )
-                    .presentationDetents([.large])
+                    .onAppear {
+                        updateCoordinator.markNoticePresented(version: notice.version)
+                    }
                 }
         }
         .onContinueUserActivity(NSUserActivityTypeLiveActivity) { _ in
@@ -83,14 +82,12 @@ struct RootTabView: View {
             openPairingSettings()
         }
         .task {
+            updateCoordinator.sceneDidChange(isActive: scenePhase == .active)
             if PairingCodeNotification.consumePairingScreenRequest() {
                 openPairingSettings()
             }
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
-            // 更新抽屉只在首屏与本地检查稳定后呈现，避免启动瞬间叠两层流程。
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            await performUpdateCheck()
         }
         .onChange(of: appsViewModel.shouldOpenSettings) { shouldOpen in
             guard shouldOpen else { return }
@@ -102,6 +99,7 @@ struct RootTabView: View {
             appsViewModel.shouldOpenSettings = false
         }
         .onChange(of: scenePhase) { phase in
+            updateCoordinator.sceneDidChange(isActive: phase == .active)
             // 进后台停掉 misagent 保活心跳，省电。
             if phase == .background {
                 appsViewModel.stopProfileServiceKeepalive()
@@ -115,8 +113,13 @@ struct RootTabView: View {
             appsViewModel.startProfileServiceKeepalive()
             Task {
                 await performLaunchCheck()
-                await performUpdateCheck()
             }
+        }
+        .onChange(of: updateCoordinator.presentedNotice?.id) { _, noticeID in
+            guard noticeID != nil else { return }
+            isAppearanceThemePresented = false
+            isCustomAccentColorPresented = false
+            shouldPresentCustomAccentColorAfterThemeDismiss = false
         }
         .onOpenURL { url in
             if LocalDevVPNLink.isCallback(url) {
@@ -218,33 +221,6 @@ struct RootTabView: View {
         guard let localURL = pendingUpdateInstallURL else { return }
         pendingUpdateInstallURL = nil
         installSelfUpdate(localURL)
-    }
-
-    @MainActor
-    private func performUpdateCheck() async {
-        guard updateCheckInProgress == false, didCheckUpdatesThisLaunch == false else { return }
-        didCheckUpdatesThisLaunch = true
-        updateCheckInProgress = true
-        defer { updateCheckInProgress = false }
-        while scenePhase == .active && hasBlockingUpdateOperation {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-        }
-        guard scenePhase == .active else {
-            didCheckUpdatesThisLaunch = false
-            return
-        }
-        let result = await UpdateChecker.shared.check()
-        if case .available(let notice) = result {
-            updateNotice = notice
-        }
-    }
-
-    private var hasBlockingUpdateOperation: Bool {
-        selection != .apps
-            || appsViewModel.signingSession != nil
-            || appsViewModel.selectedOperationApp != nil
-            || appsViewModel.isImporterPresented
-            || appsViewModel.isImportSheetPresented
     }
 
     @MainActor

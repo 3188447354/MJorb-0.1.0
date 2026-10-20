@@ -1015,20 +1015,30 @@ actor AppFileStore {
         }
     }
 
-    func clearTemporaryFiles() throws {
-        // 2026-10-09：只清 Temp 目录内容，不删父目录。
-        // 之前删 temporaryDirectory.deletingLastPathComponent()（即 cacheDirectory/Seal），
-        // 把整个 Seal 缓存端掉了，且 init 里也在删，导致按钮成摆设。
+    func clearTemporaryFiles(appID: UUID? = nil) throws {
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: temporaryDirectory.path) else { return }
-        let contents = try fileManager.contentsOfDirectory(
-            at: temporaryDirectory,
-            includingPropertiesForKeys: nil,
-            options: []
-        )
-        for item in contents {
-            try fileManager.removeItem(at: item)
+        let cacheRoot = temporaryDirectory.deletingLastPathComponent()
+        let targets: [URL]
+        if let appID {
+            targets = [
+                temporaryDirectory,
+                cacheRoot.appending(path: "Signing/\(appID.uuidString)", directoryHint: .isDirectory),
+                cacheRoot.appending(path: "Exports/\(appID.uuidString)", directoryHint: .isDirectory)
+            ]
+        } else if fileManager.fileExists(atPath: cacheRoot.path) {
+            targets = try fileManager.contentsOfDirectory(
+                at: cacheRoot,
+                includingPropertiesForKeys: nil,
+                options: []
+            )
+        } else {
+            targets = []
         }
+
+        for target in targets where fileManager.fileExists(atPath: target.path) {
+            try fileManager.removeItem(at: target)
+        }
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
     }
 
     func storageUsage() throws -> SettingsStorageUsage {

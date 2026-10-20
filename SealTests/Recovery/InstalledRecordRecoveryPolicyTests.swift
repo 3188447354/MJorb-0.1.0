@@ -159,7 +159,7 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
-    func attachesProfileOnlyWhenOneProfileUnambiguouslyCoversApp() throws {
+    func prefersExactProfileAndMergesOnlyConsistentProfileFields() throws {
         let context = makeContext(teams: [])
         let profile = makeProfile(bundleID: "com.example.*", team: "TEAM123456")
         let app = makeInstalledApp("com.example.demo")
@@ -172,14 +172,65 @@ struct InstalledRecordRecoveryPolicyTests {
         #expect(draft.profileUUID == profile.uuid)
         #expect(draft.profileExpirationDate == profile.expirationDate)
 
-        let ambiguous = InstalledRecordRecoveryPolicy.drafts(
+        let exactProfile = makeProfile(bundleID: "com.example.demo", team: "OTHERTEAM1")
+        let exactOverridesWildcard = InstalledRecordRecoveryPolicy.drafts(
             installedApplications: [app],
-            profiles: [profile, makeProfile(bundleID: "com.example.demo", team: "OTHERTEAM1")],
+            profiles: [profile, exactProfile],
             context: context
         )
-        #expect(ambiguous.first?.teamIdentifier == nil)
-        #expect(ambiguous.first?.profileUUID == nil)
-        #expect(ambiguous.first?.profileExpirationDate == nil)
+        #expect(exactOverridesWildcard.first?.teamIdentifier == "OTHERTEAM1")
+        #expect(exactOverridesWildcard.first?.profileUUID == exactProfile.uuid)
+        #expect(exactOverridesWildcard.first?.profileExpirationDate == exactProfile.expirationDate)
+
+        let sameTeam = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [app],
+            profiles: [
+                makeProfile(bundleID: "com.example.demo", team: "TEAM123456"),
+                makeProfile(bundleID: "com.example.demo", team: "team123456")
+            ],
+            context: context
+        )
+        #expect(sameTeam.first?.teamIdentifier == "TEAM123456")
+        #expect(sameTeam.first?.originalBundleIdentifier == "com.example.demo")
+        #expect(sameTeam.first?.profileUUID == nil)
+        #expect(sameTeam.first?.profileName == "Seal Profile")
+        #expect(sameTeam.first?.profileCreationDate == Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(sameTeam.first?.profileExpirationDate == Date(timeIntervalSince1970: 1_700_600_000))
+    }
+
+    @Test
+    func recoveredOriginalBundleIDAllowsReimportToReplaceTheInstalledRecord() throws {
+        let mappedBundleIdentifier = "com.example.demo.TEAM123456"
+        let draft = try #require(InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(mappedBundleIdentifier)],
+            profiles: [
+                makeProfile(bundleID: "com.example.*", team: "TEAM123456"),
+                makeProfile(bundleID: mappedBundleIdentifier, team: "TEAM123456")
+            ],
+            context: makeContext(teams: [])
+        ).first)
+        let recovered = try #require(InstalledRecordRecoveryPolicy.makeRecord(
+            from: draft,
+            installedOnDevice: true,
+            accountID: nil
+        ))
+        let parsed = ParsedIPA(
+            name: "Demo",
+            bundleIdentifier: "com.example.demo",
+            version: "2.0",
+            buildNumber: "2",
+            fileSize: 10,
+            iconData: nil,
+            extensions: [],
+            entitlementKeys: [],
+            importWarnings: []
+        )
+
+        #expect(draft.originalBundleIdentifier == "com.example.demo")
+        #expect(ImportReplacementPolicy.installedReplacementCandidate(
+            for: parsed,
+            in: [recovered]
+        )?.id == recovered.id)
     }
 
     private func makeInstalledApp(

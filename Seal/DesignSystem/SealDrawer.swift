@@ -9,6 +9,27 @@ struct SealSheetGrabber: View {
     }
 }
 
+struct SealDrawerLayoutMeasurements: Equatable {
+    var headerHeight: CGFloat = 0
+    var contentHeight: CGFloat = 0
+    var footerHeight: CGFloat = 0
+
+    var totalHeight: CGFloat {
+        headerHeight + contentHeight + footerHeight
+    }
+}
+
+struct SealDrawerLayoutMeasurementsPreferenceKey: PreferenceKey {
+    static let defaultValue = SealDrawerLayoutMeasurements()
+
+    static func reduce(value: inout SealDrawerLayoutMeasurements, nextValue: () -> SealDrawerLayoutMeasurements) {
+        let next = nextValue()
+        value.headerHeight = max(value.headerHeight, next.headerHeight)
+        value.contentHeight = max(value.contentHeight, next.contentHeight)
+        value.footerHeight = max(value.footerHeight, next.footerHeight)
+    }
+}
+
 /// Unified bottom-sheet container used throughout Seal.
 /// The header and footer stay fixed while the body scrolls independently.
 struct SealDrawer<Content: View, Footer: View>: View {
@@ -46,12 +67,28 @@ struct SealDrawer<Content: View, Footer: View>: View {
                 }
             }
             .padding(.bottom, title == nil ? 10 : 14)
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: SealDrawerLayoutMeasurementsPreferenceKey.self,
+                        value: SealDrawerLayoutMeasurements(headerHeight: geometry.size.height)
+                    )
+                }
+            }
 
             ScrollView {
                 content()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, SealLayout.drawerHorizontalInset)
                     .padding(.vertical, 2)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: SealDrawerLayoutMeasurementsPreferenceKey.self,
+                                value: SealDrawerLayoutMeasurements(contentHeight: geometry.size.height)
+                            )
+                        }
+                    }
             }
             .scrollDismissesKeyboard(.interactively)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,6 +103,14 @@ struct SealDrawer<Content: View, Footer: View>: View {
                         .padding(.bottom, 10)
                 }
                 .background(SealBackdrop(level: level))
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: SealDrawerLayoutMeasurementsPreferenceKey.self,
+                            value: SealDrawerLayoutMeasurements(footerHeight: geometry.size.height)
+                        )
+                    }
+                }
             }
         }
         .background(SealBackdrop(level: level).ignoresSafeArea())

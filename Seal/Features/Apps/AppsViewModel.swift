@@ -3715,7 +3715,7 @@ final class AppsViewModel: ObservableObject {
         guard UserDefaults.standard.bool(forKey: "behavior.deleteIPAAfterInstall"),
               let fileStore else { return }
         do {
-            try await fileStore.clearTemporaryFiles()
+            try await fileStore.clearTemporaryFiles(appID: appID)
             try? await logStore?.append(
                 category: .system,
                 message: appID == nil ? "安装完成后已清理临时签名工作区" : "安装完成后已清理当前应用临时签名工作区"

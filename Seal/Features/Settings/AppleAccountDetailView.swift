@@ -75,7 +75,10 @@ struct AppleAccountDetailView: View {
     private func makeAppItems(from inventory: ApplePortalInventory) -> [AppleAccountAppItem] {
         let now = Date()
         let snapshots = inventory.appIDs.filter { snapshot in
-            (snapshot.appIDExpirationDate ?? .distantPast) > now
+            ApplePortalAppIDPolicy.includes(
+                expirationDate: snapshot.appIDExpirationDate,
+                fetchedAt: now
+            )
         }
         let items = snapshots.map { snapshot in
             AppleAccountAppItem(
@@ -349,12 +352,14 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
         appIdentifier = AppleAccountAppNamePolicy.applicationIdentifier(
             for: snapshot.bundleIdentifier,
             accountID: accountID,
-            relatedApps: relatedApps
+            relatedApps: relatedApps,
+            fallbackAppleAppID: snapshot.identifier
         )
         name = AppleAccountAppNamePolicy.displayName(
             for: snapshot.bundleIdentifier,
             accountID: accountID,
-            relatedApps: relatedApps
+            relatedApps: relatedApps,
+            fallbackAppleName: snapshot.name
         )
         bundleIdentifier = snapshot.bundleIdentifier
         expiryDate = AppleAccountAppNamePolicy.expirationDate(
@@ -366,7 +371,7 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
     }
 
     var expirationText: String {
-        expiryDate.map(SealSettingsDateFormatter.string(from:)) ?? "未记录"
+        expiryDate.map(SealSettingsDateFormatter.string(from:)) ?? "Apple 未提供"
     }
 }
 
@@ -375,9 +380,14 @@ enum AppleAccountAppNamePolicy {
         displayName(for: bundleIdentifier, accountID: accountID, relatedApps: relatedApps)
     }
 
-    static func displayName(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
+    static func displayName(
+        for bundleIdentifier: String,
+        accountID: UUID,
+        relatedApps: [AppRecord],
+        fallbackAppleName: String? = nil
+    ) -> String {
         let target = normalize(bundleIdentifier)
-        guard target.isEmpty == false else { return "App 名称未记录" }
+        guard target.isEmpty == false else { return nonBlank(fallbackAppleName) ?? "App 名称未记录" }
 
         let matchingApp = relatedApps.first { app in
             guard app.accountID == accountID else { return false }
@@ -390,15 +400,22 @@ enum AppleAccountAppNamePolicy {
             return identifiers.contains { normalize($0) == target }
         }
         let appName = matchingApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard appName.isEmpty == false, let matchingApp else { return "App 名称未记录" }
-        let isExtension = matchingApp.extensions.contains { ext in
-            normalize(ext.originalBundleIdentifier) == target
-                || normalize(ext.mappedBundleIdentifier ?? "") == target
+        if appName.isEmpty == false, let matchingApp {
+            let isExtension = matchingApp.extensions.contains { ext in
+                normalize(ext.originalBundleIdentifier) == target
+                    || normalize(ext.mappedBundleIdentifier ?? "") == target
+            }
+            return isExtension ? "\(appName) · 扩展" : appName
         }
-        return isExtension ? "\(appName) · 扩展" : appName
+        return nonBlank(fallbackAppleName) ?? "App 名称未记录"
     }
 
-    static func applicationIdentifier(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
+    static func applicationIdentifier(
+        for bundleIdentifier: String,
+        accountID: UUID,
+        relatedApps: [AppRecord],
+        fallbackAppleAppID: String? = nil
+    ) -> String {
         let target = normalize(bundleIdentifier)
         guard let value = relatedApps
             .filter({ $0.accountID == accountID })
@@ -408,7 +425,7 @@ enum AppleAccountAppNamePolicy {
             .applicationIdentifier,
               value.isEmpty == false,
               value.contains("*") == false else {
-            return "未记录"
+            return nonBlank(fallbackAppleAppID) ?? "未记录"
         }
         return value
     }
@@ -425,13 +442,15 @@ enum AppleAccountAppNamePolicy {
             .lazy
             .flatMap(\.signingTargets)
             .first(where: { normalize($0.bundleIdentifier) == target }) {
-            return exactTarget.profileExpirationDate
+            if let expiry = exactTarget.profileExpirationDate { return expiry }
         }
 
         for app in relatedApps where app.accountID == accountID {
             if normalize(app.mappedBundleIdentifier ?? "") == target
                 || normalize(app.originalBundleIdentifier) == target {
-                return app.provisioningProfileExpirationDate ?? app.expiryDate
+                if let expiry = app.provisioningProfileExpirationDate ?? app.expiryDate {
+                    return expiry
+                }
             }
             if let ext = app.extensions.first(where: {
                 normalize($0.mappedBundleIdentifier ?? $0.originalBundleIdentifier) == target
@@ -439,7 +458,13 @@ enum AppleAccountAppNamePolicy {
                 return expiry
             }
         }
-        return snapshot.provisioningProfileExpirationDate
+        return snapshot.provisioningProfileExpirationDate ?? snapshot.appIDExpirationDate
+    }
+
+    private static func nonBlank(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func normalize(_ value: String) -> String {

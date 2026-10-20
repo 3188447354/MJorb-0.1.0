@@ -63,8 +63,16 @@ public final class ALTAppID: NSObject, NSCopying {
             resolvedFeatures[feature] = allFeatures[feature]
         }
 
-        let expirationDate =
-            responseDictionary["expirationDate"] as? Date
+        let expirationDate: Date? = {
+            if let date = responseDictionary["expirationDate"] as? Date {
+                return date
+            }
+            guard let value = responseDictionary["expirationDate"] as? String else { return nil }
+            let formatter = ISO8601DateFormatter()
+            if let date = formatter.date(from: value) { return date }
+            formatter.formatOptions.insert(.withFractionalSeconds)
+            return formatter.date(from: value)
+        }()
 
         self.init(
             name: name,

@@ -32,14 +32,18 @@ struct SelfAppRegistrarTests {
     func sameVersionRegistrationBackfillsRunningExtensions() async throws {
         let fixture = try makeSealFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        try await fixture.appStore.save(
-            makeSealRecord(
-                fixture,
-                expiry: Date(timeIntervalSince1970: 1_700_000_000),
-                profileUUID: "PROFILE",
-                profileName: "Seal"
-            )
+        var seal = makeSealRecord(
+            fixture,
+            expiry: Date(timeIntervalSince1970: 1_700_000_000),
+            profileUUID: "PROFILE",
+            profileName: "Seal"
         )
+        seal.state = .signed
+        seal.mappedBundleIdentifier = "com.mjorb.seal"
+        seal.signingTeamID = "TEAM000001"
+        seal.certificateSerialNumber = "SERIAL"
+        seal.hasPendingSelfUpdateSource = true
+        try await fixture.appStore.save(seal)
         let extensionRecord = AppExtensionRecord(
             name: "SealLiveActivity",
             originalBundleIdentifier: "com.mjorb.seal.LiveActivity",
@@ -65,6 +69,47 @@ struct SelfAppRegistrarTests {
         let updated = try #require(try await fixture.appStore.fetchAll().first)
         #expect(updated.extensions.count == 1)
         #expect(updated.extensions.first?.mappedBundleIdentifier == "com.mjorb.seal.LiveActivity")
+        #expect(updated.state == .installed)
+
+        let runningIdentity = InstalledIdentity(
+            bundleURL: fixture.currentBundle,
+            version: "1.0",
+            buildNumber: "1",
+            targets: [
+                SignedTargetIdentity(
+                    kind: .mainApp,
+                    bundleIdentifier: "com.mjorb.seal",
+                    teamIdentifier: "TEAM000001",
+                    applicationIdentifier: "TEAM000001.com.mjorb.seal",
+                    profileUUID: "PROFILE",
+                    profileExpirationDate: Date(timeIntervalSince1970: 1_700_000_000),
+                    signerSerialNumber: "SERIAL",
+                    signerCertificateSHA256: "CERTSHA",
+                    status: .complete
+                ),
+                SignedTargetIdentity(
+                    kind: .appExtension,
+                    bundleIdentifier: "com.mjorb.seal.LiveActivity",
+                    teamIdentifier: "TEAM000001",
+                    applicationIdentifier: "TEAM000001.com.mjorb.seal.LiveActivity",
+                    profileUUID: "EXT-PROFILE",
+                    profileExpirationDate: Date(timeIntervalSince1970: 1_700_000_000),
+                    signerSerialNumber: "SERIAL",
+                    signerCertificateSHA256: "CERTSHA",
+                    status: .complete
+                )
+            ],
+            readErrors: []
+        )
+        let liveIdentity = ProfileOnlyRenewalPolicy.liveIdentity(
+            installedIdentity: runningIdentity,
+            runningVersion: "1.0",
+            app: updated
+        )
+        #expect(
+            ProfileOnlyRenewalPolicy.evaluate(app: updated, liveIdentity: liveIdentity)
+                == .eligible(targetBundleIdentifiers: ["com.mjorb.seal", "com.mjorb.seal.LiveActivity"])
+        )
     }
 
     @Test
@@ -593,6 +638,7 @@ struct SelfAppRegistrarTests {
             profileUUID: "OLD-PROFILE",
             profileName: "Seal"
         )
+        seal.state = .signed
         seal.hasPendingSelfUpdateSource = true
         seal.pendingUpdateSourceFingerprint = "sha256-of-imported-update"
         try await fixture.appStore.save(seal)
@@ -653,6 +699,7 @@ struct SelfAppRegistrarTests {
         let updated = try #require(try await fixture.appStore.fetchAll().first)
         // 指纹清掉 ⇒ 下一次续签准入不再把它当成待安装更新（自愈）。
         #expect(updated.pendingUpdateSourceFingerprint == nil)
+        #expect(updated.state == .installed)
         // 结算确认的真实身份仍然写入。
         #expect(updated.provisioningProfileUUID == "NEW-PROFILE")
         #expect(updated.expiryDate == newExpiry)

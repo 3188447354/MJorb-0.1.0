@@ -23,6 +23,8 @@ struct LogViewerView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
+                diagnosticGuide
+
                 if rounds.isEmpty {
                     Text("暂无日志")
                         .foregroundColor(.secondary)
@@ -102,6 +104,24 @@ struct LogViewerView: View {
         .sheet(item: $exportDocument) { document in
             ShareSheet(activityItems: [document.url])
         }
+    }
+
+    private var diagnosticGuide: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Label("开发者排障", systemImage: "stethoscope")
+                .font(.system(size: 15, weight: .semibold))
+            Text("先记下失败时间和当时执行的操作，再点失败记录中的“查看错误信息”复制错误码。")
+            Text("点右上角导出 Seal-log.txt，并把错误码、操作名称和大致时间一并发给开发者。")
+            Text("导出文件头包含 Seal 版本与 CI 构建号，日志最多保留最近 1000 条。")
+        }
+        .font(.system(size: 13))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(
+            Color(.secondarySystemBackground),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
     }
 
     private func loadRounds() async {

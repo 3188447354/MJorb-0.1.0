@@ -1,3 +1,4 @@
+import AltSign
 import Foundation
 import Testing
 @testable import Seal
@@ -88,5 +89,75 @@ struct AppleAccountAppNamePolicyTests {
             accountID: accountID,
             relatedApps: [app]
         ) == "ACTUALPREFIX.com.example.song.TEAMID")
+    }
+
+    @Test
+    func usesAppleReturnedNameAndAppIDWhenNoLocalSigningRecordExists() {
+        let accountID = UUID()
+        let snapshot = makeSnapshot()
+        #expect(AppleAccountAppNamePolicy.displayName(
+            for: snapshot.bundleIdentifier,
+            accountID: accountID,
+            relatedApps: [],
+            fallbackAppleName: snapshot.name
+        ) == "Apple 中的名称")
+        #expect(AppleAccountAppNamePolicy.applicationIdentifier(
+            for: snapshot.bundleIdentifier,
+            accountID: accountID,
+            relatedApps: [],
+            fallbackAppleAppID: snapshot.identifier
+        ) == "APPLE-APP-ID")
+    }
+
+    @Test
+    func keepsAppIDWithoutAppleExpirationAndUsesReturnedDateWhenAvailable() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        #expect(ApplePortalAppIDPolicy.includes(expirationDate: nil, fetchedAt: now))
+        #expect(ApplePortalAppIDPolicy.includes(
+            expirationDate: now.addingTimeInterval(60),
+            fetchedAt: now
+        ))
+        #expect(ApplePortalAppIDPolicy.includes(
+            expirationDate: now,
+            fetchedAt: now
+        ) == false)
+
+        let snapshot = makeSnapshot(appIDExpirationDate: now.addingTimeInterval(86_400))
+        #expect(AppleAccountAppNamePolicy.expirationDate(
+            for: snapshot.bundleIdentifier,
+            snapshot: snapshot,
+            accountID: UUID(),
+            relatedApps: []
+        ) == now.addingTimeInterval(86_400))
+    }
+
+    @Test
+    func parsesAppleJSONExpirationDateFromISO8601String() throws {
+        for rawDate in ["2026-10-25T10:35:09Z", "2026-10-25T10:35:09.125Z"] {
+            let appID = try #require(ALTAppID(responseDictionary: [
+                "name": "Music Player",
+                "appIdId": "APPLE-APP-ID",
+                "identifier": "com.example.music",
+                "expirationDate": rawDate
+            ]))
+
+            let fractionalFormatter = ISO8601DateFormatter()
+            fractionalFormatter.formatOptions.insert(.withFractionalSeconds)
+            let expectedDate = fractionalFormatter.date(from: rawDate)
+                ?? ISO8601DateFormatter().date(from: rawDate)
+            #expect(appID.expirationDate == expectedDate)
+        }
+    }
+
+    private func makeSnapshot(appIDExpirationDate: Date? = nil) -> ApplePortalAppIDSnapshot {
+        ApplePortalAppIDSnapshot(
+            identifier: "APPLE-APP-ID",
+            name: "Apple 中的名称",
+            bundleIdentifier: "com.example.appleapp",
+            appIDExpirationDate: appIDExpirationDate,
+            provisioningProfileName: nil,
+            provisioningProfileExpirationDate: nil,
+            provisioningProfileState: .unavailable
+        )
     }
 }

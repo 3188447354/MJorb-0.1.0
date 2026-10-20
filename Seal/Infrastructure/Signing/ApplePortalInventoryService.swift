@@ -175,7 +175,10 @@ actor ApplePortalInventoryService {
         // Apple ID 页面只读取 Apple 返回的 App ID 元数据。
         // 刷新列表绝不能获取或生成 provisioning profile，否则会改变描述文件时间。
         let appSnapshots: [ApplePortalAppIDSnapshot] = appIDs.compactMap { appID in
-            guard let expirationDate = appID.expirationDate, expirationDate > fetchedAt else {
+            guard ApplePortalAppIDPolicy.includes(
+                expirationDate: appID.expirationDate,
+                fetchedAt: fetchedAt
+            ) else {
                 return nil
             }
             return ApplePortalAppIDSnapshot(
@@ -185,7 +188,7 @@ actor ApplePortalInventoryService {
                     fallbackBundleIdentifier: appID.bundleIdentifier
                 ),
                 bundleIdentifier: appID.bundleIdentifier,
-                appIDExpirationDate: expirationDate,
+                appIDExpirationDate: appID.expirationDate,
                 provisioningProfileName: nil,
                 provisioningProfileExpirationDate: nil,
                 provisioningProfileState: .unavailable
@@ -294,4 +297,11 @@ actor ApplePortalInventoryService {
     }
 
 
+}
+
+enum ApplePortalAppIDPolicy {
+    static func includes(expirationDate: Date?, fetchedAt: Date) -> Bool {
+        guard let expirationDate else { return true }
+        return expirationDate > fetchedAt
+    }
 }

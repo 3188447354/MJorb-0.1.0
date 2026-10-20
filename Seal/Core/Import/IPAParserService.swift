@@ -3,15 +3,19 @@ import ZIPFoundation
 
 struct IPAParserService: Sendable {
     let limits: ArchiveLimits
+    private let pathEncoding: IPAArchivePathEncoding
 
-    init(limits: ArchiveLimits = ArchiveLimits()) {
+    init(limits: ArchiveLimits = ArchiveLimits(), pathEncoding: IPAArchivePathEncoding = .utf8) {
         self.limits = limits
+        self.pathEncoding = pathEncoding
     }
 
     func parse(url: URL) throws -> ParsedIPA {
-        let archive: Archive
+        let defaultArchive: Archive
+        let utf8Archive: Archive?
         do {
-            archive = try Archive(url: url, accessMode: .read)
+            defaultArchive = try Archive(url: url, accessMode: .read)
+            utf8Archive = try? Archive(url: url, accessMode: .read, pathEncoding: .utf8)
         } catch {
             throw failure(
                 title: "无法打开 IPA",
@@ -22,9 +26,18 @@ struct IPAParserService: Sendable {
         }
 
         do {
-            return try parse(archive: archive, sourceURL: url)
-        } catch let error as ImportFailure {
-            throw error
+            let selectedEncoding = IPAArchivePathPolicy.selectEncoding(
+                utf8Archive: utf8Archive,
+                defaultArchive: defaultArchive,
+                maximumMetadataSize: limits.maximumMetadataSize
+            )
+            let selectedArchive = selectedEncoding == .utf8
+                ? (utf8Archive ?? defaultArchive)
+                : defaultArchive
+            return try IPAParserService(limits: limits, pathEncoding: selectedEncoding)
+                .parse(archive: selectedArchive, sourceURL: url)
+        } catch let failure as ImportFailure {
+            throw failure
         } catch {
             throw failure(
                 title: "无法读取 IPA",
@@ -590,10 +603,9 @@ struct IPAParserService: Sendable {
         return false
     }
 
-    /// IPA 包内路径统一按 UTF-8 读取。部分打包器写入 UTF-8 文件名却漏设 ZIP 的 UTF-8 标志位；
-    /// ZIPFoundation 的默认路径解码会按 CP437 解释，导致中文主程序名无法与 Info.plist 对上。
+    /// 主程序存在性决定 ZIP 路径编码：兼容 UTF-8 标志缺失的中文包，也兼容按 ZIP 默认编码写入的旧包。
     private func archivePath(for entry: Entry) -> String {
-        entry.path(using: .utf8)
+        pathEncoding.path(for: entry)
     }
 
     private func sourceFileSize(at url: URL) throws -> Int64 {

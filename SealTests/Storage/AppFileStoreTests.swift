@@ -132,6 +132,52 @@ struct AppFileStoreTests {
     }
 
     @Test
+    func clearingAllTemporaryCachesRemovesSigningWorkspacesCountedAsTemporaryUsage() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = AppFileStore(
+            documentsDirectory: fixture.documents,
+            cacheDirectory: fixture.cache
+        )
+        let signingCache = fixture.cache.appending(path: "Seal/Signing/app/workspace.bin")
+        let exportCache = fixture.cache.appending(path: "Seal/Exports/app/export.ipa")
+        for url in [signingCache, exportCache] {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try Data("cache".utf8).write(to: url)
+        }
+        #expect(try await store.storageUsage().temporary > 0)
+
+        try await store.clearTemporaryFiles()
+
+        #expect(try await store.storageUsage().temporary == 0)
+        #expect(FileManager.default.fileExists(atPath: fixture.cache.appending(path: "Seal/Temp").path))
+    }
+
+    @Test
+    func postInstallCleanupOnlyRemovesTheCompletedAppsSigningCache() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let store = AppFileStore(
+            documentsDirectory: fixture.documents,
+            cacheDirectory: fixture.cache
+        )
+        let completedAppID = UUID()
+        let otherAppID = UUID()
+        let completedWorkspace = try await store.signingWorkspace(appID: completedAppID)
+        let otherWorkspace = try await store.signingWorkspace(appID: otherAppID)
+        try Data("completed".utf8).write(to: completedWorkspace.appending(path: "workspace.bin"))
+        try Data("other".utf8).write(to: otherWorkspace.appending(path: "workspace.bin"))
+
+        try await store.clearTemporaryFiles(appID: completedAppID)
+
+        #expect(FileManager.default.fileExists(atPath: completedWorkspace.path) == false)
+        #expect(FileManager.default.fileExists(atPath: otherWorkspace.path))
+    }
+
+    @Test
     func importTransactionCanFinalizeIdempotentlyAndClearJournal() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

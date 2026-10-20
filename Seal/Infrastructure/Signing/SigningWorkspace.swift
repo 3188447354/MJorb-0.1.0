@@ -55,24 +55,13 @@ struct SigningWorkspace: Sendable {
         // 大 IPA 优化：用系统 unzipItem 流式解压（ZIPFoundation extract 对 500MB+ 文件
         // 可能因内存/写入失败报 DataError）。仍用 ZIPFoundation Archive 只读条目元数据做安全验证。
         let defaultArchive = try Archive(url: ipaURL, accessMode: .read)
-        let archive: Archive
-        let pathEncoding: String.Encoding?
-        // IPA 内路径应按 UTF-8 解释；部分 Windows 打包器漏写 ZIP UTF-8 标志，
-        // 默认解码会把中文 .app 路径变成乱码，最终把主可执行文件判成缺失。
-        if let utf8Archive = try? Archive(
-            url: ipaURL,
-            accessMode: .read,
-            pathEncoding: .utf8
-        ), Self.hasDeclaredMainExecutable(in: utf8Archive, pathEncoding: .utf8) {
-            archive = utf8Archive
-            pathEncoding = .utf8
-        } else if Self.hasDeclaredMainExecutable(in: defaultArchive) {
-            archive = defaultArchive
-            pathEncoding = nil
-        } else {
-            archive = defaultArchive
-            pathEncoding = nil
-        }
+        let utf8Archive = try? Archive(url: ipaURL, accessMode: .read, pathEncoding: .utf8)
+        let pathEncoding = IPAArchivePathPolicy.selectEncoding(
+            utf8Archive: utf8Archive,
+            defaultArchive: defaultArchive,
+            maximumMetadataSize: limits.maximumMetadataSize
+        )
+        let archive = pathEncoding == .utf8 ? (utf8Archive ?? defaultArchive) : defaultArchive
         let entries = Array(archive)
         let expandedBytes = try validate(entries)
 
@@ -103,7 +92,11 @@ struct SigningWorkspace: Sendable {
         let unzipStartedAt = Date()
         do {
             // 系统 API 流式解压，不加载大文件到内存
-            try fileManager.unzipItem(at: ipaURL, to: workspaceRoot, pathEncoding: pathEncoding)
+            try fileManager.unzipItem(
+                at: ipaURL,
+                to: workspaceRoot,
+                pathEncoding: pathEncoding.foundationEncoding
+            )
             try Task.checkCancellation()
             let unzipSeconds = Date().timeIntervalSince(unzipStartedAt)
 
@@ -486,51 +479,6 @@ struct SigningWorkspace: Sendable {
             )
         }
         return identifier
-    }
-
-    private static func hasDeclaredMainExecutable(
-        in archive: Archive,
-        pathEncoding: String.Encoding? = nil
-    ) -> Bool {
-        let entries = Array(archive)
-        func path(for entry: Entry) -> String {
-            guard let pathEncoding else { return entry.path }
-            return entry.path(using: pathEncoding)
-        }
-
-        let infoEntries = entries.filter { entry in
-            let components = path(for: entry).split(separator: "/")
-            return components.count == 3
-                && components[0] == "Payload"
-                && components[1].hasSuffix(".app")
-                && components[2] == "Info.plist"
-        }
-        guard infoEntries.count == 1, let infoEntry = infoEntries.first else { return false }
-
-        var infoData = Data()
-        do {
-            _ = try archive.extract(infoEntry) { infoData.append($0) }
-        } catch {
-            return false
-        }
-        guard let plist = try? PropertyListSerialization.propertyList(
-            from: infoData,
-            options: [],
-            format: nil
-        ) as? [String: Any],
-        let executable = plist["CFBundleExecutable"] as? String,
-        executable.isEmpty == false,
-        executable.contains("/") == false,
-        executable.contains("\\") == false,
-        executable.contains("\0") == false else {
-            return false
-        }
-
-        let appRoot = path(for: infoEntry).split(separator: "/").dropLast().joined(separator: "/")
-        let executablePath = "\(appRoot)/\(executable)"
-        return entries.contains {
-            path(for: $0) == executablePath && $0.type == .file && $0.uncompressedSize > 0
-        }
     }
 
     private func updateBundleIdentifier(

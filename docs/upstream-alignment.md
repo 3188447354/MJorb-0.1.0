@@ -367,3 +367,11 @@ on 4.5.2」✗。
 | 无本机私钥时的续签 | `VerifyCertificateOperation(willResign: false)` 核对当前安装包签名者；只要证书仍有效就可以只更新描述文件，不要求设备保存私钥。 | **普通 App 与已完成接管的 Seal 跟随**：继续允许 profile-only。首次电脑签名安装的 Seal 若当前运行签名者没有匹配的本机 P12，则由 `SigningCoordinator` 强制完整重签一次以生成本机签名材料；新包确认安装且运行身份匹配 P12 后，后续回到 profile-only。只在协调层加 Seal 专属的一次性接管，不改变通用准入策略。 |
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift`。
+
+### 2026-10-20 Seal 自替换后的续签状态
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| profile-only 准入状态 | `VerifyCertificateOperation(willResign: false)` 以设备上实际安装包的签名身份验证续签对象；数据库里的签名中间态不能覆盖“当前运行包已安装”这一事实。 | **跟其事实来源，不照搬存储模型**：`SelfAppRegistrar` 只有在启动时读到当前运行 Seal，或自替换后确认新运行身份时，才将 `AppRecord.state` 写为 `.installed`。续签仍执行原有实时签名者、Team、扩展、版本和待更新源判定；不因状态修复放宽身份准入。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift`。

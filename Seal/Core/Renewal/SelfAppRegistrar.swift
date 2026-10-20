@@ -444,6 +444,7 @@ actor SelfAppRegistrar {
         updated.provisioningProfileExpirationDate = main.profileExpirationDate
         updated.expiryDate = main.profileExpirationDate
         updated.signingTeamID = main.teamIdentifier
+        updated.state = .installed
         updated.signedArtifactStatus = .installed
         updated.accountID = SelfAppAccountBinding.resolvedAccountID(
             teamIdentifier: main.teamIdentifier,
@@ -510,6 +511,12 @@ actor SelfAppRegistrar {
         var changed = false
         let candidateIsOffDevice = candidateConfirmedNotInstalled
             || (existing.hasPendingSelfUpdateSource && existing.version != metadata.version)
+        // 本函数的 metadata 来自正在运行的 Bundle.main；pending 自更新源只表示
+        // 有新源包等待安装，不改变 Seal 当前确实已安装并运行这一事实。
+        if updated.state != .installed {
+            updated.state = .installed
+            changed = true
+        }
 
         if existing.signingTeamID != resolvedTeamID {
             updated.signingTeamID = resolvedTeamID
