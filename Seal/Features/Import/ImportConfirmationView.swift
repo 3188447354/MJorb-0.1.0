@@ -128,6 +128,7 @@ struct ImportConfirmationView: View {
             }
         }
         .interactiveDismissDisabled(showsProgress)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("import-confirmation")
         // 降级警告
         .alert(isSealUpdate ? "确认降级" : "确定要降级吗？", isPresented: $showDowngradeConfirm) {

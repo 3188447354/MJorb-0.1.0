@@ -20,10 +20,14 @@ struct InstalledAppScannerTests {
         #expect(image.size.height == CGFloat(width))
     }
 
-    @Test
+    @Test @MainActor
     func acceptsImageDataReturnedByLaunchServices() throws {
+        let size = CGSize(width: 1, height: 1)
         let pngData = try #require(
-            Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
+            UIGraphicsImageRenderer(size: size).image { context in
+                UIColor.systemBlue.setFill()
+                context.fill(CGRect(origin: .zero, size: size))
+            }.pngData()
         )
 
         let decoded = try #require(InstalledAppScanner.decodeLaunchServicesIconData(pngData))

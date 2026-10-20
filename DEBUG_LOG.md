@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 测试失败：图标样本 PNG 无效，导入抽屉覆盖子控件标识
+
+- **现象**：CI `39460933848` 的 Swift/UI 回归中，图标解码用例因 PNG IDAT CRC 错误返回 `nil`；导入忙碌态 UI 用例找不到 `import-confirmation-dismiss-progress`。
+- **根因**：图标用例内嵌的 1×1 PNG 数据本身损坏，不是 LaunchServices 解码器失败。导入抽屉把 `.accessibilityIdentifier("import-confirmation")` 直接挂在自定义抽屉根视图上，SwiftUI 测试树将根标识传播到 footer 按钮，遮住了按钮自己的稳定标识。
+- **修复**：用 `UIGraphicsImageRenderer` 生成有效 PNG 测试样本；将导入抽屉显式设为 `.accessibilityElement(children: .contain)`，保留抽屉容器与按钮各自的无障碍标识。
+- **涉及文件**：`SealTests/Recovery/InstalledAppScannerTests.swift`、`Seal/Features/Import/ImportConfirmationView.swift`、`DEBUG_LOG.md`。
+- **验证状态**：本轮签名器测试通过；CI 跑到 Swift/UI 回归时上述两个测试失败，安全守卫仍运行。Windows 无 Swift/Xcode，修复提交后需重新跑 CI。
+
 # 2026-10-21 — CI 编译失败：日志工具栏引用不存在的 glassButton
 
 - **现象**：CI `39459487200` 的 `swift-regression` 编译 `LogViewerView.swift:53` 时失败，错误为 `some View` 没有 `glassButton` 成员。
