@@ -1,3 +1,9 @@
+# 2026-10-20 — CI 对齐 IPA 路径与更新抽屉源码守卫
+
+- **现象**：CI run `39377682080` 的 release-safety guard 有两项源码断言失败，并报告三个 mutation anchor missing。
+- **根因与修复**：R121 仍假定 ZIP 路径解码写在 `IPAParserService`，而实现已抽到 `IPAArchivePathPolicy` 并由导入、签名解包共用；R120 仍匹配独立 About sheet、旧 `updateNotice` 属性和固定 `.large` detent，而当前实现由 `UpdatePresentationCoordinator` 统一呈现，About 页请求同一 coordinator，drawer 按内容测量并受 `.large` 上限约束。更新守卫本体与变异锚点，让它们验证当前真实链路。
+- **验证状态**：Swift 回归和签名器测试已通过；CI 因 R120/R121 源码守卫及旧变异锚点失败。守卫修正待新 CI 验证；本地不运行源码守卫。
+
 # 2026-10-20 — CI 修正重导入覆盖回归测试的草稿类型
 
 - **现象**：CI run `39376489641` 编译回归测试时，`InstalledRecordRecoveryPolicyTests.swift` 把 `InstalledAppDraft` 传给只接受 profile `Draft` 的 `makeRecord(..., installedOnDevice:)` 重载，类型不匹配。

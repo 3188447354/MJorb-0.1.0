@@ -3767,8 +3767,13 @@ def violations(load=read):
     check("nestedData" not in parser and 'code: "SEAL-IPA-101b"' in parser,
           "Import: nested wrappers must not be buffered or committed as inner IPAs")
     ipa_import_tests = load("SealTests/Import/IPAParserServiceTests.swift")
-    check("entry.path(using: .utf8)" in strip_comments(parser)
-          and strip_comments(parser).count("entry.path") == 1
+    ipa_parser = strip_comments(parser)
+    ipa_path_policy = strip_comments(load("Seal/Core/Import/IPAArchivePathPolicy.swift"))
+    signing_workspace = strip_comments(load("Seal/Infrastructure/Signing/SigningWorkspace.swift"))
+    check("IPAArchivePathPolicy.selectEncoding(" in ipa_parser
+          and "pathEncoding.path(for: entry)" in ipa_parser
+          and "IPAArchivePathPolicy.selectEncoding(" in signing_workspace
+          and "return entry.path(using: .utf8)" in ipa_path_policy
           and "func importsUTF8ExecutablePathWhenZIPFlagIsMissing()" in ipa_import_tests
           and "clearUTF8FilenameFlag(in: url)" in ipa_import_tests,
           "R121: IPA 的 ZIP 路径必须统一按 UTF-8 解码，并覆盖标志位缺失的中文主程序导入")
@@ -4766,14 +4771,13 @@ def violations(load=read):
     seal_drawer = strip_comments(load("Seal/DesignSystem/SealDrawer.swift"))
     check("SealDrawer(title: drawerTitle, showsFooter: true)" in update_notice_view
           and ".interactiveDismissDisabled(isDismissible == false)" in update_notice_view
+          and ".presentationDetents(availableDetents, selection: $selectedDetent)" in update_notice_view
+          and "return [.height(fittedDetentHeight), .large]" in update_notice_view
           and "ScrollView {" in seal_drawer
           and "footer()" in seal_drawer
-          and ".sheet(\n            item: $presentedUpdate,\n            onDismiss: installPendingUpdateIfNeeded,\n            content: { notice in" in about_view
-          and ".presentationDetents([.large])" in about_view
-          and "pendingUpdateInstallURL = localURL" in about_view
-          and "onInstall?(localURL)" in about_view
-          and ".background {\n            Color.clear\n                .sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded)" in root_tab_view
-          and ".presentationDetents([.large])" in root_tab_view
+          and "await updateCoordinator.checkManually()" in about_view
+          and ".sheet(item: $updateCoordinator.presentedNotice, onDismiss: installPendingUpdateIfNeeded)" in root_tab_view
+          and ".toolbar(updateCoordinator.presentedNotice == nil ? .visible : .hidden, for: .tabBar)" in root_tab_view
           and "pendingUpdateInstallURL = localURL" in root_tab_view
           and "installSelfUpdate(localURL)" in root_tab_view
           and "UpdateNoticeContentPolicy.changeItems(from: notice.message, version: notice.version)"
@@ -10897,11 +10901,11 @@ def main():
          "VStack(spacing: 0) {",
          "R120:"),
         ("Seal/Features/Settings/AboutView.swift",
-         ".sheet(\n            item: $presentedUpdate,",
-         ".overlay {\n            item: $presentedUpdate,",
+          "updateCoordinator.checkManually()",
+          "updateCoordinator.checkAutomatically()",
          "R120:"),
         ("Seal/App/RootTabView.swift",
-         ".sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded) { notice in",
+          ".sheet(item: $updateCoordinator.presentedNotice, onDismiss: installPendingUpdateIfNeeded)",
          ".overlay {",
          "R120:"),
         ("Seal/Infrastructure/UpdateChecker.swift",
@@ -10909,9 +10913,9 @@ def main():
          "normalizedVersion(trimmed) == normalizedVersion(version)",
          "R120:"),
         # ── R121：不带 ZIP UTF-8 标记的 IPA 路径仍按其 UTF-8 文件名导入 ──
-        ("Seal/Core/Import/IPAParserService.swift",
-         "entry.path(using: .utf8)",
-         "entry.path(using: .ascii)",
+        ("Seal/Core/Import/IPAArchivePathPolicy.swift",
+         "return entry.path(using: .utf8)",
+         "return entry.path(using: .ascii)",
          "R121:"),
         # ── R122：更新下载任务必须使用进度代理 ──
         ("Seal/Infrastructure/UpdateIPADownloader.swift",
