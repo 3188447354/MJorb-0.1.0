@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 错误码清单未随源代码更新
+
+- **现象**：CI `39469835734` 第 2 次尝试的 Swift/UI 回归与签名器测试通过；`build-package` 在 `Audit source error identifiers` 因生成清单与仓库版本不一致失败。
+- **根因**：本批新增/调整的结构化错误引用改变了错误码出现次数和源码行号，`docs/qa/generated/error-code-inventory.json` 尚未重新生成。
+- **修复**：按 CI 使用的命令重新生成 `docs/qa/generated/error-code-inventory.json`，更新错误码位置与统计。
+- **涉及文件**：`docs/qa/generated/error-code-inventory.json`、`DEBUG_LOG.md`。
+- **验证状态**：生成器输出 433 个标识符、843 个出现位置；当前 CI 的 Swift/UI 与签名器测试通过，构建守卫只因清单不同步失败。更新清单后需完整 CI 验证。
+
 # 2026-10-21 — CI 安全守卫 R24 未登记新增的会话预检重试
 
 - **现象**：CI `39463871785` 第 2 次尝试的 `build-package` 在 R24 失败：`withSessionRecovery` 调用数为 10，守卫仍要求 9。
