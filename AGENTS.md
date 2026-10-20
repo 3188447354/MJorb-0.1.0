@@ -283,9 +283,11 @@ Windows 本机**无法编译**，一切以云 CI 编译 + 真机回归为准。
 - `ios.yml` 完整档：RustBridge 一致性 + UI 回归 + 签名测试，大改动走它。
   `ios-release.yml` 发布档：Release 编译 + 发布。`ios-fast.yml` 是 `main` 的快速出包档
   （注意它用 **Debug** 配置且不跑守卫与测试）。
-- **触发方式**：`ios.yml` 除 PR 外，推到非 `main` 分支且改动命中相关路径也会自动编译；
-  `publish-release` 始终只在 `workflow_dispatch` + `publish_release=true` 时触发，**push 路径绝不自动发布**；
-  该不变量由 `Scripts/verify-release-safety.py` 静态守护（含变异自检）。
+- **触发方式**：`ios.yml` 除 PR 外，推到非 `main` 分支且改动命中相关路径会自动跑完整 CI；
+  `build-package`、`swift-regression`、`signer-tests` 全部通过后自动发布与 IPA 版本一致的 GitHub Release，并同步官网。
+  手动 `workflow_dispatch` 仍需显式设 `publish_release=true`；`ios-release.yml` 快速发布档仍为手动触发。
+  每次要发布的新版本先递增 `MARKETING_VERSION` 并更新 `RELEASE_NOTES.md`；重复 tag 会由发布步骤拒绝。
+  这些条件由 `Scripts/verify-release-safety.py` 静态守护（含变异自检）。
 - **时间预算**：`ios.yml` 拆成 3 个并行 job —— `build-package` / `swift-regression` / `signer-tests`，
   墙钟取 max 而非 sum（实测 9m38s）。**不要加「按路径判定是否跑测试」的闸门**（曾实测无收益且承担漏跑风险）。
   ⚠️ 2026-09-19：`signer-tests` 由 `rork-sign-tests` **改名而来** —— 签名器换成上游
