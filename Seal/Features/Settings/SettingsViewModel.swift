@@ -1664,14 +1664,23 @@ final class SettingsViewModel: ObservableObject {
         let transaction = try? await selfReplacementStore?.loadPending()
         var signerIsLocal = false
         if let signer, let keychain {
+            var secrets: [AccountSecret] = []
             for account in accounts {
-                guard let secret = try? await keychain.load(accountID: account.id),
-                      SigningCertificateMaterialPolicy.availableCertificate(
-                          secret: secret,
-                          serialNumber: signer
-                      ) != nil else { continue }
-                signerIsLocal = true
-                break
+                if let secret = try? await keychain.load(accountID: account.id) {
+                    secrets.append(secret)
+                }
+            }
+            if let unindexedSecrets = try? await keychain.loadAllSecrets() {
+                secrets.append(contentsOf: unindexedSecrets)
+            }
+            signerIsLocal = LocalSigningCertificateLookup.hasMatchingPrivateKey(
+                serialNumber: signer,
+                in: secrets
+            ) { secret, serial in
+                SigningCertificateMaterialPolicy.availableCertificate(
+                    secret: secret,
+                    serialNumber: serial
+                ) != nil
             }
         }
         let resolvedState = SelfManagementStateResolver.resolve(

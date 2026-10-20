@@ -87,6 +87,60 @@ struct SelfSigningBootstrapPolicyTests {
     }
 
     @Test
+    func orphanedKeychainSecretStillProvesSealWasTakenOver() {
+        let orphanedSecret = AccountSecret(
+            email: "user@example.com",
+            accountIdentifier: "ACCOUNT",
+            dsid: "DSID",
+            authToken: "TOKEN",
+            password: nil,
+            certificateP12: Data("private-key".utf8),
+            certificateSerialNumber: "00AABB"
+        )
+
+        let hasMatchingPrivateKey = LocalSigningCertificateLookup.hasMatchingPrivateKey(
+            serialNumber: "AABB",
+            in: [orphanedSecret]
+        ) { secret, serial in
+            secret.p12(for: serial) != nil
+        }
+
+        #expect(hasMatchingPrivateKey)
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: "AABB",
+            signerHasLocalPrivateKey: hasMatchingPrivateKey
+        ) == false)
+    }
+
+    @Test
+    func orphanedSecretWithoutMatchingPrivateKeyDoesNotSkipBootstrap() {
+        let orphanedSecret = AccountSecret(
+            email: "user@example.com",
+            accountIdentifier: "ACCOUNT",
+            dsid: "DSID",
+            authToken: "TOKEN",
+            password: nil,
+            certificateP12: Data("other-key".utf8),
+            certificateSerialNumber: "OTHER"
+        )
+
+        let hasMatchingPrivateKey = LocalSigningCertificateLookup.hasMatchingPrivateKey(
+            serialNumber: "AABB",
+            in: [orphanedSecret]
+        ) { secret, serial in
+            secret.p12(for: serial) != nil
+        }
+
+        #expect(hasMatchingPrivateKey == false)
+        #expect(SelfSigningBootstrapPolicy.requiresFullResign(
+            isSeal: true,
+            signerSerialNumber: "AABB",
+            signerHasLocalPrivateKey: hasMatchingPrivateKey
+        ))
+    }
+
+    @Test
     func unknownSignerDoesNotBootstrap() {
         #expect(SelfSigningBootstrapPolicy.requiresFullResign(
             isSeal: true,

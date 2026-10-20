@@ -1056,22 +1056,30 @@ actor SigningCoordinator {
         preferredAccountID: UUID? = nil,
         preferredSecret: AccountSecret? = nil
     ) async -> Bool {
+        var secrets: [AccountSecret] = []
+        if let preferredSecret {
+            secrets.append(preferredSecret)
+        }
         for account in accounts {
-            let secret: AccountSecret?
-            if account.id == preferredAccountID, let preferredSecret {
-                secret = preferredSecret
-            } else {
-                secret = try? await keychain.load(accountID: account.id)
+            if account.id == preferredAccountID, preferredSecret != nil {
+                continue
             }
-            if let secret,
-               SigningCertificateMaterialPolicy.availableCertificate(
-                   secret: secret,
-                   serialNumber: serialNumber
-               ) != nil {
-                return true
+            if let secret = try? await keychain.load(accountID: account.id) {
+                secrets.append(secret)
             }
         }
-        return false
+        if let unindexedSecrets = try? await keychain.loadAllSecrets() {
+            secrets.append(contentsOf: unindexedSecrets)
+        }
+        return LocalSigningCertificateLookup.hasMatchingPrivateKey(
+            serialNumber: serialNumber,
+            in: secrets
+        ) { secret, serial in
+            SigningCertificateMaterialPolicy.availableCertificate(
+                secret: secret,
+                serialNumber: serial
+            ) != nil
+        }
     }
 
     private func shouldUseProfileOnlyRenewal(

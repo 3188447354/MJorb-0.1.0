@@ -35,6 +35,11 @@ struct PairingLiveActivityWidget: Widget {
     }
 
     private var sealMarkImage: Image {
+        if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {
+            return Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+        }
         if let imageURL = Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png"),
            let image = UIImage(contentsOfFile: imageURL.path) {
             return Image(uiImage: image)

@@ -1,3 +1,21 @@
+# 2026-10-20 Seal 重装后重复完整接管与灵动岛图标读取
+
+- **现象**：Seal 已完成本机证书接管后，卸载重装再续签仍可能再次完整重签；灵动岛品牌位仍显示灰色占位。
+- **根因**：首次接管判定本身不是“首次安装”标记，而是按当前账号 UUID 从 Keychain 读取匹配 P12。`Accounts.json` 与 `Seal.sqlite` 都位于应用容器；卸载后重加 Apple ID 会生成新 UUID，旧 Keychain secret 仍可能留在同一访问组，却不会出现在当前账号列表中。`SigningCoordinator` 和证书页因此都把已有本机证书判成缺失。另，0.1.37 IPA 中扩展含 `SealBrandIcon.png` 和 `Assets.car`；Widget 原先优先直接解码 PNG 文件，资源实际存在但仍可走到不稳定的运行期图像路径。
+- **修复**：`KeychainVault.loadAllSecrets()` 枚举当前应用可读的账号条目；续签预测/执行与证书页都按 Seal 运行签名者的序列号验证 P12，旧 UUID 不再导致重复接管。灵动岛图标改为优先从扩展 Asset Catalog 加载，原始 PNG 仍作回退。新增两条纯策略回归用例覆盖旧 UUID 下有/无匹配私钥；发布守卫 R125 钉住全量查询及两个消费点，R119 加入 Asset Catalog 优先级检查。
+- **上游对照**：SideStore 的 profile-only refresh 依据已安装应用签名身份，不要求本地 P12；Seal 保留首次接管的一次完整重签，只修正重装后账号 UUID 索引丢失造成的假阴性，详见 `docs/upstream-alignment.md`。
+- **涉及文件**：`Seal/Infrastructure/Security/KeychainVault.swift`、`Seal/Core/Renewal/SelfSigningIdentity.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、对应回归测试、发布守卫、版本、`RELEASE_NOTES.md`、上游对照台账与本日志。
+- **验证状态**：已检查桌面 0.1.37 IPA，扩展目录确实同时含 `SealBrandIcon.png` 与 `Assets.car`；源 PNG 正确显示 Seal 图案。尚未运行 Swift/Xcode、发布守卫、CI 或真机验证；Windows 无 Xcode 工具链。当前修改只在本地，未推送，图标真机显示和重装后续签路径仍待验证。
+
+## 2026-10-20 更新抽屉改用签名抽屉容器
+
+- **现象**：0.1.37“关于 Seal”页打开更新抽屉时，导航栏遮住抽屉标题，底部标签栏盖住下载按钮。
+- **根因**：手动更新路径在 `AboutView` 内容内部用自绘 `.overlay`；系统导航栏与 Tab 栏位于它上层。启动更新虽在 `RootTabView`，也使用不同的 overlay 抽屉实现。0.1.37 只调整几何与滚动内容，没有统一呈现容器。
+- **修复**：更新内容改为复用签名抽屉使用的 `SealDrawer`；手动检查与启动检查均由原生大尺寸 `.sheet` 呈现，使用同一滚动区、固定底部操作区和圆角背景。下载、验证及自动交接阶段禁止手势收起，下载取消按钮保持可用；IPA 导入等抽屉完整收起后再开始。
+- **回归守卫**：更新抽屉必须实例化 `SealDrawer`；About 页和启动更新都必须用大尺寸原生 sheet 呈现。为两处旧 overlay 与私有自绘容器添加 R120 变异检查。
+- **涉及文件**：`Seal/Features/UpdateNoticeView.swift`、`Seal/Features/Settings/AboutView.swift`、`Seal/App/RootTabView.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：待 CI 编译、Swift 回归及 R120 守卫验证；真机需确认更新抽屉与签名抽屉的层级、滚动、下载取消和下载完成交接一致。未声称已通过。
+
 ## 2026-10-20 更新下载进度、跨团队 App Group 与设备兼容性拦截
 
 - **现象**：更新抽屉下载时没有之前设计的传输进度；0.1.36 日志中 LiveContainer 的历史 App ID 可复用且无需新建，但完整签名仍失败；“歌一刀”被签名前置检查以设备型号不匹配拒绝。

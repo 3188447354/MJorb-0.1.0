@@ -26,6 +26,7 @@ struct RootTabView: View {
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
     @State private var updateNotice: UpdateNotice?
+    @State private var pendingUpdateInstallURL: URL?
     @State private var updateCheckInProgress = false
 
     var body: some View {
@@ -58,6 +59,22 @@ struct RootTabView: View {
         .tint(.sealAccent)
         .preferredColorScheme(SealAppearance(rawValue: appearanceRawValue)?.colorScheme)
         .sealScreenBackground()
+        .background {
+            Color.clear
+                .sheet(item: $updateNotice, onDismiss: installPendingUpdateIfNeeded) { notice in
+                    UpdateNoticeView(
+                        notice: notice,
+                        onDismiss: {
+                            updateNotice = nil
+                        },
+                        onInstall: { localURL in
+                            pendingUpdateInstallURL = localURL
+                            updateNotice = nil
+                        }
+                    )
+                    .presentationDetents([.large])
+                }
+        }
         .onContinueUserActivity(NSUserActivityTypeLiveActivity) { _ in
             openPairingSettings()
         }
@@ -137,24 +154,6 @@ struct RootTabView: View {
             selection = .apps
             Task { await appsViewModel.importSelectedFile(url) }
         }
-        .overlay {
-            if let notice = updateNotice {
-                UpdateNoticeView(
-                    notice: notice,
-                    onDismiss: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            updateNotice = nil
-                        }
-                    },
-                    onInstall: { localURL in
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            updateNotice = nil
-                        }
-                        installSelfUpdate(localURL)
-                    }
-                )
-            }
-        }
         .sheet(isPresented: $isAppearanceThemePresented, onDismiss: {
             guard shouldPresentCustomAccentColorAfterThemeDismiss else { return }
             shouldPresentCustomAccentColorAfterThemeDismiss = false
@@ -213,6 +212,12 @@ struct RootTabView: View {
                 UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
             }
         }
+    }
+
+    private func installPendingUpdateIfNeeded() {
+        guard let localURL = pendingUpdateInstallURL else { return }
+        pendingUpdateInstallURL = nil
+        installSelfUpdate(localURL)
     }
 
     @MainActor
