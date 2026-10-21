@@ -9403,7 +9403,7 @@
             "origin"
           ],
           "semanticValues": {
-            "operation": ".renewal",
+            "operation": ".renew",
             "origin": ".deviceChannel"
           },
           "source": "code: \"SEAL-OP-001\","

@@ -2029,7 +2029,7 @@ actor MinimuxerInstallChannel: InstallChannel {
         reason: "设备描述文件服务正被清单扫描或维护占用；Seal 没有重置连接，也没有并发启动新的设备请求。",
         recovery: "等待当前设备操作结束后重试",
         code: "SEAL-OP-001",
-        operation: .renewal,
+        operation: .renew,
         origin: .deviceChannel
     )
 

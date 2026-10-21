@@ -3896,8 +3896,13 @@ def violations(load=read):
         "private func inject(",
         "private func nativeProfileOperationDidComplete()"
     )
-    check("onWorkNeverStarted:" in profile_only_readback
-          and "onWorkNeverStarted:" in profile_only_injection,
+    check("onNativeCompletion:" in profile_only_readback
+          and "onNativeCompletion:" in profile_only_injection
+          and "onWorkNeverStarted: {\n"
+              "                await gate.finish(probeID: probeID, timedOut: false)\n"
+              "                await releaseOperationLease()\n"
+              "                await onNativeCompletion()\n"
+              "            }" in profile_native_call,
           "R130: cancelled profile FFI that never starts must release its native-operation lease")
     # 续签是覆盖安装**已存在**的应用，不新增免费账号设备槽位 ⇒ 两条续签路径
     #（profile-only / 回落后的完整重签）都不该被 3-app 预检误拦。
@@ -11113,11 +11118,16 @@ def main():
          "        if useProfileOnlyRenewal {\n            _ = ProfileOnlyIdentityVerifier.verify(\n",
          "R129:"),
         # ── R130：父任务取消先于原生任务启动时，不得留下永久设备租约 ──
-        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "                onWorkNeverStarted: { [weak self] in\n"
-         "                    await self?.nativeProfileOperationDidComplete()\n"
-         "                }\n",
-         "                onWorkNeverStarted: nil\n",
+        ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
+         "            onWorkNeverStarted: {\n"
+         "                await gate.finish(probeID: probeID, timedOut: false)\n"
+         "                await releaseOperationLease()\n"
+         "                await onNativeCompletion()\n"
+         "            },\n",
+         "            onWorkNeverStarted: {\n"
+         "                await gate.finish(probeID: probeID, timedOut: false)\n"
+         "                await releaseOperationLease()\n"
+         "            },\n",
          "R130:"),
         # ── R131：安装结果确认必须由状态事件触发，不能每两秒重读 ──
         ("Seal/Features/Settings/SigningCertificateSettingsView.swift",

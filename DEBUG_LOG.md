@@ -1,10 +1,18 @@
 # 2026-10-21 — CI 静态守卫未跟上设备单飞封装
 
-- **现象**：CI `39587187268`、`39587359644`、`39588014206`、`39588262215` 的 `build-package` 依次在静态守卫失败，均发生在 Swift 构建之前；已发现锚点和调用模型过期，以及守卫断言顺序错误。
-- **根因**：R10 仍以已提前创建的 `OperationCoordinator` 作为 AppContainer 安装通道块的结束标记；证书清理守卫仍要求旧的单行 `referencedCertificateSerials()` 声明，并把 `BlockingCall.bounded` / 不取消超时的责任错误地算在调用点。当前实现已将设备原生操作集中到 `DeviceProfileNativeCall.perform`，由共享闸门持有设备租约并等待不可取消的 FFI 真正返回。Seal 更新身份断言放在 `apps_vm` 读取之前，触发 Python 局部变量未绑定错误。当前又发现 R126 守卫仍引用旧的单行 `isInstalled` 签名和局部 `probeGate`，而实际实现将 gate 独立为 `InstalledAppRefreshProbeGate` actor。
-- **修复**：AppContainer 范围改为其后的设备扫描器初始化为边界。证书清理守卫分别钉住调用点使用共享执行器和查询预算、以及执行器内部有界等待/不取消 FFI/超时后保留闸门与设备租约；增加变异样本，防止调用点绕过共享闸门或把超时改为取消。Seal 更新身份断言移至 `apps_vm` 加载之后。R126 改为检查多行方法声明、独立 gate actor 的迟到完成 ID 核验，以及验证器的 gate 和设备 lease 在原生工作结束时释放；同步更新三条变异样本的真实源文件和表达式。
+- **现象**：CI `39587187268`、`39587359644`、`39588014206`、`39588262215`、`39588505991` 的 `build-package` 依次在静态守卫或变异自检失败，均发生在 IPA 构建之前；已发现锚点和调用模型过期、断言顺序错误，以及一条 R130 变异样本锚点过期。
+- **根因**：R10 仍以已提前创建的 `OperationCoordinator` 作为 AppContainer 安装通道块的结束标记；证书清理守卫仍要求旧的单行 `referencedCertificateSerials()` 声明，并把 `BlockingCall.bounded` / 不取消超时的责任错误地算在调用点。当前实现已将设备原生操作集中到 `DeviceProfileNativeCall.perform`，由共享闸门持有设备租约并等待不可取消的 FFI 真正返回。Seal 更新身份断言放在 `apps_vm` 读取之前，触发 Python 局部变量未绑定错误。R126 守卫仍引用旧的单行 `isInstalled` 签名和局部 `probeGate`，而实际实现将 gate 独立为 `InstalledAppRefreshProbeGate` actor。R130 变异样本仍在续签调用点寻找 `onWorkNeverStarted`，实际释放动作已封装在共享设备调用执行器中。
+- **修复**：AppContainer 范围改为其后的设备扫描器初始化为边界。证书清理守卫分别钉住调用点使用共享执行器和查询预算、以及执行器内部有界等待/不取消 FFI/超时后保留闸门与设备租约；增加变异样本，防止调用点绕过共享闸门或把超时改为取消。Seal 更新身份断言移至 `apps_vm` 加载之后。R126 改为检查多行方法声明、独立 gate actor 的迟到完成 ID 核验，以及验证器的 gate 和设备 lease 在原生工作结束时释放；同步更新三条变异样本的真实源文件和表达式。R130 改为检查续签调用点传递完成回调，并通过变异确认“原生任务未启动”时共享执行器仍会释放业务租约。
 - **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
-- **验证状态**：四次 CI traceback 已确认失效锚点、旧调用模型、Python 断言顺序及 R126 旧方法签名；按项目纪律未在本地运行源码守卫。全部修正需经新的 CI 运行验证。
+- **验证状态**：CI `39588505991` 已确认主体守卫通过，但 R130 变异锚点过期；按项目纪律未在本地运行源码守卫。守卫变异修正需新的 CI 验证。
+
+# 2026-10-21 — 描述文件服务忙碌日志使用不存在的操作枚举
+
+- **现象**：CI `39588505991` 的 Swift 回归在编译 `MinimuxerInstallChannel.swift` 时失败，提示 `FailureOperation` 没有 `renewal` 成员。
+- **根因**：`FailureOperation` 的合法值为 `renew`；`renewal` 是其他模型中的事件分类，不能用于 `ImportFailure.operation`。
+- **修复**：描述文件服务忙碌错误改用 `FailureOperation.renew`，保留“续签期间设备服务被占用”的语义。
+- **涉及文件**：`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：由 CI 编译错误与 `FailureOperation` 声明确认根因；源码及 R130 守卫变异已修正，等待新的 CI 编译和守卫验证。
 
 # 2026-10-21 — Apple ID 被握手错误误标为凭据失效
 
