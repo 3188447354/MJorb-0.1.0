@@ -555,7 +555,6 @@ struct SelfAppRegistrarTests {
             appStore: fixture.appStore,
             accountRepository: EmptyAccountRepository(),
             fileStore: fixture.fileStore,
-            logStore: logStore,
             selfReplacement: FakeSelfReplacing(
                 reconcileAction: .closeAsNotInstalled,
                 settled: SettledSelfReplacement(
@@ -638,6 +637,10 @@ struct SelfAppRegistrarTests {
     func successfulSelfReplacementSettlementClearsPendingUpdateSourceFingerprint() async throws {
         let fixture = try makeSealFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let logStore = SealLogStore(
+            fileURL: fixture.root.appending(path: "Logs.json"),
+            fileProtector: MarkerFileProtector()
+        )
         var seal = makeSealRecord(
             fixture,
             expiry: Date(timeIntervalSince1970: 1_700_000_000),
@@ -698,7 +701,8 @@ struct SelfAppRegistrarTests {
                     transactionStartedAt: Date(timeIntervalSince1970: 100),
                     installedIdentityReadAt: Date()
                 )
-            )
+            ),
+            logStore: logStore
         )
 
         try await registrar.ensureRegistered()
@@ -714,7 +718,7 @@ struct SelfAppRegistrarTests {
         #expect(updated.hasPendingSelfUpdateSource)
         let updateLog = try #require(try await logStore.entries().first { $0.code == "SEAL-SELF-113" })
         #expect(updateLog.operationSummary?.operation == .singleUpdate)
-        #expect(updateLog.operationSummary?.items.map(\.appName) == ["Seal"])
+        #expect(updateLog.operationSummary?.items.map { $0.appName } == ["Seal"])
     }
 
     // MARK: - 夹具
