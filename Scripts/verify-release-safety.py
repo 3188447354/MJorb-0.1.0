@@ -4043,9 +4043,6 @@ def violations(load=read):
     check("SelfAppMetadata.installedIdentitySnapshot()" in revoke_keyless
           and "SEAL-CERT-230" in revoke_keyless,
           "Seal self-protection: certificate picker must stop when the actual signer is unreadable")
-    check("let currentSeal = await SelfAppMetadata.installedIdentitySnapshot()" in apps_vm
-          and "SelfAppMetadata.current(includeIcon: false)" not in apps_vm,
-          "R116①: Seal update identity must be read off the UI actor")
     app_container = strip_comments(load("Seal/Application/AppContainer.swift"))
     check("await SelfAppMetadata.loadCurrentAsync()" in app_container
           and "SelfAppMetadata.current()" not in app_container,
@@ -4137,6 +4134,9 @@ def violations(load=read):
           and 'normalized.contains("iphone developer")' in cleanup_policy,
           "Sacrifice: Apple Development and legacy iOS Development certificates may be offered")
     apps_vm = load("Seal/Features/Apps/AppsViewModel.swift")
+    check("let currentSeal = await SelfAppMetadata.installedIdentitySnapshot()" in apps_vm
+          and "SelfAppMetadata.current(includeIcon: false)" not in apps_vm,
+          "R116①: Seal update identity must be read off the UI actor")
     check("allowSealSigner: session.app.isSeal" in apps_vm,
           "Sacrifice: only explicit self-sign recovery may include Seal's signer")
     check("func confirmCertificateSacrificeAndRetry(serialNumber: String)" in apps_vm

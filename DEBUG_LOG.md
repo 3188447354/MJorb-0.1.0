@@ -1,10 +1,10 @@
 # 2026-10-21 — CI 静态守卫未跟上设备单飞封装
 
-- **现象**：CI `39587187268` 的 `build-package` 在 R10 守卫失败，后续 CI `39587359644` 再次在证书清理守卫失败；两个错误都发生在 Swift 构建之前。
-- **根因**：R10 仍以已提前创建的 `OperationCoordinator` 作为 AppContainer 安装通道块的结束标记；证书清理守卫仍要求旧的单行 `referencedCertificateSerials()` 声明，并把 `BlockingCall.bounded` / 不取消超时的责任错误地算在调用点。当前实现已将设备原生操作集中到 `DeviceProfileNativeCall.perform`，由共享闸门持有设备租约并等待不可取消的 FFI 真正返回。
-- **修复**：AppContainer 范围改为以下一个设备扫描器初始化为边界。证书清理守卫改为分别钉住调用点使用共享执行器和查询预算、以及执行器内部有界等待/不取消 FFI/超时后保留闸门与设备租约；增加变异样本，防止调用点绕过共享闸门或把超时改为取消。
+- **现象**：CI `39587187268`、`39587359644`、`39588014206` 的 `build-package` 依次在静态守卫失败，均发生在 Swift 构建之前；前两次是锚点与调用模型过期，第三次守卫自身触发 `UnboundLocalError`。
+- **根因**：R10 仍以已提前创建的 `OperationCoordinator` 作为 AppContainer 安装通道块的结束标记；证书清理守卫仍要求旧的单行 `referencedCertificateSerials()` 声明，并把 `BlockingCall.bounded` / 不取消超时的责任错误地算在调用点。当前实现已将设备原生操作集中到 `DeviceProfileNativeCall.perform`，由共享闸门持有设备租约并等待不可取消的 FFI 真正返回。另有一条 Seal 更新身份断言放在 `apps_vm` 读取之前，触发 Python 局部变量未绑定错误。
+- **修复**：AppContainer 范围改为其后的设备扫描器初始化为边界。证书清理守卫分别钉住调用点使用共享执行器和查询预算、以及执行器内部有界等待/不取消 FFI/超时后保留闸门与设备租约；增加变异样本，防止调用点绕过共享闸门或把超时改为取消。Seal 更新身份断言移至 `apps_vm` 加载之后。
 - **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
-- **验证状态**：两次 CI traceback 已分别确认失效标记和实际源码结构；按项目纪律未在本地运行源码守卫。修正需经新的 CI 运行验证。
+- **验证状态**：三次 CI traceback 已分别确认失效标记、调用模型不一致和断言顺序错误；按项目纪律未在本地运行源码守卫。全部修正需经新的 CI 运行验证。
 
 # 2026-10-21 — Apple ID 被握手错误误标为凭据失效
 
