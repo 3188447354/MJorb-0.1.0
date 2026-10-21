@@ -42,7 +42,7 @@ final class ImportFlowUITests: XCTestCase {
         dismissButton.tap()
 
         XCTAssertFalse(app.otherElements["import-confirmation"].waitForExistence(timeout: 2))
-        let settingsTab = app.buttons["root-tab-settings"]
+        let settingsTab = app.tabBars.buttons["我的"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 5))
         XCTAssertTrue(settingsTab.isEnabled)
         settingsTab.tap()
