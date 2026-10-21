@@ -88,6 +88,35 @@ struct RefreshPlannerTests {
     }
 
     @Test
+    func signedTargetCertificateEvidenceKeepsAppInRenewalQueue() {
+        let account = AppleAccountRecord(
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "TEAM000001",
+            teamName: "Team",
+            lastVerifiedAt: Date()
+        )
+        let bundleID = "com.example.targetserial"
+        var signed = app(name: "TargetSerial", expiry: Date(timeIntervalSince1970: 2_100_000_000), accountID: account.id)
+        signed.certificateSerialNumber = nil
+        signed.signingTargets = [SigningTargetRecord(
+            bundleIdentifier: bundleID,
+            profileUUID: "PROFILE-TARGET",
+            profileName: "Target",
+            profileCreationDate: nil,
+            profileExpirationDate: Date(timeIntervalSince1970: 2_100_000_000),
+            teamIdentifier: account.teamID,
+            certificateSerialNumbers: ["ABC123"],
+            deviceIdentifiers: ["DEVICE-1"]
+        )]
+
+        let queue = RefreshPlanner().makeQueue(apps: [signed], accounts: [account])
+
+        #expect(queue.map(\.appID) == [signed.id])
+        #expect(queue.first?.state != .requiresAction)
+    }
+
+    @Test
     func previouslySealSignedAppWithoutAccountRemainsVisibleAsRequiresAction() {
         let app = app(name: "Managed", expiry: nil, accountID: nil)
 

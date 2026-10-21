@@ -75,8 +75,8 @@ private enum SigningGuideSection: String, CaseIterable, Identifiable {
         case .pairing:
             return [
                 "iOS 27：在 Seal 的“设备”页启动配对",
-                "前往“设置 > 隐私与安全性 > 开发者模式”",
-                "在“与 Seal 配对”中选择 Seal，核对配对码后确认",
+                PairingActivityAttributes.developerModePairingInstruction,
+                "核对配对码后确认",
                 "iOS 17.4–26：用电脑配对助手导入配对文件",
                 "回到“设备”页，确认 LocalDevVPN 已验证"
             ]

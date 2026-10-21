@@ -199,7 +199,7 @@ final class SettingsViewModel: ObservableObject {
     private var phonePairingHost: PhonePairingHost?
     private var phonePairingLease: OperationCoordinator.Lease?
     /// 把配对码镜像到灵动岛 / 锁屏。见 `PairingLiveActivityController` 的注释。
-    private let pairingLiveActivity = PairingLiveActivityController()
+    private let pairingLiveActivity: PairingLiveActivityController
     /// 本轮是否走通知回退；仅当预创建失败或活动在出码前被系统回收时切换。
     private var pairingUsesNotifications = false
     private var isPhonePairingAutomaticCheckRunning = false
@@ -239,6 +239,7 @@ final class SettingsViewModel: ObservableObject {
         self.appStore = appStore
         self.fileStore = fileStore
         self.logStore = logStore
+        pairingLiveActivity = PairingLiveActivityController(logStore: logStore)
         self.signingHistoryStore = signingHistoryStore
         self.applePortalInventoryService = ApplePortalInventoryService()
         self.applePortalCertificateService = ApplePortalCertificateService(logStore: logStore)
@@ -258,7 +259,7 @@ final class SettingsViewModel: ObservableObject {
             name: .sealRenewalCompleted,
             object: nil
         )
-        Task { await pairingLiveActivity.endOrphanedActivities() }
+        pairingLiveActivity.scheduleOrphanCleanup()
     }
 
     init(startupFailure: ImportFailure) {
@@ -272,6 +273,7 @@ final class SettingsViewModel: ObservableObject {
         appStore = nil
         fileStore = nil
         logStore = nil
+        pairingLiveActivity = PairingLiveActivityController()
         signingHistoryStore = nil
         applePortalInventoryService = nil
         applePortalCertificateService = nil
@@ -296,6 +298,7 @@ final class SettingsViewModel: ObservableObject {
         appStore = nil
         fileStore = nil
         logStore = nil
+        pairingLiveActivity = PairingLiveActivityController()
         signingHistoryStore = nil
         applePortalInventoryService = nil
         applePortalCertificateService = nil
@@ -1928,11 +1931,11 @@ final class SettingsViewModel: ObservableObject {
         var relatedApps: [AppRecord] = []
         if let appStore {
             do {
-                relatedApps = try await appStore.fetchAll().filter { app in
-                    app.accountID == account.id
-                        && app.signingTeamID == account.teamID
-                        && app.certificateSerialNumber?.caseInsensitiveCompare(serial) == .orderedSame
-                }
+                relatedApps = CertificateRevocationImpact.accountAssociatedApps(
+                    serialNumber: serial,
+                    teamID: account.teamID,
+                    apps: try await appStore.fetchAll()
+                )
             } catch {
                 try? await logStore?.append(
                     category: .account,
@@ -2561,7 +2564,7 @@ final class SettingsViewModel: ObservableObject {
         // 用户主动开始配对时先预创建 Live Activity。系统设置会把 App 放到后台，
         // 等拿到 PIN 才 request 可能已经错过前台创建窗口；预创建态不展示假码，
         // 并在失败、取消和超时后清理。创建失败才回退到通知。
-        pairingUsesNotifications = pairingLiveActivity.prepare(
+        pairingUsesNotifications = await pairingLiveActivity.prepare(
             deviceName: Self.phonePairingDeviceDisplayName
         ) == false
         if pairingUsesNotifications {

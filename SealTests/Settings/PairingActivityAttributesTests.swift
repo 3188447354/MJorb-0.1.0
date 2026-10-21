@@ -4,6 +4,14 @@ import Testing
 
 struct PairingActivityAttributesTests {
     @Test
+    func devicePageAndGuideShareTheRequestedDeveloperModeInstruction() {
+        #expect(
+            PairingActivityAttributes.developerModePairingInstruction
+                == "前往 设置 > 隐私与安全 > 开发者模式 > 选择 Pair with Seal 配对"
+        )
+    }
+
+    @Test
     func sealIconSurvivesActivityAttributeEncoding() throws {
         let icon = Data(repeating: 0x89, count: 1_800)
         let attributes = PairingActivityAttributes(deviceName: "iPhone", sealIconPNG: icon)

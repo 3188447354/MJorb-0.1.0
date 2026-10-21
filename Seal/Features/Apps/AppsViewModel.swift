@@ -932,14 +932,14 @@ final class AppsViewModel: ObservableObject {
     }
 
     /// 本机 LaunchServices 清单不依赖 Wi-Fi / LocalDevVPN，能直接确认外部卸载。
-    /// `nil` 表示快照不可用或阳性对照未通过，此时保留旧路径的远程核验兜底。
+    /// `nil` 表示快照不可用或为空，此时保留旧路径的远程核验兜底。
     private func reconcileInstalledAppsFromLocalSnapshot() async -> Bool? {
         guard let controlBundleIdentifier = Bundle.main.bundleIdentifier else { return nil }
         let scanner = InstalledAppScanner()
         guard let snapshot = await scanner.scanAllSnapshot() else { return nil }
 
         let snapshotBundleIdentifiers = snapshot.map(\.bundleIdentifier)
-        guard InstalledAppRefreshProbePolicy.hasPositiveControl(
+        guard InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
             controlBundleIdentifier: controlBundleIdentifier,
             installedBundleIdentifiers: snapshotBundleIdentifiers
         ) else { return nil }

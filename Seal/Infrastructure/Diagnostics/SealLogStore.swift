@@ -8,8 +8,8 @@ actor SealLogStore {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    // 内存缓冲：append 只更新内存，由 flush_task 节流批量落盘，
-    // 避免「每条日志都全量读 + JSON 重写 + atomic 双写 + protect」放大成 MB 级磁盘写。
+    // 普通诊断日志由 flush_task 节流批量落盘；用户可见的操作结果立即持久化，
+    // 避免更新替换进程时丢掉刚完成的签名、续签或安装记录。
     private var buffer: [SealLogEntry] = []
     private var bufferLoaded = false
     private var pendingFlush = false
@@ -57,10 +57,26 @@ actor SealLogStore {
             )
         )
         if buffer.count > maximumEntries {
-            droppedSinceClear += buffer.count - maximumEntries
-            buffer = Array(buffer.suffix(maximumEntries))
+            let operationResults = buffer.filter(LogViewerPolicy.isUserVisibleOperationResult)
+            let retainedResults = Array(operationResults.suffix(maximumEntries))
+            let diagnosticCapacity = max(0, maximumEntries - retainedResults.count)
+            let retainedDiagnosticIDs = Set(
+                buffer
+                    .filter { LogViewerPolicy.isUserVisibleOperationResult($0) == false }
+                    .suffix(diagnosticCapacity)
+                    .map(\.id)
+            )
+            let retainedResultIDs = Set(retainedResults.map(\.id))
+            let retainedIDs = retainedResultIDs.union(retainedDiagnosticIDs)
+            let retained = buffer.filter { retainedIDs.contains($0.id) }
+            droppedSinceClear += buffer.count - retained.count
+            buffer = retained
         }
-        scheduleFlush()
+        if operationSummary != nil || (category == .installation && operationResult != nil) {
+            flush()
+        } else {
+            scheduleFlush()
+        }
     }
 
     func entries() throws -> [SealLogEntry] {
@@ -81,7 +97,7 @@ actor SealLogStore {
     func exportText() throws -> String {
         loadBufferIfNeeded()
         let notice = droppedSinceClear > 0
-            ? "（自上次清空以来已有 \(droppedSinceClear) 条更早日志被滚动丢弃）"
+            ? "（自上次清空以来已有 \(droppedSinceClear) 条诊断记录因容量限制被丢弃；签名、续签和安装结果优先保留）"
             : nil
         // 构建标识显式传下去（而不是靠默认参数）：这条依赖是「日志能不能定版」的关键，
         // 要能被守卫的源码断言看见 —— 删掉它守卫就该红。
@@ -196,8 +212,7 @@ actor SealLogStore {
             at: directory,
             withIntermediateDirectories: true
         )
-        // 非 atomic：避免每条日志临时文件 + rename 的双写放大
-        try? encoder.encode(entries).write(to: fileURL)
+        try? encoder.encode(entries).write(to: fileURL, options: .atomic)
         if !hasProtectedOnce {
             hasProtectedOnce = true
             try? fileProtector.protect(fileURL)

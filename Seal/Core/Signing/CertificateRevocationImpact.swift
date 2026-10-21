@@ -26,6 +26,23 @@ enum CertificateRevocationImpact {
         }
     }
 
+    /// An account's app history is identified by its Team and certificate, not its local UUID.
+    /// Re-adding an Apple ID creates a new UUID, and older records may keep the serial only on a target.
+    static func accountAssociatedApps(
+        serialNumber: String,
+        teamID: String,
+        apps: [AppRecord]
+    ) -> [AppRecord] {
+        let normalizedTeam = teamID.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalizedTeam.isEmpty == false else { return [] }
+        return associatedApps(serialNumber: serialNumber, apps: apps).filter { app in
+            app.signingTeamID?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == normalizedTeam
+                || app.signingTargets.contains {
+                    $0.teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == normalizedTeam
+                }
+        }
+    }
+
     /// 本机**已安装**、且用该证书签名的应用（保持传入顺序）。
     ///
     /// 只统计已安装的：未安装的包重新签一次即可，撤销证书不会造成实际损失；

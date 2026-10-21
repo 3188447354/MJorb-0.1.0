@@ -10,8 +10,10 @@ import UIKit
 @MainActor
 final class PairingLiveActivityController {
 
+    private let logStore: SealLogStore?
     private var activity: Activity<PairingActivityAttributes>?
     private var activityOperation: Task<Void, Never>?
+    private var orphanCleanupTask: Task<Void, Never>?
     private var stage: PairingActivityAttributes.Stage?
     private var expiresAt: Date?
     private var dismissTask: Task<Void, Never>?
@@ -20,6 +22,10 @@ final class PairingLiveActivityController {
     private static let codeLifetime: TimeInterval = 180
     private static let completionLifetime: TimeInterval = 6
     private static let failureLifetime: TimeInterval = 12
+
+    init(logStore: SealLogStore? = nil) {
+        self.logStore = logStore
+    }
 
     var isEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
 
@@ -33,11 +39,28 @@ final class PairingLiveActivityController {
         }
     }
 
+    /// 启动时清理与用户开始配对前的清理共用同一个任务，避免旧清理晚于新活动创建，
+    /// 把刚创建的配对活动误判为上次遗留活动结束。
+    func scheduleOrphanCleanup() {
+        guard orphanCleanupTask == nil else { return }
+        orphanCleanupTask = Task { await endOrphanedActivities() }
+    }
+
     /// 在用户按下「开始配对」的前台时调用。返回 false 时由调用方走通知回退。
     @discardableResult
-    func prepare(deviceName: String) -> Bool {
+    func prepare(deviceName: String) async -> Bool {
         finish()
-        guard isEnabled else { return false }
+        await activityOperation?.value
+        if let orphanCleanupTask {
+            await orphanCleanupTask.value
+            self.orphanCleanupTask = nil
+        } else {
+            await endOrphanedActivities()
+        }
+        guard isEnabled else {
+            await logUnavailable("系统未允许实时活动，配对码将改用系统通知显示。")
+            return false
+        }
 
         let expiry = Date().addingTimeInterval(Self.preparationLifetime)
         do {
@@ -55,6 +78,7 @@ final class PairingLiveActivityController {
         } catch {
             activity = nil
             stage = nil
+            await logUnavailable("创建配对实时活动失败，配对码将改用系统通知显示：\(error.localizedDescription)")
             return false
         }
     }
@@ -68,6 +92,7 @@ final class PairingLiveActivityController {
             return false
         }
         guard activity.activityState == .active || activity.activityState == .stale else {
+            await logUnavailable("配对实时活动已被系统结束，配对码将改用系统通知显示。")
             finish()
             return false
         }
@@ -87,6 +112,7 @@ final class PairingLiveActivityController {
         await updateOperation.value
         guard self.activity?.id == activityID, stage == .code else { return false }
         guard activity.activityState == .active || activity.activityState == .stale else {
+            await logUnavailable("配对实时活动更新后已不可用，配对码将改用系统通知显示。")
             finish()
             return false
         }
@@ -191,7 +217,7 @@ final class PairingLiveActivityController {
         stage: .preparing,
         code: "",
         title: "Seal",
-        detail: "隐私与安全-开发者模式-与 Seal 配对"
+        detail: PairingActivityAttributes.developerModePairingInstruction
     )
 
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
@@ -202,4 +228,8 @@ final class PairingLiveActivityController {
     private static let sealIconPNG: Data? = {
         UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)?.pngData()
     }()
+
+    private func logUnavailable(_ message: String) async {
+        try? await logStore?.append(category: .pairing, level: .warning, message: message)
+    }
 }

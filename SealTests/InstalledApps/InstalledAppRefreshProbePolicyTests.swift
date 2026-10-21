@@ -26,6 +26,22 @@ struct InstalledAppRefreshProbePolicyTests {
     }
 
     @Test
+    func acceptsNonemptyLaunchServicesSnapshotWhenItOmitsTheRunningApp() {
+        #expect(
+            InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
+                controlBundleIdentifier: "com.mjorb.seal.device",
+                installedBundleIdentifiers: ["com.example.music"]
+            )
+        )
+        #expect(
+            InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
+                controlBundleIdentifier: "com.mjorb.seal.device",
+                installedBundleIdentifiers: []
+            ) == false
+        )
+    }
+
+    @Test
     func localSnapshotMatchesBundleIDsCaseInsensitively() {
         #expect(
             InstalledAppRefreshProbePolicy.contains(

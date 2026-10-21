@@ -94,6 +94,29 @@ struct LogViewerPolicyTests {
     }
 
     @Test
+    func sealSelfUpdateSummaryNamesTheAppAndUsesConfirmedTransactionDuration() {
+        let startedAt = Date(timeIntervalSince1970: 100)
+        let endedAt = Date(timeIntervalSince1970: 113)
+        let expiration = Date(timeIntervalSince1970: 2_100_000_000)
+        let summary = RenewalRoundSummary.sealUpdate(
+            startedAt: startedAt,
+            endedAt: endedAt,
+            expirationDate: expiration
+        )
+        let entry = SealLogEntry(
+            category: .installation,
+            message: summary.humanReadableMessage(),
+            operationResult: .success,
+            operationSummary: summary
+        )
+
+        #expect(summary.operation == .singleUpdate)
+        #expect(summary.items.map(\.appName) == ["Seal"])
+        #expect(summary.totalDuration == 13)
+        #expect(LogViewerPolicy.visibleEntries([entry]) == [entry])
+    }
+
+    @Test
     func displaysFinishedRoundsThatIncludeAppsNotRun() {
         let summary = RenewalRoundSummary(
             roundNumber: 1,

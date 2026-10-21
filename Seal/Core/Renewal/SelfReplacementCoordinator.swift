@@ -38,6 +38,7 @@ struct SettledSelfReplacement: Equatable, Sendable {
     let installedIdentity: InstalledIdentity
     let mainBundleIdentifier: String
     let mainProfileUUID: String
+    let transactionStartedAt: Date
     let installedIdentityReadAt: Date
 }
 
@@ -279,6 +280,7 @@ actor SelfReplacementCoordinator: SelfReplacing {
             installedIdentity: running,
             mainBundleIdentifier: main.bundleIdentifier,
             mainProfileUUID: main.profileUUID,
+            transactionStartedAt: transaction.createdAt,
             installedIdentityReadAt: readAt
         )
     }

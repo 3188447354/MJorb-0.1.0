@@ -299,9 +299,17 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     private var hasPersistedSealSigningEvidence: Bool {
-        mappedBundleIdentifier?.isEmpty == false
+        let teamID = signingTeamID ?? ""
+        let hasCertificateSerial = certificateSerialNumber?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            || signingTargets.contains { target in
+                target.teamIdentifier.caseInsensitiveCompare(teamID) == .orderedSame
+                    && target.certificateSerialNumbers.contains {
+                        $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    }
+            }
+        return mappedBundleIdentifier?.isEmpty == false
             && signingTeamID?.isEmpty == false
-            && certificateSerialNumber?.isEmpty == false
+            && hasCertificateSerial
             && signedDeviceIdentifier?.isEmpty == false
             && provisioningProfileExpirationDate != nil
     }

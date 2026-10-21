@@ -108,7 +108,7 @@ struct SigningCertificateSettingsView: View {
     private func refreshInstalledBundleIdentifiers() async {
         guard let controlBundleIdentifier = Bundle.main.bundleIdentifier,
               let snapshot = await InstalledAppScanner().scanAllSnapshot(),
-              InstalledAppRefreshProbePolicy.hasPositiveControl(
+              InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
                 controlBundleIdentifier: controlBundleIdentifier,
                 installedBundleIdentifiers: snapshot.map(\.bundleIdentifier)
               ) else {
@@ -605,7 +605,11 @@ struct SigningCertificateSettingsView: View {
 
     @ViewBuilder
     private func installedAppsSection(account: AppleAccountRecord) -> some View {
-        // 序列号关联与 LaunchServices 当前安装 Bundle ID 必须同时命中，不能把历史记录当作本机现状。
+        // 有可用快照时同时核对证书与 Bundle ID；快照未知时仅展示签名记录并标明安装状态未确认。
+        let certificateApps = CertificateRevocationImpact.associatedApps(
+            serialNumber: account.certificateSerialNumber ?? "",
+            apps: relatedApps
+        )
         let installedApps = CertificateRevocationImpact.installedAppsAssociated(
             serialNumber: account.certificateSerialNumber ?? "",
             apps: relatedApps,
@@ -613,7 +617,7 @@ struct SigningCertificateSettingsView: View {
         )
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("本机已安装 App")
+                Text(installedBundleIdentifiers == nil ? "该证书的 App 记录" : "本机已安装 App")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.sealTextSecondary)
                 Spacer(minLength: 8)
@@ -622,32 +626,43 @@ struct SigningCertificateSettingsView: View {
                     .foregroundStyle(Color.sealTextSecondary)
             }
             if installedBundleIdentifiers == nil {
-                Text("无法读取本机安装清单")
+                Text("本机安装清单暂不可用；以下签名记录的安装状态未确认")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                if certificateApps.isEmpty {
+                    Text("暂无关联的签名记录")
+                        .font(.caption)
+                        .foregroundStyle(Color.sealTextSecondary)
+                } else {
+                    installedAppRows(certificateApps)
+                }
             } else if installedApps.isEmpty {
                 Text("暂无")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
             } else {
-                ForEach(installedApps) { app in
-                    HStack(alignment: .center, spacing: 10) {
-                        installedAppIcon(for: app)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.name)
-                                .font(.subheadline.weight(.medium))
-                                .lineLimit(1)
-                            Text(app.mappedBundleIdentifier ?? app.originalBundleIdentifier)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(Color.sealTextSecondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
-                }
+                installedAppRows(installedApps)
             }
         }
         .padding(.vertical, 12)
+    }
+
+    private func installedAppRows(_ apps: [AppRecord]) -> some View {
+        ForEach(apps) { app in
+            HStack(alignment: .center, spacing: 10) {
+                installedAppIcon(for: app)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(app.name)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    Text(app.mappedBundleIdentifier ?? app.originalBundleIdentifier)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Color.sealTextSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
     }
 
     @ViewBuilder

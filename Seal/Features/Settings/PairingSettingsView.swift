@@ -358,7 +358,7 @@ struct PairingSettingsView: View {
         case .requestingLocalNetwork:
             return ("准备配对", "正在请求本地网络权限。", "network", .sealAccent, "正在准备")
         case .waitingForSystemConfirmation:
-            return ("在系统中配对", "前往 设置 > 隐私与安全性 > 开发者模式，在“与 Seal 配对”中选择 Seal。", "gearshape.2", .sealAccent, "等待系统确认")
+            return ("在系统中配对", PairingActivityAttributes.developerModePairingInstruction, "gearshape.2", .sealAccent, "等待系统确认")
         case .showingCode:
             return ("确认配对码", "将下方配对码与系统设置中的提示核对后确认。", "custom.pairingCode", .sealAccent, "等待系统确认")
         case .validating:

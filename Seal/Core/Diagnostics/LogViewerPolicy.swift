@@ -48,6 +48,10 @@ enum LogViewerPolicy {
         }
     }
 
+    static func isUserVisibleOperationResult(_ entry: SealLogEntry) -> Bool {
+        operationResult(for: entry) != nil && isSummaryEntry(entry)
+    }
+
     private static func isSummaryEntry(_ entry: SealLogEntry) -> Bool {
         // Per-App renewal diagnostics and raw signing errors are already represented by the
         // operation summary, whose failure reason is shown only when the user taps the row.

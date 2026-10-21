@@ -82,6 +82,17 @@ struct CertificateRevocationImpactTests {
         #expect(associated.map(\.name) == ["Alpha"])
     }
 
+    @Test
+    func accountAssociationUsesTeamAndTargetSerialAfterAccountRecreation() {
+        let app = makeTargetOnlyApp(name: "Alpha", serial: "0AA11", state: .installed)
+        let associated = CertificateRevocationImpact.accountAssociatedApps(
+            serialNumber: "AA11",
+            teamID: "team123456",
+            apps: [app]
+        )
+        #expect(associated.map(\.name) == ["Alpha"])
+    }
+
     /// 只导入 / 已签名但未安装的包，重新签一次即可，不算受影响。
     @Test
     func ignoresAppsThatAreNotInstalled() {

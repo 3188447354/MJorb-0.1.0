@@ -28,7 +28,7 @@ struct LogViewerView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                Text("页面只显示最新 20 条结果；完整日志最多保留 1000 条，超出后会移除最早记录。无法解决时，可点邮件按钮发送日志至 mjorb@foxmail.com。")
+                Text("页面只显示最新 20 条结果；完整日志最多保留 1000 条，超出后优先移除较早的诊断记录。无法解决时，可点邮件按钮发送日志至 mjorb520@gmail.com。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -59,22 +59,22 @@ struct LogViewerView: View {
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.red)
                             .frame(width: 36, height: 36)
-                            .glassSurface(cornerRadius: 18)
                     }
+                    .buttonStyle(.plain)
                     Button(action: exportLogs) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.accentColor)
                             .frame(width: 36, height: 36)
-                            .glassSurface(cornerRadius: 18)
                     }
+                    .buttonStyle(.plain)
                     Button(action: emailLogs) {
                         Image(systemName: "envelope")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.accentColor)
                             .frame(width: 36, height: 36)
-                            .glassSurface(cornerRadius: 18)
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("邮件发送日志")
                 }
             }
@@ -421,7 +421,7 @@ private struct LogMailComposer: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> MFMailComposeViewController {
         let composer = MFMailComposeViewController()
         composer.mailComposeDelegate = context.coordinator
-        composer.setToRecipients(["mjorb@foxmail.com"])
+        composer.setToRecipients(["mjorb520@gmail.com"])
         composer.setSubject("Seal 诊断日志")
         composer.setMessageBody("附件是 Seal 诊断日志。", isHTML: false)
         composer.addAttachmentData(attachmentData, mimeType: "text/plain", fileName: "Seal-log.txt")

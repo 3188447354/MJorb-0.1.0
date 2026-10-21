@@ -355,11 +355,17 @@ actor SelfAppRegistrar {
             await settlePendingBatchSealResult(to: .completed)
             if let main = settled.installedIdentity.mainTarget {
                 let expiry = SealLogTextFormatter.diagnosticTimestamp(main.profileExpirationDate)
+                let summary = RenewalRoundSummary.sealUpdate(
+                    startedAt: settled.transactionStartedAt,
+                    endedAt: settled.installedIdentityReadAt,
+                    expirationDate: main.profileExpirationDate
+                )
                 try? await logStore?.append(
                     category: .installation,
                     message: "自替换结算确认：运行包身份与候选一致；Bundle=\(main.bundleIdentifier)，描述文件 \(main.profileUUID)，到期 \(expiry)，证书末尾 …\(main.signerSerialNumber.suffix(8))",
                     code: "SEAL-SELF-113",
-                    operationResult: .success
+                    operationResult: .success,
+                    operationSummary: summary
                 )
             }
             if let existing {

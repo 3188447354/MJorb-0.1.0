@@ -462,6 +462,7 @@ private struct ReplacementRegistrarFixture {
             installedIdentity: running,
             mainBundleIdentifier: "com.mjorb.seal",
             mainProfileUUID: candidateProfileUUID,
+            transactionStartedAt: Date(timeIntervalSince1970: 100),
             installedIdentityReadAt: Date()
         ))
         let profileCleaner = RecordingProfileCleaner(appStore: appStore)

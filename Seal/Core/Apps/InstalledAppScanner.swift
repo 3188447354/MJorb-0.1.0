@@ -53,10 +53,10 @@ final class InstalledAppScanner: Sendable {
         guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type else {
             return nil
         }
-        guard let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() else {
+        guard let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject else {
             return nil
         }
-        guard let appList = workspace.perform(NSSelectorFromString("allInstalledApplications"))?.takeUnretainedValue() as? [NSObject] else {
+        guard let appList = installedApplicationProxies(from: workspace) else {
             return nil
         }
 
@@ -90,9 +90,8 @@ final class InstalledAppScanner: Sendable {
         #endif
         guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
               let workspace = workspaceClass
-                .perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue(),
-              let appList = workspace
-                .perform(NSSelectorFromString("allInstalledApplications"))?.takeUnretainedValue() as? [NSObject] else {
+                .perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject,
+              let appList = installedApplicationProxies(from: workspace) else {
             return [:]
         }
 
@@ -108,6 +107,18 @@ final class InstalledAppScanner: Sendable {
             result[normalizedBundleID] = iconData
         }
         return result
+    }
+
+    private static func installedApplicationProxies(from workspace: NSObject) -> [NSObject]? {
+        for name in ["allInstalledApplications", "allApplications"] {
+            let selector = NSSelectorFromString(name)
+            guard workspace.responds(to: selector),
+                  let applications = workspace.perform(selector)?.takeUnretainedValue() as? [NSObject] else {
+                continue
+            }
+            return applications
+        }
+        return nil
     }
 
     private static func iconPNGData(from application: NSObject) -> Data? {

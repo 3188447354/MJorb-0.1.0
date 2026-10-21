@@ -31,6 +31,31 @@ struct SealLogStoreTests {
     }
 
     @Test
+    func retainsOperationResultsAheadOfDiagnosticNoiseAndPersistsThemImmediately() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "SealTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appending(path: "Logs.json")
+        let store = SealLogStore(
+            fileURL: fileURL,
+            maximumEntries: 2,
+            fileProtector: MarkerFileProtector()
+        )
+
+        try await store.append(
+            category: .installation,
+            message: "设备核验通过：Seal",
+            operationResult: .success
+        )
+        try await store.append(category: .account, message: "认证诊断一")
+        try await store.append(category: .system, message: "认证诊断二")
+
+        let reopened = SealLogStore(fileURL: fileURL, fileProtector: MarkerFileProtector())
+        let entries = try await reopened.entries()
+        #expect(entries.map(\.message) == ["认证诊断二", "设备核验通过：Seal"])
+    }
+
+    @Test
     func redactsSensitiveAppleAndPairingValuesBeforePersistence() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "SealTests-\(UUID().uuidString)", directoryHint: .isDirectory)

@@ -351,6 +351,10 @@ struct SelfAppRegistrarTests {
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let oldExpiry = Date(timeIntervalSince1970: 1_700_000_000)
         let newExpiry = Date(timeIntervalSince1970: 1_750_000_000)
+        let logStore = SealLogStore(
+            fileURL: fixture.root.appending(path: "Logs.json"),
+            fileProtector: MarkerFileProtector()
+        )
         try await fixture.appStore.save(
             makeSealRecord(
                 fixture,
@@ -551,6 +555,7 @@ struct SelfAppRegistrarTests {
             appStore: fixture.appStore,
             accountRepository: EmptyAccountRepository(),
             fileStore: fixture.fileStore,
+            logStore: logStore,
             selfReplacement: FakeSelfReplacing(
                 reconcileAction: .closeAsNotInstalled,
                 settled: SettledSelfReplacement(
@@ -564,6 +569,7 @@ struct SelfAppRegistrarTests {
                     ),
                     mainBundleIdentifier: "com.mjorb.seal",
                     mainProfileUUID: "OLD-PROFILE",
+                    transactionStartedAt: Date(timeIntervalSince1970: 100),
                     installedIdentityReadAt: Date()
                 )
             )
@@ -689,6 +695,7 @@ struct SelfAppRegistrarTests {
                     installedIdentity: installedIdentity,
                     mainBundleIdentifier: "com.mjorb.seal",
                     mainProfileUUID: "NEW-PROFILE",
+                    transactionStartedAt: Date(timeIntervalSince1970: 100),
                     installedIdentityReadAt: Date()
                 )
             )
@@ -705,6 +712,9 @@ struct SelfAppRegistrarTests {
         #expect(updated.expiryDate == newExpiry)
         // `hasPendingSelfUpdateSource` 刻意保留（语义是「导入过自更新源」）。
         #expect(updated.hasPendingSelfUpdateSource)
+        let updateLog = try #require(try await logStore.entries().first { $0.code == "SEAL-SELF-113" })
+        #expect(updateLog.operationSummary?.operation == .singleUpdate)
+        #expect(updateLog.operationSummary?.items.map(\.appName) == ["Seal"])
     }
 
     // MARK: - 夹具

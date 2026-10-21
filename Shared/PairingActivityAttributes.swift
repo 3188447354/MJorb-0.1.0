@@ -3,6 +3,9 @@ import Foundation
 
 /// 配对 Live Activity 的属性定义。此文件同时属于 Seal 与 SealLiveActivity target。
 struct PairingActivityAttributes: ActivityAttributes {
+    static let developerModePairingInstruction =
+        "前往 设置 > 隐私与安全 > 开发者模式 > 选择 Pair with Seal 配对"
+
     enum Stage: String, Codable, Hashable, Sendable {
         /// 用户已主动开始配对，但系统尚未生成真实配对码。
         case preparing

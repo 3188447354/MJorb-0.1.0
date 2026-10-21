@@ -1,3 +1,12 @@
+# 2026-10-21 — 离线卸载对账、账号应用归属、操作日志保留与配对灵动岛
+
+- **现象**：未连接 Wi-Fi / LocalDevVPN 时卸载的 App 仍显示在 Seal 的已安装列表；重新添加 Apple ID 后证书页和批量续签漏掉原账号下已签名的 App；操作日志偶尔消失，自更新显示成没有 App 名的“安装”；设备配对时 Live Activity 未出现并退回系统通知。
+- **根因**：已安装清单依赖远程设备会话，失败时安全地保留旧状态；本机 LaunchServices 扫描还要求列表必须包含 Seal 自身，系统未列出调用方时会丢弃可用快照。证书归属依赖随机本地 account UUID 和仅顶层保存的 serial，无法承接重建账号 UUID 或 target-only 签名数据。日志环形缓冲按时间一律淘汰旧记录，操作结果与异步 flush 共享写入窗口；自替换成功日志没有人类可见摘要。启动时异步清理遗留 Live Activity 与用户创建新活动没有串行化，ActivityKit 创建/更新失败也被静默转换为通知回退。
+- **修复**：LaunchServices 非空快照即用于本机卸载对账（空结果或扫描失败仍走设备核验、不会批量误删）；扫描图标时复用 `allInstalledApplications` / `allApplications` 兼容入口。证书关联按归一化 serial + Team 匹配，不要求随机 account UUID；续签证据允许 serial 保存在同 Team signing target，同时仍要求其余持久化签名身份。日志容量优先保留最终签名/续签/安装结果、操作结果立即原子落盘；Seal 自替换结算日志显示为“更新 · Seal”并使用事务起止时间。配对活动清理与创建共用串行任务，ActivityKit 未启用、创建失败或更新后被回收时记录可诊断原因；设备页、指南和活动预备态共用开发者模式配对文案。日志页工具栏按钮去掉圆形玻璃背景，邮件收件人改为用户指定地址。
+- **涉及文件**：`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Apps/AppRecord.swift`、`Seal/Core/Signing/CertificateRevocationImpact.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Core/Renewal/RenewalRoundSummary.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Core/Renewal/SelfReplacementCoordinator.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Features/Settings/PairingSettingsView.swift`、`Seal/Features/Settings/SigningAndRenewalGuideView.swift`、`Seal/Features/Settings/LogViewerView.swift`、`Seal/Infrastructure/Diagnostics/SealLogStore.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`Shared/PairingActivityAttributes.swift`、对应 `SealTests/**`、`docs/upstream-alignment.md`。
+- **回归覆盖**：本机快照未包含 Seal / 空快照策略；账号重建且证书只记于 target 时的证书关联；target-only 证书证据进入续签队列；容量淘汰优先级和结果立即持久化；Seal 更新摘要名称/耗时；配对文案一致性；自替换结算写入带 Seal 更新摘要的日志。
+- **验证状态**：按用户和项目约定，未运行 Swift/Xcode 编译、测试或源码守卫；本机 Windows 无法完成 iOS 编译。需 CI 编译及真机确认 LaunchServices 清单、离线卸载对账、续签队列、ActivityKit 系统可用性/图标和日志持久化。系统关闭实时活动时仍会回退系统通知，日志会明确记录此原因。
+
 # 2026-10-21 — CI 105 守卫变异定位错误的资源副本与互斥锚点
 
 - **现象**：CI `39526715221` 的 Swift/UI 回归与签名器测试通过；发布安全守卫仍因 R84⑦ 变异锚点缺失、R119④ 变异未触发而失败。

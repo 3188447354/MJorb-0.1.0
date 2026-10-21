@@ -109,6 +109,27 @@ struct RenewalRoundSummary: Codable, Equatable, Sendable {
     var needsActionCount: Int { items.filter { $0.outcome == .needsAction }.count }
     var awaitingCount: Int { items.filter { $0.outcome == .awaitingConfirmation }.count }
 
+    static func sealUpdate(startedAt: Date, endedAt: Date, expirationDate: Date) -> Self {
+        Self(
+            roundNumber: 0,
+            triggerSource: .manual,
+            operation: .singleUpdate,
+            startedAt: startedAt,
+            endedAt: endedAt,
+            items: [
+                RenewalRoundItem(
+                    appName: "Seal",
+                    outcome: .succeeded,
+                    duration: endedAt.timeIntervalSince(startedAt),
+                    profileExpirationDate: expirationDate,
+                    failureCode: nil,
+                    failureReason: nil,
+                    failureRecovery: nil
+                )
+            ]
+        )
+    }
+
     /// 人话层消息（用户直接看的）。
     ///
     /// 只说"成了没、用了多久、失败了为什么、找谁"，

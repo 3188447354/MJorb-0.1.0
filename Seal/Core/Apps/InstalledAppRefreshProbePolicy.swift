@@ -34,6 +34,21 @@ enum InstalledAppRefreshProbePolicy {
         }
     }
 
+    /// LaunchServices may return a complete user-app snapshot without listing the caller itself.
+    /// A non-empty successful snapshot is still useful; an empty one remains untrusted so a
+    /// transiently empty result cannot mark every saved app as uninstalled.
+    static func canUseLocalSnapshot(
+        controlBundleIdentifier: String?,
+        installedBundleIdentifiers: [String]
+    ) -> Bool {
+        hasPositiveControl(
+            controlBundleIdentifier: controlBundleIdentifier,
+            installedBundleIdentifiers: installedBundleIdentifiers
+        ) || installedBundleIdentifiers.contains {
+            normalizedBundleIdentifier($0) != nil
+        }
+    }
+
     static func contains(
         _ bundleIdentifier: String?,
         in installedBundleIdentifiers: Set<String>
