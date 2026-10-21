@@ -6522,7 +6522,11 @@ def violations(load=read):
     # `SEAL-PROFILE-350`（调用方明明已重置）。预热只是后台优化，
     # 真正的注入失败仍由 `installAndVerify` 自己标记污染。
     check("markTaintOnFailure: Bool = true" in r115_installer_code
-          and "ensureProfileService(using: channel, markTaintOnFailure: false)" in r115_installer_code
+          and "markTaintOnFailure: false," in section(
+              r115_installer_code,
+              "func prewarmProfileService(",
+              "func installAndVerify(",
+          )
           and "if markTaintOnFailure," in r115_installer_code,
           "R116: 预热失败不得标记污染 ✗ —— "
           "否则与污染消费竞态，`installAndVerify` 误报 `SEAL-PROFILE-350`；"
@@ -7608,7 +7612,8 @@ def main():
         ("Seal/Infrastructure/Installation/DeviceProfileInspector.swift",
          "        let outcome = await DeviceProfileNativeCall.perform(\n"
          "            operationCoordinator: operationCoordinator,\n"
-         "            seconds: BlockingCall.queryTimeoutSeconds\n"
+         "            seconds: BlockingCall.queryTimeoutSeconds,\n"
+         "            waitForAvailability: waitForAvailability\n"
          "        ) {\n"
          "            return try Self.readReferencedCertificateSerials(in: workingDir)",
          "        let outcome = await BlockingCall.bounded(\n"
@@ -7630,7 +7635,8 @@ def main():
          "Cleanup: hasLocalPrivateKey"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(\n"
-         "            using: operationCoordinator\n"
+         "            using: operationCoordinator,\n"
+         "            waitForAvailability: true\n"
          "        )",
          "let deviceReferenced: Set<String>? = nil // ",
          "Auto-cleanup: must consult device profile inspector"),
@@ -8364,7 +8370,8 @@ def main():
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
          "        let outcome = await DeviceProfileNativeCall.perform(\n"
          "            operationCoordinator: operationCoordinator,\n"
-         "            seconds: BlockingCall.queryTimeoutSeconds\n"
+         "            seconds: BlockingCall.queryTimeoutSeconds,\n"
+         "            waitForAvailability: true\n"
          "        ) {\n"
          "            try Minimuxer.isAppInstalled(bundleId: bundleID)\n"
          "        }",
@@ -10472,8 +10479,8 @@ def main():
         # ── R116：预热失败不标记污染 ──
         # 预热又开始标记（竞态回来，350 误报）⇒ R116 报红。
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "        try await ensureProfileService(using: channel, markTaintOnFailure: false)",
-         "        try await ensureProfileService(using: channel)",
+         "            markTaintOnFailure: false,",
+         "            markTaintOnFailure: true,",
          "R116:"),
         # R113③：label 又被加回 44x44 frame（玻璃撑大）⇒ R113③ 报红。
         ("Seal/Features/Apps/AppsRootView.swift",
