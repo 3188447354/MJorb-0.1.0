@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 静态守卫沿用 AppContainer 旧初始化顺序
+
+- **现象**：CI `39587187268` 的 `build-package` 在 `Check release safety invariants` 失败，Swift 回归和签名器测试当时仍在运行；错误是守卫取 AppContainer 安装通道构造段时找不到结束标记 `let operationCoordinator`。
+- **根因**：同批并发协调器改动已将 `OperationCoordinator` 的创建移到安装通道之前，但 R10 守卫仍假设它出现在安装通道之后。被检查的 `logStore` 注入本身仍存在，失效的是守卫的代码边界锚点。
+- **修复**：将守卫范围终点改为紧随安装通道创建的 `DeviceInstalledAppScanner` 初始化，继续只在安装通道构造块内核验真实 `logStore` 注入。
+- **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：依据 CI traceback 与当前源码核对了根因；按项目纪律未在本地运行源码守卫。已完成 `git diff --check` 后等待当前其余 CI job 结算，再推送此修正并由 CI 验证。
+
 # 2026-10-21 — Apple ID 被握手错误误标为凭据失效
 
 - **现象**：登录过的 Apple ID 在签名/续签遇到设备环境握手失败后会被持久化为“需要重新验证”；用户会误以为本地账号凭据丢失，并被引导再次登录。Apple 要求 2FA 时则仍需在账号认证流程输入验证码。

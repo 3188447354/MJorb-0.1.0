@@ -2905,7 +2905,7 @@ def violations(load=read):
     channel_init = section(
         container_source,
         "let installChannel = MinimuxerInstallChannel(",
-        "let operationCoordinator"
+        "let deviceInstalledAppScanner = DeviceInstalledAppScanner("
     )
     check("logStore: logStore" in channel_init,
           "R10: AppContainer must hand the install channel a real log store")
