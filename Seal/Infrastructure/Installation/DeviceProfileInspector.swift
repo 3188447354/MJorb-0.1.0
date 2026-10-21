@@ -27,6 +27,7 @@ struct DeviceProfileInspector: Sendable {
     /// 而不是仅凭 UDID/TCP 推断通道可用。
     static func probeProfileService(
         using operationCoordinator: OperationCoordinator? = nil,
+        waitForAvailability: Bool = true,
         onLateCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> ProfileServiceProbeOutcome {
         let workingDir = FileManager.default.temporaryDirectory
@@ -34,6 +35,7 @@ struct DeviceProfileInspector: Sendable {
         let outcome = await DeviceProfileNativeCall.perform(
             operationCoordinator: operationCoordinator,
             seconds: 8,
+            waitForAvailability: waitForAvailability,
             onNativeCompletion: onLateCompletion
         ) {
             defer { try? FileManager.default.removeItem(at: workingDir) }
@@ -69,6 +71,7 @@ struct DeviceProfileInspector: Sendable {
         return await DeviceProfileNativeCall.perform(
             operationCoordinator: operationCoordinator,
             seconds: 30,
+            waitForAvailability: true,
             onNativeCompletion: onNativeCompletion
         ) {
             defer { try? FileManager.default.removeItem(at: workingDir) }
@@ -118,13 +121,15 @@ struct DeviceProfileInspector: Sendable {
     /// 调用方必须按「未核验」降级处理，绝不能当成「设备上没有引用」。
     /// 返回空集仅当设备端确实一份描述文件都没有。
     static func referencedCertificateSerials(
-        using operationCoordinator: OperationCoordinator? = nil
+        using operationCoordinator: OperationCoordinator? = nil,
+        waitForAvailability: Bool = false
     ) async -> Set<String>? {
         let workingDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("seal-profile-inspect-\(UUID().uuidString)", isDirectory: true)
         let outcome = await DeviceProfileNativeCall.perform(
             operationCoordinator: operationCoordinator,
-            seconds: BlockingCall.queryTimeoutSeconds
+            seconds: BlockingCall.queryTimeoutSeconds,
+            waitForAvailability: waitForAvailability
         ) {
             return try Self.readReferencedCertificateSerials(in: workingDir)
         }

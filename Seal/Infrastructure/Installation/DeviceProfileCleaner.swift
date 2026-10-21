@@ -29,17 +29,31 @@ enum DeviceProfileNativeCall {
         gate: InstalledAppRefreshProbeGate = .shared,
         operationCoordinator: OperationCoordinator? = nil,
         seconds: Double = BlockingCall.queryTimeoutSeconds,
+        waitForAvailability: Bool = false,
+        availabilityWaitTimeoutSeconds: TimeInterval = 30,
         onNativeCompletion: @escaping @Sendable () async -> Void = {},
         _ work: @Sendable @escaping () throws -> T
     ) async -> Outcome<T> {
+        let availabilityDeadline = Date().addingTimeInterval(availabilityWaitTimeoutSeconds)
         let probeID: UUID
-        switch await gate.begin() {
+        let availability: InstalledAppRefreshProbeGate.Availability
+        if waitForAvailability {
+            availability = await gate.beginForeground(timeoutSeconds: availabilityWaitTimeoutSeconds)
+        } else {
+            availability = await gate.begin()
+        }
+        switch availability {
         case .ready(let id): probeID = id
         case .inFlight, .coolingDown: return .unavailable
         }
         let operationLease: OperationCoordinator.Lease?
         if let operationCoordinator {
-            guard let lease = await operationCoordinator.acquireNativeDeviceSessionLease() else {
+            let remainingWait = waitForAvailability
+                ? max(0, availabilityDeadline.timeIntervalSinceNow)
+                : 0
+            guard let lease = await operationCoordinator.acquireNativeDeviceSessionLease(
+                waitTimeout: remainingWait
+            ) else {
                 await gate.finish(probeID: probeID, timedOut: false)
                 return .unavailable
             }

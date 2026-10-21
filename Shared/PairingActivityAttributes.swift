@@ -38,12 +38,26 @@ struct PairingActivityAttributes: ActivityAttributes {
     }
 
     var deviceName: String
-    /// 小尺寸 Seal 标志随活动属性保存，避免 Widget 扩展因资源包解析失败而显示灰色占位图。
-    var sealIconPNG: Data?
 
-    init(deviceName: String, sealIconPNG: Data? = nil) {
+    init(deviceName: String) {
         self.deviceName = deviceName
-        self.sealIconPNG = sealIconPNG
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case deviceName
+        // Decode the field written by older Seal versions, but never encode image bytes into
+        // ActivityAttributes. The extension loads the icon from its bundled asset catalog.
+        case sealIconPNG
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        deviceName = try container.decode(String.self, forKey: .deviceName)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(deviceName, forKey: .deviceName)
     }
 }
 

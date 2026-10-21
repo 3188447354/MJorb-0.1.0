@@ -401,6 +401,14 @@ on 4.5.2」✗。
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/RefreshAppOperation.swift`。
 
+### 2026-10-22 设备事务与扫描冷却交接
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 前台描述文件请求遇到设备清单扫描 | SideStore profile-only 刷新直接注入新 profile，没有 Seal 的本机清单扫描与共享探测冷却闸门。 | **不照搬它的无扫描结构**：Seal 保留设备原生调用单飞。前台续签/签名在共享闸门冷却时排队，等待期间阻止新的低优先级扫描与后台保活探测抢占；设备租约冲突也使用有界等待。底层 FFI 未真正结束前仍不重置连接、不并发调用。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/RefreshAppOperation.swift`；Seal 的差异是本机 LaunchServices / misagent 扫描需要与 profile 注入共用设备会话。
+
 ### 2026-10-20 App Store 瘦身设备白名单
 
 | 对照项 | SideStore 实际做法 | Seal 处置 |

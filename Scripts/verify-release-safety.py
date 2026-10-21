@@ -3275,8 +3275,23 @@ def violations(load=read):
           and "func refreshProbeFailsFastWithoutBorrowingInstallationBudget()" in installed_refresh_policy_tests,
           "G: installed-page refresh must fail fast and cool down without shrinking install verification budgets")
     installed_refresh_gate_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbeGateTests.swift")
-    check("func cancelledProbeThatNeverStartedDoesNotEnterCooldown()" in installed_refresh_gate_tests,
-          "G: cancelling an installed-page device probe must not leave its gate occupied")
+    installed_refresh_gate = load("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift")
+    native_device_call = load("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift")
+    operation_coordinator = load("Seal/Application/OperationCoordinator.swift")
+    profile_installer = load("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift")
+    check("func cancelledProbeThatNeverStartedDoesNotEnterCooldown()" in installed_refresh_gate_tests
+          and "func foregroundDeviceOperationWaitsForProbeAndRecoveryCooldown()" in installed_refresh_gate_tests
+          and "waitingForegroundOperationCount" in installed_refresh_gate
+          and "guard waitingForegroundOperationCount == 0 else { return .coolingDown }" in installed_refresh_gate
+          and "func beginForeground(timeoutSeconds: TimeInterval = 30) async -> Availability" in installed_refresh_gate
+          and "waitForAvailability: Bool = false" in native_device_call
+          and "gate.beginForeground(timeoutSeconds: availabilityWaitTimeoutSeconds)" in native_device_call,
+          "G: foreground device transactions must wait through scan recovery cooldown and prevent new background scans from jumping ahead")
+    check("func acquireNativeDeviceSessionLease(waitTimeout: TimeInterval = 0) async -> Lease?" in operation_coordinator
+          and "lease = await beginWaiting(.scanningDeviceInventory, timeout: waitTimeout)" in operation_coordinator
+          and "waitTimeout: remainingWait" in native_device_call
+          and "prewarmProfileService(using: channel, waitForAvailability: false)" in profile_installer,
+          "G: foreground native device requests must wait for coordinator conflicts within the same bounded wait window")
     certificate_root_source = strip_comments(load("Seal/Features/Settings/CertificatesRootView.swift"))
     apple_inventory_refresh_tests = load("SealTests/Settings/ApplePortalInventoryRefreshTests.swift")
     check("await viewModel.refreshApplePortalInventories()" in certificate_root_source
@@ -4779,7 +4794,7 @@ def violations(load=read):
     pairing_widget = squash(strip_comments(load("SealLiveActivity/PairingLiveActivityWidget.swift")))
     check("DynamicIslandExpandedRegion(.leading) { EmptyView() }" in pairing_widget
           and "DynamicIslandExpandedRegion(.trailing) { EmptyView() }" in pairing_widget
-          and "DynamicIslandExpandedRegion(.bottom) { VStack(spacing: 8) { brandingRow(context.state, iconData: context.attributes.sealIconPNG) pairingDetails(context.state, codeSize: 30) } }" in pairing_widget
+          and "DynamicIslandExpandedRegion(.bottom) { VStack(spacing: 8) { brandingRow(context.state) pairingDetails(context.state, codeSize: 30) } }" in pairing_widget
           and "} compactLeading: { EmptyView() }" in pairing_widget
           and "} minimal: { statusIcon(for: context.state.stage) }" in pairing_widget,
           "R119①: 灵动岛胶囊不得承载 Seal 品牌图标或状态文案；展开内容区必须显示品牌状态行")
@@ -4802,15 +4817,21 @@ def violations(load=read):
           "R119③: 已签名 App 行只显示应用名，不得再显示「应用名称」标签")
     pairing_project = strip_yaml_comments(load("project.yml"))
     pairing_controller = strip_comments(load("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift"))
-    check('sealIconPNG: Self.sealIconPNG' in pairing_controller
-          and 'UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)?.pngData()' in pairing_controller
-          and 'if let iconData, let image = UIImage(data: iconData)' in pairing_widget
-          and 'context.attributes.sealIconPNG' in pairing_widget
+    pairing_attributes = strip_comments(load("Shared/PairingActivityAttributes.swift"))
+    pairing_attribute_tests = load("SealTests/Settings/PairingActivityAttributesTests.swift")
+    check('attributes: PairingActivityAttributes(deviceName: deviceName)' in pairing_controller
+          and 'sealIconPNG:' not in pairing_controller
+          and 'case sealIconPNG' in pairing_attributes
+          and 'container.encode(deviceName, forKey: .deviceName)' in pairing_attributes
+          and 'forKey: .sealIconPNG' not in pairing_attributes
+          and 'brandingRow(context.state)' in pairing_widget
+          and 'context.attributes.sealIconPNG' not in pairing_widget
+          and 'UIImage(data:' not in pairing_widget
           and 'if let image = UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)' in pairing_widget
           and 'Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")' in pairing_widget
           and "UIImage(contentsOfFile: imageURL.path)" in pairing_widget
           and 'Image(systemName: "seal.fill")' in pairing_widget
-          and 0 <= pairing_widget.find('if let iconData, let image = UIImage(data: iconData)')
+          and 0 <= pairing_widget.find('UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)')
               < pairing_widget.find('UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil)')
               < pairing_widget.find('Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")')
           and ".widgetAccentedRenderingMode(.fullColor)" in pairing_widget
@@ -4822,8 +4843,10 @@ def violations(load=read):
           and '"filename" : "icon@3x.png"' in load("Seal/Resources/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
           and '"scale" : "3x"' in load("Seal/Resources/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
           and '"filename" : "icon@3x.png"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
-          and '"scale" : "3x"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json"),
-          "R119④: 灵动岛优先使用主 App 随活动传入的品牌图标，保留扩展资源回退与全彩渲染")
+          and '"scale" : "3x"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
+          and "func activityAttributesDoNotSerializeTheBundledSealIcon()" in pairing_attribute_tests
+          and "func olderActivityAttributesDecodeAndDiscardTheLegacyIconBytes()" in pairing_attribute_tests,
+          "R119④: Live Activity attributes must stay small, decode the legacy icon field, and load the small brand asset from the extension")
     ipa_verifier = load("Scripts/verify-ipa.sh")
     check("Seal IPA is missing the required SealLiveActivity widget extension" in ipa_verifier
           and "NSExtension.NSExtensionPointIdentifier" in ipa_verifier
@@ -11054,6 +11077,26 @@ def main():
          ".widgetAccentedRenderingMode(.fullColor)",
          ".widgetAccentedRenderingMode(.accented)",
          "R119④:"),
+        ("Shared/PairingActivityAttributes.swift",
+         "try container.encode(deviceName, forKey: .deviceName)",
+         "try container.encode(deviceName, forKey: .deviceName)\n        try container.encode(Data(repeating: 0, count: 8_000), forKey: .sealIconPNG)",
+         "R119④:"),
+        ("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift",
+         "guard waitingForegroundOperationCount == 0 else { return .coolingDown }",
+         "return beginImmediately()",
+         "G:"),
+        ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
+         "availability = await gate.beginForeground(timeoutSeconds: availabilityWaitTimeoutSeconds)",
+         "availability = await gate.begin()",
+         "G:"),
+        ("Seal/Application/OperationCoordinator.swift",
+         "lease = await beginWaiting(.scanningDeviceInventory, timeout: waitTimeout)",
+         "lease = nil",
+         "G:"),
+        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
+         "prewarmProfileService(using: channel, waitForAvailability: false)",
+         "prewarmProfileService(using: channel, waitForAvailability: true)",
+         "G:"),
         ("project.yml",
          "- path: SealLiveActivity/Resources/SealBrandIcon.png",
          "- path: SealLiveActivity/Resources/MissingBrandIcon.png",

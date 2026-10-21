@@ -408,6 +408,13 @@ actor MinimuxerInstallChannel: InstallChannel {
     }
 
     func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws {
+        try await prepareProfileService(waitForAvailability: true, onLateCompletion: onLateCompletion)
+    }
+
+    func prepareProfileService(
+        waitForAvailability: Bool,
+        onLateCompletion: @escaping @Sendable () async -> Void
+    ) async throws {
         if let lastHealthyProfileServiceAt,
            ProfileServiceLeasePolicy.requiresProbe(
                lastHealthyAt: lastHealthyProfileServiceAt,
@@ -420,7 +427,10 @@ actor MinimuxerInstallChannel: InstallChannel {
         }
 
         let task = Task<Void, Error> {
-            try await self.prepareProfileServiceOnce(onLateCompletion: onLateCompletion)
+            try await self.prepareProfileServiceOnce(
+                waitForAvailability: waitForAvailability,
+                onLateCompletion: onLateCompletion
+            )
         }
         inFlightProfileServicePreparation = task
         defer { inFlightProfileServicePreparation = nil }
@@ -432,6 +442,7 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// 第一次失败时只废弃 Rust RSD 缓存并立即重建，不清配对/provider 状态，也不把
     /// 8 秒外层退避浪费在已经确认失效的旧会话上。第二次失败才交给既有重试策略。
     private func prepareProfileServiceOnce(
+        waitForAvailability: Bool,
         onLateCompletion: @escaping @Sendable () async -> Void
     ) async throws {
         _ = try await start()
@@ -440,6 +451,7 @@ actor MinimuxerInstallChannel: InstallChannel {
         while true {
             switch await DeviceProfileInspector.probeProfileService(
                 using: operationCoordinator,
+                waitForAvailability: waitForAvailability,
                 onLateCompletion: onLateCompletion
             ) {
             case .ready:
@@ -1586,7 +1598,8 @@ actor MinimuxerInstallChannel: InstallChannel {
     private func probeInstalled(bundleID: String) async -> ProfileReclaimPolicy.InstallProbe {
         let outcome = await DeviceProfileNativeCall.perform(
             operationCoordinator: operationCoordinator,
-            seconds: BlockingCall.queryTimeoutSeconds
+            seconds: BlockingCall.queryTimeoutSeconds,
+            waitForAvailability: true
         ) {
             try Minimuxer.isAppInstalled(bundleId: bundleID)
         }
@@ -2026,8 +2039,8 @@ actor MinimuxerInstallChannel: InstallChannel {
 
     private static let profileServiceBusyFailure = ImportFailure(
         title: "设备正在处理其他操作",
-        reason: "设备描述文件服务正被清单扫描或维护占用；Seal 没有重置连接，也没有并发启动新的设备请求。",
-        recovery: "等待当前设备操作结束后重试",
+        reason: "设备清单或描述文件服务在等待窗口内没有释放；本次没有重置连接，也没有并发发起设备请求。",
+        recovery: "保持设备连接，稍后重试；Seal 会在可安全使用设备服务后继续操作。",
         code: "SEAL-OP-001",
         operation: .renew,
         origin: .deviceChannel

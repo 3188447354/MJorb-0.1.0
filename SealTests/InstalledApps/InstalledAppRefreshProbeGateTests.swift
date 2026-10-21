@@ -55,4 +55,40 @@ struct InstalledAppRefreshProbeGateTests {
             return
         }
     }
+
+    @Test
+    func foregroundDeviceOperationWaitsForProbeAndRecoveryCooldown() async throws {
+        let gate = InstalledAppRefreshProbeGate(timeoutCooldownSeconds: 0.02)
+        guard case .ready(let scanID) = await gate.begin() else {
+            Issue.record("The inventory scan should acquire the gate")
+            return
+        }
+
+        let writer = Task { await gate.beginForeground(timeoutSeconds: 2) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        #expect(await gate.begin() == .coolingDown)
+
+        await gate.finish(probeID: scanID, timedOut: true)
+        guard case .ready(let writerID) = await writer.value else {
+            Issue.record("The foreground operation should acquire the released device gate")
+            return
+        }
+        await gate.finish(probeID: writerID, timedOut: false)
+    }
+
+    @Test
+    func foregroundWaitTimeoutDoesNotLeaveAReservationBehind() async {
+        let gate = InstalledAppRefreshProbeGate()
+        guard case .ready(let scanID) = await gate.begin() else {
+            Issue.record("The inventory scan should acquire the gate")
+            return
+        }
+
+        #expect(await gate.beginForeground(timeoutSeconds: 0.01) == .coolingDown)
+        await gate.finish(probeID: scanID, timedOut: false)
+        guard case .ready = await gate.begin() else {
+            Issue.record("A timed-out writer must release its priority reservation")
+            return
+        }
+    }
 }

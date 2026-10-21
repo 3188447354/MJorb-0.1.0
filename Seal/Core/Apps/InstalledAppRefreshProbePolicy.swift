@@ -73,10 +73,44 @@ actor InstalledAppRefreshProbeGate {
 
     static let shared = InstalledAppRefreshProbeGate()
 
+    private let timeoutCooldownSeconds: TimeInterval
     private var activeProbeID: UUID?
     private var cooldownUntil = Date.distantPast
+    private var waitingForegroundOperationCount = 0
+
+    init(timeoutCooldownSeconds: TimeInterval = InstalledAppRefreshProbePolicy.timeoutCooldownSeconds) {
+        self.timeoutCooldownSeconds = timeoutCooldownSeconds
+    }
 
     func begin() -> Availability {
+        guard waitingForegroundOperationCount == 0 else { return .coolingDown }
+        return beginImmediately()
+    }
+
+    /// Interactive device work waits behind an already-running native call and its recovery
+    /// cooldown. While it waits, new inventory scans yield so they cannot repeatedly jump ahead.
+    func beginForeground(timeoutSeconds: TimeInterval = 30) async -> Availability {
+        waitingForegroundOperationCount += 1
+        defer { waitingForegroundOperationCount -= 1 }
+
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            guard Task.isCancelled == false else { return .coolingDown }
+            if Date() >= cooldownUntil, activeProbeID == nil {
+                let probeID = UUID()
+                activeProbeID = probeID
+                return .ready(probeID)
+            }
+            do {
+                try await Task.sleep(nanoseconds: 50_000_000)
+            } catch {
+                return .coolingDown
+            }
+        }
+        return .coolingDown
+    }
+
+    private func beginImmediately() -> Availability {
         guard Date() >= cooldownUntil else { return .coolingDown }
         guard activeProbeID == nil else { return .inFlight }
         let probeID = UUID()
@@ -88,7 +122,7 @@ actor InstalledAppRefreshProbeGate {
         guard activeProbeID == probeID else { return }
         activeProbeID = nil
         if timedOut {
-            cooldownUntil = Date().addingTimeInterval(InstalledAppRefreshProbePolicy.timeoutCooldownSeconds)
+            cooldownUntil = Date().addingTimeInterval(timeoutCooldownSeconds)
         }
     }
 }

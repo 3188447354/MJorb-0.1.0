@@ -1060,7 +1060,8 @@ final class SettingsViewModel: ObservableObject {
             )
 
             let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(
-                using: operationCoordinator
+                using: operationCoordinator,
+                waitForAvailability: true
             )
             // Seal 自保护：真实签名证书永远不撤，避免手动清理把 Seal 自己变砖。
             // 只相信真实 CMS 签名者（installedIdentity），不信描述文件授权列表、不信 DB 记录。
@@ -1173,7 +1174,8 @@ final class SettingsViewModel: ObservableObject {
                 )
             }
             let freshDeviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(
-                using: operationCoordinator
+                using: operationCoordinator,
+                waitForAvailability: true
             )
             let freshPlan = CertificateCleanupPolicy.makePlan(
                 certificates: freshInventory.certificates,

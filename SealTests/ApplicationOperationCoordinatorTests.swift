@@ -107,6 +107,24 @@ struct ApplicationOperationCoordinatorTests {
     }
 
     @Test
+    func nativeDeviceLeaseWaitsForPairingResetToFinish() async throws {
+        let coordinator = OperationCoordinator()
+        let reset = try #require(coordinator.begin(.resettingPairing))
+        let waiter = Task { @MainActor in
+            await coordinator.acquireNativeDeviceSessionLease(waitTimeout: 1)
+        }
+
+        try await Task.sleep(for: .milliseconds(20))
+        coordinator.end(reset)
+        guard let nativeLease = await waiter.value else {
+            Issue.record("The device request should wait for pairing reset instead of failing immediately")
+            return
+        }
+        #expect(nativeLease.kind == .scanningDeviceInventory)
+        coordinator.releaseDeviceSessionLeaseAfterNativeCall(nativeLease)
+    }
+
+    @Test
     func profileMaintenanceSerializesDeviceAccessWithoutBlockingAccountOrImportWork() throws {
         let coordinator = OperationCoordinator()
         let maintenance = try #require(coordinator.begin(.managingDeviceProfiles))

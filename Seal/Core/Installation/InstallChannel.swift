@@ -23,6 +23,11 @@ protocol InstallChannel: Actor {
     func prepareProfileService() async throws
     /// Lets a serialized renewal caller release its device lease after a timed-out native probe returns.
     func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws
+    /// Background keepalive probes must fail fast so they cannot hold up foreground device work.
+    func prepareProfileService(
+        waitForAvailability: Bool,
+        onLateCompletion: @escaping @Sendable () async -> Void
+    ) async throws
     /// 只废弃 Rust 的 RSD 会话缓存，保留当前配对文件与 provider 选择。
     /// 用于 profile 服务出现瞬时失败后的立即自愈，避免全量 reset 配对状态。
     func invalidateProfileServiceConnection() async
@@ -76,6 +81,13 @@ extension InstallChannel {
 
     func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws {
         try await prepareProfileService()
+    }
+
+    func prepareProfileService(
+        waitForAvailability: Bool,
+        onLateCompletion: @escaping @Sendable () async -> Void
+    ) async throws {
+        try await prepareProfileService(onLateCompletion: onLateCompletion)
     }
 
     func invalidateProfileServiceConnection() async {}

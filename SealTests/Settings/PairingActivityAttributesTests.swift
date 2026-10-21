@@ -12,9 +12,8 @@ struct PairingActivityAttributesTests {
     }
 
     @Test
-    func sealIconSurvivesActivityAttributeEncoding() throws {
-        let icon = Data(repeating: 0x89, count: 1_800)
-        let attributes = PairingActivityAttributes(deviceName: "iPhone", sealIconPNG: icon)
+    func activityAttributesDoNotSerializeTheBundledSealIcon() throws {
+        let attributes = PairingActivityAttributes(deviceName: "iPhone")
         let encoded = try JSONEncoder().encode(attributes)
         let decoded = try JSONDecoder().decode(PairingActivityAttributes.self, from: encoded)
         let state = PairingActivityAttributes.ContentState(
@@ -25,17 +24,18 @@ struct PairingActivityAttributesTests {
         )
         let encodedState = try JSONEncoder().encode(state)
 
-        #expect(decoded.sealIconPNG == icon)
-        #expect(encoded.count + encodedState.count < 4_096)
+        #expect(decoded.deviceName == "iPhone")
+        #expect(encoded.count + encodedState.count < 1_024)
+        #expect(String(decoding: encoded, as: UTF8.self).contains("sealIconPNG") == false)
     }
 
     @Test
-    func olderActivityAttributesDecodeWithoutAnIcon() throws {
+    func olderActivityAttributesDecodeAndDiscardTheLegacyIconBytes() throws {
         let decoded = try JSONDecoder().decode(
             PairingActivityAttributes.self,
-            from: Data(#"{"deviceName":"iPhone"}"#.utf8)
+            from: Data(#"{"deviceName":"iPhone","sealIconPNG":"AQID"}"#.utf8)
         )
 
-        #expect(decoded.sealIconPNG == nil)
+        #expect(decoded.deviceName == "iPhone")
     }
 }

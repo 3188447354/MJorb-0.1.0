@@ -76,14 +76,22 @@ final class OperationCoordinator {
 
     /// Keep the parent device transaction alive, or create a narrow read lease when this native
     /// call has no parent transaction. The lease covers the full non-cancellable FFI lifetime.
-    func acquireNativeDeviceSessionLease() -> Lease? {
+    func acquireNativeDeviceSessionLease(waitTimeout: TimeInterval = 0) async -> Lease? {
         guard let lease = activeLeases.last(where: {
             [
                 .signing, .installing, .renewing, .managingDeviceProfiles,
                 .scanningDeviceInventory
             ].contains($0.kind)
         }) else {
-            guard let lease = begin(.scanningDeviceInventory) else { return nil }
+            let lease: Lease?
+            if let immediateLease = begin(.scanningDeviceInventory) {
+                lease = immediateLease
+            } else if waitTimeout > 0 {
+                lease = await beginWaiting(.scanningDeviceInventory, timeout: waitTimeout)
+            } else {
+                lease = nil
+            }
+            guard let lease else { return nil }
             nativeDeviceCallCounts[lease.id] = 1
             nativeDeviceLeasesCreatedByNativeCall.insert(lease.id)
             return lease

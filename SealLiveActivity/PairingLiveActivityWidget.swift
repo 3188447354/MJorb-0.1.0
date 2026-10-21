@@ -7,7 +7,7 @@ import WidgetKit
 struct PairingLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: PairingActivityAttributes.self) { context in
-            lockScreen(context.attributes.sealIconPNG, state: context.state)
+            lockScreen(state: context.state)
                 .activityBackgroundTint(Color.black.opacity(0.55))
                 .activitySystemActionForegroundColor(.white)
                 .widgetURL(PairingDeepLink.url)
@@ -18,7 +18,7 @@ struct PairingLiveActivityWidget: Widget {
 
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 8) {
-                        brandingRow(context.state, iconData: context.attributes.sealIconPNG)
+                        brandingRow(context.state)
                         pairingDetails(context.state, codeSize: 30)
                     }
                 }
@@ -34,12 +34,7 @@ struct PairingLiveActivityWidget: Widget {
         }
     }
 
-    private func sealMarkImage(iconData: Data?) -> Image {
-        if let iconData, let image = UIImage(data: iconData) {
-            return Image(uiImage: image)
-                .renderingMode(.original)
-                .resizable()
-        }
+    private func sealMarkImage() -> Image {
         if let image = UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil) {
             return Image(uiImage: image)
                 .renderingMode(.original)
@@ -62,16 +57,16 @@ struct PairingLiveActivityWidget: Widget {
     }
 
     @ViewBuilder
-    private func sealMark(iconData: Data?) -> some View {
+    private func sealMark() -> some View {
         if #available(iOS 18.0, *) {
-            sealMarkImage(iconData: iconData)
+            sealMarkImage()
                 .widgetAccentedRenderingMode(.fullColor)
                 .scaledToFit()
                 .frame(width: 24, height: 24)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                 .accessibilityLabel("Seal")
         } else {
-            sealMarkImage(iconData: iconData)
+            sealMarkImage()
                 .scaledToFit()
                 .frame(width: 24, height: 24)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
@@ -146,21 +141,18 @@ struct PairingLiveActivityWidget: Widget {
         }
     }
 
-    private func lockScreen(_ iconData: Data?, state: PairingActivityAttributes.ContentState) -> some View {
+    private func lockScreen(state: PairingActivityAttributes.ContentState) -> some View {
         VStack(spacing: 10) {
-            brandingRow(state, iconData: iconData)
+            brandingRow(state)
             pairingDetails(state, codeSize: 36)
         }
         .foregroundStyle(.white)
         .padding(18)
     }
 
-    private func brandingRow(
-        _ state: PairingActivityAttributes.ContentState,
-        iconData: Data?
-    ) -> some View {
+    private func brandingRow(_ state: PairingActivityAttributes.ContentState) -> some View {
         HStack(spacing: 7) {
-            sealMark(iconData: iconData)
+            sealMark()
             Text(state.title)
                 .font(.headline)
                 .lineLimit(1)

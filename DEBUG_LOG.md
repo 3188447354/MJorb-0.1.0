@@ -1,3 +1,13 @@
+# 2026-10-22 — 前台设备事务被扫描冷却误拒绝，配对活动属性超限
+
+- **现象**：真机 0.1.47 日志中，续签已确认走“仅更新描述文件”，随后多次报 `SEAL-OP-001`，提示设备描述文件服务被清单扫描或维护占用；配对码活动创建失败，系统日志明确报 ActivityAttributes 超过最大载荷，配对码退回系统通知。
+- **根因**：签名/续签/证书引用查询复用的 `InstalledAppRefreshProbeGate` 对扫描超时后的冷却窗口采取 fail-fast；事务协调器看不到这个冷却，profile 探测立即返回 busy。扫描也可能在前台事务等待期间再次尝试获取探测闸门。灵动岛则把小图 PNG 序列化进 `ActivityAttributes`，实际请求超过 ActivityKit 限制。
+- **修复**：前台设备操作改为有界等待扫描和 20 秒恢复冷却；等待者存在时清单扫描让路。若设备协调器中的配对重置暂时冲突，原生读请求也排队等待而非立即报错；后台保活探测则 fail-fast 让位，不抢占前台事务。保持单飞和 FFI 真正结束前不释放锁、不重置会话。灵动岛属性仅保存设备名，扩展从自己的 Asset Catalog 读取 72×72 图标，并继续解码旧版属性以兼容已有活动。
+- **上游对照**：SideStore profile-only 刷新直接注入 profile，不做 Seal 的设备扫描；Seal 保留共享设备会话的单飞安全边界，只改变前台操作与低优先级扫描的排队顺序。
+- **边界**：日志中的 Apple `3022`（证书配额达到上限）与 `SEAL-INVENTORY-100b`（对应 Apple ID 本机凭据不存在）是独立问题，不属于设备扫描冷却或灵动岛载荷修复。
+- **涉及文件**：`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Application/OperationCoordinator.swift`、`Seal/Infrastructure/Installation/DeviceProfileCleaner.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、`Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Shared/PairingActivityAttributes.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、对应回归测试、`Scripts/verify-release-safety.py`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`、`project.yml`。
+- **验证状态**：已补共享闸门优先级、事务租约等待和旧活动属性兼容回归用例；未在 Windows 运行 Swift 编译/测试或静态守卫，等待推送后的完整 CI；灵动岛显示和真机续签交接仍需设备回归。
+
 # 2026-10-21 — CI 变异自检的预期错误标签落后于断言文案
 
 - **现象**：CI `39614648750` 的源码断言通过，但两条变异自检报错：图标写回代际门被移除、阳性对照设备查询参数被改写后，变异没有被识别。

@@ -91,7 +91,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
                 guard let self else { return }
                 guard Task.isCancelled == false else { return }
                 // 保活只是轻量预热：失败不抛、不标记污染、不干扰注入。
-                try? await self.prewarmProfileService(using: channel)
+                try? await self.prewarmProfileService(using: channel, waitForAvailability: false)
             }
         }
     }
@@ -109,13 +109,20 @@ actor ProfileOnlyProvisioningProfileInstaller {
     /// 失败是预期的；若它标记污染，会与 `renewProfilesOnly` 的污染消费竞态 ——
     /// 消费后、注入前预热才标记 ⇒ `installAndVerify` 误报 `SEAL-PROFILE-350`
     /// （调用方明明已重置通道）。真正的注入失败仍由 `installAndVerify` 自己标记。
-    func prewarmProfileService(using channel: any InstallChannel) async throws {
+    func prewarmProfileService(
+        using channel: any InstallChannel,
+        waitForAvailability: Bool = true
+    ) async throws {
         guard isBusy == false else { return }
         isBusy = true
         defer {
             if operationLease.holdBusyUntilCompletion == false { isBusy = false }
         }
-        try await ensureProfileService(using: channel, markTaintOnFailure: false)
+        try await ensureProfileService(
+            using: channel,
+            markTaintOnFailure: false,
+            waitForAvailability: waitForAvailability
+        )
     }
 
     func installAndVerify(
@@ -218,7 +225,11 @@ actor ProfileOnlyProvisioningProfileInstaller {
         }
     }
 
-    private func ensureProfileService(using channel: any InstallChannel, markTaintOnFailure: Bool = true) async throws {
+    private func ensureProfileService(
+        using channel: any InstallChannel,
+        markTaintOnFailure: Bool = true,
+        waitForAvailability: Bool = true
+    ) async throws {
         do {
             if let inFlightPreparation {
                 try await inFlightPreparation.value
@@ -228,9 +239,12 @@ actor ProfileOnlyProvisioningProfileInstaller {
             operationLease.beginNativeOperation()
             let task = Task<Void, Error> { [weak self] in
                 do {
-                    try await channel.prepareProfileService(onLateCompletion: { [weak self] in
-                        await self?.nativeProfileOperationDidComplete()
-                    })
+                    try await channel.prepareProfileService(
+                        waitForAvailability: waitForAvailability,
+                        onLateCompletion: { [weak self] in
+                            await self?.nativeProfileOperationDidComplete()
+                        }
+                    )
                     await self?.nativeProfileOperationDidComplete()
                 } catch {
                     await self?.nativeProfileOperationDidFail(error)
@@ -268,6 +282,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
             let injection = await DeviceProfileNativeCall.perform(
                 operationCoordinator: operationCoordinator,
                 seconds: 30,
+                waitForAvailability: true,
                 onNativeCompletion: { [weak self] in
                     await self?.nativeProfileOperationDidComplete()
                 }

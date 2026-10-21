@@ -1444,7 +1444,8 @@ actor SigningCoordinator {
         // 设备引用检查：`referencedCertificateSerials()` 返回 nil（枚举失败）时，
         // 保守起见视作「无法确认设备端引用」，跳过清理（fail closed）。
         let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(
-            using: operationCoordinator
+            using: operationCoordinator,
+            waitForAvailability: true
         )
         // 决策必须用**最新**的远端清单：缓存的 inventory 可能已过期，
         // 用过期清单做撤销决策会误删刚建好的证书。

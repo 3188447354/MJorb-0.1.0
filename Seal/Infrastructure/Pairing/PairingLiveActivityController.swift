@@ -1,6 +1,5 @@
 import ActivityKit
 import Foundation
-import UIKit
 
 /// 控制手机配对的 Live Activity 生命周期。
 ///
@@ -73,10 +72,7 @@ final class PairingLiveActivityController {
         let expiry = Date().addingTimeInterval(Self.preparationLifetime)
         do {
             activity = try Activity.request(
-                attributes: PairingActivityAttributes(
-                    deviceName: deviceName,
-                    sealIconPNG: Self.sealIconPNG
-                ),
+                attributes: PairingActivityAttributes(deviceName: deviceName),
                 content: .init(state: Self.preparingState, staleDate: expiry),
                 pushType: nil
             )
@@ -241,11 +237,6 @@ final class PairingLiveActivityController {
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
         .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口输入此码")
     }
-
-    /// 读取专为 24pt 灵动岛图标导出的 72 px @3x 小图，避免运行时二次缩放。
-    private static let sealIconPNG: Data? = {
-        UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)?.pngData()
-    }()
 
     private func logUnavailable(_ message: String) async {
         try? await logStore?.append(category: .pairing, level: .warning, message: message)
