@@ -6,7 +6,7 @@ import Testing
 ///
 /// 用户要求：只有快捷指令那条链路发通知，Seal 内手动续签不发。
 /// 「手动不发」由 `AppsViewModel` 的请求级标记保证（不在本文件的纯判据范围），
-/// 这里钉的是「本轮到底值不值得打扰用户」以及四桶怎么落到文案上。
+/// 这里钉的是「本轮到底值不值得打扰用户」以及结果怎么落到文案上。
 struct BackgroundRenewalNotificationResultTests {
     private func make(
         total: Int,
@@ -90,20 +90,14 @@ struct BackgroundRenewalNotificationResultTests {
         #expect(result.body.contains("待核验 2 个"))
     }
 
-    /// 「本轮没跑起来」的三档：让位给非续签操作 / 等锁超时 ⇒ 未执行；整轮抛错 ⇒ 失败。
+    /// 「本轮没跑起来」：让位给非续签操作 ⇒ 未执行；整轮抛错 ⇒ 失败。
     @Test
-    func skippedNoticeCoversTheThreeSilentExits() {
+    func skippedNoticeCoversTheSilentExits() {
         let blocked = BackgroundRenewalSkippedNotice(
             reason: .blockedByOtherOperation("「导入配对文件」")
         )
         #expect(blocked.title == "Seal 续签未执行")
         #expect(blocked.body.contains("「导入配对文件」"))
-
-        let timedOut = BackgroundRenewalSkippedNotice(
-            reason: .operationLockTimeout("「管理证书」")
-        )
-        #expect(timedOut.title == "Seal 续签未执行")
-        #expect(timedOut.body.contains("「管理证书」"))
 
         let roundFailed = BackgroundRenewalSkippedNotice(reason: .roundFailed(title: "无法续签应用"))
         #expect(roundFailed.title == "Seal 续签失败")

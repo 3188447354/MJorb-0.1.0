@@ -3460,7 +3460,8 @@ def violations(load=read):
         "private func installedAppIcon(for app: AppRecord) -> some View {",
     )
     check("installedAppsSection(account: account)" in cert_view
-          and "CertificateRevocationImpact.installedAppsAssociated(" in cert_installed_apps
+          and "let localCertificateApps = CertificateRevocationImpact.installedAppsAssociated(" in cert_installed_apps
+          and "certificateBundleIdentifiers.contains(bundleIdentifier)" in cert_installed_apps
           and "本机已安装 App" in cert_view
           and "fullSerialText(certificate.serialNumber)" in cert_view,
           "Certificates: UI must show full identity and associated apps")
@@ -3621,7 +3622,7 @@ def violations(load=read):
     #   ② 迁移必须**同步**跑，且 `SealApp.init()` 与 `RootTabView(scenePhase == .active)`
     #   两处都要接（锁屏冷启动那次会被系统拒绝，靠回前台补做）；
     #   ③ `KeychainError` 必须把真实 OSStatus 暴露成 `NSError.code`（否则又变回恒 1）；
-    #   ④ 通知只服务快捷指令：请求级标记要**消费并清位**、`shouldNotify` 只在有成功项时为真；
+    #   ④ 通知只服务快捷指令：请求级标记要**消费并清位**，有续签项就给出通知；
     #   ⑤ 新增的四个日志码必须登记进 `docs/qa/log-code-index.md`。
     r106_access = strip_comments(load("Seal/Infrastructure/Security/KeychainAccessibility.swift"))
     r106_vault = strip_comments(load("Seal/Infrastructure/Security/KeychainVault.swift"))
@@ -3674,8 +3675,8 @@ def violations(load=read):
           and "var shouldNotify: Bool { total > 0 }" in r106_notifier,
           "R106④: 快捷指令续签通知必须只认「后台点火 + 有项要续签」✗ —— "
           "① 标记必须在 `runBatchRefresh` **入口**消费并清位（紧跟第一条 `guard` 之前）："
-          "本轮有三条**不产生 result** 的出口（`renewalCoordinator` 缺失、抢不到操作锁、"
-          "`refreshAll` 直接抛错），只在成功路径清位会让标记**跨轮存活** ⇒ "
+          "协调器缺失、任务取消或 `refreshAll` 抛错都可能不产生 result；"
+          "只在成功路径清位会让标记**跨轮存活** ⇒ "
           "「快捷指令失败一次、之后手动点续签全部」误发一条本不该有的通知；"
           "② `shouldNotify` 必须是 `total > 0`（有项要续签就发）："
           "退回 `succeeded > 0` 会让**全失败那一轮彻底沉默** —— 2026-09-28 真机日志实证"
@@ -3683,21 +3684,24 @@ def violations(load=read):
           "而快捷指令续签的全部价值就是「不打开 App 也能续」，静默失败会让用户"
           "在应用过期那天才发现")
 
+    r106_batch_admission = section(
+        r106_view_model,
+        "private var hasActiveSigningWork: Bool {",
+        "private var hasActiveRenewalWork: Bool {",
+    )
+    check("backgroundTriggerAdmissionPending" in r106_batch_admission
+          and "batchRefreshTask != nil" in r106_batch_admission
+          and "signingTask" not in r106_batch_admission,
+          "R106⑥: 后台批量续签不得被单 App 签名全局挡住；重复批次仍合并到同一轮")
+
     check("private var hasActiveRenewalWork: Bool {" in r106_view_model
           and "if self.hasActiveRenewalWork == false {" in r106_view_model
           and ".blockedByOtherOperation(blocker)" in r106_view_model
-          and ".operationLockTimeout(activeOperationDescription)" in r106_view_model
           and "notifyBackgroundRenewalSkipped(.roundFailed(title: failure.title))" in r106_view_model
           and 'code: "SEAL-BACKGROUND-016"' in r106_view_model
           and "`SEAL-BACKGROUND-016`" in r106_index,
-          "R106⑥: 「本轮未执行 / 整轮失败」通知必须只发**不会自动补上**的三档 ✗ —— "
-          "① 让位给**签名/续签**时**不能**发（那一轮自己会给出结论：后台轮会发通知、"
-          "手动轮用户就在 App 里看着），所以让位那处必须按 `hasActiveRenewalWork` 分流；"
-          "② 让位给**非续签类操作**（导入配对文件 / 管理证书，只占 `activeLease`）"
-          "⇒ 那项操作不续签、没有任何一轮会补上 ⇒ 必须发；"
-          "③ 取操作锁**等满 30 秒**仍没等到 ⇒ 必须发（`alertFailure` 在后台没人看得见）；"
-          "④ 整轮抛错的两个 `catch` 只写 `batchRefreshSession.status` ⇒ 后台用户什么都收不到，"
-          "这是最大的静默口子 ⇒ 必须发；⑤ 该码要登记进 `docs/qa/log-code-index.md`")
+          "R106⑥: 后台让位只通知不会自动补续签的非续签操作；整轮失败通知快捷指令；"
+          "并且单 App 签名不得成为批量续签的全局锁")
 
     check('code: "SEAL-BACKGROUND-015"' in r106_view_model
           and 'code: "SEAL-KEYCHAIN-001"' in r106_access
@@ -5958,7 +5962,7 @@ def violations(load=read):
           "排到后面时代码看起来仍然有对照，但列表已经被错误改写（顺序就是安全本身）")
 
     check("return false" in squash(section_or_empty(
-              r88_code, "guard controlInstalled else {", "// 两种清单路径都先核实 Seal 阳性对照")),
+              r88_code, "guard controlInstalled else {", "var missingOnDevice: [AppRecord] = []")),
           "R88④: 对照未通过必须**整轮中止**（`return false`）✗ —— "
           "「继续问剩下的」只会让更多记录被一条不可信的通道判定")
 
@@ -7559,12 +7563,12 @@ def main():
          "return false // extension association removed",
          "Certificates: association lookup must include extension targets"),
         ("Seal/Features/Settings/SigningCertificateSettingsView.swift",
-         "        let installedApps = CertificateRevocationImpact.installedAppsAssociated(\n"
+         "        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociated(\n"
          "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
          "            apps: relatedApps,\n"
          "            installedBundleIdentifiers: installedBundleIdentifiers ?? []\n"
          "        )",
-         "        let installedApps = CertificateRevocationImpact.installedAppsAssociatedUnused(\n"
+         "        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociatedUnused(\n"
          "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
          "            apps: relatedApps,\n"
          "            installedBundleIdentifiers: installedBundleIdentifiers ?? []\n"
@@ -9937,17 +9941,17 @@ def main():
         ("Seal/Features/Apps/AppsViewModel.swift",
          "            if operationCoordinator?.hasDeviceSessionConflict == true {\n"
          "                installedAppRefreshPendingAfterOperation = true\n"
-         "                return (false, false)\n"
-         "            }\n",
-         "            // 允许在前台设备写入期间直接删除设备缺失记录。\n",
+         "                return false\n"
+         "            }\n\n",
+         "",
          "R84⑦: only app-changing device writes defer record mutations"),
         ("Seal/Application/OperationCoordinator.swift",
-         "            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
-         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
-         "                return false",
          "            case .managingDeviceProfiles:\n"
          "                return true\n"
          "            case .resettingPairing, .scanningDeviceInventory,\n"
+         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
+         "                return false",
+         "            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
          "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
          "                return false",
          "R84⑦: only app-changing device writes defer record mutations"),

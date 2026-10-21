@@ -64,17 +64,15 @@ struct BackgroundRenewalNotificationResult: Equatable {
 
 /// 本轮**根本没跑起来**时的通知。
 ///
-/// 🔴 **只覆盖「不会自动补上」的三种**（2026-09-28 定案）：
+/// 🔴 **只覆盖「不会自动补上」的两种**（2026-09-28 定案）：
 /// 让位给 `signingTask` / `batchRefreshTask` 的那一档**刻意不在这里** —— 那一轮本身就会
 /// 把应用续完并给出结论（后台轮会自己发通知，手动轮用户就在 App 里看着），再发一条
-/// 「未执行」只会重复。而下面三种没有任何一轮会补上，用户点了快捷指令却收不到任何回音，
+/// 「未执行」只会重复。而下面两种没有任何一轮会补上，用户点了快捷指令却收不到任何回音，
 /// 最容易误判成「续签成功了」。
 struct BackgroundRenewalSkippedNotice: Equatable {
     enum Reason: Equatable {
         /// 被**非续签类**操作占着设备通道（导入配对文件、管理证书等）—— 那项操作不会续签。
         case blockedByOtherOperation(String)
-        /// 取操作锁等满 30 秒（`beginWaiting` 默认预算）仍没等到。
-        case operationLockTimeout(String)
         /// 整轮抛错（`refreshAll` 直接失败）。
         case roundFailed(title: String)
     }
@@ -85,7 +83,7 @@ struct BackgroundRenewalSkippedNotice: Equatable {
         switch reason {
         case .roundFailed:
             return "Seal 续签失败"
-        case .blockedByOtherOperation, .operationLockTimeout:
+        case .blockedByOtherOperation:
             return "Seal 续签未执行"
         }
     }
@@ -94,9 +92,6 @@ struct BackgroundRenewalSkippedNotice: Equatable {
         switch reason {
         case .blockedByOtherOperation(let blocker):
             return "\(blocker)正占用设备通道，本轮没有续签。"
-                + "稍后重跑一次快捷指令即可（快捷指令后台续签）"
-        case .operationLockTimeout(let blocker):
-            return "等不到设备通道（\(blocker)占用中），本轮没有续签。"
                 + "稍后重跑一次快捷指令即可（快捷指令后台续签）"
         case .roundFailed(let failureTitle):
             return "\(failureTitle)。打开 Seal 查看原因，或稍后重跑快捷指令（快捷指令后台续签）"

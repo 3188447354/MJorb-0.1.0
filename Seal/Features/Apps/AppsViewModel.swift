@@ -163,8 +163,8 @@ final class AppsViewModel: ObservableObject {
     /// **「只有快捷指令续签成功才通知，Seal 内手动续签不通知」**。
     ///
     /// 🔴 必须在 `runBatchRefresh` **入口处**（任何 `guard` / `throw` 之前）消费并清位 ——
-    /// 那里就是「一轮」的起点。放到拿到 `result` 之后清位是错的：本轮有三条**不产生
-    /// `result`** 的出口（`renewalCoordinator` 缺失、抢不到操作锁、`refreshAll` 直接抛错），
+    /// 那里就是「一轮」的起点。放到拿到 `result` 之后清位是错的：协调器缺失、任务取消或
+    /// `refreshAll` 抛错都可能不产生 `result`，
     /// 标记会**跨轮存活** ⇒ 用户先跑一次失败的快捷指令、再手动点「续签全部」时
     /// 就会收到一条本不该有的通知（用户明确要求手动续签不通知）。
     private var backgroundTriggerRequested = false
@@ -2804,8 +2804,8 @@ final class AppsViewModel: ObservableObject {
 
     private func runBatchRefresh(appIDs: [UUID]? = nil) async {
         // 🔴 **第一件事就是读并清位**：标记只属于「这一轮」，而本函数就是那一轮。
-        // 放在这里（而不是拿到 `result` 之后）是因为本轮有三条**不产生 result** 的出口 ——
-        // `renewalCoordinator` 缺失、抢不到操作锁、以及 `refreshAll` 直接抛错 ——
+        // 放在这里（而不是拿到 `result` 之后）是因为本轮可能提前返回、取消或抛错 ——
+        // 这些情况都不产生 `result`；
         // 若只在成功路径清位，标记会**跨轮存活**：用户先跑一次失败的快捷指令续签、
         // 之后手动点「续签全部」时会收到一条本不该有的通知（用户明确要求手动续签不通知）。
         let wasBackgroundTriggered = consumeBackgroundTriggerFlag()
