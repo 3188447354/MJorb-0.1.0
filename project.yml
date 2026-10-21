@@ -56,7 +56,6 @@ targets:
       - path: Shared
     resources:
       - path: Seal/Resources/Anisette
-      - path: SealLiveActivity/Resources/SealBrandIcon.png
     dependencies:
       - package: ZIPFoundation
       - package: AltSign

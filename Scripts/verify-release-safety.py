@@ -9743,11 +9743,9 @@ def main():
          "R84⑥: 证书轮换**必须**能撤到"),
         # ⑦ 去掉「与前台操作互斥」的闸门 ⇒ R84⑦ 报红（707 噪音与抢会话回来）。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "    private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {\n"
-         "        let installedRecords = installedApps\n"
+         "        //    必须由它自己让路，否则就会去抢续签的设备会话。\n"
          "        guard operationCoordinator?.activeLease == nil else {\n",
-         "    private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {\n"
-         "        let installedRecords = installedApps\n"
+         "        //    必须由它自己让路，否则就会去抢续签的设备会话。\n"
          "        guard true else {\n",
          "R84⑦: 已安装页设备核验必须与前台操作**互斥**"),
         # ⑧ 把「实时身份放行」那条单测改名 ⇒ R84⑧ 报红（不变量没人守）。
@@ -11004,7 +11002,10 @@ def main():
             )
             continue
         if not any(item.startswith(expected) for item in mutated_failures):
-            failures.append("Guard failed mutation check: " + expected)
+            failures.append(
+                "Guard failed mutation check: " + expected + " at " + path
+                + " anchor=" + repr(old[:160])
+            )
     print("Source regression checks: " + str(count))
     print("Guard mutation checks: " + str(len(mutations)))
     if failures:

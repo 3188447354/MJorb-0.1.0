@@ -1,3 +1,11 @@
+# 2026-10-21 — CI 105 守卫变异定位错误的资源副本与互斥锚点
+
+- **现象**：CI `39526715221` 的 Swift/UI 回归与签名器测试通过；发布安全守卫仍因 R84⑦ 变异锚点缺失、R119④ 变异未触发而失败。
+- **根因**：R84⑦ 的互斥判断位于解释性注释之后，变异锚点错误地假定它紧跟 `installedRecords`。R119④ 对 `project.yml` 的变异替换了 Seal 主 target 的重复 PNG 资源行，Live Activity target 的真实资源行仍存在，因而没有破坏守卫目标。
+- **修复**：R84⑦ 锚定互斥注释后的唯一 guard；从 Seal 主 target 移除不再使用的原始 PNG 副本，只由 Live Activity target 保留回退 PNG；变异失败信息附上文件与锚点，方便定位后续误配。
+- **涉及文件**：`Scripts/verify-release-safety.py`、`project.yml`、`DEBUG_LOG.md`。
+- **验证状态**：本机未运行源码守卫或测试。修复后需重新推送 CI；Swift/UI 与签名器在该轮已通过，只有守卫需重验，构建 job 尚未执行。
+
 # 2026-10-21 — CI 守卫未对齐灵动岛小图资源与变异锚点
 
 - **现象**：CI `39523900134` 的 Swift 回归与签名器通过，但 `build-package` 在 R119④ 及证书页、已安装页两个守卫变异检查失败。
