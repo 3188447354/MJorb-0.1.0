@@ -57,6 +57,9 @@ struct CoreDataAppStoreTests {
         defer { try? FileManager.default.removeItem(at: directory) }
         let storeURL = directory.appending(path: "Seal.sqlite")
         var record = makeRecord(name: "Persisted")
+        record.needsIPAImport = true
+        record.installedFingerprint = "installed-fingerprint"
+        record.importWarnings = [AppRecord.deviceRecoveryWarning]
         record.pendingSignedSnapshot = PendingSignedSnapshot(
             expiryDate: Date(timeIntervalSince1970: 1_900_000_000),
             provisioningProfileUUID: "PENDING-PROFILE",

@@ -27,7 +27,11 @@ struct DeviceProfileCleanerTests {
         #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
         #expect(await gate.begin() == .inFlight)
         try await Task.sleep(for: .milliseconds(200))
-        #expect(await gate.begin() == .inFlight)
+        guard case .ready(let probeID) = await gate.begin() else {
+            Issue.record("The profile gate should reopen after the native call returns")
+            return
+        }
+        await gate.finish(probeID: probeID)
     }
 
     @Test
@@ -46,10 +50,12 @@ struct DeviceProfileCleanerTests {
 
         #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
         coordinator.end(renewal)
-        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
-
-        try await Task.sleep(for: .milliseconds(200))
-        #expect(coordinator.begin(.scanningDeviceInventory) != nil)
+        let signing = try #require(coordinator.begin(.signing, appID: UUID()))
+        coordinator.end(signing)
+        #expect(coordinator.begin(.resettingPairing) == nil)
+        let reset = await coordinator.beginWaiting(.resettingPairing, timeout: 2)
+        #expect(reset != nil)
+        if let reset { coordinator.end(reset) }
     }
 
     // MARK: - 默认摘要

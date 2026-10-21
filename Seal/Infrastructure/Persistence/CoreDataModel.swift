@@ -48,6 +48,9 @@ enum CoreDataModel {
             attribute("pendingFileTransactionID", type: .UUIDAttributeType, optional: true),
             attribute("hasPendingSelfUpdateSource", type: .booleanAttributeType, defaultValue: false),
             attribute("pendingUpdateSourceFingerprint", type: .stringAttributeType, optional: true),
+            attribute("installedFingerprint", type: .stringAttributeType, optional: true),
+            attribute("needsIPAImport", type: .booleanAttributeType, defaultValue: false),
+            attribute("importWarningsData", type: .binaryDataAttributeType, optional: true),
             attribute("replacesInstalledAppID", type: .UUIDAttributeType, optional: true),
             attribute("isSeal", type: .booleanAttributeType, defaultValue: false),
             attribute("isPinned", type: .booleanAttributeType, defaultValue: false),
@@ -75,9 +78,20 @@ enum CoreDataModel {
         return model
     }
 
+    /// Store schema before recovery metadata was persisted.
+    static func makeLegacyV5() -> NSManagedObjectModel {
+        let model = make()
+        if let app = model.entitiesByName[appEntityName] {
+            app.properties = app.properties.filter {
+                !["installedFingerprint", "needsIPAImport", "importWarningsData"].contains($0.name)
+            }
+        }
+        return model
+    }
+
     /// Previous current schema, before per-App uninstall markers were persisted.
     static func makeLegacyV4() -> NSManagedObjectModel {
-        let model = make()
+        let model = makeLegacyV5()
         if let app = model.entitiesByName[appEntityName] {
             app.properties = app.properties.filter { $0.name != "installedAppMarkerVersion" }
         }

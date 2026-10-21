@@ -1655,7 +1655,7 @@ final class AppsViewModel: ObservableObject {
     }
 
     func requestSigning(for app: AppRecord) async {
-        guard signingTask == nil, batchRefreshTask == nil else { return }
+        guard signingTask == nil else { return }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 请求签名: \(app.displayName) (\(app.id.uuidString.prefix(8)))")
         await load(force: true)
         // 已安装应用的单项续签与“全部续签/重试失败项”必须共用同一个队列：
@@ -1788,7 +1788,7 @@ final class AppsViewModel: ObservableObject {
         requestedBundleIdentifier: String? = nil,
         completionMode: SigningCompletionMode = .signAndInstall
     ) async {
-        guard signingTask == nil, batchRefreshTask == nil else { return }
+        guard signingTask == nil else { return }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 开始签名: \(app.displayName) (\(app.id.uuidString.prefix(8))), 续签=\(app.belongsInInstalledList)")
         let isRenewal = app.belongsInInstalledList
         // 🔴 续签的账号判据集中在 `RenewalAccountResolver`。
@@ -2060,7 +2060,6 @@ final class AppsViewModel: ObservableObject {
               case .failed(let failure) = session.status,
               CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code),
               signingTask == nil,
-              batchRefreshTask == nil,
               let signingCoordinator else { return }
         Task { try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 确认证书牺牲并重试签名: \(session.app.displayName)") }
         // 走同一条阶段推进路径（而不是直接赋值 `status`）：阶段与「本阶段起点」一起落。
@@ -2520,15 +2519,7 @@ final class AppsViewModel: ObservableObject {
             )
             await self.awaitDeviceChannelBeforeBackgroundRenewal()
             self.backgroundTriggerAdmissionPending = false
-            // 🔴 **让位**（2026-09-27）：已有签名/续签在跑时**不重复点火**。
-            //
-            // 两种情形都要让：
-            //   · 用户正在**手动**续签/签名 ⇒ 那一轮本来就会把应用续完，再点一次火
-            //     只会多造一次 installd 命令（历史事故，见守卫 R05）；
-            //   · 上一轮**后台**触发还在跑 ⇒ 同理，重复点火毫无收益。
-            // ⚠️ 必须留痕：这条链路在后台跑、界面上什么都没有，日志是唯一证据。
-            //    没有这条日志时，用户报「快捷指令没续上」与「其实被让位了」在日志上
-            //    长得一模一样。
+            // 同一批任务已由逐 App 租约处理；这里仅避免重复启动另一批。
             guard self.hasActiveSigningWork == false else {
                 let blocker = self.activeOperationDescription
                 try? try? await self.logStore?.append(
@@ -2537,12 +2528,6 @@ final class AppsViewModel: ObservableObject {
                         + "本轮不重复点火（进行中的那一轮会完成续签）",
                     code: "SEAL-BACKGROUND-014"
                 )
-                // 🔴 **只给「不会自动补上」的那一档发通知**（2026-09-28 定案）：
-                //   · 挡住的是签名 / 续签 ⇒ 那一轮自己会给出结论（后台轮会发通知，
-                //     手动轮用户此刻就在 App 里看着），再发一条「未执行」只是重复；
-                //   · 挡住的是导入配对文件 / 管理证书等**不经过这两个任务**、却同样占着
-                //     设备通道的操作 ⇒ 那项操作**根本不会续签**，没有任何一轮会补上，
-                //     用户点了快捷指令却什么都收不到（最容易误判成「成功了」）。
                 if self.hasActiveRenewalWork == false {
                     await self.notifyBackgroundRenewalSkipped(
                         .blockedByOtherOperation(blocker)
@@ -2560,22 +2545,11 @@ final class AppsViewModel: ObservableObject {
         return .accepted
     }
 
-    /// 是否已有签名/续签（或任何占用设备通道的操作）在跑。
-    ///
-    /// 🔴 用途是**让位**与**不再静默丢弃**（2026-09-27）：
-    ///   · 后台触发与手动操作相遇时必须让手动那一轮跑完，而不是重复点火；
-    ///   · 反过来，用户手动点的请求被后台批量挡住时必须有可见反馈（见
-    ///     `operationInProgressFailure`）。
-    ///
-    /// ⚠️ 除两个任务外还要看续签冲突判定：批量续签跨全部账号，必须避开同账号会话变更
-    /// 和所有共享设备通道的签名、安装、续签；本地导入与不冲突的账号操作可以并行。
-    ///
-    /// ⚠️ **与 `hasActiveRenewalWork` 的区别是「那项操作会不会把应用续完」**：
-    /// 让位通知只发给后者为假的情况（见 `refreshAllFromBackgroundTrigger`）。
+    /// 是否已有批量续签或后台点火检查在跑。单项签名与批量续签可以并行，
+    /// 同一 App 的冲突由逐 App 操作租约处理。
     private var hasActiveSigningWork: Bool {
         backgroundTriggerAdmissionPending
-            || hasActiveRenewalWork
-            || operationCoordinator?.hasConflict(for: .renewing) == true
+            || batchRefreshTask != nil
     }
 
     /// 是否有**签名 / 续签**正在跑（即「那一轮本身会把应用续完」）。
@@ -2729,13 +2703,8 @@ final class AppsViewModel: ObservableObject {
         appIDs: [UUID]? = nil,
         presentsSheet: Bool = true
     ) {
-        guard backgroundTriggerAdmissionPending == false || backgroundTriggerRequested else {
-            alertFailure = Self.operationInProgressFailure(blockedBy: "后台续签请求正在确认设备状态")
-            return
-        }
         guard renewalCoordinator != nil else { return }
-        guard batchRefreshTask == nil,
-              signingTask == nil else {
+        guard batchRefreshTask == nil else {
             // 不再静默丢弃（2026-09-27）：原来这里直接 `return`，用户点了「续签全部」
             // 却什么都不发生、日志里也一行没有 —— 真机上最容易被误读成
             // 「快捷指令的自动续签把通道占住了 / 手动和自动互相影响」。
@@ -2841,27 +2810,6 @@ final class AppsViewModel: ObservableObject {
         // 之后手动点「续签全部」时会收到一条本不该有的通知（用户明确要求手动续签不通知）。
         let wasBackgroundTriggered = consumeBackgroundTriggerFlag()
         guard let renewalCoordinator else { return }
-        guard let operationLease = await acquireOperation(.renewing) else {
-            batchRefreshSession = nil
-            batchRefreshTask = nil
-            isBatchRefreshSheetPresented = false
-            isBackgroundBatchRefresh = false
-            // 等不到锁（`beginWaiting` 默认 30 秒）说明确实有另一项操作长期占着通道 ——
-            // 必须说出来（2026-09-27）：否则用户看到的是「点了续签、抽屉一闪就没了」，
-            // 日志里也只有沉默，真机上会被误读成「被快捷指令的自动续签挡住」。
-            alertFailure = operationCoordinator?.conflictFailure(requested: .renewing)
-                ?? Self.operationInProgressFailure(blockedBy: activeOperationDescription)
-            // 🔴 后台那一轮**没有任何界面**：`alertFailure` 谁也看不见 ⇒ 必须发通知，
-            //    否则用户点了快捷指令却什么都收不到（最容易误判成「续签成功了」）。
-            //    这里属于「等 30 秒仍没等到、不会自动补上」那一档（2026-09-28 定案）。
-            if wasBackgroundTriggered {
-                await notifyBackgroundRenewalSkipped(
-                    .operationLockTimeout(activeOperationDescription)
-                )
-            }
-            return
-        }
-        defer { releaseOperation(operationLease) }
         var shouldPostRenewalCompleted = false
         // 批量续签只使用已保存会话；会话过期会快速失败，并统一引导到「我的」页重新验证。
         do {
@@ -3444,8 +3392,7 @@ final class AppsViewModel: ObservableObject {
         completionMode: SigningCompletionMode = .signAndInstall
     ) {
         guard signingCoordinator != nil else { return }
-        guard signingTask == nil,
-              batchRefreshTask == nil else {
+        guard signingTask == nil else {
             // 不再静默丢弃（2026-09-27）：理由与文案见 `operationInProgressFailure`。
             alertFailure = Self.operationInProgressFailure(blockedBy: activeOperationDescription)
             return
@@ -3505,8 +3452,7 @@ final class AppsViewModel: ObservableObject {
         forceResign: Bool = false
     ) {
         guard signingCoordinator != nil else { return }
-        guard signingTask == nil,
-              batchRefreshTask == nil else {
+        guard signingTask == nil else {
             // 不再静默丢弃（2026-09-27）：理由与文案见 `operationInProgressFailure`。
             alertFailure = Self.operationInProgressFailure(blockedBy: activeOperationDescription)
             return
@@ -4087,7 +4033,6 @@ final class AppsViewModel: ObservableObject {
         appID: UUID? = nil,
         accountID: UUID? = nil
     ) async -> OperationCoordinator.Lease? {
-        guard backgroundTriggerAdmissionPending == false else { return nil }
         guard let operationCoordinator else {
             return .uncoordinated(kind, appID: appID, accountID: accountID)
         }

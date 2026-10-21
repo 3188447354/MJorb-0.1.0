@@ -161,9 +161,7 @@ actor AppRecordRecovery {
         )
         for index in records.indices {
             let record = records[index]
-            guard record.isSeal == false,
-                  record.state == .installed,
-                  record.importWarnings.contains(AppRecord.deviceRecoveryWarning) else { continue }
+            guard record.isSeal == false, record.state == .installed else { continue }
             let bundleIdentifier = record.mappedBundleIdentifier
                 ?? record.preferredBundleIdentifier
                 ?? record.originalBundleIdentifier
@@ -171,8 +169,22 @@ actor AppRecordRecovery {
                 bundleIdentifier
             )
             guard let application = applicationsByBundleIdentifier[normalizedBundleIdentifier] else { continue }
+            let hasOriginalIPA = (try? await fileStore.exists(relativePath: record.ipaRelativePath)) == true
+            let isRecoveredRecord = record.importWarnings.contains(AppRecord.deviceRecoveryWarning)
+            guard isRecoveredRecord || hasOriginalIPA == false else { continue }
 
             var enriched = record
+            if hasOriginalIPA == false {
+                enriched.needsIPAImport = true
+                if isRecoveredRecord == false {
+                    enriched.importWarnings.append(AppRecord.deviceRecoveryWarning)
+                }
+            }
+            if enriched.signedDeviceIdentifier == nil,
+               enriched.signedIPARelativePath == nil,
+               enriched.signedIPASHA256 == nil {
+                enriched.certificateSerialNumber = nil
+            }
             let displayName = application.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             let recordNameIsBundleIdentifier = [bundleIdentifier, record.originalBundleIdentifier]
                 .contains(where: { record.name.caseInsensitiveCompare($0) == .orderedSame })
@@ -214,12 +226,6 @@ actor AppRecordRecovery {
                 enriched.provisioningProfileCreationDate = binding.creationDate
                 enriched.provisioningProfileExpirationDate = binding.expirationDate
                 enriched.expiryDate = binding.expirationDate
-                let serials = Set(binding.certificateSerialNumbers.map {
-                    SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
-                })
-                if serials.count == 1 {
-                    enriched.certificateSerialNumber = binding.certificateSerialNumbers.first
-                }
             }
             guard enriched != record else { continue }
             try? await appStore.save(enriched)
@@ -303,17 +309,10 @@ actor AppRecordRecovery {
             let accountID = draft.teamIdentifier.flatMap { teamID in
                 accounts.first { $0.teamID.caseInsensitiveCompare(teamID) == .orderedSame }?.id
             }
-            let uniqueProfileSerials = Set(draft.profileBinding?.certificateSerialNumbers.map {
-                SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
-            } ?? [])
-            let certificateSerialNumber = uniqueProfileSerials.count == 1
-                ? draft.profileBinding?.certificateSerialNumbers.first
-                : nil
             let recordID = UUID()
             var record = InstalledRecordRecoveryPolicy.makeRecord(
                 from: draft,
                 accountID: accountID,
-                certificateSerialNumber: certificateSerialNumber,
                 id: recordID
             )
             let normalizedBundleID = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(

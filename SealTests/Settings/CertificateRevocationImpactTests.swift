@@ -28,6 +28,43 @@ struct CertificateRevocationImpactTests {
         )
     }
 
+    @Test
+    func findsLocallyInstalledAppsBySigningTeamOrSealBundleIDSuffix() {
+        let scannedApps = [
+            InstalledAppScanner.ScannedApp(
+                bundleIdentifier: "com.example.music.TEAM123456",
+                name: "Music",
+                version: "1.0",
+                buildNumber: "1",
+                teamID: nil,
+                sealManagedMarkerVersion: nil
+            ),
+            InstalledAppScanner.ScannedApp(
+                bundleIdentifier: "com.example.video",
+                name: "Video",
+                version: "1.0",
+                buildNumber: "1",
+                teamID: "team123456",
+                sealManagedMarkerVersion: nil
+            ),
+            InstalledAppScanner.ScannedApp(
+                bundleIdentifier: "com.example.other",
+                name: "Other",
+                version: "1.0",
+                buildNumber: "1",
+                teamID: "OTHERTEAM",
+                sealManagedMarkerVersion: nil
+            )
+        ]
+
+        #expect(
+            CertificateRevocationImpact.sameTeamInstalledApps(
+                teamID: "TEAM123456",
+                scannedApps: scannedApps
+            ).map(\.name) == ["Music", "Video"]
+        )
+    }
+
     /// AltSign 会剥掉前导 0，DER 来源会保留：同一证书的两种写法都必须命中（DEBUG_LOG 坑位 1）。
     @Test
     func matchesCertificateAcrossLeadingZeroDifferences() {

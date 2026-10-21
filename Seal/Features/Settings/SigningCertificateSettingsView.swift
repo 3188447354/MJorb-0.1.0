@@ -8,6 +8,8 @@ struct SigningCertificateSettingsView: View {
     @State private var selectedAccountID: UUID?
     @State private var certificatePendingRevocation: ApplePortalCertificateSnapshot?
     @State private var installedBundleIdentifiers: Set<String>?
+    @State private var localInstalledApps: [InstalledAppScanner.ScannedApp]?
+    @State private var localInstalledIconData: [String: Data] = [:]
     @State private var isRefreshingInstalledBundleIdentifiers = false
     @State private var installedBundleIdentifierRetryRequested = false
 
@@ -114,12 +116,14 @@ struct SigningCertificateSettingsView: View {
     }
 
     private func scanInstalledBundleIdentifiersOnce() async {
+        let scanner = InstalledAppScanner()
         if let controlBundleIdentifier = Bundle.main.bundleIdentifier,
-           let snapshot = await InstalledAppScanner().scanAllSnapshot(),
+           let snapshot = await scanner.scanAllSnapshot(),
            InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
                 controlBundleIdentifier: controlBundleIdentifier,
                 installedBundleIdentifiers: snapshot.map(\.bundleIdentifier)
            ) {
+            await storeLocalInstalledApps(snapshot, using: scanner)
             installedBundleIdentifiers = Set(
                 snapshot.compactMap {
                     InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
@@ -127,7 +131,38 @@ struct SigningCertificateSettingsView: View {
             )
             return
         }
+        if let partialSnapshot = await scanner.scanAllSnapshot(allowPartialForRecovery: true) {
+            await storeLocalInstalledApps(partialSnapshot, using: scanner)
+        }
         installedBundleIdentifiers = await viewModel.scanInstalledAppBundleIdentifiers(for: relatedApps)
+    }
+
+    private func storeLocalInstalledApps(
+        _ apps: [InstalledAppScanner.ScannedApp],
+        using scanner: InstalledAppScanner
+    ) async {
+        localInstalledApps = apps
+        let knownTeams = viewModel.accounts.map(\.teamID)
+        let certificateBundleIdentifiers = Set(viewModel.accounts.flatMap { account in
+            CertificateRevocationImpact.associatedApps(
+                serialNumber: account.certificateSerialNumber ?? "",
+                apps: relatedApps
+            ).map { $0.mappedBundleIdentifier ?? $0.preferredBundleIdentifier ?? $0.originalBundleIdentifier }
+        }.compactMap(InstalledAppRefreshProbePolicy.normalizedBundleIdentifier))
+        let teamBundleIdentifiers = Set(knownTeams.flatMap { teamID in
+            CertificateRevocationImpact.sameTeamInstalledApps(teamID: teamID, scannedApps: apps)
+                .compactMap { InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier) }
+        })
+        let iconsToLoad = Set(apps.compactMap { app -> String? in
+            let normalizedBundleIdentifier = InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(
+                app.bundleIdentifier
+            )
+            guard let normalizedBundleIdentifier,
+                  teamBundleIdentifiers.contains(normalizedBundleIdentifier)
+                    || certificateBundleIdentifiers.contains(normalizedBundleIdentifier) else { return nil }
+            return normalizedBundleIdentifier
+        })
+        localInstalledIconData = await scanner.scanIconData(for: iconsToLoad)
     }
 
     private var selectableAccounts: [AppleAccountRecord] {
@@ -613,7 +648,6 @@ struct SigningCertificateSettingsView: View {
 
     @ViewBuilder
     private func installedAppsSection(account: AppleAccountRecord) -> some View {
-        // 有可用快照时同时核对证书与 Bundle ID；快照未知时仅展示签名记录并标明安装状态未确认。
         let certificateApps = CertificateRevocationImpact.associatedApps(
             serialNumber: account.certificateSerialNumber ?? "",
             apps: relatedApps
@@ -623,36 +657,110 @@ struct SigningCertificateSettingsView: View {
             apps: relatedApps,
             installedBundleIdentifiers: installedBundleIdentifiers ?? []
         )
+        let locallyInstalledBundleIdentifiers = Set((localInstalledApps ?? []).compactMap {
+            InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+        })
+        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociated(
+            serialNumber: account.certificateSerialNumber ?? "",
+            apps: relatedApps,
+            installedBundleIdentifiers: locallyInstalledBundleIdentifiers
+        )
+        let certificateBundleIdentifiers = Set(localCertificateApps.compactMap {
+            InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(
+                $0.mappedBundleIdentifier ?? $0.preferredBundleIdentifier ?? $0.originalBundleIdentifier
+            )
+        })
+        let sameTeamApps = CertificateRevocationImpact.sameTeamInstalledApps(
+            teamID: account.teamID,
+            scannedApps: localInstalledApps ?? []
+        )
+        let locallyVisibleApps = (localInstalledApps ?? []).filter { app in
+            guard let bundleIdentifier = InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(
+                app.bundleIdentifier
+            ) else { return false }
+            return certificateBundleIdentifiers.contains(bundleIdentifier)
+                || sameTeamApps.contains { $0.bundleIdentifier == app.bundleIdentifier }
+        }
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(installedBundleIdentifiers == nil ? "该证书的 App 记录" : "本机已安装 App")
+                Text(localInstalledApps != nil || installedBundleIdentifiers != nil ? "本机已安装 App" : "签名记录")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.sealTextSecondary)
                 Spacer(minLength: 8)
-                Text("由该证书签名")
+                Text(localInstalledApps != nil ? "证书记录 / 同团队" : "由该证书签名")
                     .font(.caption2)
                     .foregroundStyle(Color.sealTextSecondary)
             }
-            if installedBundleIdentifiers == nil {
-                Text("本机安装清单暂不可用；以下签名记录的安装状态未确认")
-                    .font(.caption)
-                    .foregroundStyle(Color.sealTextSecondary)
-                if certificateApps.isEmpty {
-                    Text("暂无关联的签名记录")
+            if localInstalledApps != nil {
+                if locallyVisibleApps.isEmpty {
+                    Text("暂无")
                         .font(.caption)
                         .foregroundStyle(Color.sealTextSecondary)
                 } else {
-                    installedAppRows(certificateApps)
+                    localInstalledAppRows(locallyVisibleApps, certificateBundleIdentifiers: certificateBundleIdentifiers)
                 }
-            } else if installedApps.isEmpty {
+            } else if installedBundleIdentifiers != nil, installedApps.isEmpty {
                 Text("暂无")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
-            } else {
+            } else if installedBundleIdentifiers != nil {
                 installedAppRows(installedApps)
+            } else if certificateApps.isEmpty {
+                Text("暂无关联记录")
+                    .font(.caption)
+                    .foregroundStyle(Color.sealTextSecondary)
+            } else {
+                installedAppRows(certificateApps)
             }
         }
         .padding(.vertical, 12)
+    }
+
+    private func localInstalledAppRows(
+        _ apps: [InstalledAppScanner.ScannedApp],
+        certificateBundleIdentifiers: Set<String>
+    ) -> some View {
+        ForEach(apps, id: \.bundleIdentifier) { app in
+            let bundleIdentifier = InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(app.bundleIdentifier) ?? ""
+            HStack(alignment: .center, spacing: 10) {
+                localInstalledAppIcon(for: bundleIdentifier)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(app.name)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                    Text(app.bundleIdentifier)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(Color.sealTextSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 6)
+                Text(certificateBundleIdentifiers.contains(bundleIdentifier) ? "证书记录" : "同团队")
+                    .font(.caption2)
+                    .foregroundStyle(Color.sealTextSecondary)
+                    .fixedSize()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func localInstalledAppIcon(for bundleIdentifier: String) -> some View {
+        ZStack {
+            if let data = localInstalledIconData[bundleIdentifier], let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.sealSurface)
+                Image(systemName: "app.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Color.sealTextSecondary)
+            }
+        }
+        .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .accessibilityHidden(true)
     }
 
     private func installedAppRows(_ apps: [AppRecord]) -> some View {

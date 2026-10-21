@@ -183,6 +183,7 @@ struct AppContainer {
                 appStore: appStore,
                 signingCoordinator: signingCoordinator,
                 queueStore: refreshQueueStore,
+                operationCoordinator: operationCoordinator,
                 defaultAccountIDProvider: {
                     let activeID = await signingPreferenceStore.activeAccountID()
                     if let activeID,

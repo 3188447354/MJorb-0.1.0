@@ -47,10 +47,12 @@ final class OperationCoordinator {
         }
     }
 
+    struct NativeDeviceCallLease: Equatable, Sendable {
+        fileprivate let id: UUID
+    }
+
     private(set) var activeLeases: [Lease] = []
-    private var nativeDeviceCallCounts: [UUID: Int] = [:]
-    private var leasesEndingAfterNativeCalls = Set<UUID>()
-    private var nativeDeviceLeasesCreatedByNativeCall = Set<UUID>()
+    private var activeNativeDeviceCallIDs = Set<UUID>()
     var onLeaseReleased: (() -> Void)?
 
     /// Compatibility view for existing status copy. Coordination decisions must use
@@ -60,6 +62,7 @@ final class OperationCoordinator {
     var hasActiveLease: Bool { activeLeases.isEmpty == false }
 
     func begin(_ kind: Kind, appID: UUID? = nil, accountID: UUID? = nil) -> Lease? {
+        guard kind != .resettingPairing || activeNativeDeviceCallIDs.isEmpty else { return nil }
         guard hasConflict(for: kind, appID: appID, accountID: accountID) == false else { return nil }
         let lease = Lease(id: UUID(), kind: kind, appID: appID, accountID: accountID)
         activeLeases.append(lease)
@@ -67,51 +70,30 @@ final class OperationCoordinator {
     }
 
     func end(_ lease: Lease) {
-        if nativeDeviceCallCounts[lease.id, default: 0] > 0 {
-            leasesEndingAfterNativeCalls.insert(lease.id)
-            return
-        }
         removeLease(id: lease.id)
     }
 
-    /// Keep the parent device transaction alive, or create a narrow read lease when this native
-    /// call has no parent transaction. The lease covers the full non-cancellable FFI lifetime.
-    func acquireNativeDeviceSessionLease(waitTimeout: TimeInterval = 0) async -> Lease? {
-        guard let lease = activeLeases.last(where: {
-            [
-                .signing, .installing, .renewing, .managingDeviceProfiles,
-                .scanningDeviceInventory
-            ].contains($0.kind)
-        }) else {
-            let lease: Lease?
-            if let immediateLease = begin(.scanningDeviceInventory) {
-                lease = immediateLease
-            } else if waitTimeout > 0 {
-                lease = await beginWaiting(.scanningDeviceInventory, timeout: waitTimeout)
-            } else {
-                lease = nil
+    /// Track only the non-cancellable native call. It must not inherit an unrelated app's
+    /// transaction lease; pairing reset waits for the actual FFI call to return.
+    func acquireNativeDeviceSessionLease(waitTimeout: TimeInterval = 0) async -> NativeDeviceCallLease? {
+        let deadline = waitTimeout.isFinite ? Date().addingTimeInterval(waitTimeout) : nil
+        while activeLeases.contains(where: { $0.kind == .resettingPairing }) {
+            guard waitTimeout > 0, Task.isCancelled == false else { return nil }
+            if let deadline, Date() >= deadline { return nil }
+            do {
+                try await Task.sleep(nanoseconds: 200_000_000)
+            } catch {
+                return nil
             }
-            guard let lease else { return nil }
-            nativeDeviceCallCounts[lease.id] = 1
-            nativeDeviceLeasesCreatedByNativeCall.insert(lease.id)
-            return lease
         }
-        nativeDeviceCallCounts[lease.id, default: 0] += 1
+        guard Task.isCancelled == false else { return nil }
+        let lease = NativeDeviceCallLease(id: UUID())
+        activeNativeDeviceCallIDs.insert(lease.id)
         return lease
     }
 
-    func releaseDeviceSessionLeaseAfterNativeCall(_ lease: Lease) {
-        let remaining = max(0, nativeDeviceCallCounts[lease.id, default: 0] - 1)
-        if remaining == 0 {
-            nativeDeviceCallCounts.removeValue(forKey: lease.id)
-            let createdHere = nativeDeviceLeasesCreatedByNativeCall.remove(lease.id) != nil
-            let ending = leasesEndingAfterNativeCalls.remove(lease.id) != nil
-            if createdHere || ending {
-                removeLease(id: lease.id)
-            }
-        } else {
-            nativeDeviceCallCounts[lease.id] = remaining
-        }
+    func releaseDeviceSessionLeaseAfterNativeCall(_ lease: NativeDeviceCallLease) {
+        activeNativeDeviceCallIDs.remove(lease.id)
     }
 
     func hasConflict(for kind: Kind, appID: UUID? = nil, accountID: UUID? = nil) -> Bool {
@@ -211,7 +193,7 @@ final class OperationCoordinator {
         let accountWork: Set<Kind> = [.managingAccount, .managingCertificate]
 
         if deviceWork.contains(activeKind), deviceWork.contains(requestedKind) {
-            return true
+            return appScopesConflict(active.appID, requestedAppID)
         }
         if profileWork.contains(activeKind), profileWork.contains(requestedKind) {
             return true
@@ -223,7 +205,6 @@ final class OperationCoordinator {
             return deviceWork.contains(otherKind)
                 || profileWork.contains(otherKind)
                 || inventoryWork.contains(otherKind)
-                || accountWork.contains(otherKind)
         }
 
         if accountWork.contains(activeKind), accountWork.contains(requestedKind) {
@@ -247,17 +228,22 @@ final class OperationCoordinator {
         if activeKind == .importing, requestedKind == .importing { return true }
 
         if activeKind == .updatingApp || requestedKind == .updatingApp {
-            let appIDMatches = active.appID == nil || requestedAppID == nil || active.appID == requestedAppID
             let appScopedWork: Set<Kind> = [.updatingApp, .signing, .installing, .renewing]
-            return appIDMatches
-                && appScopedWork.contains(activeKind)
+            return appScopedWork.contains(activeKind)
                 && appScopedWork.contains(requestedKind)
+                && appScopesConflict(active.appID, requestedAppID)
         }
 
         return false
     }
 
     private static func scopesConflict(_ lhs: UUID?, _ rhs: UUID?) -> Bool {
-        lhs == nil || rhs == nil || lhs == rhs
+        guard let lhs, let rhs else { return false }
+        return lhs == rhs
+    }
+
+    private static func appScopesConflict(_ lhs: UUID?, _ rhs: UUID?) -> Bool {
+        guard let lhs, let rhs else { return true }
+        return lhs == rhs
     }
 }

@@ -109,6 +109,54 @@ struct ModelMigrationTests {
     }
 
     @Test
+    func previousCurrentStoreMigratesRecoveryMetadataFields() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(
+            path: "SealRecoveryMetadataMigration-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appending(path: "Seal.sqlite")
+        let coordinator = NSPersistentStoreCoordinator(managedObjectModel: CoreDataModel.makeLegacyV5())
+        _ = try coordinator.addPersistentStore(
+            ofType: NSSQLiteStoreType,
+            configurationName: nil,
+            at: storeURL,
+            options: nil
+        )
+        let context = NSManagedObjectContext(concurrencyType: .privateQueueConcurrencyType)
+        context.persistentStoreCoordinator = coordinator
+        try context.performAndWait {
+            let object = NSEntityDescription.insertNewObject(
+                forEntityName: CoreDataModel.appEntityName,
+                into: context
+            )
+            object.setValue(UUID(), forKey: "id")
+            object.setValue("com.example.recovered", forKey: "originalBundleIdentifier")
+            object.setValue("Recovered", forKey: "name")
+            object.setValue("1.0", forKey: "version")
+            object.setValue("1", forKey: "buildNumber")
+            object.setValue(Int64(1_024), forKey: "size")
+            object.setValue(AppState.installed.rawValue, forKey: "stateRaw")
+            object.setValue("Apps/recovered/Original.ipa", forKey: "ipaRelativePath")
+            object.setValue(false, forKey: "isSeal")
+            object.setValue(false, forKey: "isPinned")
+            object.setValue(Date(timeIntervalSince1970: 100), forKey: "importedAt")
+            try context.save()
+        }
+        if let store = coordinator.persistentStores.first {
+            try coordinator.remove(store)
+        }
+
+        let migratedStore = try CoreDataAppStore(storeURL: storeURL)
+        let record = try #require(try await migratedStore.fetchAll().first)
+        #expect(record.originalBundleIdentifier == "com.example.recovered")
+        #expect(record.needsIPAImport == false)
+        #expect(record.installedFingerprint == nil)
+        #expect(record.importWarnings.isEmpty)
+    }
+
+    @Test
     func previousCurrentCoreDataStoreMigratesNewSignedArtifactAndTransactionFields() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(
             path: "SealLegacyV2Migration-\(UUID().uuidString)",

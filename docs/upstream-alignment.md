@@ -424,3 +424,11 @@ on 4.5.2」✗。
 | 托管 App 状态恢复 | SideStore 将已安装托管 App 及图标缓存到本地，并在设备操作流程中更新状态；它没有 Seal 这种“启动时 VPN 未就绪、之后从本机 / profile / installation proxy 恢复”的链路。 | 跟随其按已安装应用身份更新列表的做法；Seal 从 LaunchServices 与 InstallationProxy 合并应用资料，profile 只补充签名身份。本机清单、InstallationProxy 与 misagent 各走自己的调用路径，可并行读取；每个原生服务只串行自己的不可取消调用。清单完整且设备写入空闲后才结算卸载状态，扫描失败不伪装为空清单，也不挡住签名或续签。 |
 
 对照源码：SideStore `d97ec133719d79916675bdaf722b82a8d091d545` 的 `SideStore/Core/Operations/` 与本仓 `AppRecordRecovery`、`OperationCoordinator`。本机 LaunchServices 可独立恢复名称、版本和图标；签名管理身份结合 profile、LaunchServices Team、Seal 安装标记、安装代理状态等现有信号识别。profile 或配对通道暂不可用时仍显示本机能确认的应用资料，不将未知状态伪造成卸载或空清单。
+
+### 2026-10-22 — 批量续签按 App 并行
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 多 App 续签与单项操作 | `PipelineRunner` 用 `withThrowingTaskGroup` 并行执行各 App 的操作管线；后台批量刷新由 `AppManager.refresh(apps)` 统一提交，不以一把批次锁冻结其他页面操作。 | **跟**：批量和单项操作可并行；Seal 现有 `OperationCoordinator` 只协调同一 App 的签名、安装和续签。不同 App 不因另一个续签批次而被入口拒绝；共享的设备原生服务仍由其单飞路径处理。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineRunner.swift` 与 `StandaloneOperations/BackgroundRefreshAppsOperation.swift`。

@@ -197,11 +197,23 @@ struct UpdateNoticeView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-            if received > 0, let progress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(Color.sealAccent)
+            if received > 0 {
+                if let progress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(Color.sealAccent)
+                        .padding(.top, 14)
+                } else {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Color.sealAccent)
+                        Text("正在下载")
+                            .font(.subheadline)
+                            .foregroundStyle(Color.sealTextSecondary)
+                    }
                     .padding(.top, 14)
+                }
             } else {
                 HStack(spacing: 10) {
                     ProgressView()
@@ -308,13 +320,8 @@ struct UpdateNoticeView: View {
                         from: ipaURL,
                         expectedSize: notice.ipaDownloadSize,
                         onProgress: { @MainActor received, total in
-                            guard downloadGeneration == generation else { return }
-                            let previousBytes: Int64
-                            if case .downloading(let previous, _) = phase {
-                                previousBytes = previous
-                            } else {
-                                previousBytes = 0
-                            }
+                            guard downloadGeneration == generation,
+                                  case .downloading(let previousBytes, _) = phase else { return }
                             phase = .downloading(max(received, previousBytes), total)
                         }
                     )

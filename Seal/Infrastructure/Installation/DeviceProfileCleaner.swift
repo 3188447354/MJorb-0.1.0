@@ -44,7 +44,7 @@ enum DeviceProfileNativeCall {
         case .ready(let id): probeID = id
         case .inFlight, .cancelled: return .unavailable
         }
-        let operationLease: OperationCoordinator.Lease?
+        let operationLease: OperationCoordinator.NativeDeviceCallLease?
         if let operationCoordinator {
             guard let lease = await operationCoordinator.acquireNativeDeviceSessionLease(
                 waitTimeout: waitForAvailability ? .infinity : 0

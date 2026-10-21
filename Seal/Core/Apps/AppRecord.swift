@@ -323,9 +323,8 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
             && provisioningProfileExpirationDate != nil
     }
 
-    /// 批量续签只纳入 Seal 有签名记录可核验的应用。
-    /// 账号可能已被用户删除，因此签名归属证据不要求 accountID；设备扫描恢复的记录
-    /// 没有实际证书序列号和签名设备标识，不能仅凭描述文件授权信息认作 Seal 签名。
+    /// 批量续签纳入 Seal 安装标记或 Seal Team 映射身份可识别的应用。
+    /// 设备扫描恢复时用安装标记识别新版 Seal 安装；旧版没有标记的应用按 Seal 的 Team 映射 ID 识别。
     var isSealManagedRenewalCandidate: Bool {
         isSeal || hasPersistedSealSigningEvidence || hasRecoveredSealSigningEvidence
     }
@@ -336,8 +335,6 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
               importWarnings.contains(Self.deviceRecoveryWarning),
               let team = signingTeamID?.trimmingCharacters(in: .whitespacesAndNewlines),
               team.isEmpty == false,
-              let serial = certificateSerialNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
-              serial.isEmpty == false,
               let bundleIdentifier = mappedBundleIdentifier?.lowercased() else {
             return false
         }

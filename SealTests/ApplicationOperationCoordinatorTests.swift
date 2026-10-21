@@ -74,16 +74,46 @@ struct ApplicationOperationCoordinatorTests {
     }
 
     @Test
-    func deviceOperationsRemainSerialized() throws {
+    func sameAppDeviceOperationsRemainSerialized() throws {
         let coordinator = OperationCoordinator()
-        let install = try #require(coordinator.begin(.installing, appID: UUID()))
+        let appID = UUID()
+        let install = try #require(coordinator.begin(.installing, appID: appID))
 
-        #expect(coordinator.begin(.renewing) == nil)
+        #expect(coordinator.begin(.renewing, appID: appID) == nil)
         #expect(coordinator.begin(.resettingPairing) == nil)
         #expect(coordinator.hasDeviceSessionConflict)
 
         coordinator.end(install)
-        #expect(coordinator.begin(.renewing) != nil)
+        #expect(coordinator.begin(.renewing, appID: appID) != nil)
+    }
+
+    @Test
+    func differentAppsCanSignAndRenewAtTheSameTime() throws {
+        let coordinator = OperationCoordinator()
+        let firstApp = try #require(coordinator.begin(.signing, appID: UUID(), accountID: UUID()))
+        let secondApp = try #require(coordinator.begin(.renewing, appID: UUID(), accountID: UUID()))
+
+        #expect(coordinator.activeLeases.count == 2)
+        coordinator.end(firstApp)
+        coordinator.end(secondApp)
+    }
+
+    @Test
+    func nativeDeviceCallDoesNotKeepItsAppLeaseOrBlockAnotherApp() async throws {
+        let coordinator = OperationCoordinator()
+        let firstApp = try #require(coordinator.begin(.renewing, appID: UUID(), accountID: UUID()))
+        guard let nativeCall = await coordinator.acquireNativeDeviceSessionLease() else {
+            Issue.record("The native device call should acquire its own lease")
+            return
+        }
+        let secondApp = try #require(coordinator.begin(.signing, appID: UUID(), accountID: UUID()))
+
+        coordinator.end(firstApp)
+        #expect(coordinator.activeLeases.contains(firstApp) == false)
+        coordinator.end(secondApp)
+        #expect(coordinator.begin(.resettingPairing) == nil)
+        coordinator.releaseDeviceSessionLeaseAfterNativeCall(nativeCall)
+        #expect(coordinator.begin(.resettingPairing) != nil)
     }
 
     @Test
@@ -140,7 +170,6 @@ struct ApplicationOperationCoordinatorTests {
             Issue.record("The device request should wait for pairing reset instead of failing immediately")
             return
         }
-        #expect(nativeLease.kind == .scanningDeviceInventory)
         coordinator.releaseDeviceSessionLeaseAfterNativeCall(nativeLease)
     }
 

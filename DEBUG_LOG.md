@@ -1,3 +1,20 @@
+# 2026-10-22 — 批量续签挡住独立操作，设备恢复资料没有写入数据库
+
+- **现象**：批量续签期间，其他 App 的签名/续签入口被界面状态整体挡住；Seal 重装后扫描找回的侧载 App 资料不完整，IPA 状态与续签信息重启后丢失。
+- **根因**：批量任务状态被当成全局互斥；单项续签没有进入已有的应用级协调器。设备恢复记录的 `installedFingerprint`、`needsIPAImport`、`importWarnings` 只在 Swift 模型中存在，Core Data 写入与读取漏掉这些字段；恢复时还曾把 profile 授权证书误记成实际签名证书。证书页只接受带 Seal 阳性对照的完整本机快照；本机 LaunchServices 已扫到侧载 App、但完整清单校验未通过时，页面只尝试配对扫描，离线状态下不会展示已扫到的 App。
+- **修复**：单项操作与批量续签可同时运行；用已有协调器只串行同一 App，独立 App 并行。Core Data 补存恢复所需字段并迁移旧库；profile 授权证书继续作为 profile 身份保存，不伪装成实际签名证书；扫描恢复的 App 可保留 profile-only 续签依据，并明确缺 IPA 时需重新导入 IPA 才能完整重签。证书页直接展示本机扫描到的同团队侧载 App 与能由签名记录精确关联的 App，并读取系统图标；“同团队”和“证书记录”分开展示，不把团队关系误说成具体证书签名。
+- **上游对照**：SideStore 的 `PipelineRunner` 用任务组并发运行各 App 的续签管线；Seal 对齐按 App 并行，不把批次包装成全局锁。设备原生服务只协调自身调用。
+- **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Apps/AppRecord.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Infrastructure/Persistence/CoreDataAppStore.swift`、`Seal/Infrastructure/Persistence/CoreDataModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Core/Signing/CertificateRevocationImpact.swift` 及对应测试、源码守卫。
+- **验证状态**：上一轮 CI `39683610145` 中 Swift 回归与静态守卫失败；修复已按失败项落地，当前改动待完整 CI 验证。未在 Windows 本机运行 Swift 测试或静态守卫。
+
+# 2026-10-22 — 更新包已有字节时仍显示“正在连接”
+
+- **现象**：更新抽屉的安装包大小未知时，字节数已增加但进度区域还显示“正在连接”；下载完成进入校验后，晚到的回调还可能把界面改回下载状态。
+- **根因**：无总大小时界面只按百分比是否存在来决定连接/下载样式；进度回调只核对下载代际，没有确认界面仍处于下载阶段。
+- **修复**：收到任何字节后都显示“正在下载”；仍用实际字节数，无总大小时显示不定进度。回调只更新下载中的状态，不能覆盖校验或终态。
+- **涉及文件**：`Seal/Features/UpdateNoticeView.swift`。
+- **验证状态**：等待完整 CI 编译和回归。
+
 # 2026-10-22 — 续签被跨服务闸门拦截，设备记录恢复与更新等待态不清楚
 
 - **现象**：0.1.47/0.1.48 的设备日志反复出现 `SEAL-OP-001`，提示描述文件服务被安装清单扫描占用；更新抽屉显示 `0 B / 26 MB` 和一条空进度线，看不出仍在连接更新源；Seal 重装后已安装侧载记录缺少本机展示资料。

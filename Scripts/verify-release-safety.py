@@ -5283,7 +5283,7 @@ def violations(load=read):
           and "isSealGeneratedBundleIdentifier(raw)" not in r80_policy,
           "Scan/nonempty-id: 扫回需保留描述文件实际 Bundle ID 并验证可信 Team，"
           "不得把 Seal 自己生成的后缀当作识别门槛")
-    check("context.knownTeamIdentifiers.contains(team)" in r80_policy,
+    check("context.knownTeamIdentifiers.contains(team)" in r80_profile_scan,
           "Scan/team: 候选的 Team 必须在可信集合里 —— 设备端 dump 出来的是**全部**描述文件，"
           "含别的工具与旧账号留下的（真机实测 39 个 Bundle ID 变体 / 33 份孤儿）")
     check("context.dismissedBundleIdentifiers.contains(normalized) == false" in r80_profile_scan,
@@ -5296,7 +5296,7 @@ def violations(load=read):
           "Scan/extension: 不得按 Bundle ID 前缀猜扩展；交由设备安装查询确认")
     check(all(all(token in record for token in (
               "signedIPARelativePath: nil", "signedIPASHA256: nil",
-              "signedArtifactStatus: nil", "signingTargets: [],",
+              "signedArtifactStatus: nil",
           )) for record in r80_scan_records),
           "Scan/identity: 扫回记录不得带任何「已签名产物」痕迹 —— 它从来没有过本地 IPA，"
           "填了会让下游拿一个不存在的文件去签名/安装")
@@ -5333,10 +5333,10 @@ def violations(load=read):
           "Scan/empty: 候选为空时一次设备查询都不许发（常见情况只花一次 dump）")
 
     r80_recovery = load("Seal/Core/Recovery/AppRecordRecovery.swift")
-    check("        return await recoverRecordsFromDeviceProfiles()" in r80_recovery,
+    check("        return await recoverRecordsFromLocalInventory(localInventoryOnly: localInventoryOnly)" in r80_recovery,
           "Scan/append: 扫回必须接在 restoreMissingRecords() 的**最后** —— "
           "它要读前两步刚修好的记录（「已覆盖的 Bundle ID」必须是最新的）")
-    check("    @discardableResult\n    func restoreMissingRecords() async throws"
+    check("    @discardableResult\n    func restoreMissingRecords(localInventoryOnly: Bool = false) async throws"
           " -> InstalledRecordRecoverySummary {" in r80_recovery,
           "Scan/summary: restoreMissingRecords 必须回传摘要 —— "
           "「扫了 0 个」与「根本没扫」在日志上必须分得开")
@@ -5670,7 +5670,6 @@ def violations(load=read):
     )
     check(device_reconcile_conflict_at > r84_reconcile.find("var missingOnDevice")
           and device_reconcile_conflict_at < device_reconcile_mutation_at
-          and "hasConflict(for: .scanningDeviceInventory)" not in r84_reconcile
           and "case .signing, .installing, .renewing:" in conflict_property
           and "case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles," in conflict_property
           and "func pairingAndProfileMaintenanceDoNotHideLocalInstalledApps()" in operation_coordinator_tests,
@@ -5959,7 +5958,7 @@ def violations(load=read):
           "排到后面时代码看起来仍然有对照，但列表已经被错误改写（顺序就是安全本身）")
 
     check("return false" in squash(section_or_empty(
-              r88_code, "guard controlInstalled else {", "if operationCoordinator?.hasDeviceSessionConflict == true")),
+              r88_code, "guard controlInstalled else {", "// 两种清单路径都先核实 Seal 阳性对照")),
           "R88④: 对照未通过必须**整轮中止**（`return false`）✗ —— "
           "「继续问剩下的」只会让更多记录被一条不可信的通道判定")
 
@@ -9559,8 +9558,8 @@ def main():
          "Scan/nonempty-id:"),
         # ② 去掉 Team 可信判据 ⇒ 别的工具/旧账号留下的 profile 也会被补成记录 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
-         "                  context.knownTeamIdentifiers.contains(team) else { continue }",
-         "                  true else { continue }",
+         "context.knownTeamIdentifiers.contains(team) else { continue }",
+         "true else { continue }",
          "Scan/team:"),
         # ③ 墓碑判据取反 ⇒ 用户删过的反而被扫回、没删过的被跳过 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
@@ -9608,15 +9607,15 @@ def main():
          "Scan/empty:"),
         # ⑩ 扫回不再接在 restoreMissingRecords() 末尾 ⇒ 恢复链路拿不到摘要 ✓ 报红。
         ("Seal/Core/Recovery/AppRecordRecovery.swift",
-         "        return await recoverRecordsFromDeviceProfiles()",
-         "        _ = await recoverRecordsFromDeviceProfiles()\n"
+         "        return await recoverRecordsFromLocalInventory(localInventoryOnly: localInventoryOnly)",
+         "        _ = await recoverRecordsFromLocalInventory(localInventoryOnly: localInventoryOnly)\n"
          "        return InstalledRecordRecoverySummary()",
          "Scan/append:"),
         # ⑪ 摘要不再回传 ⇒ 「扫了 0 个」与「根本没扫」重新混在一起 ✓ 报红。
         ("Seal/Core/Recovery/AppRecordRecovery.swift",
-         "    @discardableResult\n    func restoreMissingRecords() async throws"
+         "    @discardableResult\n    func restoreMissingRecords(localInventoryOnly: Bool = false) async throws"
          " -> InstalledRecordRecoverySummary {",
-         "    func restoreMissingRecords() async throws {",
+         "    func restoreMissingRecords(localInventoryOnly: Bool = false) async throws {",
          "Scan/summary:"),
         # ⑫ 清理调用改名 ⇒ 「扫回排在清理之前」这条顺序判据失去锚点 ✓ 报红。
         ("Seal/Core/Maintenance/AppMaintenanceJob.swift",
@@ -9938,17 +9937,19 @@ def main():
         ("Seal/Features/Apps/AppsViewModel.swift",
          "            if operationCoordinator?.hasDeviceSessionConflict == true {\n"
          "                installedAppRefreshPendingAfterOperation = true\n"
-         "                return false\n"
+         "                return (false, false)\n"
          "            }\n",
          "            // 允许在前台设备写入期间直接删除设备缺失记录。\n",
          "R84⑦: only app-changing device writes defer record mutations"),
         ("Seal/Application/OperationCoordinator.swift",
-         "case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
-         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:",
-         "case .managingDeviceProfiles:\n"
+         "            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
+         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
+         "                return false",
+         "            case .managingDeviceProfiles:\n"
          "                return true\n"
          "            case .resettingPairing, .scanningDeviceInventory,\n"
-         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:",
+         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
+         "                return false",
          "R84⑦: only app-changing device writes defer record mutations"),
         # ⑧ 把「实时身份放行」那条单测改名 ⇒ R84⑧ 报红（不变量没人守）。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
@@ -10111,8 +10112,8 @@ def main():
         # ④ 对照未通过却继续往下走 ⇒ R88④ 报红
         #    （「继续问剩下的」= 让一条不可信的通道去判更多记录）。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         '被答成未安装）⇒ 通道此刻不可信，本轮一条记录都不删。",\n                    code: "SEAL-INSTALL-739"\n                )\n                return false',
-         '被答成未安装）⇒ 通道此刻不可信，本轮一条记录都不删。",\n                    code: "SEAL-INSTALL-739"\n                )\n                return true',
+         "                return false\n            }\n\n            // 两种清单路径都先核实 Seal 阳性对照",
+         "                return true\n            }\n\n            // 两种清单路径都先核实 Seal 阳性对照",
          "R88④: 对照未通过必须"),
         # ⑤ 只留一条留痕（第二条中止路径悄悄退出）⇒ R88⑤ 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",

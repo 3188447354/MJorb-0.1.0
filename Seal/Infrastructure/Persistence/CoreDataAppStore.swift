@@ -165,6 +165,7 @@ actor CoreDataAppStore: AppStore {
         }
 
         let candidateLegacyModels = [
+            CoreDataModel.makeLegacyV5(),
             CoreDataModel.makeLegacyV4(),
             CoreDataModel.makeLegacyV3(),
             CoreDataModel.makeLegacyV2(),
@@ -357,6 +358,12 @@ actor CoreDataAppStore: AppStore {
         object.setValue(record.pendingFileTransactionID, forKey: "pendingFileTransactionID")
         object.setValue(record.hasPendingSelfUpdateSource, forKey: "hasPendingSelfUpdateSource")
         object.setValue(record.pendingUpdateSourceFingerprint, forKey: "pendingUpdateSourceFingerprint")
+        object.setValue(record.installedFingerprint, forKey: "installedFingerprint")
+        object.setValue(record.needsIPAImport, forKey: "needsIPAImport")
+        object.setValue(
+            try? JSONEncoder().encode(record.importWarnings),
+            forKey: "importWarningsData"
+        )
         object.setValue(record.replacesInstalledAppID, forKey: "replacesInstalledAppID")
         object.setValue(record.isSeal, forKey: "isSeal")
         object.setValue(record.isPinned, forKey: "isPinned")
@@ -486,19 +493,20 @@ actor CoreDataAppStore: AppStore {
             pendingUpdateSourceFingerprint: object.value(
                 forKey: "pendingUpdateSourceFingerprint"
             ) as? String,
+            installedFingerprint: object.value(forKey: "installedFingerprint") as? String,
+            needsIPAImport: (object.value(forKey: "needsIPAImport") as? NSNumber)?.boolValue ?? false,
             isSeal: (object.value(forKey: "isSeal") as? NSNumber)?.boolValue ?? false,
             isPinned: (object.value(forKey: "isPinned") as? NSNumber)?.boolValue ?? false,
             importedAt: importedAt,
             extensions: appExtensions,
+            importWarnings: Self.decodeStringArray(
+                object.value(forKey: "importWarningsData") as? Data
+            ),
             extensionProfileStrategy: (object.value(
                 forKey: "extensionProfileStrategyRaw"
             ) as? String).flatMap(AppExtensionProfileStrategy.init(rawValue:)),
             pendingSignedSnapshot: pendingSignedSnapshot
         )
-        // 2026-10-09: replacesInstalledAppID 是 var，单独赋值。
-        // 不能放在 init 参数里，因为它在参数列表末尾，前面有 3 个非 CoreData 字段
-        //（installedFingerprint/needsIPAImport/importWarnings），
-        // 放在 init 里会导致 valueForUndefinedKey 崩溃。
         var mutableRecord = record
         mutableRecord.replacesInstalledAppID = object.value(forKey: "replacesInstalledAppID") as? UUID
         return mutableRecord

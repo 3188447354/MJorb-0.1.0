@@ -155,10 +155,10 @@ struct InstalledRecordRecoveryPolicyTests {
         #expect(draft.teamIdentifier == "TEAM123456")
         let record = InstalledRecordRecoveryPolicy.makeRecord(
             from: draft,
-            accountID: nil,
-            certificateSerialNumber: "ABC123"
+            accountID: nil
         )
         #expect(record.installedAppMarkerVersion == SealInstalledAppMarker.version)
+        #expect(record.certificateSerialNumber == nil)
         #expect(record.isSealManagedRenewalCandidate)
     }
 
@@ -214,10 +214,11 @@ struct InstalledRecordRecoveryPolicyTests {
         ))
 
         #expect(merged.count == 2)
-        #expect(merged[0].displayName == "Folia Player")
-        #expect(merged[0].teamIdentifier == "TEAM123456")
-        #expect(merged[0].profileValidated == true)
-        #expect(merged[0].shortVersion == "2.1")
+        let folia = try #require(merged.first { $0.bundleIdentifier == local.bundleIdentifier })
+        #expect(folia.displayName == "Folia Player")
+        #expect(folia.teamIdentifier == "TEAM123456")
+        #expect(folia.profileValidated == true)
+        #expect(folia.shortVersion == "2.1")
     }
 
     @Test
@@ -254,7 +255,6 @@ struct InstalledRecordRecoveryPolicyTests {
         let record = InstalledRecordRecoveryPolicy.makeRecord(
             from: draft,
             accountID: UUID(),
-            certificateSerialNumber: binding.certificateSerialNumbers.first
         )
 
         #expect(record.signingTargets.count == 1)

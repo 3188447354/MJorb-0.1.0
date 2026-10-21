@@ -184,9 +184,59 @@ struct AppRecordRecoveryTests {
         #expect(recovered.version == "2.5")
         #expect(recovered.iconRelativePath != nil)
         #expect(recovered.signingTeamID == account.teamID)
-        #expect(recovered.certificateSerialNumber == "ABC123")
+        #expect(recovered.certificateSerialNumber == nil)
         #expect(recovered.signingTargets.count == 1)
         #expect(recovered.signingTargets.first?.entitlements.isEmpty == false)
+        #expect(recovered.isSealManagedRenewalCandidate)
+        #expect(ProfileOnlyRenewalPolicy.evaluate(app: recovered)
+                == .eligible(targetBundleIdentifiers: [bundleIdentifier]))
+    }
+
+    @Test
+    func repairsLegacyInstalledRecordWhoseRecoveryFlagsWereNotSaved() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let bundleIdentifier = "com.example.demo.ABCDE12345"
+        let account = AppleAccountRecord(
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "ABCDE12345",
+            teamName: "Team",
+            certificateSerialNumber: "ABC123",
+            selectedCertificateSerialNumber: "ABC123",
+            lastVerifiedAt: Date()
+        )
+        let appID = UUID()
+        try await environment.appStore.save(
+            AppRecord(
+                id: appID,
+                originalBundleIdentifier: "com.example.demo",
+                mappedBundleIdentifier: bundleIdentifier,
+                name: bundleIdentifier,
+                version: "2.5",
+                buildNumber: "25",
+                size: 0,
+                state: .installed,
+                signingTeamID: account.teamID,
+                ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
+                importedAt: Date()
+            )
+        )
+
+        _ = await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            accountsProvider: { [account] },
+            deviceScanner: LocalProfileInstalledAppScanner(
+                bundleIdentifier: bundleIdentifier,
+                iconData: Data([0x01])
+            )
+        ).restoreInstalledApps()
+
+        let recovered = try #require(try await environment.appStore.fetchAll().first)
+        #expect(recovered.needsIPAImport)
+        #expect(recovered.importWarnings.contains(AppRecord.deviceRecoveryWarning))
+        #expect(recovered.certificateSerialNumber == nil)
         #expect(recovered.isSealManagedRenewalCandidate)
         #expect(ProfileOnlyRenewalPolicy.evaluate(app: recovered)
                 == .eligible(targetBundleIdentifiers: [bundleIdentifier]))

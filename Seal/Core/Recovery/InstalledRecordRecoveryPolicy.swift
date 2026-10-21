@@ -147,9 +147,9 @@ enum DismissedInstalledRecordTombstones {
 ///    都按设备描述文件里的实际值识别；Team 只用于确认账号归属，不参与拼 ID。
 /// 2. **身份必须诚实**：重建的记录**没有本地 IPA**（文件从未存在过），所以
 ///    `signedIPARelativePath` / `signedIPASHA256` 留空、`signedArtifactStatus` 留 nil。
-///    于是 `hasSignedArtifact == false` ⇒ 天然进不了 profile-only 续签、也进不了
-///    「安装已签名产物」路径 —— 与事实一致。填假值会让下游拿不存在的文件去签名。
-///    **证书序列号同样留空**，理由见 `makeRecord` 里那段。
+///    这些字段只表示本机真实存在的 IPA 产物；设备 profile 的授权证书集合只放在
+///    `signingTargets`，不伪装成本机已签名文件或实际签名证书。
+///    有可用 profile 身份时可更新描述文件；需要完整重签时仍须导入 IPA。
 /// 3. **本策略只做本地筛选**，产出的只是候选。「到底装没装」必须由会抛错的
 ///    `Minimuxer.isAppInstalled` 回答（见 `DeviceInstalledAppScanner`）——
 ///    少一次设备核验，就会给「已从设备删掉、profile 还留着」的 App 造出僵尸记录。
@@ -559,7 +559,6 @@ enum InstalledRecordRecoveryPolicy {
     static func makeRecord(
         from draft: InstalledAppDraft,
         accountID: UUID?,
-        certificateSerialNumber: String? = nil,
         id: UUID = UUID(),
         now: Date = Date()
     ) -> AppRecord {
@@ -579,7 +578,7 @@ enum InstalledRecordRecoveryPolicy {
             expiryDate: draft.profileExpirationDate,
             accountID: accountID,
             signingTeamID: draft.teamIdentifier,
-            certificateSerialNumber: certificateSerialNumber,
+            certificateSerialNumber: nil,
             signedDeviceIdentifier: nil,
             provisioningProfileUUID: draft.profileUUID,
             provisioningProfileName: draft.profileName,

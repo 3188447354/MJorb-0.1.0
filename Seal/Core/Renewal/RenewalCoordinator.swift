@@ -46,6 +46,7 @@ actor RenewalCoordinator {
     private let signingCoordinator: SigningCoordinator
     private let queueStore: RefreshQueueStore
     private let planner: RefreshPlanner
+    private let operationCoordinator: OperationCoordinator?
     private let defaultAccountIDProvider: (@Sendable () async -> UUID?)?
     private let accountsProvider: (@Sendable () async -> [AppleAccountRecord])?
     /// 逐项结果要落日志。
@@ -98,6 +99,7 @@ actor RenewalCoordinator {
         signingCoordinator: SigningCoordinator,
         queueStore: RefreshQueueStore,
         planner: RefreshPlanner = RefreshPlanner(),
+        operationCoordinator: OperationCoordinator? = nil,
         defaultAccountIDProvider: (@Sendable () async -> UUID?)? = nil,
         accountsProvider: (@Sendable () async -> [AppleAccountRecord])? = nil,
         logStore: SealLogStore? = nil
@@ -106,6 +108,7 @@ actor RenewalCoordinator {
         self.signingCoordinator = signingCoordinator
         self.queueStore = queueStore
         self.planner = planner
+        self.operationCoordinator = operationCoordinator
         self.defaultAccountIDProvider = defaultAccountIDProvider
         self.accountsProvider = accountsProvider
         self.logStore = logStore
@@ -475,6 +478,47 @@ actor RenewalCoordinator {
     /// 并行时上一项的 `.profileOnly` 绝不能泄漏到下一项
     ///（泄漏的后果是 Seal 那一项被误记成成功，而它其实换了进程）。
     private func processItem(
+        item: RefreshQueueItem,
+        offset: Int,
+        total: Int,
+        appsByID: [UUID: AppRecord],
+        progress: @escaping @Sendable (BatchRefreshEvent) async -> Void
+    ) async throws -> (outcome: ProcessItemOutcome, roundItem: RenewalRoundItem) {
+        guard item.isExecutable,
+              let accountID = item.accountID,
+              let operationCoordinator else {
+            return try await processRenewalItem(
+                item: item,
+                offset: offset,
+                total: total,
+                appsByID: appsByID,
+                progress: progress
+            )
+        }
+        guard let lease = await operationCoordinator.beginWaiting(
+            .renewing,
+            appID: item.appID,
+            accountID: accountID
+        ) else {
+            throw CancellationError()
+        }
+        do {
+            let result = try await processRenewalItem(
+                item: item,
+                offset: offset,
+                total: total,
+                appsByID: appsByID,
+                progress: progress
+            )
+            await operationCoordinator.end(lease)
+            return result
+        } catch {
+            await operationCoordinator.end(lease)
+            throw error
+        }
+    }
+
+    private func processRenewalItem(
         item: RefreshQueueItem,
         offset: Int,
         total: Int,

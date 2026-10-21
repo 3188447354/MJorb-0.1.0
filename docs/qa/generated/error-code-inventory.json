@@ -236,7 +236,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2471,
+          "line": 2470,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -278,7 +278,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2428,
+          "line": 2427,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -487,7 +487,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 561,
+          "line": 605,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -2366,7 +2366,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2496,
+          "line": 2495,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -2460,7 +2460,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2519,
+          "line": 2518,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2481,7 +2481,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2633,
+          "line": 2607,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2502,7 +2502,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2656,
+          "line": 2630,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2523,7 +2523,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2650,
+          "line": 2624,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2628,7 +2628,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2538,
+          "line": 2529,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2649,7 +2649,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3078,
+          "line": 3026,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2670,7 +2670,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3098,
+          "line": 3046,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -2754,7 +2754,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2155,
+          "line": 2154,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -2775,7 +2775,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 652,
+          "line": 651,
           "path": "Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -2806,7 +2806,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2170,
+          "line": 2169,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4535,7 +4535,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2191,
+          "line": 2190,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4556,7 +4556,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2206,
+          "line": 2205,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4577,7 +4577,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2282,
+          "line": 2281,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4598,7 +4598,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2275,
+          "line": 2274,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -4692,7 +4692,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2234,
+          "line": 2233,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4921,7 +4921,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2455,
+          "line": 2454,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -4984,7 +4984,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 4001,
+          "line": 3947,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -5005,7 +5005,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 4023,
+          "line": 3969,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -5026,7 +5026,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 4262,
+          "line": 4207,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5047,7 +5047,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 4269,
+          "line": 4214,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5089,7 +5089,7 @@
       "locations": [
         {
           "identifierKind": "diagnostic_tag",
-          "line": 4277,
+          "line": 4222,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5098,7 +5098,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 4293,
+          "line": 4238,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -5771,7 +5771,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2773,
+          "line": 2742,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -6240,7 +6240,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 271,
+          "line": 274,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -6587,7 +6587,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2297,
+          "line": 2296,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -8248,7 +8248,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 427,
+          "line": 426,
           "path": "Seal/Core/Recovery/AppRecordRecovery.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -8560,7 +8560,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2932,
+          "line": 2880,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -8569,7 +8569,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2939,
+          "line": 2887,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -8707,7 +8707,7 @@
       "locations": [
         {
           "identifierKind": "diagnostic_tag",
-          "line": 3022,
+          "line": 2970,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -8716,7 +8716,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 3031,
+          "line": 2979,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -8725,7 +8725,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 3038,
+          "line": 2986,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -8734,7 +8734,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 3044,
+          "line": 2992,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -8995,7 +8995,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2065,
+          "line": 2064,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9004,7 +9004,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2114,
+          "line": 2113,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9013,7 +9013,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2143,
+          "line": 2142,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9022,7 +9022,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2179,
+          "line": 2178,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9031,7 +9031,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2215,
+          "line": 2214,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9040,7 +9040,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2290,
+          "line": 2289,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9049,7 +9049,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2317,
+          "line": 2316,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9058,7 +9058,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2407,
+          "line": 2406,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9067,7 +9067,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2478,
+          "line": 2477,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9076,7 +9076,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2663,
+          "line": 2637,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9085,7 +9085,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2691,
+          "line": 2665,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -9349,7 +9349,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 173,
+          "line": 154,
           "path": "Seal/Application/OperationCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -9398,7 +9398,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2613,
+          "line": 2587,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -11050,7 +11050,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2501,
+          "line": 2500,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11120,7 +11120,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2502,
+          "line": 2501,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11129,7 +11129,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3689,
+          "line": 3635,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11250,7 +11250,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 676,
+          "line": 675,
           "path": "Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11259,7 +11259,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 697,
+          "line": 696,
           "path": "Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11290,7 +11290,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2902,
+          "line": 2850,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -11311,7 +11311,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 808,
+          "line": 852,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -11341,7 +11341,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 68,
+          "line": 69,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11350,7 +11350,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2815,
+          "line": 2784,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11372,7 +11372,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2823,
+          "line": 2792,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11393,7 +11393,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 791,
+          "line": 835,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11402,7 +11402,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2947,
+          "line": 2895,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11423,7 +11423,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2959,
+          "line": 2907,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -11444,7 +11444,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2709,
+          "line": 2683,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11465,7 +11465,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 202,
+          "line": 203,
           "path": "Seal/Application/AppContainer.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11483,7 +11483,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 430,
+          "line": 433,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11492,7 +11492,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 744,
+          "line": 788,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11501,7 +11501,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 837,
+          "line": 881,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11510,7 +11510,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 861,
+          "line": 905,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11532,7 +11532,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3357,
+          "line": 3305,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11553,7 +11553,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3278,
+          "line": 3226,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11574,7 +11574,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3306,
+          "line": 3254,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11595,7 +11595,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3386,
+          "line": 3334,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11616,7 +11616,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2718,
+          "line": 2692,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11637,7 +11637,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2803,
+          "line": 2772,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11658,7 +11658,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 710,
+          "line": 754,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11679,7 +11679,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 147,
+          "line": 150,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11718,7 +11718,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2895,
+          "line": 2843,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11748,7 +11748,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 880,
+          "line": 924,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11769,7 +11769,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 797,
+          "line": 841,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -11778,7 +11778,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 826,
+          "line": 870,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -11843,7 +11843,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2984,
+          "line": 2932,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -11864,7 +11864,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 682,
+          "line": 726,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11885,7 +11885,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 329,
+          "line": 332,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -11906,7 +11906,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 638,
+          "line": 682,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -11927,7 +11927,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 775,
+          "line": 819,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -11948,7 +11948,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 424,
+          "line": 427,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "failure_emission_candidate",
           "semanticFields": [],
@@ -11969,7 +11969,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2672,
+          "line": 2646,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -11990,7 +11990,7 @@
       "locations": [
         {
           "identifierKind": "diagnostic_tag",
-          "line": 457,
+          "line": 460,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12008,7 +12008,7 @@
         },
         {
           "identifierKind": "diagnostic_tag",
-          "line": 2945,
+          "line": 2893,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -12632,7 +12632,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 2125,
+          "line": 2124,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12991,7 +12991,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2101,
+          "line": 2100,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13000,12 +13000,21 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 2102,
+          "line": 2101,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
           "semanticValues": {},
           "source": "code: \"SEAL-SIGN-500\")"
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 2364,
+          "path": "Seal/Features/Apps/AppsViewModel.swift",
+          "role": "internal_event_or_log",
+          "semanticFields": [],
+          "semanticValues": {},
+          "source": "message: \"SEAL-SIGN-500 底层诊断：\\(ErrorDiagnosticFormatter.diagnostic(for: error))\","
         },
         {
           "identifierKind": "standard_error_code",
@@ -13014,20 +13023,11 @@
           "role": "internal_event_or_log",
           "semanticFields": [],
           "semanticValues": {},
-          "source": "message: \"SEAL-SIGN-500 底层诊断：\\(ErrorDiagnosticFormatter.diagnostic(for: error))\","
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 2366,
-          "path": "Seal/Features/Apps/AppsViewModel.swift",
-          "role": "internal_event_or_log",
-          "semanticFields": [],
-          "semanticValues": {},
           "source": "code: \"SEAL-SIGN-500\")"
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3658,
+          "line": 3604,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -13036,7 +13036,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3662,
+          "line": 3608,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13045,7 +13045,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3691,
+          "line": 3637,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13054,7 +13054,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3708,
+          "line": 3654,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13063,7 +13063,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3709,
+          "line": 3655,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13072,7 +13072,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3784,
+          "line": 3730,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13081,7 +13081,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3785,
+          "line": 3731,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13090,7 +13090,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 4132,
+          "line": 4077,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -13099,7 +13099,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 4137,
+          "line": 4082,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13108,7 +13108,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 4140,
+          "line": 4085,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13117,7 +13117,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 4142,
+          "line": 4087,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13183,7 +13183,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 3770,
+          "line": 3716,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13214,7 +13214,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 4139,
+          "line": 4084,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13223,7 +13223,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 4146,
+          "line": 4091,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13232,7 +13232,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 4167,
+          "line": 4112,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "structured_failure_emission",
           "semanticFields": [
@@ -13308,7 +13308,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3826,
+          "line": 3772,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13317,7 +13317,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3834,
+          "line": 3780,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13326,7 +13326,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3850,
+          "line": 3796,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13335,7 +13335,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 3901,
+          "line": 3847,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -13357,7 +13357,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 4057,
+          "line": 4003,
           "path": "Seal/Features/Apps/AppsViewModel.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -13846,7 +13846,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 271,
+          "line": 274,
           "path": "Seal/Core/Renewal/RenewalCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],

@@ -6,6 +6,23 @@ import Foundation
 /// AltSign 会剥掉最高半字节的前导 `0`，而 DER 来源（证书列表 / 描述文件）会保留，
 /// 直接 `caseInsensitiveCompare` 会把同一证书误判成两个（见 DEBUG_LOG 坑位 1）。
 enum CertificateRevocationImpact {
+    /// 本机侧载应用有些系统版本不暴露签名 Team；Seal 生成的 Bundle ID 会附加 Team ID，
+    /// 因此可用签名 Team 或最后一段 Team 后缀找回同团队应用。
+    static func sameTeamInstalledApps(
+        teamID: String,
+        scannedApps: [InstalledAppScanner.ScannedApp]
+    ) -> [InstalledAppScanner.ScannedApp] {
+        let normalizedTeam = teamID.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard normalizedTeam.isEmpty == false else { return [] }
+        return scannedApps.filter { app in
+            app.teamID?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == normalizedTeam
+                || app.bundleIdentifier
+                    .split(separator: ".")
+                    .last?
+                    .uppercased() == normalizedTeam
+        }
+    }
+
     /// 所有能从本地记录确认使用该证书的 App（保持传入顺序）。
     ///
     /// 既检查旧记录里的顶层序列号，也检查每个签名 target 的序列号：
