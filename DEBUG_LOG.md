@@ -1,3 +1,19 @@
+# 2026-10-21 — 设备图标恢复在闭包中同步读取 actor 文件存储
+
+- **现象**：CI `39597872847` 的 Swift 回归编译失败，`AppRecordRecovery.recoverMissingIcons` 在 `contains` 的同步闭包中调用 actor 隔离的 `AppFileStore.read(relativePath:)`。
+- **根因**：为修复已安装 App 图标的恢复路径，新增了文件可读性探测；但 `Array.contains` 的闭包不能 `await` actor 方法，CI 严格并发编译拒绝该调用。
+- **修复**：改为在异步循环中逐个读取候选图标路径，找到一个可读文件后立即停止；缺图标判断语义不变，仍由已有 `AppRecordRecoveryTests` 覆盖。
+- **涉及文件**：`Seal/Core/Recovery/AppRecordRecovery.swift`、`DEBUG_LOG.md`。
+- **验证状态**：CI 编译诊断已定位并修正；等待重新运行 Swift 回归。
+
+# 2026-10-21 — 图标加载旧任务可在新列表之后覆盖状态
+
+- **现象**：已安装列表刷新期间，较早一轮图标加载可能在较新一轮开始后才返回，覆盖新列表的图标缓存。
+- **根因**：代际检查与 `MainActor` 写入分开执行；两步之间新一轮加载可能递增代际，使旧任务仍写入过期图标。
+- **修复**：把代际检查与图标缓存写入放进同一个 `MainActor.run` 原子区间；旧代际直接丢弃结果。
+- **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`DEBUG_LOG.md`。
+- **验证状态**：静态检查通过；等待 CI Swift 回归与构建验证。
+
 # 2026-10-21 — 设备扫描与描述文件并发修复的 Swift 回归编译失败
 
 - **现象**：CI `39595526309` 的 Swift 回归未能编译：扫描器实例方法调用静态 profile 摘要方法；设备维护闭包把非逃逸回调传给原生异步执行器；描述文件检查的 `@Sendable` 工作闭包捕获非 `Sendable` 的 `FileManager` 实例。

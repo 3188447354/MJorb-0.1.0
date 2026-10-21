@@ -608,11 +608,13 @@ final class AppsViewModel: ObservableObject {
                     in: fetched,
                     iconDataByAppID: icons
                 )
-                guard await self.isCurrentLoad(generation) else { return }
-                await MainActor.run {
+                let iconsAccepted = await MainActor.run {
+                    guard self.loadGeneration == generation else { return false }
                     self.iconData = icons
                     self.clearDecodedIconCache()
+                    return true
                 }
+                guard iconsAccepted else { return }
 
                 await self.seedSigningHistoryIfNeeded(apps: fetched, accounts: fetchedAccounts)
 

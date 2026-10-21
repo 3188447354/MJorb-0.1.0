@@ -241,8 +241,12 @@ actor AppRecordRecovery {
         var records = sourceRecords
         var bundleIdentifierByRecordID: [UUID: String] = [:]
         for record in records where record.isSeal == false && record.belongsInInstalledList {
-            let hasReadableIcon = AppIconDataResolver.iconRelativePaths(for: record).contains { path in
-                (try? fileStore.read(relativePath: path)) != nil
+            var hasReadableIcon = false
+            for path in AppIconDataResolver.iconRelativePaths(for: record) {
+                if (try? await fileStore.read(relativePath: path)) != nil {
+                    hasReadableIcon = true
+                    break
+                }
             }
             guard hasReadableIcon == false else { continue }
             let bundleIdentifier = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(

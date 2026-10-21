@@ -468,11 +468,11 @@ def violations(load=read):
         "private static func removeProfiles("
     )))
     check("for attempt in 1...dumpAttemptLimit" in dump_body
-          and "Provision.resetProvider()" in dump_body
+          and "Minimuxer.invalidateRemotePairingConnection()" in dump_body
           and "Task.sleep(nanoseconds: dumpRetryDelayNanoseconds)" in dump_body,
-          "R08: retrying the dump without resetting the cached provider retries the same dead link")
+          "R08: retrying the dump must invalidate the cached RSD connection before retrying")
     # 调用点必须走这个带重试的包装。直接调 `Provision.dumpProfiles` 会让重试形同虚设。
-    check("try await dumpProfiles(docsPath: workingDir.path)" in sweep_clean
+    check("dump = try await dumpProfiles(" in sweep_clean
           and "Provision.dumpProfiles" not in sweep_clean,
           "R08: the sweep must go through the retrying dump wrapper")
     # 试了几次必须进摘要 —— 否则下次真机还是「扫描 0，匹配 0，删除 0」，
@@ -614,12 +614,13 @@ def violations(load=read):
     # ⚠️ **2026-09-20 跟进**：阳性对照改成「**带耗时的**探测 ＋ 再问一次同一个 ID」（R58 ✓）
     # ⇒ 这里的两处文本要**一起**更新 ✗ —— 否则断言与锚点都会失配 ✓
     #（**教训**：改任何一行之前，grep 守卫时不能只搜注释文案，**代码行本身就是锚点** ✗）。
-    check("let firstControlProbe = await probeInstalledWithDuration(bundleID: controlBundleID)"
-          in reclaim_body
+    check("let firstControlProbe = await probeInstalledWithDuration(" in reclaim_body
+          and "bundleID: controlBundleID" in reclaim_body
+          and "operationCoordinator: operationCoordinator" in reclaim_body
           and "let positiveControlPassed = firstControlProbe.probe == .installed" in reclaim_body,
           "R11: the positive control must be an actual probe of a definitely-installed app")
-    control_at = reclaim_body.find("probeInstalledWithDuration(bundleID: controlBundleID)")
-    candidate_at = reclaim_body.find("ProfileReclaimPolicy.decision(")
+    control_at = reclaim_body.find("let firstControlProbe = await probeInstalledWithDuration(")
+    candidate_at = reclaim_body.find("for candidate in reclaimCandidates {")
     check(control_at != -1 and candidate_at != -1 and control_at < candidate_at,
           "R11: the positive control must run before any candidate is probed or deleted")
     # ⑤ `.abortPass` 必须**中止整轮**，而不是只跳过当前这一条。
@@ -1388,13 +1389,21 @@ def violations(load=read):
     check(re.search(r"HardTimeout\.run\(\s*seconds: seconds,", blocking_source) is not None,
           "R25: 有界包装必须真的走硬超时")
     verifier_source = strip_comments(load("Seal/Features/Apps/InstalledAppDeviceVerifier.swift"))
-    check("BlockingCall.bounded(seconds: InstalledAppRefreshProbePolicy.timeoutSeconds" in verifier_source
+    check("await BlockingCall.bounded(" in verifier_source
+          and "seconds: InstalledAppRefreshProbePolicy.timeoutSeconds" in verifier_source
           and "Task.detached" not in verifier_source,
           "R25: 设备核验的同步 FFI 必须有界 —— 只 Task.detached 不够，阻塞本身仍然无界")
-    check("withTaskCancellationHandler" in verifier_source
-          and "await probeGate.finish(timedOut: true)" in verifier_source,
+    check("onLateCompletion: { _ in" in verifier_source
+          and "await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)" in verifier_source
+          and "onWorkNeverStarted: {" in verifier_source,
           "R25: 设备核验被取消后必须释放门闩并冷却，不能永久卡在查询中")
-    check("BlockingCall.bounded(seconds: BlockingCall.queryTimeoutSeconds" in cleaner_source,
+    maintenance_probe = section(
+        cleaner_source,
+        "private static func probeInstalled(",
+        "/// **带耗时的**探测结果"
+    )
+    check("DeviceProfileNativeCall.perform(" in maintenance_probe
+          and "seconds: BlockingCall.queryTimeoutSeconds" in maintenance_probe,
           "R25: 维护期的设备探测必须有界 —— 一次无界阻塞会让整轮维护永远完不成")
     # 通道那份重复实现必须**委托**，不能再抄一遍（「同一条规则两份实现」已踩过五次）。
     check("await BlockingCall.bounded(" in install_source
@@ -1408,8 +1417,13 @@ def violations(load=read):
     #   ① **有界**（R25 本来的主题）—— 死会话上不报错、只阻塞到操作系统放弃；
     #   ② 探测必须走**会抛错**的 `isAppInstalled`，不能用折叠 `nil` 的 `lookupApp`
     #      （「查询失败」与「没装」被折成同一个值 ⇒ 隧道一抖，装好的 App 被判成验证失败）。
-    check("let outcome = await offThread(seconds: BlockingCall.queryTimeoutSeconds) {"
-          in install_source
+    install_probe = section(
+        install_source,
+        "private func probeInstalled(bundleID: String) async -> ProfileReclaimPolicy.InstallProbe {",
+        "    #endif"
+    )
+    check("DeviceProfileNativeCall.perform(" in install_probe
+          and "seconds: BlockingCall.queryTimeoutSeconds" in install_probe
           and "try Minimuxer.isAppInstalled(bundleId: bundleID)" in install_source,
           "R25: 安装后验证的设备查询必须有界，且必须用会抛错的 `isAppInstalled`"
           "（折叠 nil 的 `lookupApp` 会把「查询失败」读成「没装」）")
@@ -3183,8 +3197,9 @@ def violations(load=read):
           and "clearOrphanedAppFiles" not in load_body
           and "ensureRegistered" not in load_body,
           "C: the app-list read path must not write records or delete files")
-    check(load_body.count("await self.isCurrentLoad(generation)") >= 3,
-          "C: every background write-back must be guarded by the load generation")
+    check(load_body.count("guard self.loadGeneration == generation else { return false }") >= 2
+          and load_body.count("await self.isCurrentLoad(generation)") >= 2,
+          "C: background state writes must check the load generation atomically and async stages must recheck it")
 
     job = load("Seal/Core/Maintenance/AppMaintenanceJob.swift")
     # 现在有**两处**删除步骤（孤儿文件清理、设备端旧描述文件清理），各自都要有租约复查。
@@ -3217,8 +3232,13 @@ def violations(load=read):
     # 同版本续签会换掉 profile（新 UUID、新有效期）但版本号不变 ⇒ 结算必须按 profile 身份，
     # 只比版本号会把「那次自更新其实失败了」当成成功，UI 显示一个设备上不存在的有效期。
     self_metadata = load("Seal/Core/Renewal/SelfAppMetadata.swift")
+    self_metadata_async = section(
+        self_metadata,
+        "static func loadCurrentAsync() async -> SelfAppMetadata? {",
+        "static func installedIdentitySnapshot() async -> InstalledIdentity? {"
+    )
     check("provisioningProfileUUID" in self_metadata
-          and "ProvisioningProfileReader().details(from:" in self_metadata,
+          and "ProvisioningProfileReader().details(from:" in self_metadata_async,
           "D: the running bundle must expose its provisioning profile identity")
     self_registrar = load("Seal/Core/Renewal/SelfAppRegistrar.swift")
     check("reconcileSealRecordFromRunningBundleIfNeeded" in self_registrar
@@ -3255,7 +3275,7 @@ def violations(load=read):
           and "func refreshProbeFailsFastWithoutBorrowingInstallationBudget()" in installed_refresh_policy_tests,
           "G: installed-page refresh must fail fast and cool down without shrinking install verification budgets")
     installed_refresh_gate_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbeGateTests.swift")
-    check("func cancelledProbeEntersCooldownInsteadOfLeavingTheGateBusy()" in installed_refresh_gate_tests,
+    check("func cancelledProbeThatNeverStartedDoesNotEnterCooldown()" in installed_refresh_gate_tests,
           "G: cancelling an installed-page device probe must not leave its gate occupied")
     certificate_root_source = strip_comments(load("Seal/Features/Settings/CertificatesRootView.swift"))
     apple_inventory_refresh_tests = load("SealTests/Settings/ApplePortalInventoryRefreshTests.swift")
@@ -3872,7 +3892,9 @@ def violations(load=read):
     trigger_fn = section(coord, "static func isOrphanCertificateBlocking", "\n    }")
     check('failure.code == "SEAL-CERT-204b"' in trigger_fn,
           "Auto-cleanup: trigger must also cover SEAL-CERT-204b (isCertificateLimitError path)")
-    check("let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials()" in coord,
+    check("let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials("
+          in coord
+          and "using: operationCoordinator" in coord,
           "Auto-cleanup: must consult device profile inspector")
 
     # profile-only 路径不能在新 profile 注入前额外 dump 旧清单：它只写诊断日志，
@@ -3888,7 +3910,7 @@ def violations(load=read):
     check("ProfileOnlyIdentityVerifier.verify(" not in coord
           and "DeviceProfileInspector.containsProfile(" not in coord
           and "await DeviceProfileInspector.containsProfiles(" in profile_only_readback
-          and "onLateCompletion:" in profile_only_readback
+          and "onNativeCompletion:" in profile_only_readback
           and "nativeProfileOperationDidComplete()" in profile_only_readback,
           "R129: profile-only must skip the redundant preflight dump and retain exact post-injection readback")
     profile_only_injection = section(
@@ -4828,7 +4850,7 @@ def violations(load=read):
           and "request[kSecMatchLimit as String] = kSecMatchLimitAll" in keychain_vault
           and "if let unindexedSecrets = try? await keychain.loadAllSecrets() {" in signing_coordinator
           and "LocalSigningCertificateLookup.hasMatchingPrivateKey(" in signing_coordinator
-          and "if let unindexedSecrets = try? await keychain.loadAllSecrets() {" in settings_vm_self_management
+          and "keychain.loadAllSecrets()" in settings_vm_self_management
           and "LocalSigningCertificateLookup.hasMatchingPrivateKey(" in settings_vm_self_management
           and "func orphanedKeychainSecretStillProvesSealWasTakenOver()" in self_management_tests
           and "func orphanedSecretWithoutMatchingPrivateKeyDoesNotSkipBootstrap()" in self_management_tests,
@@ -5094,7 +5116,7 @@ def violations(load=read):
           "对「死连接」不是杠杆（同结论见 `MinimuxerInstallChannel.probeCachedSessionIfStale`）；"
           "在逐条循环里调用还可能拆掉正在服务安装的连接（R05）。")
     # ② 默认值必须在「不打扰用户」那一侧。
-    check("func refreshInstalledApps(userInitiated: Bool = false) async {" in r71_vm
+    check(re.search(r"func refreshInstalledApps\(\s*userInitiated: Bool = false,", r71_vm) is not None
           and "userInitiated: Bool = true" not in r71_vm,
           "R71②: `refreshInstalledApps` 的 `userInitiated` 默认值必须是 `false` —— "
           "设备查询失败在「刚启动、通道还没就绪」时是**预期**现象（构建 37 真机：三次 "
@@ -5258,7 +5280,8 @@ def violations(load=read):
           "Scan/control: 设备核验必须先过阳性对照 —— Rust 侧 lookup 会把 RPC 失败也返回成 nil，"
           "这种静默失败在单条查询上看不出来；对照不过就整轮不建记录")
     check(squash("guard let installed = try? await InstalledAppDeviceVerifier.isInstalled("
-                 " bundleIdentifier: candidate ) else { return nil }") in squash(r80_scanner),
+                 " bundleIdentifier: candidate, operationCoordinator: operationCoordinator ) else { return nil }")
+          in squash(r80_scanner),
           "Scan/abort: 任一条核验失败必须**整轮中止**（不得逐条 continue）—— "
           "通道一抖动，剩下的候选会被读成「没装」，该补的 App 永远补不回来")
     check("        guard candidates.isEmpty == false else { return [] }" in r80_scanner,
@@ -5370,8 +5393,9 @@ def violations(load=read):
           and '"skipped-not-wired"' in r80_recovery,
           "Scan/notwired: 未接线时必须留下 stage（skipped-not-wired）—— "
           "否则「没人接这根线」会被读成「设备端确实没有可补的」，扫回静默失效")
-    check("deviceScanner: DeviceInstalledAppScanner.live"
-          in load("Seal/Application/AppContainer.swift"),
+    app_container_source = load("Seal/Application/AppContainer.swift")
+    check("let deviceInstalledAppScanner = DeviceInstalledAppScanner(" in app_container_source
+          and "deviceScanner: deviceInstalledAppScanner" in app_container_source,
           "Scan/wire: 生产路径必须由 AppContainer 接上真扫描器 —— "
           "漏接线不会编译失败，只会让扫回永远停在 skipped-not-wired")
 
@@ -5513,10 +5537,10 @@ def violations(load=read):
     r84_material_policy = load("Seal/Core/Signing/SigningCertificateMaterialPolicy.swift")
     r84_policy_tests = load("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift")
     r84_material_policy_tests = load("SealTests/Signing/SigningCertificateMaterialPolicyTests.swift")
-    r84_363_block = section_or_empty(
+    r84_profile_only_flow = section_or_empty(
         r84_coord,
-        "            if useProfileOnlyRenewal {\n                if let channelStart {",
-        "            if isInstalledRenewal {"
+        "if useProfileOnlyRenewal {",
+        "let originalURL = try await fileStore.fileURL("
     )
     r84_live_identity = section_or_empty(
         r84_policy,
@@ -5548,14 +5572,12 @@ def violations(load=read):
           "R84③: 准入必须**真的用上**双通道 ✗ —— `liveProfileOnlyIdentity(for:)` 算了"
           "却不传给 `evaluate`，等于「上游算好了、下游又退回记录判据」——"
           "这正是本项目反复出现的「改了一半、看起来改完了」")
-    # ⚠️ 必须 `strip_comments` 之后再判 `useProfileOnlyRenewal = false`：本块里**注释**中
-    # 引用了旧写法（「旧行为：没明确通过就 `useProfileOnlyRenewal = false`」）——
-    # 不剥注释就会把注释当代码，让这条断言**恒假**（R84 自己的第一版正是这么写错的，
-    # 靠 `check-mutation-power.py` 的基线失败才发现）。
-    r84_363_code = strip_comments(r84_363_block)
-    check("DeviceProfileInspector.containsProfile(" not in r84_363_code
-          and "useProfileOnlyRenewal = false" not in r84_363_code,
-          "R84④: a preflight profile dump must neither race injection nor force a full resign")
+    # The only full-resign fallback in the profile-only path is Apple's explicit
+    # inactive-certificate response; a device profile preflight would race injection.
+    r84_profile_only_code = strip_comments(r84_profile_only_flow)
+    check("DeviceProfileInspector.containsProfile(" not in r84_profile_only_code
+          and 'where failure.code == "SEAL-PROFILE-335"' in r84_profile_only_code,
+          "R84④: profile-only must avoid device preflight and fall back only when Apple rejects the active certificate")
     r84_device_binding = section_or_empty(
         r84_policy,
         "static func isBoundToCurrentDevice(",
@@ -5590,7 +5612,8 @@ def violations(load=read):
         "private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {",
         "private func ",
     )
-    check("guard operationCoordinator?.activeLease == nil else {" in r84_reconcile
+    check("operationCoordinator?.hasDeviceSessionConflict != true" in r84_reconcile
+          and "operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true" in r84_reconcile
           and "SEAL-INSTALL-708" in r84_vm,
           "R84⑦: 已安装页设备核验必须与前台操作**互斥** ✗ —— 它走同步 FFI、"
           "和签名 / 安装 / 续签共用同一条设备会话；构建 46 三次 `SEAL-INSTALL-707`"
@@ -5861,8 +5884,11 @@ def violations(load=read):
           "R88①: 已安装页对账必须拿**正在运行的 Seal 自己**做阳性对照 ✗ —— "
           "姊妹路径都有这一步，而这里的下游是 `delete`（连带删本地文件）")
 
-    check("InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID)" in r88_flat,
-          "R88②: 阳性对照必须真的发一次设备查询 ✗ —— 只取到 Bundle ID 不算对照")
+    check("installedAppScanner.scanUserApplications()" in r88_flat
+          and "InstalledAppRefreshProbePolicy.hasPositiveControl(" in r88_flat
+          and "InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID, operationCoordinator: operationCoordinator)"
+              in r88_flat,
+          "R88②: 阳性对照必须来自真实设备清单或设备查询 ✗ —— 只取到 Bundle ID 不算对照")
 
     r88_control_at = r88_flat.find("guard controlInstalled else")
     r88_collect_at = r88_flat.find("var missingOnDevice")
@@ -5873,7 +5899,7 @@ def violations(load=read):
           "排到后面时代码看起来仍然有对照，但列表已经被错误改写（顺序就是安全本身）")
 
     check("return false" in squash(section_or_empty(
-              r88_code, "guard controlInstalled else {", "if operationCoordinator?.activeLease != nil {")),
+              r88_code, "guard controlInstalled else {", "if operationCoordinator?.hasDeviceSessionConflict == true")),
           "R88④: 对照未通过必须**整轮中止**（`return false`）✗ —— "
           "「继续问剩下的」只会让更多记录被一条不可信的通道判定")
 
@@ -7412,16 +7438,18 @@ def main():
          "false",
          "C: freshly created directories need a grace period"),
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "await self.isCurrentLoad(generation)",
-         "true",
+         "guard self.loadGeneration == generation else { return false }",
+         "guard true else { return false }",
          "C: every background write-back must be guarded"),
         ("Seal/Features/Apps/AppsRootView.swift",
          "await viewModel.runEssentialMaintenanceIfIdle()",
          "",
          "C: maintenance must run before the first read"),
         ("Seal/Core/Renewal/SelfAppMetadata.swift",
-         "ProvisioningProfileReader().details(from:",
-         "ProvisioningProfileReader().summary(from:",
+         "let profileDetails = (try? Data(contentsOf: profileURL, options: .mappedIfSafe))\n"
+         "                .flatMap { try? ProvisioningProfileReader().details(from: $0) }",
+         "let profileDetails = (try? Data(contentsOf: profileURL, options: .mappedIfSafe))\n"
+         "                .flatMap { try? ProvisioningProfileReader().summary(from: $0) }",
          "D: the running bundle must expose its provisioning profile identity"),
         ("Seal/Core/Renewal/SelfAppRegistrar.swift",
          "// 后者是 R07：同版本续签会换掉 profile 但版本号不变，只比版本就会漏掉结算。\n            try await reconcileSealRecordFromRunningBundleIfNeeded(",
@@ -7567,7 +7595,9 @@ def main():
          "hasLocalPrivateKey: false // ",
          "Cleanup: hasLocalPrivateKey"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials()",
+         "let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(\n"
+         "            using: operationCoordinator\n"
+         "        )",
          "let deviceReferenced: Set<String>? = nil // ",
          "Auto-cleanup: must consult device profile inspector"),
         ("Seal/Core/Signing/SigningCoordinator.swift",
@@ -7582,21 +7612,6 @@ def main():
          "try await certificateRecoveryJournal.record(",
          "try await certificateRecoveryJournal.write(",
          "Sacrifice: persisted revocations must resume affected-app recovery after retry installation"),
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         "        case .none:\n            return .unavailable",
-         "        case .some(false):\n            return .unavailable",
-         "Profile-only: containsProfile nil must map to unavailable, never to mismatch"),
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         "                if identity != .confirmed {",
-         "                if false {",
-         "Profile-only: unconfirmed identity must still be surfaced as a diagnostic"),
-        # ── R78：核验未确认的日志丢掉「究竟是哪一种没问通」⇒ 报红 ──
-        # 三态的原因必须各自可见：只说「核验未通过」时，排障无法区分
-        # 「记录过期」（该去修记录）与「通道没连上」（该去修通道）。
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         '                        message: "profile-only 续签的设备端核验未确认（\\(identity.fallbackReason)），"',
-         '                        message: "profile-only 续签的设备端核验未确认，"',
-         "Profile-only: 核验未确认必须留痕"),
     ]
     mutations += [
         ("Seal/Infrastructure/Pairing/PairingStore.swift",
@@ -7676,13 +7691,14 @@ def main():
         # 重试前不重置 provider：三条重试全走同一条已经断开的 RSD 连接，等于没重试
         #（循环还在、次数还在，约束已经失效）。
         ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
-         "                Provision.resetProvider()\n"
+         "                Minimuxer.invalidateRemotePairingConnection()\n"
          "                try? await Task.sleep(nanoseconds: dumpRetryDelayNanoseconds)",
          "                try? await Task.sleep(nanoseconds: dumpRetryDelayNanoseconds)",
-         "R08: retrying the dump without resetting the cached provider retries the same dead link"),
+         "R08: retrying the dump must invalidate the cached RSD connection before retrying"),
         # 绕过带重试的包装、直接调 FFI：重试形同虚设，函数与单测都还在。
         ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
-         "dump = try await dumpProfiles(docsPath: workingDir.path)",
+         "dump = try await dumpProfiles(\n"
+         "                docsPath: workingDir.path,\n",
          "dump = (path: try Provision.dumpProfiles(docsPath: workingDir.path), attempts: 1)",
          "R08: the sweep must go through the retrying dump wrapper"),
         # `.skipped` 退回「只有一句 break」：用户看到 profile 一直在堆，
@@ -8288,21 +8304,13 @@ def main():
         #（2026-09-25 实际踩到：两遍守卫各白跑一轮）。锚点越短越不容易被无关编辑带坏，
         # 只要「有界调用消失 ＋ 出现 Task.detached」这条断言仍会报红就够。
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
-         "            await BlockingCall.bounded(seconds: InstalledAppRefreshProbePolicy.timeoutSeconds) {",
-         "            await Task.detached(priority: .userInitiated) {",
+         "        let outcome = await BlockingCall.bounded(\n",
+         "        let outcome = await Task.detached(\n",
          "R25: 设备核验的同步 FFI 必须有界"),
         # 把维护期探测退回「只 Task.detached、无超时」：一次无界阻塞会让整轮维护永远完不成。
         ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
-         "        guard let outcome = await BlockingCall.bounded(seconds: BlockingCall.queryTimeoutSeconds, {\n"
-         "            try Minimuxer.isAppInstalled(bundleId: bundleID)\n"
-         "        }) else {\n"
-         "            return .unavailable\n"
-         "        }",
-         "        guard let outcome = await Task.detached(priority: .utility, {\n"
-         "            Result { try Minimuxer.isAppInstalled(bundleId: bundleID) }\n"
-         "        }).value as Result<Bool, Error>? else {\n"
-         "            return .unavailable\n"
-         "        }",
+         "        let outcome = await DeviceProfileNativeCall.perform(\n",
+         "        let outcome = await Task.detached(\n",
          "R25: 维护期的设备探测必须有界"),
         # 让通道不再委托：又变成两份实现，迟早漂移。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
@@ -8317,7 +8325,10 @@ def main():
         # 安装后验证退回无界查询 + 折叠 nil 的旧写法：
         # 死会话上会在 8 次循环里一直卡住，而且「查询失败」会被读成「没装」。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
-         "        let outcome = await offThread(seconds: BlockingCall.queryTimeoutSeconds) {\n"
+         "        let outcome = await DeviceProfileNativeCall.perform(\n"
+         "            operationCoordinator: operationCoordinator,\n"
+         "            seconds: BlockingCall.queryTimeoutSeconds\n"
+         "        ) {\n"
          "            try Minimuxer.isAppInstalled(bundleId: bundleID)\n"
          "        }",
          "        let outcome: Result<Bool, Error>? = .some(.success(Minimuxer.lookupApp(bundleId: bundleID) != nil))",
@@ -9021,8 +9032,12 @@ def main():
          "R10: the install wait needs a heartbeat — installd reports no progress"),
         # 容器不再把日志出口交给安装通道 = 日志通道永远静默（只声明依赖不等于接上了）。
         ("Seal/Application/AppContainer.swift",
-         "                logStore: logStore\n            )",
-         "                logStore: nil\n            )",
+         "                logStore: logStore,\n"
+         "                operationCoordinator: operationCoordinator\n"
+         "            )",
+         "                logStore: nil,\n"
+         "                operationCoordinator: operationCoordinator\n"
+         "            )",
          "R10: AppContainer must hand the install channel a real log store"),
         # 把设备专属符号的定义挪回 `#if !targetEnvironment(simulator)` 里 = 原样重演
         # 2026-09-16 的「模拟器切片缺符号」：`build-package` 照样绿，只有
@@ -9324,9 +9339,9 @@ def main():
         # ── R71：已安装列表设备核验 ＋ 安装重试路径（2026-09-25 审查项 P1/P2/P4）──
         # ①a 把无效的「重置 Install provider」加回设备核验路径 ⇒ R71① 报红。
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
-         "                return try Minimuxer.isAppInstalled(bundleId: identifier)",
-         "                Install.resetProvider()\n"
-         "                return try Minimuxer.isAppInstalled(bundleId: identifier)",
+         "            return try Minimuxer.isAppInstalled(bundleId: identifier)",
+         "            Install.resetProvider()\n"
+         "            return try Minimuxer.isAppInstalled(bundleId: identifier)",
          "R71①: `InstalledAppDeviceVerifier` 与"),
         # ①b 加回安装重试路径 ⇒ R71① 报红。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
@@ -9336,8 +9351,8 @@ def main():
          "R71①: `InstalledAppDeviceVerifier` 与"),
         # ② 默认值改回 `true` ⇒ R71② 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "func refreshInstalledApps(userInitiated: Bool = false) async {",
-         "func refreshInstalledApps(userInitiated: Bool = true) async {",
+         "    func refreshInstalledApps(\n        userInitiated: Bool = false,",
+         "    func refreshInstalledApps(\n        userInitiated: Bool = true,",
          "R71②: `refreshInstalledApps` 的"),
         # ③ 退回「边问边删」⇒ R71③ 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",
@@ -9639,8 +9654,8 @@ def main():
          "Scan/notwired:"),
         # ㉘ AppContainer 不再接线 ⇒ 扫回永远停在 skipped-not-wired（静默失效）✓ 报红。
         ("Seal/Application/AppContainer.swift",
-         "                deviceScanner: DeviceInstalledAppScanner.live\n",
-         "",
+         "                deviceScanner: deviceInstalledAppScanner\n",
+         "                deviceScanner: nil\n",
          "Scan/wire:"),
         # ㉙ 把 mapped ID 当成原始 ID 会让原始 IPA 重导入时无法接管恢复记录 ✓ 报红。
         ("Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift",
@@ -9828,18 +9843,18 @@ def main():
          "        let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: liveIdentity)\n",
          "        let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: nil)\n",
          "R84③: 准入必须**真的用上**双通道"),
-        # ④ 把已删除的设备端旧 profile 前置枚举加回来 ⇒ R84④ 报红。
+        # ④ 把设备端旧 profile 前置枚举加回 profile-only 分支 ⇒ R84④ 报红。
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "                if let channelStart {\n",
-         "                _ = DeviceProfileInspector.containsProfile(\n"
-         "                if let channelStart {\n",
-         "R84④:"),
-        # ④b 把前置 profile 查询结果重新作为完整重签条件 ⇒ R84④ 报红。
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         "            if useProfileOnlyRenewal {\n                if let channelStart {",
          "            if useProfileOnlyRenewal {\n"
-         "                let useProfileOnlyRenewal = false\n"
-         "                if let channelStart {",
+         "                // 设备端不做旧 profile 前置枚举；",
+         "            if useProfileOnlyRenewal {\n"
+         "                _ = DeviceProfileInspector.containsProfile(\n"
+         "                // 设备端不做旧 profile 前置枚举；",
+         "R84④:"),
+        # ④b 把只在 Apple 明确拒绝当前证书时才完整重签的条件改宽 ⇒ R84④ 报红。
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         'where failure.code == "SEAL-PROFILE-335"',
+         'where failure.code == "SEAL-PROFILE-336"',
          "R84④:"),
         # ⑤ 把当前设备 ID 核验放松成「总是通过」⇒ R84⑤ 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
@@ -9867,9 +9882,8 @@ def main():
          "R84⑥: 证书轮换**必须**能撤到"),
         # ⑦ 去掉「与前台操作互斥」的闸门 ⇒ R84⑦ 报红（707 噪音与抢会话回来）。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "        //    必须由它自己让路，否则就会去抢续签的设备会话。\n"
-         "        guard operationCoordinator?.activeLease == nil else {\n",
-         "        //    必须由它自己让路，否则就会去抢续签的设备会话。\n"
+         "        guard operationCoordinator?.hasDeviceSessionConflict != true,\n"
+         "              operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true else {\n",
          "        guard true else {\n",
          "R84⑦: 已安装页设备核验必须与前台操作**互斥**"),
         # ⑧ 把「实时身份放行」那条单测改名 ⇒ R84⑧ 报红（不变量没人守）。
@@ -10021,8 +10035,14 @@ def main():
          "R88①: 已安装页对账必须拿"),
         # ② 取了 Bundle ID 却不照原样问设备 ⇒ R88② 报红（对照必须真的问一次）。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID)",
-         "InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID.lowercased())",
+         "InstalledAppDeviceVerifier.isInstalled(\n"
+         "                    bundleIdentifier: controlBundleID,\n"
+         "                    operationCoordinator: operationCoordinator\n"
+         "                )",
+         "InstalledAppDeviceVerifier.isInstalled(\n"
+         "                    bundleIdentifier: controlBundleID.lowercased(),\n"
+         "                    operationCoordinator: operationCoordinator\n"
+         "                )",
          "R88②: 阳性对照必须真的发一次设备查询"),
         # ③ 把「收集缺失」与删除挪到对照**之前** ⇒ R88③ 报红
         #    （代码看起来仍然有对照，但删除已经发生了 —— 顺序就是安全本身）。
@@ -10044,8 +10064,8 @@ def main():
         # ⑥ 拿不到对照 Bundle ID 时「当作通过」⇒ R88⑥ 报红
         #    （对照缺失还往下走 = 把整道网拆掉）。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         '拿不到阳性对照的 Bundle ID ⇒ 本轮一条记录都不删。",\n                    code: "SEAL-INSTALL-739"\n                )\n                return false',
-         '拿不到阳性对照的 Bundle ID ⇒ 本轮一条记录都不删。",\n                    code: "SEAL-INSTALL-739"\n                )\n                return true',
+         "                return false\n            }\n\n            let deviceSnapshot:",
+         "                return true\n            }\n\n            let deviceSnapshot:",
          "R88⑥: 拿不到对照 Bundle ID 也必须 fail closed"),
 
         # ── R89：「记录里的源包版本 ≠ 正在运行的版本」⇒ 不得走 profile-only 快路径 ──
@@ -11039,8 +11059,8 @@ def main():
          "if false, let unindexedSecrets = try? await keychain.loadAllSecrets() {",
          "R125:"),
         ("Seal/Features/Settings/SettingsViewModel.swift",
-         "if let unindexedSecrets = try? await keychain.loadAllSecrets() {",
-         "if false, let unindexedSecrets = try? await keychain.loadAllSecrets() {",
+         "let secrets = (try? await keychain.loadAllSecrets()) ?? []",
+         "let secrets: [AccountSecret] = []",
          "R125:"),
         # ── R120：更新抽屉共用 SealDrawer，呈现层必须在导航与 Tab 栏之上 ──
         ("Seal/Features/UpdateNoticeView.swift",
@@ -11083,8 +11103,11 @@ def main():
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
          "            onLateCompletion: { _ in\n"
          "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)\n"
+         "                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)\n"
          "            },\n",
-         "            onLateCompletion: nil,\n",
+         "            onLateCompletion: { _ in\n"
+         "                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)\n"
+         "            },\n",
          "R126:"),
         ("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift",
          "        guard activeProbeID == probeID else { return }",
@@ -11114,8 +11137,8 @@ def main():
          "R128:"),
         # ── R129：profile-only 预检清单不得与注入/读回争用设备会话 ──
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "        if useProfileOnlyRenewal {\n",
-         "        if useProfileOnlyRenewal {\n            _ = ProfileOnlyIdentityVerifier.verify(\n",
+         "            if useProfileOnlyRenewal {\n",
+         "            if useProfileOnlyRenewal {\n                _ = ProfileOnlyIdentityVerifier.verify(\n",
          "R129:"),
         # ── R130：父任务取消先于原生任务启动时，不得留下永久设备租约 ──
         ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
