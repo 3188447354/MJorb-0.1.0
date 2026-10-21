@@ -5666,13 +5666,21 @@ def violations(load=read):
     device_reconcile_conflict_at = r84_reconcile.find(
         "if operationCoordinator?.hasDeviceSessionConflict == true"
     )
+    device_reconcile_write_guard = section_or_empty(
+        r84_reconcile,
+        "if operationCoordinator?.hasDeviceSessionConflict == true {",
+        "removeDuplicateInstalledRecords",
+    )
     device_reconcile_mutation_at = r84_reconcile.find("removeDuplicateInstalledRecords")
     conflict_property = section(
         operation_coordinator_source,
         "var hasDeviceSessionConflict: Bool {",
         "func beginWaiting("
     )
-    check(device_reconcile_conflict_at > r84_reconcile.find("var missingOnDevice")
+    check(r84_reconcile.count("if operationCoordinator?.hasDeviceSessionConflict == true {") == 1
+          and "installedAppRefreshPendingAfterOperation = true" in device_reconcile_write_guard
+          and "return false" in device_reconcile_write_guard
+          and device_reconcile_conflict_at > r84_reconcile.find("var missingOnDevice")
           and device_reconcile_conflict_at < device_reconcile_mutation_at
           and "case .signing, .installing, .renewing:" in conflict_property
           and "case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles," in conflict_property
@@ -7566,12 +7574,12 @@ def main():
          "        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociated(\n"
          "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
          "            apps: relatedApps,\n"
-         "            installedBundleIdentifiers: installedBundleIdentifiers ?? []\n"
+         "            installedBundleIdentifiers: locallyInstalledBundleIdentifiers\n"
          "        )",
          "        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociatedUnused(\n"
          "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
          "            apps: relatedApps,\n"
-         "            installedBundleIdentifiers: installedBundleIdentifiers ?? []\n"
+         "            installedBundleIdentifiers: locallyInstalledBundleIdentifiers\n"
          "        )",
          "Certificates: UI must show full identity and associated apps"),
         ("Seal/Core/Signing/CertificateRevocationImpact.swift",
@@ -9943,15 +9951,18 @@ def main():
          "                installedAppRefreshPendingAfterOperation = true\n"
          "                return false\n"
          "            }\n\n",
-         "",
+         "            if operationCoordinator?.hasDeviceSessionConflict == true {\n"
+         "                installedAppRefreshPendingAfterOperation = true\n"
+         "                return true\n"
+         "            }\n\n",
          "R84⑦: only app-changing device writes defer record mutations"),
         ("Seal/Application/OperationCoordinator.swift",
+         "            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
+         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
+         "                return false",
          "            case .managingDeviceProfiles:\n"
          "                return true\n"
          "            case .resettingPairing, .scanningDeviceInventory,\n"
-         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
-         "                return false",
-         "            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
          "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
          "                return false",
          "R84⑦: only app-changing device writes defer record mutations"),

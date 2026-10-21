@@ -5,7 +5,7 @@
 - **修复**：单项操作与批量续签可同时运行；用已有协调器只串行同一 App，独立 App 并行。Core Data 补存恢复所需字段并迁移旧库；profile 授权证书继续作为 profile 身份保存，不伪装成实际签名证书；扫描恢复的 App 可保留 profile-only 续签依据，并明确缺 IPA 时需重新导入 IPA 才能完整重签。证书页直接展示本机扫描到的同团队侧载 App 与能由签名记录精确关联的 App，并读取系统图标；“同团队”和“证书记录”分开展示，不把团队关系误说成具体证书签名。
 - **上游对照**：SideStore 的 `PipelineRunner` 用任务组并发运行各 App 的续签管线；Seal 对齐按 App 并行，不把批次包装成全局锁。设备原生服务只协调自身调用。
 - **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Apps/AppRecord.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Infrastructure/Persistence/CoreDataAppStore.swift`、`Seal/Infrastructure/Persistence/CoreDataModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Core/Signing/CertificateRevocationImpact.swift` 及对应测试、源码守卫。
-- **验证状态**：CI `39683610145` 后，`39690032492` 的签名器测试通过；Swift 回归指出两个未标明账号范围的操作不能假定互不相关，已修正该分流。守卫阶段发现几条旧断言仍要求全局锁和旧源码锚点，已改为验证当前的逐 App 并行、证书页本机精确关联与阳性对照逻辑，并移除不再调用的 30 秒锁超时通知分支。最新改动待完整 CI 验证；未在 Windows 本机运行 Swift 测试或源码守卫。
+- **验证状态**：CI `39683610145` 后，`39690032492` 的签名器测试通过；Swift 回归指出两个未标明账号范围的操作不能假定互不相关，已修正该分流。CI `39692756426` 的 Swift 回归与签名器测试通过，862 项源码断言通过；625 项变异自检有三个旧锚点未跟随证书页本机清单和设备写入边界，已对齐，并补强设备写入延期条件的断言。完整 CI 待再次验证；未在 Windows 本机运行 Swift 测试或源码守卫。
 
 # 2026-10-22 — 更新包已有字节时仍显示“正在连接”
 
