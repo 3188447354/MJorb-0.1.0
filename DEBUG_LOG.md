@@ -1,10 +1,10 @@
-# 2026-10-21 — CI 静态守卫沿用 AppContainer 旧初始化顺序
+# 2026-10-21 — CI 静态守卫未跟上设备单飞封装
 
-- **现象**：CI `39587187268` 的 `build-package` 在 `Check release safety invariants` 失败，Swift 回归和签名器测试当时仍在运行；错误是守卫取 AppContainer 安装通道构造段时找不到结束标记 `let operationCoordinator`。
-- **根因**：同批并发协调器改动已将 `OperationCoordinator` 的创建移到安装通道之前，但 R10 守卫仍假设它出现在安装通道之后。被检查的 `logStore` 注入本身仍存在，失效的是守卫的代码边界锚点。
-- **修复**：将守卫范围终点改为紧随安装通道创建的 `DeviceInstalledAppScanner` 初始化，继续只在安装通道构造块内核验真实 `logStore` 注入。
+- **现象**：CI `39587187268` 的 `build-package` 在 R10 守卫失败，后续 CI `39587359644` 再次在证书清理守卫失败；两个错误都发生在 Swift 构建之前。
+- **根因**：R10 仍以已提前创建的 `OperationCoordinator` 作为 AppContainer 安装通道块的结束标记；证书清理守卫仍要求旧的单行 `referencedCertificateSerials()` 声明，并把 `BlockingCall.bounded` / 不取消超时的责任错误地算在调用点。当前实现已将设备原生操作集中到 `DeviceProfileNativeCall.perform`，由共享闸门持有设备租约并等待不可取消的 FFI 真正返回。
+- **修复**：AppContainer 范围改为以下一个设备扫描器初始化为边界。证书清理守卫改为分别钉住调用点使用共享执行器和查询预算、以及执行器内部有界等待/不取消 FFI/超时后保留闸门与设备租约；增加变异样本，防止调用点绕过共享闸门或把超时改为取消。
 - **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
-- **验证状态**：依据 CI traceback 与当前源码核对了根因；按项目纪律未在本地运行源码守卫。已完成 `git diff --check` 后等待当前其余 CI job 结算，再推送此修正并由 CI 验证。
+- **验证状态**：两次 CI traceback 已分别确认失效标记和实际源码结构；按项目纪律未在本地运行源码守卫。修正需经新的 CI 运行验证。
 
 # 2026-10-21 — Apple ID 被握手错误误标为凭据失效
 

@@ -3833,12 +3833,21 @@ def violations(load=read):
           "Cleanup: device profile inspection must be read-only")
     check("return parsed > 0 ? serials : nil" in inspector,
           "Cleanup: unparseable dump must mean unverified, not empty")
-    reference_scan = section(inspector, "static func referencedCertificateSerials()",
+    reference_scan = section(inspector, "static func referencedCertificateSerials(",
                              "private static func readReferencedCertificateSerials")
-    check("BlockingCall.bounded(" in reference_scan
-          and "seconds: BlockingCall.queryTimeoutSeconds" in reference_scan
-          and "cancelsWorkOnTimeout: false" in reference_scan,
-          "Cleanup: device profile reference scan must be bounded and keep its worker-owned temp directory")
+    check("DeviceProfileNativeCall.perform(" in reference_scan
+          and "seconds: BlockingCall.queryTimeoutSeconds" in reference_scan,
+          "Cleanup: device profile reference scan must use the shared bounded native-call gate")
+    profile_native_call = section(
+        load("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift"),
+        "static func perform<T: Sendable>(",
+        "private struct DeviceProfileNativeCallUnavailable"
+    )
+    check("BlockingCall.bounded(" in profile_native_call
+          and "cancelsWorkOnTimeout: false" in profile_native_call
+          and "await gate.finish(probeID: probeID, timedOut: true)" in profile_native_call
+          and "releaseDeviceSessionLeaseAfterNativeCall" in profile_native_call,
+          "Cleanup: shared device native-call gate must retain its lease until non-cancellable FFI returns")
     settings_vm = load("Seal/Features/Settings/SettingsViewModel.swift")
     cleanup_exec = section(settings_vm, "func executeCertificateCleanup(",
                            "private func persistCreatedCertificate(")
@@ -7527,6 +7536,21 @@ def main():
          "return parsed > 0 ? serials : nil",
          "return serials",
          "Cleanup: unparseable dump"),
+        ("Seal/Infrastructure/Installation/DeviceProfileInspector.swift",
+         "        let outcome = await DeviceProfileNativeCall.perform(\n"
+         "            operationCoordinator: operationCoordinator,\n"
+         "            seconds: BlockingCall.queryTimeoutSeconds\n"
+         "        ) {\n"
+         "            return try Self.readReferencedCertificateSerials(in: workingDir)",
+         "        let outcome = await BlockingCall.bounded(\n"
+         "            seconds: BlockingCall.queryTimeoutSeconds\n"
+         "        ) {\n"
+         "            return try Self.readReferencedCertificateSerials(in: workingDir)",
+         "Cleanup: device profile reference scan must use the shared bounded native-call gate"),
+        ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
+         "cancelsWorkOnTimeout: false",
+         "cancelsWorkOnTimeout: true",
+         "Cleanup: shared device native-call gate must retain its lease until non-cancellable FFI returns"),
         ("Seal/Features/Settings/SettingsViewModel.swift",
          "let targets = freshPlan.revocable.filter {",
          "let targets = plan.revocable.filter {",
