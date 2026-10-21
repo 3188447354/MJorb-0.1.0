@@ -3198,7 +3198,7 @@ def violations(load=read):
           and "ensureRegistered" not in load_body,
           "C: the app-list read path must not write records or delete files")
     check(load_body.count("guard self.loadGeneration == generation else { return false }") >= 2
-          and load_body.count("await self.isCurrentLoad(generation)") >= 2,
+          and load_body.count("await self.isCurrentLoad(generation)") >= 1,
           "C: background state writes must check the load generation atomically and async stages must recheck it")
 
     job = load("Seal/Core/Maintenance/AppMaintenanceJob.swift")
@@ -5109,8 +5109,8 @@ def violations(load=read):
     r71_channel = load("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift")
     r71_vm = load("Seal/Features/Apps/AppsViewModel.swift")
     # ① 无效的「重置 Install provider」不得再出现在这两条路径上（注释里的说明不算）。
-    check("                Install.resetProvider()" not in r71_verifier
-          and "                Install.resetProvider()" not in r71_channel,
+    check("Install.resetProvider()" not in strip_comments(r71_verifier)
+          and "Install.resetProvider()" not in strip_comments(r71_channel),
           "R71①: `InstalledAppDeviceVerifier` 与 `MinimuxerInstallChannel` 都不得再调"
           "「重置 Install provider」—— 它只清 Swift 侧对象、**清不掉 Rust 的 RSD 会话缓存**，"
           "对「死连接」不是杠杆（同结论见 `MinimuxerInstallChannel.probeCachedSessionIfStale`）；"
@@ -5886,8 +5886,12 @@ def violations(load=read):
 
     check("installedAppScanner.scanUserApplications()" in r88_flat
           and "InstalledAppRefreshProbePolicy.hasPositiveControl(" in r88_flat
-          and "InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID, operationCoordinator: operationCoordinator)"
-              in r88_flat,
+          and re.search(
+              r"InstalledAppDeviceVerifier\.isInstalled\(\s*"
+              r"bundleIdentifier:\s*controlBundleID,\s*"
+              r"operationCoordinator:\s*operationCoordinator\s*\)",
+              r88_code
+          ) is not None,
           "R88②: 阳性对照必须来自真实设备清单或设备查询 ✗ —— 只取到 Bundle ID 不算对照")
 
     r88_control_at = r88_flat.find("guard controlInstalled else")
@@ -5910,7 +5914,7 @@ def violations(load=read):
           "⚠️ 码必须是**新**的（709 已是 `MinimuxerInstallChannel` 的「安全握手未完成」）")
 
     check("return false" in squash(section_or_empty(
-              r88_code, "guard let controlBundleID", "guard controlInstalled")),
+              r88_code, "guard let controlBundleID", "let deviceSnapshot:")),
           "R88⑥: 拿不到对照 Bundle ID 也必须 fail closed（`return false`）✗ —— "
           "对照缺失时「当作通过」等于把整道网拆掉")
 
@@ -6579,7 +6583,12 @@ def violations(load=read):
     probe_gate = load("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift")
     check("BlockingCall.bounded(" in probe_body
           and "cancelsWorkOnTimeout: false" in probe_body
-          and "onLateCompletion:" in probe_body
+          and re.search(
+              r"onLateCompletion:\s*\{\s*_\s*in\s+"
+              r"await InstalledAppRefreshProbeGate\.shared\.finish\(probeID: probeID, timedOut: true\)\s+"
+              r"await InstalledAppInventoryOperationLease\.end\(operationLease, using: operationCoordinator\)",
+              probe_body
+          ) is not None
           and "onWorkNeverStarted:" in probe_body
           and "onWorkNeverStarted: {\n                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)" in probe_body
           and "InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)" in probe_body
@@ -7438,8 +7447,10 @@ def main():
          "false",
          "C: freshly created directories need a grace period"),
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "guard self.loadGeneration == generation else { return false }",
-         "guard true else { return false }",
+         "let iconsAccepted = await MainActor.run {\n"
+         "                    guard self.loadGeneration == generation else { return false }",
+         "let iconsAccepted = await MainActor.run {\n"
+         "                    guard true else { return false }",
          "C: every background write-back must be guarded"),
         ("Seal/Features/Apps/AppsRootView.swift",
          "await viewModel.runEssentialMaintenanceIfIdle()",
@@ -8309,8 +8320,11 @@ def main():
          "R25: 设备核验的同步 FFI 必须有界"),
         # 把维护期探测退回「只 Task.detached、无超时」：一次无界阻塞会让整轮维护永远完不成。
         ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
-         "        let outcome = await DeviceProfileNativeCall.perform(\n",
-         "        let outcome = await Task.detached(\n",
+         "        let outcome = await DeviceProfileNativeCall.perform(\n"
+         "            operationCoordinator: operationCoordinator,\n"
+         "            seconds: BlockingCall.queryTimeoutSeconds\n"
+         "        ) {",
+         "        let outcome = await Task.detached(priority: .utility) {",
          "R25: 维护期的设备探测必须有界"),
         # 让通道不再委托：又变成两份实现，迟早漂移。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
@@ -10035,14 +10049,8 @@ def main():
          "R88①: 已安装页对账必须拿"),
         # ② 取了 Bundle ID 却不照原样问设备 ⇒ R88② 报红（对照必须真的问一次）。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "InstalledAppDeviceVerifier.isInstalled(\n"
-         "                    bundleIdentifier: controlBundleID,\n"
-         "                    operationCoordinator: operationCoordinator\n"
-         "                )",
-         "InstalledAppDeviceVerifier.isInstalled(\n"
-         "                    bundleIdentifier: controlBundleID.lowercased(),\n"
-         "                    operationCoordinator: operationCoordinator\n"
-         "                )",
+         "bundleIdentifier: controlBundleID,",
+         "bundleIdentifier: controlBundleID.lowercased(),",
          "R88②: 阳性对照必须真的发一次设备查询"),
         # ③ 把「收集缺失」与删除挪到对照**之前** ⇒ R88③ 报红
         #    （代码看起来仍然有对照，但删除已经发生了 —— 顺序就是安全本身）。

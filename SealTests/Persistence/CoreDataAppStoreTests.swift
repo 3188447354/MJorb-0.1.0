@@ -190,8 +190,7 @@ struct CoreDataAppStoreTests {
         var existing = makeRecord(name: "Before")
         existing.state = .installed
         try await store.save(existing)
-        var promoted = existing
-        promoted.name = "After"
+        var promoted = makeRecord(id: existing.id, name: "After")
         promoted.state = .installed
 
         try await store.commitInstalledReplacement(promoted, replacing: existing.id)
