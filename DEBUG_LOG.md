@@ -4,7 +4,7 @@
 - **根因**：证书行重复展示当前账号已有的 Team ID，并将证书用途、日期、序列号和影响数分散为多行；R71③ 变异锚点仍按旧缩进匹配，R88④ 的守卫范围又包含后续的另一个 `return false`，把错误改动漏检。
 - **修复**：抽屉 detent 设为屏幕高度的 56%，由内容区独立滚动；证书行压成紧凑的名称/状态、有效期与序列号尾号、本机影响数三行；推荐证书置顶，默认最多展示三张，其余按需展开。R71③ 更新为当前源码缩进；R88④ 限定检查阳性对照失败分支本身。
 - **涉及文件**：`Seal/Features/Apps/CertificateSacrificePickerView.swift`、`Scripts/verify-release-safety.py`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
-- **验证状态**：未在 Windows 本机运行源码守卫或 Swift 测试；需重新推送完整 CI，确认变异自检通过并编译 IPA。真机检查抽屉初始高度、展开全部证书后的选择与确认流程。
+- **验证状态**：完整 CI `39557606872` 的 `build-package`、`swift-regression`、`signer-tests` 全部通过；发布 IPA 为 0.1.46 / Build 114，SHA-256 已核对，桌面副本位于 `Seal-IPA`。还需真机检查抽屉 56% 高度、展开全部证书后的选择与确认流程。
 
 # 2026-10-21 — 配对灵动岛提前结束并静默回退通知
 
@@ -15,7 +15,7 @@
 - **同批修复**：启动列表首次读取移到关键维护之后；本机完整快照与远程设备核验统一先做 Seal 阳性对照、收集完全部缺失项后才修改记录，避免不可信清单删记录；设备操作互斥的等待后检查改为非重复守卫形式，保持变异检查能锁定入口闸门。
 - **限制**：用户在 iOS 设置关闭 Seal 实时活动时，系统仍会拒绝创建；应用不能绕过系统开关，只能明确记录原因并使用通知回退。部分电脑签名器在显式描述文件模式会删除 `PlugIns`，移除 Live Activity 扩展；Seal 的 IPA 守卫只能确认发布产物签名前带有扩展，不能控制外部签名器处理后的安装包。需使用能签扩展的签名器和对应描述文件。
 - **涉及文件**：`Seal/Infrastructure/Pairing/PhonePairingHost.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealTests/Pairing/PhonePairingPresentationPolicyTests.swift`、`Scripts/verify-ipa.sh`、`Scripts/verify-release-safety.py`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`。
-- **验证状态**：待新一轮 CI；必须在真机确认手机配对等待超过 60 秒后仍保留灵动岛，并分别确认系统禁用/缺扩展时日志说明正确。Windows 本机不运行 Swift 测试或源码守卫。
+- **验证状态**：完整 CI `39557606872` 全部通过，CI IPA 已核实含 `SealLiveActivity.appex`。尚未真机验证配对等待超过 60 秒、系统禁用时的日志和电脑签名后的实际包；若外部签名器删除扩展，Seal 运行时无法恢复该扩展。
 
 # 2026-10-21 — 诊断日志耗时精度在落盘后丢失
 
