@@ -130,7 +130,7 @@ struct AppRecordRecoveryTests {
             Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
         )
 
-        let summary = await AppRecordRecovery(
+        let summary = try await AppRecordRecovery(
             appStore: environment.appStore,
             fileStore: environment.fileStore,
             deviceScanner: FakeInstalledAppScanner(
@@ -168,7 +168,7 @@ struct AppRecordRecoveryTests {
             selectedCertificateSerialNumber: "ABC123",
             lastVerifiedAt: Date()
         )
-        let summary = await AppRecordRecovery(
+        let summary = try await AppRecordRecovery(
             appStore: environment.appStore,
             fileStore: environment.fileStore,
             accountsProvider: { [account] },
