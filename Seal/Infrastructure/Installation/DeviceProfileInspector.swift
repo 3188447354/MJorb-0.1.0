@@ -29,15 +29,14 @@ struct DeviceProfileInspector: Sendable {
         using operationCoordinator: OperationCoordinator? = nil,
         onLateCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> ProfileServiceProbeOutcome {
-        let fileManager = FileManager.default
-        let workingDir = fileManager.temporaryDirectory
+        let workingDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("seal-profile-probe-\(UUID().uuidString)", isDirectory: true)
         let outcome = await DeviceProfileNativeCall.perform(
             operationCoordinator: operationCoordinator,
             seconds: 8,
             onNativeCompletion: onLateCompletion
         ) {
-            defer { try? fileManager.removeItem(at: workingDir) }
+            defer { try? FileManager.default.removeItem(at: workingDir) }
             _ = try Provision.dumpProfiles(docsPath: workingDir.path)
         }
         switch outcome {
@@ -65,18 +64,17 @@ struct DeviceProfileInspector: Sendable {
         using operationCoordinator: OperationCoordinator? = nil,
         onNativeCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> DeviceProfileNativeCall.Outcome<[Bool?]> {
-        let fileManager = FileManager.default
-        let workingDir = fileManager.temporaryDirectory
+        let workingDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("seal-profile-verify-\(UUID().uuidString)", isDirectory: true)
         return await DeviceProfileNativeCall.perform(
             operationCoordinator: operationCoordinator,
             seconds: 30,
             onNativeCompletion: onNativeCompletion
         ) {
-            defer { try? fileManager.removeItem(at: workingDir) }
+            defer { try? FileManager.default.removeItem(at: workingDir) }
 
             guard let dumpDir = try? Provision.dumpProfiles(docsPath: workingDir.path),
-                  let profileURLs = try? fileManager.contentsOfDirectory(
+                  let profileURLs = try? FileManager.default.contentsOfDirectory(
                     at: URL(fileURLWithPath: dumpDir),
                     includingPropertiesForKeys: nil,
                     options: [.skipsHiddenFiles]

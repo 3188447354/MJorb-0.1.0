@@ -1,3 +1,11 @@
+# 2026-10-21 — 设备扫描与描述文件并发修复的 Swift 回归编译失败
+
+- **现象**：CI `39595526309` 的 Swift 回归未能编译：扫描器实例方法调用静态 profile 摘要方法；设备维护闭包把非逃逸回调传给原生异步执行器；描述文件检查的 `@Sendable` 工作闭包捕获非 `Sendable` 的 `FileManager` 实例。
+- **根因**：共享设备 FFI 执行器会在原生调用晚于 Swift 等待返回时执行完成回调，因此回调确实需要逃逸；清理操作也需要将该回调沿维护租约闭包继续传递。扫描器的 `readProfileSummaries` 已是静态方法，调用点遗漏 `Self.`。`FileManager` 引用被闭包捕获，触发 Swift 6 严格并发检查。
+- **修复**：扫描器使用 `Self.readProfileSummaries()`；将原生完成回调及维护闭包的回调参数明确标为 `@escaping @Sendable`；在原生工作闭包内直接访问 `FileManager.default`，不捕获管理器实例。
+- **涉及文件**：`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`Seal/Infrastructure/Installation/DeviceProfileCleaner.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、`DEBUG_LOG.md`。
+- **验证状态**：根因由 CI Swift 编译诊断定位，改动后已做差异与空白检查；尚未由 CI 重新编译，等待下一轮 Swift 回归。
+
 # 2026-10-21 — CI 静态守卫未跟上设备单飞封装
 
 - **现象**：CI `39587187268`、`39587359644`、`39588014206`、`39588262215`、`39588505991` 的 `build-package` 依次在静态守卫或变异自检失败，均发生在 IPA 构建之前；已发现锚点和调用模型过期、断言顺序错误，以及一条 R130 变异样本锚点过期。

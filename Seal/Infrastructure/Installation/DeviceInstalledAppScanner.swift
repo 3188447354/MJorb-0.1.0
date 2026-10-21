@@ -140,7 +140,7 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             }
         ) {
-            readProfileSummaries()
+            Self.readProfileSummaries()
         }
         guard let outcome else { return nil }
         await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)

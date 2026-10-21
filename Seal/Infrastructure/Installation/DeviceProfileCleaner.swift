@@ -29,7 +29,7 @@ enum DeviceProfileNativeCall {
         gate: InstalledAppRefreshProbeGate = .shared,
         operationCoordinator: OperationCoordinator? = nil,
         seconds: Double = BlockingCall.queryTimeoutSeconds,
-        onNativeCompletion: @Sendable () async -> Void = {},
+        onNativeCompletion: @escaping @Sendable () async -> Void = {},
         _ work: @Sendable @escaping () throws -> T
     ) async -> Outcome<T> {
         let probeID: UUID
@@ -771,7 +771,7 @@ extension DeviceProfileCleaner: StaleProfileSweeping {
     }
 
     private func withDeviceProfileMaintenanceLease(
-        _ operation: (@Sendable () async -> Void) async -> ProfileCleanupSummary
+        _ operation: (@escaping @Sendable () async -> Void) async -> ProfileCleanupSummary
     ) async -> ProfileCleanupSummary {
         guard let operationCoordinator else { return await operation({}) }
         guard let lease = await operationCoordinator.begin(.managingDeviceProfiles) else {
