@@ -78,8 +78,7 @@ struct RenewalRoundItem: Codable, Equatable, Sendable {
 
     let appName: String
     let outcome: Outcome
-    /// 真实耗时（秒）。`processItem` 里取两个 `Date()` 算得，
-    /// 约百纳秒开销，不增加续签时长（要求 8）。
+    /// 真实耗时（秒），由单调时钟测量，避免系统时间变化影响结果。
     let duration: TimeInterval
     /// 成功时新描述文件的到期时间（用户要看"有效期至"）
     let profileExpirationDate: Date?
@@ -102,15 +101,43 @@ struct RenewalRoundSummary: Codable, Equatable, Sendable {
     let startedAt: Date
     let endedAt: Date
     let items: [RenewalRoundItem]
+    /// 持久化的真实耗时。ISO-8601 日期编码会丢弃 Date 的亚秒部分，不能用解码后的起止时间重算。
+    let measuredDuration: TimeInterval?
 
-    var totalDuration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
+    init(
+        roundNumber: Int,
+        triggerSource: RenewalTriggerSource,
+        operation: RenewalRoundOperation,
+        startedAt: Date,
+        endedAt: Date,
+        items: [RenewalRoundItem],
+        measuredDuration: TimeInterval? = nil
+    ) {
+        self.roundNumber = roundNumber
+        self.triggerSource = triggerSource
+        self.operation = operation
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.items = items
+        self.measuredDuration = max(0, measuredDuration ?? endedAt.timeIntervalSince(startedAt))
+    }
+
+    var totalDuration: TimeInterval {
+        max(0, measuredDuration ?? endedAt.timeIntervalSince(startedAt))
+    }
     var succeededCount: Int { items.filter { $0.outcome == .succeeded }.count }
     var failedCount: Int { items.filter { $0.outcome == .failed }.count }
     var needsActionCount: Int { items.filter { $0.outcome == .needsAction }.count }
     var awaitingCount: Int { items.filter { $0.outcome == .awaitingConfirmation }.count }
 
-    static func sealUpdate(startedAt: Date, endedAt: Date, expirationDate: Date) -> Self {
-        Self(
+    static func sealUpdate(
+        startedAt: Date,
+        endedAt: Date,
+        expirationDate: Date,
+        measuredDuration: TimeInterval? = nil
+    ) -> Self {
+        let duration = max(0, measuredDuration ?? endedAt.timeIntervalSince(startedAt))
+        return Self(
             roundNumber: 0,
             triggerSource: .manual,
             operation: .singleUpdate,
@@ -120,13 +147,14 @@ struct RenewalRoundSummary: Codable, Equatable, Sendable {
                 RenewalRoundItem(
                     appName: "Seal",
                     outcome: .succeeded,
-                    duration: endedAt.timeIntervalSince(startedAt),
+                    duration: duration,
                     profileExpirationDate: expirationDate,
                     failureCode: nil,
                     failureReason: nil,
                     failureRecovery: nil
                 )
-            ]
+            ],
+            measuredDuration: duration
         )
     }
 

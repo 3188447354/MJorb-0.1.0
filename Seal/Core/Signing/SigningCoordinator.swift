@@ -2340,8 +2340,13 @@ actor SigningCoordinator {
 
         // 对齐官方 idevice：安装/校验以「成品包内 Info.plist 的真实 Bundle ID」为准，
         // 外部计算值仅在包内回读失败时回退，消除暂存路径 / ClientOptions / 包内 ID 不一致。
-        let effectiveBundleID = SignedArtifactBundleIDReader.bundleIdentifier(in: sharedArchive)
+        let mainInfoDictionary = SignedArtifactBundleIDReader.mainInfoDictionary(in: sharedArchive)
+        let packageBundleIdentifier = mainInfoDictionary?["CFBundleIdentifier"] as? String
+        let effectiveBundleID = packageBundleIdentifier.flatMap { $0.isEmpty ? nil : $0 }
             ?? bundleIdentifier
+        let installedAppMarkerVersion = mainInfoDictionary.flatMap {
+            SealInstalledAppMarker.markerVersion(in: $0, for: effectiveBundleID)
+        }
         // 非标准包上回读值可能与外部计算值不同：以装到设备上的真实 ID 为准回写记录，
         // 否则后续续签用旧计算值做 lookup 会找不到应用，陷入重复签名。
         if effectiveBundleID != bundleIdentifier {
@@ -2500,6 +2505,7 @@ actor SigningCoordinator {
                         attemptID: installAttemptID,
                         bundleIdentifier: effectiveBundleID,
                         expirationDate: expirationDate,
+                        installedAppMarkerVersion: installedAppMarkerVersion,
                         result: result
                     )
                 }
@@ -2511,6 +2517,7 @@ actor SigningCoordinator {
 
             updated.state = .installed
             updated.signedArtifactStatus = .installed
+            updated.installedAppMarkerVersion = installedAppMarkerVersion
             updated.lastInstallFailureCode = nil
             updated.lastInstallFailureReason = nil
             updated.hasPendingSelfUpdateSource = false
@@ -2583,6 +2590,7 @@ actor SigningCoordinator {
         attemptID: UUID,
         bundleIdentifier: String,
         expirationDate: Date,
+        installedAppMarkerVersion: Int?,
         result: Result<Void, HardTimeout.LateCompletionError>
     ) async {
         guard var app = try? await appStore.fetchAll().first(where: { $0.id == appID }),
@@ -2609,6 +2617,7 @@ actor SigningCoordinator {
 
             app.state = .installed
             app.signedArtifactStatus = .installed
+            app.installedAppMarkerVersion = installedAppMarkerVersion
             app.lastInstallFailureCode = nil
             app.lastInstallFailureReason = nil
             app.hasPendingSelfUpdateSource = false

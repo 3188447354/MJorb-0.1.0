@@ -122,7 +122,7 @@ actor SealLogStore {
             message: LogPrivacyRedactor.redact(entry.message),
             code: entry.code.map(LogPrivacyRedactor.redact),
             operationResult: entry.operationResult,
-            operationSummary: entry.operationSummary.map(Self.redacted)
+            operationSummary: LogViewerPolicy.operationSummary(for: entry).map(Self.redacted)
         )
     }
 
@@ -143,7 +143,8 @@ actor SealLogStore {
                     failureReason: item.failureReason.map(LogPrivacyRedactor.redact),
                     failureRecovery: item.failureRecovery.map(LogPrivacyRedactor.redact)
                 )
-            }
+            },
+            measuredDuration: summary.measuredDuration
         )
     }
 

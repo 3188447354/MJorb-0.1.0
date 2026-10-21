@@ -314,7 +314,8 @@ actor RenewalCoordinator {
         // 第一轮的旧值，把"需自替换确认"误判成"普通成功"。
         renewalExecutionPaths.removeAll()
 
-        // 轮次计时：首尾各取一次 Date()，约百纳秒，不增加续签耗时（要求 8）。
+        // Date 仅供日志显示；耗时单独用单调时钟测量，避免系统校时影响计数。
+        let roundStartUptime = ProcessInfo.processInfo.systemUptime
         let roundStart = Date()
         let roundNumber = Self.nextRoundNumber()
 
@@ -428,6 +429,7 @@ actor RenewalCoordinator {
         // 按原队列顺序排好，拼字符串在后台做，不增加续签耗时。
         // 技术层（诊断码/逐项日志）已由各处的 SEAL-RENEW-020/503 等单独记录，
         // 这里只写人话总结；导出时两者同源（SealLogStore）。
+        let roundDuration = max(0, ProcessInfo.processInfo.systemUptime - roundStartUptime)
         let roundEnd = Date()
         let sortedItems = roundItems.sorted { $0.offset < $1.offset }.map(\.item)
         let summary = RenewalRoundSummary(
@@ -436,7 +438,8 @@ actor RenewalCoordinator {
             operation: .batchRenewal,
             startedAt: roundStart,
             endedAt: roundEnd,
-            items: sortedItems
+            items: sortedItems,
+            measuredDuration: roundDuration
         )
         let hasFailure = summary.failedCount > 0 || summary.needsActionCount > 0
         let operationResult: SealLogEntry.OperationResult
@@ -479,8 +482,8 @@ actor RenewalCoordinator {
         progress: @escaping @Sendable (BatchRefreshEvent) async -> Void
     ) async throws -> (outcome: ProcessItemOutcome, roundItem: RenewalRoundItem) {
         try Task.checkCancellation()
-        // 单项计时：首尾各一次 Date()，约百纳秒（要求 8）。
-        let itemStart = Date()
+        // 单项计时使用单调时钟；Date 只负责日志时间戳。
+        let itemStartUptime = ProcessInfo.processInfo.systemUptime
         // ── App 记录透传（性能优化 2026-10-04）──
         // process() 轮次开始时已查一次全表建字典，这里直接取，省 8N+3 次 CoreData 查询。
         // 重试时按需单条刷新（记录可能被改写）。
@@ -503,7 +506,7 @@ actor RenewalCoordinator {
             let roundItem = RenewalRoundItem(
                 appName: appName,
                 outcome: .needsAction,
-                duration: Date().timeIntervalSince(itemStart),
+                duration: max(0, ProcessInfo.processInfo.systemUptime - itemStartUptime),
                 profileExpirationDate: nil,
                 failureCode: failure.code,
                 failureReason: failure.reason,
@@ -521,7 +524,7 @@ actor RenewalCoordinator {
             let roundItem = RenewalRoundItem(
                 appName: appName,
                 outcome: .failed,
-                duration: Date().timeIntervalSince(itemStart),
+                duration: max(0, ProcessInfo.processInfo.systemUptime - itemStartUptime),
                 profileExpirationDate: nil,
                 failureCode: failure.code,
                 failureReason: failure.reason,
@@ -716,7 +719,7 @@ actor RenewalCoordinator {
                 let roundItem = RenewalRoundItem(
                     appName: updated.name,
                     outcome: .awaitingConfirmation,
-                    duration: Date().timeIntervalSince(itemStart),
+                    duration: max(0, ProcessInfo.processInfo.systemUptime - itemStartUptime),
                     profileExpirationDate: nil,
                     failureCode: nil,
                     failureReason: nil,
@@ -751,7 +754,7 @@ actor RenewalCoordinator {
             let roundItem = RenewalRoundItem(
                 appName: updated.name,
                 outcome: .succeeded,
-                duration: Date().timeIntervalSince(itemStart),
+                duration: max(0, ProcessInfo.processInfo.systemUptime - itemStartUptime),
                 profileExpirationDate: updated.provisioningProfileExpirationDate ?? updated.expiryDate,
                 failureCode: nil,
                 failureReason: nil,
@@ -776,7 +779,7 @@ actor RenewalCoordinator {
             let roundItem = RenewalRoundItem(
                 appName: appName,
                 outcome: .failed,
-                duration: Date().timeIntervalSince(itemStart),
+                duration: max(0, ProcessInfo.processInfo.systemUptime - itemStartUptime),
                 profileExpirationDate: nil,
                 failureCode: failure.code,
                 failureReason: failure.reason,
@@ -789,7 +792,7 @@ actor RenewalCoordinator {
         let roundItem = RenewalRoundItem(
             appName: appName,
             outcome: .failed,
-            duration: Date().timeIntervalSince(itemStart),
+            duration: max(0, ProcessInfo.processInfo.systemUptime - itemStartUptime),
             profileExpirationDate: nil,
             failureCode: "SEAL-RENEW-404",
             failureReason: "续签时未找到这个应用的本地记录，它可能已被删除。",

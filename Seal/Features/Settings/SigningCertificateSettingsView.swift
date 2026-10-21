@@ -106,20 +106,20 @@ struct SigningCertificateSettingsView: View {
     }
 
     private func refreshInstalledBundleIdentifiers() async {
-        guard let controlBundleIdentifier = Bundle.main.bundleIdentifier,
-              let snapshot = await InstalledAppScanner().scanAllSnapshot(),
-              InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
+        if let controlBundleIdentifier = Bundle.main.bundleIdentifier,
+           let snapshot = await InstalledAppScanner().scanAllSnapshot(),
+           InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
                 controlBundleIdentifier: controlBundleIdentifier,
                 installedBundleIdentifiers: snapshot.map(\.bundleIdentifier)
-              ) else {
-            installedBundleIdentifiers = nil
+           ) {
+            installedBundleIdentifiers = Set(
+                snapshot.compactMap {
+                    InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+                }
+            )
             return
         }
-        installedBundleIdentifiers = Set(
-            snapshot.compactMap {
-                InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
-            }
-        )
+        installedBundleIdentifiers = await viewModel.scanInstalledAppBundleIdentifiers(for: relatedApps)
     }
 
     private var selectableAccounts: [AppleAccountRecord] {

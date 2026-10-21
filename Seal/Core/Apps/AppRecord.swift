@@ -33,6 +33,8 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     var signedIPAFileSize: Int64?
     var signedIPAModificationDate: Date?
     var signedArtifactStatus: SignedArtifactStatus?
+    /// 已安装包内独立 UTI 标记的版本；nil 表示旧包或非 Seal 签名安装。
+    var installedAppMarkerVersion: Int?
     var preferredBundleIdentifier: String?
     var preferredDisplayName: String?
     var preferredIconRelativePath: String?
@@ -95,6 +97,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         signedIPAFileSize: Int64? = nil,
         signedIPAModificationDate: Date? = nil,
         signedArtifactStatus: SignedArtifactStatus? = nil,
+        installedAppMarkerVersion: Int? = nil,
         preferredBundleIdentifier: String? = nil,
         preferredDisplayName: String? = nil,
         preferredIconRelativePath: String? = nil,
@@ -144,6 +147,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         self.signedIPAFileSize = signedIPAFileSize
         self.signedIPAModificationDate = signedIPAModificationDate
         self.signedArtifactStatus = signedArtifactStatus
+        self.installedAppMarkerVersion = installedAppMarkerVersion
         self.preferredBundleIdentifier = preferredBundleIdentifier
         self.preferredDisplayName = preferredDisplayName
         self.preferredIconRelativePath = preferredIconRelativePath
@@ -195,6 +199,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         case signedIPAFileSize
         case signedIPAModificationDate
         case signedArtifactStatus
+        case installedAppMarkerVersion
         case preferredBundleIdentifier
         case preferredDisplayName
         case preferredIconRelativePath
@@ -253,6 +258,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
         signedIPAFileSize = try container.decodeIfPresent(Int64.self, forKey: .signedIPAFileSize)
         signedIPAModificationDate = try container.decodeIfPresent(Date.self, forKey: .signedIPAModificationDate)
         signedArtifactStatus = try container.decodeIfPresent(SignedArtifactStatus.self, forKey: .signedArtifactStatus)
+        installedAppMarkerVersion = try container.decodeIfPresent(Int.self, forKey: .installedAppMarkerVersion)
         preferredBundleIdentifier = try container.decodeIfPresent(String.self, forKey: .preferredBundleIdentifier)
         preferredDisplayName = try container.decodeIfPresent(String.self, forKey: .preferredDisplayName)
         preferredIconRelativePath = try container.decodeIfPresent(String.self, forKey: .preferredIconRelativePath)

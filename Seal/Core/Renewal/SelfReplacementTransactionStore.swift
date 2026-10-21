@@ -47,6 +47,7 @@ actor SelfReplacementTransactionStore {
                 schemaVersion: 1,
                 id: legacy.id,
                 createdAt: legacy.automaticRecoveryAttemptedAt ?? .distantPast,
+                createdAtSystemUptime: nil,
                 updatedAt: Date(),
                 accountID: legacy.accountID,
                 preparedProcessID: legacy.preparedInProcess,

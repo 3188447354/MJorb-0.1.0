@@ -146,6 +146,7 @@ final class AppsViewModel: ObservableObject {
     private let backgroundRenewalNotifier: BackgroundRenewalNotifier?
     private let signingPreferenceStore: SigningPreferenceStore?
     private let operationCoordinator: OperationCoordinator?
+    private let installedAppScanner: (any InstalledAppScanning)?
     private let maintenanceJob: AppMaintenanceJob?
     private var signingTask: Task<Void, Never>?
     private var batchRefreshTask: Task<Void, Never>?
@@ -210,6 +211,7 @@ final class AppsViewModel: ObservableObject {
         backgroundRenewalNotifier: BackgroundRenewalNotifier? = nil,
         signingPreferenceStore: SigningPreferenceStore,
         operationCoordinator: OperationCoordinator? = nil,
+        installedAppScanner: (any InstalledAppScanning)? = nil,
         maintenanceJob: AppMaintenanceJob? = nil
     ) {
         self.workflow = workflow
@@ -227,6 +229,7 @@ final class AppsViewModel: ObservableObject {
         self.backgroundRenewalNotifier = backgroundRenewalNotifier
         self.signingPreferenceStore = signingPreferenceStore
         self.operationCoordinator = operationCoordinator
+        self.installedAppScanner = installedAppScanner
         self.maintenanceJob = maintenanceJob
         apps = []
         accounts = []
@@ -263,6 +266,7 @@ final class AppsViewModel: ObservableObject {
         backgroundRenewalNotifier = nil
         signingPreferenceStore = nil
         operationCoordinator = nil
+        installedAppScanner = nil
         maintenanceJob = nil
         apps = []
         accounts = []
@@ -291,6 +295,7 @@ final class AppsViewModel: ObservableObject {
         backgroundRenewalNotifier = nil
         signingPreferenceStore = nil
         operationCoordinator = nil
+        installedAppScanner = nil
         maintenanceJob = nil
         self.apps = apps
         accounts = []
@@ -825,19 +830,21 @@ final class AppsViewModel: ObservableObject {
     }
 
     /// 单项签名与单项续签写入和「续签全部」相同的轮次语法。
-    /// 日志页/导出页只解析这一份格式，耗时取真实起止时间，不做预估。
+    /// 日志页/导出页只解析这一份格式，耗时取单调时钟实测值。
     private func appendSingleOperationRound(
         operation: RenewalRoundOperation,
         app: AppRecord,
         startedAt: Date,
+        startedAtUptime: TimeInterval,
         outcome: RenewalRoundItem.Outcome,
         failure: ImportFailure? = nil
     ) async {
+        let duration = max(0, ProcessInfo.processInfo.systemUptime - startedAtUptime)
         let endedAt = Date()
         let item = RenewalRoundItem(
             appName: app.name,
             outcome: outcome,
-            duration: endedAt.timeIntervalSince(startedAt),
+            duration: duration,
             profileExpirationDate: outcome == .succeeded
                 ? (app.provisioningProfileExpirationDate ?? app.expiryDate)
                 : nil,
@@ -851,7 +858,8 @@ final class AppsViewModel: ObservableObject {
             operation: operation,
             startedAt: startedAt,
             endedAt: endedAt,
-            items: [item]
+            items: [item],
+            measuredDuration: duration
         )
         let hasFailure = outcome == .failed || outcome == .needsAction
         let category: SealLogEntry.Category
@@ -914,17 +922,17 @@ final class AppsViewModel: ObservableObject {
             installedAppRefreshPendingAfterOperation = true
             return
         }
-        let localSnapshotChanged = await reconcileInstalledAppsFromLocalSnapshot()
+        let localReconciliation = await reconcileInstalledAppsFromLocalSnapshot()
         guard operationCoordinator?.activeLease == nil else {
             installedAppRefreshPendingAfterOperation = true
             return
         }
         let changed: Bool
-        if let localSnapshotChanged {
-            changed = duplicateChanged || localSnapshotChanged
+        if localReconciliation.isComplete {
+            changed = duplicateChanged || localReconciliation.changed
         } else {
             let deviceChanged = await reconcileInstalledAppsWithDevice(userInitiated: userInitiated)
-            changed = duplicateChanged || deviceChanged
+            changed = duplicateChanged || localReconciliation.changed || deviceChanged
         }
         if changed {
             await load(force: true)
@@ -933,18 +941,22 @@ final class AppsViewModel: ObservableObject {
 
     /// 本机 LaunchServices 清单不依赖 Wi-Fi / LocalDevVPN，能直接确认外部卸载。
     /// `nil` 表示快照不可用或为空，此时保留旧路径的远程核验兜底。
-    private func reconcileInstalledAppsFromLocalSnapshot() async -> Bool? {
-        guard let controlBundleIdentifier = Bundle.main.bundleIdentifier else { return nil }
+    private func reconcileInstalledAppsFromLocalSnapshot() async -> (isComplete: Bool, changed: Bool) {
+        guard let controlBundleIdentifier = Bundle.main.bundleIdentifier else { return (false, false) }
         let scanner = InstalledAppScanner()
-        guard let snapshot = await scanner.scanAllSnapshot() else { return nil }
+        guard let snapshot = await scanner.scanAllSnapshot() else {
+            return await reconcileInstalledAppsFromMarkers()
+        }
 
         let snapshotBundleIdentifiers = snapshot.map(\.bundleIdentifier)
         guard InstalledAppRefreshProbePolicy.canUseLocalSnapshot(
             controlBundleIdentifier: controlBundleIdentifier,
             installedBundleIdentifiers: snapshotBundleIdentifiers
-        ) else { return nil }
+        ) else {
+            return await reconcileInstalledAppsFromMarkers()
+        }
 
-        guard operationCoordinator?.activeLease == nil else { return nil }
+        guard operationCoordinator?.activeLease == nil else { return (false, false) }
         let installedBundleIdentifiers = Set(
             snapshotBundleIdentifiers.compactMap {
                 InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0)
@@ -962,7 +974,7 @@ final class AppsViewModel: ObservableObject {
         }
         guard operationCoordinator?.activeLease == nil else {
             installedAppRefreshPendingAfterOperation = true
-            return nil
+            return (false, false)
         }
 
         var changed = false
@@ -970,7 +982,31 @@ final class AppsViewModel: ObservableObject {
             let didMarkMissing = await markMissingOnDevice(app)
             changed = changed || didMarkMissing
         }
-        return changed
+        return (true, changed)
+    }
+
+    /// SideStore-style per-app UTI markers make new Seal installs locally verifiable
+    /// even when LaunchServices enumeration and the paired-device tunnel are unavailable.
+    /// Legacy records still require a complete inventory because older Seal builds used one shared UTI.
+    private func reconcileInstalledAppsFromMarkers() async -> (isComplete: Bool, changed: Bool) {
+        guard operationCoordinator?.activeLease == nil else { return (false, false) }
+        let candidates = installedApps.filter { $0.isSeal == false }
+        guard candidates.allSatisfy({ $0.installedAppMarkerVersion == SealInstalledAppMarker.version }) else {
+            return (false, false)
+        }
+        let missingOnDevice = candidates.filter { app in
+            guard let bundleIdentifier = installedBundleIdentifier(for: app) else { return false }
+            return SealInstalledAppMarker.isDeclared(for: bundleIdentifier) == false
+        }
+        guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
+            return (false, false)
+        }
+        var changed = false
+        for app in missingOnDevice {
+            changed = await markMissingOnDevice(app) || changed
+        }
+        return (true, changed)
     }
 
     private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {
@@ -1005,6 +1041,42 @@ final class AppsViewModel: ObservableObject {
         var mutations = [await removeDuplicateInstalledRecords(installedRecords)]
 
         do {
+            if let deviceSnapshot = await installedAppScanner?.scanUserApplications() {
+                let deviceBundleIdentifiers = Set(deviceSnapshot.compactMap {
+                    InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+                })
+                guard InstalledAppRefreshProbePolicy.hasPositiveControl(
+                    controlBundleIdentifier: Bundle.main.bundleIdentifier ?? "",
+                    installedBundleIdentifiers: Array(deviceBundleIdentifiers)
+                ) else {
+                    try? await logStore?.append(
+                        category: .system,
+                        level: .warning,
+                        message: "已安装页设备清单核验中止：设备清单未包含正在运行的 Seal，本轮未移除记录。",
+                        code: "SEAL-INSTALL-739"
+                    )
+                    return InstalledAppRefreshPolicy.requiresReload(after: mutations)
+                }
+                guard operationCoordinator?.activeLease == nil else {
+                    installedAppRefreshPendingAfterOperation = true
+                    return InstalledAppRefreshPolicy.requiresReload(after: mutations)
+                }
+                let missingOnDevice = installedRecords.filter { app in
+                    guard app.isSeal == false,
+                          let bundleIdentifier = installedBundleIdentifier(for: app) else {
+                        return false
+                    }
+                    return InstalledAppRefreshProbePolicy.contains(
+                        bundleIdentifier,
+                        in: deviceBundleIdentifiers
+                    ) == false
+                }
+                for app in missingOnDevice {
+                    mutations.append(await markMissingOnDevice(app))
+                }
+                return InstalledAppRefreshPolicy.requiresReload(after: mutations)
+            }
+
             // 🔴 **阳性对照**（2026-09-26，构建 49 真机复盘）。拿正在运行的 Seal 自己先问一次，
             // 答不出来就整轮不删。姊妹路径（`DeviceInstalledAppScanner`、`DeviceProfileCleaner`）
             // 都有这一步，唯独这里漏了 —— 而它们调的是**同一个** `Minimuxer.isAppInstalled`。
@@ -2156,6 +2228,7 @@ final class AppsViewModel: ObservableObject {
         defer { releaseOperation(operationLease) }
         installingCachedPackageAppID = app.id
         defer { installingCachedPackageAppID = nil }
+        let operationStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let operationStartedAt = Date()
         let installOperation: RenewalRoundOperation = app.replacesInstalledAppID == nil
             ? .singleInstallation : .singleUpdate
@@ -2173,6 +2246,7 @@ final class AppsViewModel: ObservableObject {
                 operation: installOperation,
                 app: installed,
                 startedAt: operationStartedAt,
+                startedAtUptime: operationStartedAtUptime,
                 outcome: .succeeded
             )
             await cleanTemporaryFilesIfNeeded(appID: app.id)
@@ -2184,6 +2258,7 @@ final class AppsViewModel: ObservableObject {
                 operation: installOperation,
                 app: app,
                 startedAt: operationStartedAt,
+                startedAtUptime: operationStartedAtUptime,
                 outcome: .failed,
                 failure: failure
             )
@@ -2196,6 +2271,7 @@ final class AppsViewModel: ObservableObject {
                 operation: installOperation,
                 app: app,
                 startedAt: operationStartedAt,
+                startedAtUptime: operationStartedAtUptime,
                 outcome: .failed,
                 failure: failure
             )
@@ -3382,6 +3458,7 @@ final class AppsViewModel: ObservableObject {
             return
         }
         defer { releaseOperation(operationLease) }
+        let operationStartedAtUptime = ProcessInfo.processInfo.systemUptime
         let operationStartedAt = Date()
         let attemptedBundleIdentifier = try? BundleIDPolicy.targetBundleIdentifier(
             for: app,
@@ -3414,6 +3491,7 @@ final class AppsViewModel: ObservableObject {
                 operation: singleOperation,
                 app: completed,
                 startedAt: operationStartedAt,
+                startedAtUptime: operationStartedAtUptime,
                 outcome: .succeeded
             )
             // 签名/续签完成立即强制镜像日志，让日志页立马能看到。
@@ -3440,6 +3518,7 @@ final class AppsViewModel: ObservableObject {
                 operation: singleOperation,
                 app: app,
                 startedAt: operationStartedAt,
+                startedAtUptime: operationStartedAtUptime,
                 outcome: .failed,
                 failure: failure
             )
@@ -3471,6 +3550,7 @@ final class AppsViewModel: ObservableObject {
                 operation: singleOperation,
                 app: app,
                 startedAt: operationStartedAt,
+                startedAtUptime: operationStartedAtUptime,
                 outcome: .failed,
                 failure: failure
             )

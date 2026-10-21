@@ -183,6 +183,7 @@ final class SettingsViewModel: ObservableObject {
     private let pairingStore: PairingStore?
     private let installChannel: (any InstallChannel)?
     private let pairingTunnelProbe: any VPNOnDemandActivating
+    private let installedAppScanner: (any InstalledAppScanning)?
     private let appStore: (any AppStore)?
     private let fileStore: AppFileStore?
     private let logStore: SealLogStore?
@@ -225,6 +226,7 @@ final class SettingsViewModel: ObservableObject {
         anisetteEnvironment: any AnisetteEnvironmentManaging,
         signingPreferenceStore: SigningPreferenceStore,
         operationCoordinator: OperationCoordinator? = nil,
+        installedAppScanner: (any InstalledAppScanning)? = nil,
         selfReplacementStore: SelfReplacementTransactionStore? = nil,
         certificateRecoveryJournal: CertificateRecoveryJournalStore? = nil,
         pairingTunnelProbe: any VPNOnDemandActivating = LocalDevVPNOnDemandActivator()
@@ -236,6 +238,7 @@ final class SettingsViewModel: ObservableObject {
         self.pairingStore = pairingStore
         self.installChannel = installChannel
         self.pairingTunnelProbe = pairingTunnelProbe
+        self.installedAppScanner = installedAppScanner
         self.appStore = appStore
         self.fileStore = fileStore
         self.logStore = logStore
@@ -270,6 +273,7 @@ final class SettingsViewModel: ObservableObject {
         pairingStore = nil
         installChannel = nil
         pairingTunnelProbe = LocalDevVPNOnDemandActivator()
+        installedAppScanner = nil
         appStore = nil
         fileStore = nil
         logStore = nil
@@ -295,6 +299,7 @@ final class SettingsViewModel: ObservableObject {
         pairingStore = nil
         installChannel = nil
         pairingTunnelProbe = LocalDevVPNOnDemandActivator()
+        installedAppScanner = nil
         appStore = nil
         fileStore = nil
         logStore = nil
@@ -322,6 +327,38 @@ final class SettingsViewModel: ObservableObject {
                 return true
             }()
         )
+    }
+
+    func scanInstalledAppBundleIdentifiers(for candidates: [AppRecord]) async -> Set<String>? {
+        guard operationCoordinator?.activeLease == nil else { return nil }
+        let potentialInstalledApps = candidates.filter { $0.belongsInInstalledList && $0.isSeal == false }
+        if potentialInstalledApps.allSatisfy({
+            $0.installedAppMarkerVersion == SealInstalledAppMarker.version
+        }) {
+            return Set(potentialInstalledApps.compactMap { app in
+                let bundleIdentifier = app.mappedBundleIdentifier
+                    ?? app.preferredBundleIdentifier
+                    ?? app.originalBundleIdentifier
+                guard SealInstalledAppMarker.isDeclared(for: bundleIdentifier) else { return nil }
+                return InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(bundleIdentifier)
+            })
+        }
+
+        if let installedAppScanner,
+           let controlBundleIdentifier = Bundle.main.bundleIdentifier,
+           let applications = await installedAppScanner.scanUserApplications(),
+           operationCoordinator?.activeLease == nil {
+            let bundleIdentifiers = Set(applications.compactMap {
+                InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+            })
+            if InstalledAppRefreshProbePolicy.hasPositiveControl(
+                controlBundleIdentifier: controlBundleIdentifier,
+                installedBundleIdentifiers: Array(bundleIdentifiers)
+            ) {
+                return bundleIdentifiers
+            }
+        }
+        return nil
     }
 
     func load(force: Bool = false) async {

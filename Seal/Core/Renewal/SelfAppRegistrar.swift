@@ -16,8 +16,9 @@ actor SelfAppRegistrar {
     // 固定 ID，确保 Seal 记录和文件夹路径始终一致，不会出现多个文件夹
     private let fixedSealID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
 
-    // 防重入：确保同时只有一个注册流程在执行
-    private var isRegistering = false
+    // 启动 .task 与 scenePhase 回前台可能同时触发注册。并发调用必须等待同一轮完成，
+    // 否则较早返回的调用会让维护层误发“已同步”通知，界面仍读取旧版本记录。
+    private var registrationTask: Task<Void, Error>?
 
     init(
         metadata: SelfAppMetadata,
@@ -44,10 +45,23 @@ actor SelfAppRegistrar {
     }
 
     func ensureRegistered() async throws {
-        guard isRegistering == false else { return }
-        isRegistering = true
-        defer { isRegistering = false }
+        if let registrationTask {
+            try await registrationTask.value
+            return
+        }
 
+        let task = Task { try await self.registerIfNeeded() }
+        registrationTask = task
+        do {
+            try await task.value
+            registrationTask = nil
+        } catch {
+            registrationTask = nil
+            throw error
+        }
+    }
+
+    private func registerIfNeeded() async throws {
         var records = try await appStore.fetchAll()
         let accounts = try await accountRepository.fetchAll()
         var existing = SelfAppRecordSelection.preferredExistingSealRecord(
@@ -355,10 +369,19 @@ actor SelfAppRegistrar {
             await settlePendingBatchSealResult(to: .completed)
             if let main = settled.installedIdentity.mainTarget {
                 let expiry = SealLogTextFormatter.diagnosticTimestamp(main.profileExpirationDate)
+                let measuredDuration: TimeInterval?
+                if let startedAt = settled.transactionStartedAtSystemUptime,
+                   let endedAt = settled.installedIdentityReadAtSystemUptime,
+                   endedAt >= startedAt {
+                    measuredDuration = endedAt - startedAt
+                } else {
+                    measuredDuration = nil
+                }
                 let summary = RenewalRoundSummary.sealUpdate(
                     startedAt: settled.transactionStartedAt,
                     endedAt: settled.installedIdentityReadAt,
-                    expirationDate: main.profileExpirationDate
+                    expirationDate: main.profileExpirationDate,
+                    measuredDuration: measuredDuration
                 )
                 try? await logStore?.append(
                     category: .installation,
@@ -454,6 +477,9 @@ actor SelfAppRegistrar {
         updated.signingTeamID = main.teamIdentifier
         updated.state = .installed
         updated.signedArtifactStatus = .installed
+        updated.installedAppMarkerVersion = Bundle.main.bundleIdentifier.flatMap { bundleIdentifier in
+            SealInstalledAppMarker.isDeclared(for: bundleIdentifier) ? SealInstalledAppMarker.version : nil
+        }
         updated.accountID = SelfAppAccountBinding.resolvedAccountID(
             teamIdentifier: main.teamIdentifier,
             accounts: accounts,

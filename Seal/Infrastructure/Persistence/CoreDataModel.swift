@@ -39,6 +39,7 @@ enum CoreDataModel {
             attribute("signedIPARelativePath", type: .stringAttributeType, optional: true),
             attribute("signedIPASHA256", type: .stringAttributeType, optional: true),
             attribute("signedArtifactStatusRaw", type: .stringAttributeType, optional: true),
+            attribute("installedAppMarkerVersion", type: .integer64AttributeType, optional: true),
             attribute("preferredBundleIdentifier", type: .stringAttributeType, optional: true),
             attribute("preferredDisplayName", type: .stringAttributeType, optional: true),
             attribute("preferredIconRelativePath", type: .stringAttributeType, optional: true),
@@ -71,6 +72,15 @@ enum CoreDataModel {
 
         addRelationships(app: app, appExtension: appExtension)
         model.entities = [app, appExtension]
+        return model
+    }
+
+    /// Previous current schema, before per-App uninstall markers were persisted.
+    static func makeLegacyV4() -> NSManagedObjectModel {
+        let model = make()
+        if let app = model.entitiesByName[appEntityName] {
+            app.properties = app.properties.filter { $0.name != "installedAppMarkerVersion" }
+        }
         return model
     }
 

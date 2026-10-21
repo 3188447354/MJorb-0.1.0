@@ -666,19 +666,27 @@ struct SigningWorkspace: Sendable {
     /// 给重签后的 App 添加自定义 UTI，用于 Seal 检测已安装应用。
     private func addInstalledAppUTI(in appURL: URL, bundleID: String) throws {
         try mutateInfoPlist(at: appURL.appending(path: "Info.plist")) { info in
-            let utiIdentifier = "com.mjorb.seal.installed-app"
             var exportedUTIs = info["UTExportedTypeDeclarations"] as? [[String: Any]] ?? []
-            if exportedUTIs.contains(where: { ($0["UTTypeIdentifier"] as? String) == utiIdentifier }) {
-                return
+            let legacyIdentifier = SealInstalledAppMarker.legacyTypeIdentifier
+            if exportedUTIs.contains(where: { ($0["UTTypeIdentifier"] as? String) == legacyIdentifier }) == false {
+                exportedUTIs.append([
+                    "UTTypeIdentifier": legacyIdentifier,
+                    "UTTypeDescription": "Seal Installed App",
+                    "UTTypeConformsTo": ["public.data"],
+                    "UTTypeTagSpecification": [
+                        "com.mjorb.seal.bundle-id": [bundleID]
+                    ]
+                ])
             }
-            exportedUTIs.append([
-                "UTTypeIdentifier": utiIdentifier,
-                "UTTypeDescription": "Seal Installed App",
-                "UTTypeConformsTo": ["public.data"],
-                "UTTypeTagSpecification": [
-                    "com.mjorb.seal.bundle-id": [bundleID]
-                ]
-            ])
+
+            let markerIdentifier = SealInstalledAppMarker.typeIdentifier(for: bundleID)
+            if exportedUTIs.contains(where: { ($0["UTTypeIdentifier"] as? String) == markerIdentifier }) == false {
+                exportedUTIs.append([
+                    "UTTypeIdentifier": markerIdentifier,
+                    "UTTypeDescription": "Seal Managed App",
+                    "UTTypeConformsTo": ["public.data"]
+                ])
+            }
             info["UTExportedTypeDeclarations"] = exportedUTIs
         }
     }

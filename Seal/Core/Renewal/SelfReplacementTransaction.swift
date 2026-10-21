@@ -21,6 +21,7 @@ struct SelfReplacementTransaction: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let id: UUID
     let createdAt: Date
+    let createdAtSystemUptime: TimeInterval?
     var updatedAt: Date
     let accountID: UUID
     let preparedProcessID: UUID
@@ -46,6 +47,7 @@ struct SelfReplacementTransaction: Codable, Equatable, Sendable {
             schemaVersion: 1,
             id: id,
             createdAt: now,
+            createdAtSystemUptime: ProcessInfo.processInfo.systemUptime,
             updatedAt: now,
             accountID: accountID,
             preparedProcessID: preparedProcessID,

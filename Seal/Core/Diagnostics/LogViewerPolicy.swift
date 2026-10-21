@@ -13,7 +13,21 @@ enum LogViewerPolicy {
     }
 
     static func operationSummary(for entry: SealLogEntry) -> RenewalRoundSummary? {
-        if let summary = entry.operationSummary { return summary }
+        if let summary = entry.operationSummary {
+            guard summary.measuredDuration == nil,
+                  let duration = durationInMessage(entry.message) else {
+                return summary
+            }
+            return RenewalRoundSummary(
+                roundNumber: summary.roundNumber,
+                triggerSource: summary.triggerSource,
+                operation: summary.operation,
+                startedAt: summary.startedAt,
+                endedAt: summary.endedAt,
+                items: summary.items,
+                measuredDuration: duration
+            )
+        }
         return legacyOperationSummary(for: entry)
     }
 
@@ -103,8 +117,32 @@ enum LogViewerPolicy {
             operation: operation,
             startedAt: startedAt,
             endedAt: entry.timestamp,
-            items: items
+            items: items,
+            measuredDuration: durationInMessage(entry.message)
         )
+    }
+
+    private static func durationInMessage(_ message: String) -> TimeInterval? {
+        let pattern = #"(?:共用|共计)\s*(?:(\d+)\s*分)?(\d+(?:\.\d+)?)\s*秒"#
+        guard let expression = try? NSRegularExpression(pattern: pattern),
+              let match = expression.firstMatch(
+                in: message,
+                range: NSRange(message.startIndex..., in: message)
+              ),
+              let secondsRange = Range(match.range(at: 2), in: message),
+              let seconds = TimeInterval(String(message[secondsRange])) else {
+            return nil
+        }
+        let minutes: TimeInterval
+        if match.range(at: 1).location == NSNotFound {
+            minutes = 0
+        } else if let minutesRange = Range(match.range(at: 1), in: message),
+                  let parsedMinutes = TimeInterval(String(message[minutesRange])) {
+            minutes = parsedMinutes
+        } else {
+            return nil
+        }
+        return max(0, minutes * 60 + seconds)
     }
 
     private static func legacyItem(from line: String) -> RenewalRoundItem? {

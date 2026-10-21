@@ -1,3 +1,28 @@
+# 2026-10-21 — 诊断日志耗时精度在落盘后丢失
+
+- **现象**：操作摘要刚生成时按真实起止时间计算耗时，写入后日志页重载会出现秒数偏差。
+- **根因**：`SealLogStore` 用 `JSONEncoder.DateEncodingStrategy.iso8601` 持久化日期，而轮次摘要把耗时临时从解码后的 `startedAt` / `endedAt` 重算；该日期格式不保存亚秒，重载后最多损失近 1 秒。旧摘要文字本身已有“共用/共计 x 秒”，旧解析器却忽略它，又回退到只精确到秒的标题时间。
+- **修复**：摘要增加独立的 `measuredDuration` 数值字段并持久化；批量、单项签名/续签与安装用单调时钟测量；Seal 自更新把事务开始与新进程核验时的系统运行时长随事务保存，跨进程计算仍用单调时钟；读取旧摘要时从原摘要文字恢复耗时（兼容分钟和小数秒），并在日志脱敏重建时保留该值。
+- **涉及文件**：`Seal/Core/Renewal/RenewalRoundSummary.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Core/Renewal/SelfReplacementTransaction.swift`、`Seal/Core/Renewal/SelfReplacementTransactionStore.swift`、`Seal/Core/Renewal/SelfReplacementCoordinator.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Infrastructure/Diagnostics/SealLogStore.swift`。
+- **验证状态**：完成源码与差异审查；未运行构建、测试或守卫，Windows 无 Swift/Xcode 工具链。需 CI 编译，并以含小数耗时的摘要完成落盘、重载后检查 UI 与导出一致。
+
+# 2026-10-21 — SideStore UTI 对照、离线卸载对账与证书安装清单
+
+- **现象**：卸载 App 后 Seal 仍将记录留在“已安装”；证书页可能显示“本机安装清单暂不可用”。
+- **根因**：Seal 给所有重签 App 声明同一个 `com.mjorb.seal.installed-app` UTI，无法按 App 判定卸载；本机扫描第一个 LaunchServices selector 返回空数组或漏掉当前 Seal 时，原逻辑不会尝试第二个 selector；证书页只读本机扫描，未接设备 installation proxy 完整清单。
+- **上游对照**：SideStore 按重签 Bundle ID 生成独立 `io.sidestore.Installed.<bundleID>` UTI，并由 `UTType.isDeclared` 清理卸载后的托管记录；Seal 沿用逐 App 标记，保留本地 IPA，不照搬删除记录。
+- **修复**：新签 App 添加独立 UTI；安装后从待安装 IPA 的主 `Info.plist` 确认该 UTI 确实存在，再持久化标记版本，避免旧缓存 IPA 或仅更新描述文件被误记成新标记。新标记记录可在离线时直接核对卸载。LaunchServices 会尝试两种枚举方法并优先采用包含当前 Seal 的结果，让旧记录也能用本机完整清单核验；清单不可用时，新标记记录可逐项离线核验，旧记录继续走设备清单，不把无新标记误判为未安装。已安装列表与证书页共用 installation proxy 的完整用户 App 清单并要求 Seal 阳性对照。
+- **涉及文件**：`Seal/Core/Apps/SealInstalledAppMarker.swift`、`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Apps/AppRecord.swift`、`Seal/Infrastructure/Signing/SigningWorkspace.swift`、`Seal/Infrastructure/Persistence/CoreDataModel.swift`、`Seal/Infrastructure/Persistence/CoreDataAppStore.swift`、`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Application/AppContainer.swift`、`docs/upstream-alignment.md`。
+- **验证状态**：未运行构建、测试或源码守卫；需 CI 编译验证 Core Data 轻量迁移和 Swift 6 并发，真机验证离线卸载、已安装列表状态转换及证书页设备清单回退。
+
+# 2026-10-21 — Seal 更新后旧版本行要手动刷新才消失
+
+- **现象**：Seal 更新到新版本并重新打开后，已安装列表仍显示“新版本 → 旧版本”和“旧版本”；手动下拉刷新后才恢复。
+- **根因**：启动 `.task` 与 `scenePhase == .active` 可并发调用 `syncSelfRecordOnLaunch()`；`SelfAppRegistrar.ensureRegistered()` 的防重入分支直接返回，第二个调用仍被维护层当作同步完成并发布刷新通知，可能在记录版本对账完成前加载旧快照。首屏列表加载还排在维护与队列恢复之后。
+- **修复**：并发自注册改为共享并等待同一个任务；首轮自注册和证书快照完成后立即重载应用列表，启动维护后的最终重载继续保留。
+- **涉及文件**：`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Apps/AppsRootView.swift`。
+- **验证状态**：本机 Windows 无 Swift/Xcode；未运行测试或源码守卫。需 CI 编译回归，并在真机更新后冷启动确认旧版本标记自动消失。
+
 # 2026-10-21 — 证书关联守卫的变异检查必须限定函数体
 
 - **现象**：CI `39543784879` 的 `Check release safety invariants` 因两条证书关联变异检查未触发而失败。

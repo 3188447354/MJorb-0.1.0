@@ -256,6 +256,7 @@ struct AppContainer {
                     backgroundRenewalNotifier: BackgroundRenewalNotifier(),
                     signingPreferenceStore: signingPreferenceStore,
                     operationCoordinator: operationCoordinator,
+                    installedAppScanner: DeviceInstalledAppScanner.live,
                     maintenanceJob: maintenanceJob
                 ),
                 settingsViewModel: SettingsViewModel(
@@ -277,6 +278,7 @@ struct AppContainer {
                     anisetteEnvironment: anisetteProvider,
                     signingPreferenceStore: signingPreferenceStore,
                     operationCoordinator: operationCoordinator,
+                    installedAppScanner: DeviceInstalledAppScanner.live,
                     selfReplacementStore: transactionStore,
                     certificateRecoveryJournal: certificateRecoveryJournal
                 ),

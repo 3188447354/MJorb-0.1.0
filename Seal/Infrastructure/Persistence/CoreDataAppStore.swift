@@ -167,6 +167,7 @@ actor CoreDataAppStore: AppStore {
         }
 
         let candidateLegacyModels = [
+            CoreDataModel.makeLegacyV4(),
             CoreDataModel.makeLegacyV3(),
             CoreDataModel.makeLegacyV2(),
             CoreDataModel.makeLegacyV1()
@@ -349,6 +350,7 @@ actor CoreDataAppStore: AppStore {
         object.setValue(record.signedIPARelativePath, forKey: "signedIPARelativePath")
         object.setValue(record.signedIPASHA256, forKey: "signedIPASHA256")
         object.setValue(record.signedArtifactStatus?.rawValue, forKey: "signedArtifactStatusRaw")
+        object.setValue(record.installedAppMarkerVersion, forKey: "installedAppMarkerVersion")
         object.setValue(record.preferredBundleIdentifier, forKey: "preferredBundleIdentifier")
         object.setValue(record.preferredDisplayName, forKey: "preferredDisplayName")
         object.setValue(record.preferredIconRelativePath, forKey: "preferredIconRelativePath")
@@ -473,6 +475,7 @@ actor CoreDataAppStore: AppStore {
             signedIPASHA256: object.value(forKey: "signedIPASHA256") as? String,
             signedArtifactStatus: (object.value(forKey: "signedArtifactStatusRaw") as? String)
                 .flatMap(SignedArtifactStatus.init(rawValue:)),
+            installedAppMarkerVersion: (object.value(forKey: "installedAppMarkerVersion") as? NSNumber)?.intValue,
             preferredBundleIdentifier: object.value(forKey: "preferredBundleIdentifier") as? String,
             preferredDisplayName: object.value(forKey: "preferredDisplayName") as? String,
             preferredIconRelativePath: object.value(forKey: "preferredIconRelativePath") as? String,

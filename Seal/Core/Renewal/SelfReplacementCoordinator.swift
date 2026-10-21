@@ -40,6 +40,28 @@ struct SettledSelfReplacement: Equatable, Sendable {
     let mainProfileUUID: String
     let transactionStartedAt: Date
     let installedIdentityReadAt: Date
+    let transactionStartedAtSystemUptime: TimeInterval?
+    let installedIdentityReadAtSystemUptime: TimeInterval?
+
+    init(
+        transactionID: UUID,
+        installedIdentity: InstalledIdentity,
+        mainBundleIdentifier: String,
+        mainProfileUUID: String,
+        transactionStartedAt: Date,
+        installedIdentityReadAt: Date,
+        transactionStartedAtSystemUptime: TimeInterval? = nil,
+        installedIdentityReadAtSystemUptime: TimeInterval? = nil
+    ) {
+        self.transactionID = transactionID
+        self.installedIdentity = installedIdentity
+        self.mainBundleIdentifier = mainBundleIdentifier
+        self.mainProfileUUID = mainProfileUUID
+        self.transactionStartedAt = transactionStartedAt
+        self.installedIdentityReadAt = installedIdentityReadAt
+        self.transactionStartedAtSystemUptime = transactionStartedAtSystemUptime
+        self.installedIdentityReadAtSystemUptime = installedIdentityReadAtSystemUptime
+    }
 }
 
 /// 同一进程即使重新构造容器也不能冒充重启；进程身份在启动时固定。
@@ -264,6 +286,7 @@ actor SelfReplacementCoordinator: SelfReplacing {
         guard let transaction = try await store.loadPending() else {
             throw SelfReplacementStoreError.pendingNotFound
         }
+        let readAtSystemUptime = ProcessInfo.processInfo.systemUptime
         let readAt = Date()
         let running = try readRunningIdentity()
         guard transaction.candidate.matches(running),
@@ -281,7 +304,9 @@ actor SelfReplacementCoordinator: SelfReplacing {
             mainBundleIdentifier: main.bundleIdentifier,
             mainProfileUUID: main.profileUUID,
             transactionStartedAt: transaction.createdAt,
-            installedIdentityReadAt: readAt
+            installedIdentityReadAt: readAt,
+            transactionStartedAtSystemUptime: transaction.createdAtSystemUptime,
+            installedIdentityReadAtSystemUptime: readAtSystemUptime
         )
     }
 

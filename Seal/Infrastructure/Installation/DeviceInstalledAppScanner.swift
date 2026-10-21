@@ -31,6 +31,9 @@ protocol InstalledAppScanning: Sendable {
     /// `nil` 表示设备清单无法读取；空数组表示已成功读取但没有匹配应用。
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]?
 
+    /// 设备端 installation proxy 的全部用户应用清单；不按描述文件是否已验证过滤。
+    func scanUserApplications() async -> [DeviceInstalledApplicationSummary]?
+
     /// 按归一化 Bundle ID 读取本机 LaunchServices 图标；失败或不可用时返回空字典。
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data]
 
@@ -44,6 +47,7 @@ protocol InstalledAppScanning: Sendable {
 
 extension InstalledAppScanning {
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+    func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] { [:] }
 }
 
@@ -65,6 +69,10 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
 
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
         await Self.validatedUserApplications()
+    }
+
+    func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+        await Self.userApplications()
     }
 
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
@@ -96,15 +104,19 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
     }
 
     static func validatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+        guard let applications = await userApplications() else { return nil }
+        return applications.filter { $0.profileValidated == true }
+    }
+
+    static func userApplications() async -> [DeviceInstalledApplicationSummary]? {
         let outcome = await BlockingCall.bounded(
             seconds: BlockingCall.queryTimeoutSeconds
         ) {
             try Minimuxer.installedApplications()
         }
         guard let outcome, case .success(let applications) = outcome else { return nil }
-        return applications.compactMap { application in
-            guard application.profileValidated == true else { return nil }
-            return DeviceInstalledApplicationSummary(
+        return applications.map { application in
+            DeviceInstalledApplicationSummary(
                 bundleIdentifier: application.bundleIdentifier,
                 displayName: application.displayName,
                 shortVersion: application.shortVersion,

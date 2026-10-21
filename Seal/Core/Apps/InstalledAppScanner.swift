@@ -56,7 +56,10 @@ final class InstalledAppScanner: Sendable {
         guard let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject else {
             return nil
         }
-        guard let appList = installedApplicationProxies(from: workspace) else {
+        guard let appList = installedApplicationProxies(
+            from: workspace,
+            containing: Bundle.main.bundleIdentifier
+        ) else {
             return nil
         }
 
@@ -91,7 +94,10 @@ final class InstalledAppScanner: Sendable {
         guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
               let workspace = workspaceClass
                 .perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject,
-              let appList = installedApplicationProxies(from: workspace) else {
+              let appList = installedApplicationProxies(
+                from: workspace,
+                containing: Bundle.main.bundleIdentifier
+              ) else {
             return [:]
         }
 
@@ -109,16 +115,31 @@ final class InstalledAppScanner: Sendable {
         return result
     }
 
-    private static func installedApplicationProxies(from workspace: NSObject) -> [NSObject]? {
+    private static func installedApplicationProxies(
+        from workspace: NSObject,
+        containing bundleIdentifier: String?
+    ) -> [NSObject]? {
+        var firstAvailable: [NSObject]?
+        var firstEmpty: [NSObject]?
         for name in ["allInstalledApplications", "allApplications"] {
             let selector = NSSelectorFromString(name)
             guard workspace.responds(to: selector),
                   let applications = workspace.perform(selector)?.takeUnretainedValue() as? [NSObject] else {
                 continue
             }
-            return applications
+            if let bundleIdentifier,
+               applications.contains(where: {
+                   ($0.value(forKey: "bundleIdentifier") as? String) == bundleIdentifier
+               }) {
+                return applications
+            }
+            if applications.isEmpty == false {
+                if firstAvailable == nil { firstAvailable = applications }
+            } else if firstEmpty == nil {
+                firstEmpty = applications
+            }
         }
-        return nil
+        return firstAvailable ?? firstEmpty
     }
 
     private static func iconPNGData(from application: NSObject) -> Data? {
