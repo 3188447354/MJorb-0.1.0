@@ -6542,16 +6542,18 @@ def violations(load=read):
     device_verifier = strip_comments(load("Seal/Features/Apps/InstalledAppDeviceVerifier.swift"))
     probe_body = section(
         device_verifier,
-        "static func isInstalled(bundleIdentifier: String) async throws -> Bool {",
+        "static func isInstalled(\n",
         "private static func unavailableError"
     )
+    probe_gate = load("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift")
     check("BlockingCall.bounded(" in probe_body
           and "cancelsWorkOnTimeout: false" in probe_body
           and "onLateCompletion:" in probe_body
           and "onWorkNeverStarted:" in probe_body
-          and "onWorkNeverStarted: {\n                await probeGate.finish(probeID: probeID, timedOut: false)" in probe_body
+          and "onWorkNeverStarted: {\n                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)" in probe_body
+          and "InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)" in probe_body
           and "withTaskCancellationHandler" not in probe_body
-          and "guard activeProbeID == probeID else { return }" in device_verifier,
+          and "guard activeProbeID == probeID else { return }" in probe_gate,
           "R126: a cancelled device probe must retain its gate until native completion and ignore stale completions")
     device_probe_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbeGateTests.swift")
     check("lateProbeCompletionKeepsGateBusyUntilNativeCallEnds" in device_probe_tests
@@ -11075,17 +11077,19 @@ def main():
         # ── R126：设备查询取消后不释放仍在运行的同步 FFI 闸门 ──
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
          "            onLateCompletion: { _ in\n"
-         "                await probeGate.finish(probeID: probeID, timedOut: true)\n"
+         "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)\n"
          "            },\n",
          "            onLateCompletion: nil,\n",
          "R126:"),
-        ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
+        ("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift",
          "        guard activeProbeID == probeID else { return }",
          "        guard activeProbeID != nil else { return }",
          "R126:"),
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
-         "onWorkNeverStarted: {\n                await probeGate.finish(probeID: probeID, timedOut: false)",
-         "onWorkNeverStarted: {\n                await probeGate.finish(probeID: probeID, timedOut: true)",
+         "onWorkNeverStarted: {\n"
+         "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)",
+         "onWorkNeverStarted: {\n"
+         "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)",
          "R126:"),
         # ── R127：超时原生调用后续队列不能无限持有续签批次租约 ──
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
