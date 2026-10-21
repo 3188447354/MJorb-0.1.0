@@ -198,16 +198,8 @@ final class PairingLiveActivityController {
         .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口输入此码")
     }
 
-    /// 读取正式 Seal 品牌图标并缩到 96 px，按 3x 清晰度覆盖 24pt 灵动岛图标。
+    /// 读取专为 24pt 灵动岛图标导出的 72 px @3x 小图，避免运行时二次缩放。
     private static let sealIconPNG: Data? = {
-        guard let iconURL = Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png"),
-              let image = UIImage(contentsOfFile: iconURL.path) else { return nil }
-        let size = CGSize(width: 96, height: 96)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        return UIGraphicsImageRenderer(size: size, format: format).pngData { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
+        UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)?.pngData()
     }()
 }

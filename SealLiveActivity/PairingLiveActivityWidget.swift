@@ -40,6 +40,11 @@ struct PairingLiveActivityWidget: Widget {
                 .renderingMode(.original)
                 .resizable()
         }
+        if let image = UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil) {
+            return Image(uiImage: image)
+                .renderingMode(.original)
+                .resizable()
+        }
         if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {
             return Image(uiImage: image)
                 .renderingMode(.original)

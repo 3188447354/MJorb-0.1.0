@@ -3380,8 +3380,13 @@ def violations(load=read):
           and "static func installedAppsAssociated(" in cert_impact
           and "associatedApps(serialNumber: serialNumber, apps: apps)" in cert_impact,
           "Certificates: the installed-app list must reuse the association rule, not the stricter revocation-impact rule")
+    cert_installed_apps = section(
+        cert_view,
+        "private func installedAppsSection(account: AppleAccountRecord) -> some View {",
+        "private func installedAppIcon(for app: AppRecord) -> some View {",
+    )
     check("installedAppsSection(account: account)" in cert_view
-          and "CertificateRevocationImpact.installedAppsAssociated(" in cert_view
+          and "CertificateRevocationImpact.installedAppsAssociated(" in cert_installed_apps
           and "本机已安装 App" in cert_view
           and "fullSerialText(certificate.serialNumber)" in cert_view,
           "Certificates: UI must show full identity and associated apps")
@@ -4731,13 +4736,13 @@ def violations(load=read):
     check("Text(item.name)" in apple_account_row
           and 'accountDetailRow("应用名称", item.name' not in apple_account_row,
           "R119③: 已签名 App 行只显示应用名，不得再显示「应用名称」标签")
-    pairing_asset_json = load("SealLiveActivity/Assets.xcassets/SealBrandIcon.imageset/Contents.json")
     pairing_project = strip_yaml_comments(load("project.yml"))
     pairing_controller = strip_comments(load("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift"))
     check('sealIconPNG: Self.sealIconPNG' in pairing_controller
-          and 'UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil)' in pairing_controller
+          and 'UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)?.pngData()' in pairing_controller
           and 'if let iconData, let image = UIImage(data: iconData)' in pairing_widget
           and 'context.attributes.sealIconPNG' in pairing_widget
+          and 'if let image = UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil)' in pairing_widget
           and 'Bundle.main.url(forResource: "SealBrandIcon", withExtension: "png")' in pairing_widget
           and "UIImage(contentsOfFile: imageURL.path)" in pairing_widget
           and 'Image(systemName: "seal.fill")' in pairing_widget
@@ -4748,7 +4753,12 @@ def violations(load=read):
           and "SealLiveActivity/Assets.xcassets" in pairing_project
           and "SealLiveActivity/Resources/SealBrandIcon.png" in pairing_project
           and os.path.isfile(ROOT / "SealLiveActivity/Resources/SealBrandIcon.png")
-          and '"filename" : "icon.png"' in pairing_asset_json,
+          and os.path.isfile(ROOT / "Seal/Resources/Assets.xcassets/SealBrandIconSmall.imageset/icon@3x.png")
+          and os.path.isfile(ROOT / "SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/icon@3x.png")
+          and '"filename" : "icon@3x.png"' in load("Seal/Resources/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
+          and '"scale" : "3x"' in load("Seal/Resources/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
+          and '"filename" : "icon@3x.png"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
+          and '"scale" : "3x"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json"),
           "R119④: 灵动岛优先使用主 App 随活动传入的品牌图标，保留扩展资源回退与全彩渲染")
 
     # R125: 重装后 CoreData / Accounts.json 中的 UUID 索引会消失；接管判定仍须查找
@@ -5508,7 +5518,12 @@ def violations(load=read):
           "它覆盖安装后必然丢本机私钥，剔除后就再也建不出新证书，"
           "签任何 App 都报 `SEAL-CERT-204b`（3022）。构建 47 真机实测三条路径全被拦死。"
           "安全性由「排最后 + 撤销前 warning + 末尾重签恢复」保证，不靠「不撤」")
-    check("guard operationCoordinator?.activeLease == nil else {" in r84_vm
+    r84_reconcile = section(
+        r84_vm,
+        "private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {",
+        "private func ",
+    )
+    check("guard operationCoordinator?.activeLease == nil else {" in r84_reconcile
           and "SEAL-INSTALL-708" in r84_vm,
           "R84⑦: 已安装页设备核验必须与前台操作**互斥** ✗ —— 它走同步 FFI、"
           "和签名 / 安装 / 续签共用同一条设备会话；构建 46 三次 `SEAL-INSTALL-707`"
@@ -7384,8 +7399,16 @@ def main():
          "return false // extension association removed",
          "Certificates: association lookup must include extension targets"),
         ("Seal/Features/Settings/SigningCertificateSettingsView.swift",
-         "CertificateRevocationImpact.installedAppsAssociated(",
-         "CertificateRevocationImpact.installedAppsAssociatedUnused(",
+         "        let installedApps = CertificateRevocationImpact.installedAppsAssociated(\n"
+         "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
+         "            apps: relatedApps,\n"
+         "            installedBundleIdentifiers: installedBundleIdentifiers ?? []\n"
+         "        )",
+         "        let installedApps = CertificateRevocationImpact.installedAppsAssociatedUnused(\n"
+         "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
+         "            apps: relatedApps,\n"
+         "            installedBundleIdentifiers: installedBundleIdentifiers ?? []\n"
+         "        )",
          "Certificates: UI must show full identity and associated apps"),
         ("Seal/Core/Signing/CertificateRevocationImpact.swift",
          "associatedApps(serialNumber: serialNumber, apps: apps)",
@@ -9720,7 +9743,11 @@ def main():
          "R84⑥: 证书轮换**必须**能撤到"),
         # ⑦ 去掉「与前台操作互斥」的闸门 ⇒ R84⑦ 报红（707 噪音与抢会话回来）。
         ("Seal/Features/Apps/AppsViewModel.swift",
+         "    private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {\n"
+         "        let installedRecords = installedApps\n"
          "        guard operationCoordinator?.activeLease == nil else {\n",
+         "    private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {\n"
+         "        let installedRecords = installedApps\n"
          "        guard true else {\n",
          "R84⑦: 已安装页设备核验必须与前台操作**互斥**"),
         # ⑧ 把「实时身份放行」那条单测改名 ⇒ R84⑧ 报红（不变量没人守）。
@@ -10888,8 +10915,8 @@ def main():
          "UIImage()",
          "R119④:"),
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
-         'if let image = UIImage(named: "SealBrandIcon", in: .main, compatibleWith: nil) {',
-         'if let image = UIImage(systemName: "SealBrandIcon") {',
+         'if let image = UIImage(named: "SealBrandIconSmall", in: .main, compatibleWith: nil) {',
+         'if let image = UIImage(systemName: "SealBrandIconSmall") {',
          "R119④:"),
         ("SealLiveActivity/PairingLiveActivityWidget.swift",
          ".widgetAccentedRenderingMode(.fullColor)",
