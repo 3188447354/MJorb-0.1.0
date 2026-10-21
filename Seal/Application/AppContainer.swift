@@ -214,7 +214,7 @@ struct AppContainer {
                 // `skipped-not-wired`（静默失效）—— 守卫 R80 的 `Scan/wire` 钉住它。
                 deviceScanner: deviceInstalledAppScanner
             )
-            let selfAppRegistrarTask = Task { @MainActor in
+            let selfAppRegistrarTask: Task<SelfAppRegistrar?, Never> = Task { @MainActor in
                 guard let metadata = await SelfAppMetadata.loadCurrentAsync() else { return nil }
                 return SelfAppRegistrar(
                     metadata: metadata,

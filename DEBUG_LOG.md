@@ -14,6 +14,22 @@
 - **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`DEBUG_LOG.md`。
 - **验证状态**：静态检查通过；等待 CI Swift 回归与构建验证。
 
+# 2026-10-21 — CI 守卫取片段时错误依赖已剥除的注释
+
+- **现象**：CI `39606768687` 在 `build-package` 守卫步骤抛出 `section end marker not found`，静态检查没有运行到后续断言。
+- **根因**：`cleaner_source` 在截取函数前先剥除了注释，结束标记却选用了函数间的文档注释，因此标记永远不存在。
+- **修复**：结束标记改为下一个真实函数声明，继续只检查维护期设备探测函数本体。
+- **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：已对照源文件确认两个函数边界；等待本轮 CI 结束后重新推送验证。
+
+# 2026-10-21 — 后台启动注册任务的空结果缺少类型上下文
+
+- **现象**：CI `39606768687` 的 Swift 回归编译失败，`AppContainer` 启动注册任务的 `return nil` 无法推断类型。
+- **根因**：异步加载启动元数据后，`Task` 初始化没有显式结果类型，而闭包存在可选返回路径；下游赋值点未能为该闭包提供足够的推断上下文。
+- **修复**：声明任务为 `Task<SelfAppRegistrar?, Never>`，使成功读取和元数据缺失两条路径类型一致。
+- **涉及文件**：`Seal/Application/AppContainer.swift`、`DEBUG_LOG.md`。
+- **验证状态**：编译诊断已定位并修正；等待 CI Swift 回归验证。
+
 # 2026-10-21 — 设备扫描与描述文件并发修复的 Swift 回归编译失败
 
 - **现象**：CI `39595526309` 的 Swift 回归未能编译：扫描器实例方法调用静态 profile 摘要方法；设备维护闭包把非逃逸回调传给原生异步执行器；描述文件检查的 `@Sendable` 工作闭包捕获非 `Sendable` 的 `FileManager` 实例。

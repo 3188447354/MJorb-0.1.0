@@ -1400,7 +1400,7 @@ def violations(load=read):
     maintenance_probe = section(
         cleaner_source,
         "private static func probeInstalled(",
-        "/// **带耗时的**探测结果"
+        "private static func probeInstalledWithDuration("
     )
     check("DeviceProfileNativeCall.perform(" in maintenance_probe
           and "seconds: BlockingCall.queryTimeoutSeconds" in maintenance_probe,
