@@ -50,9 +50,11 @@ struct SealLogStoreTests {
         try await store.append(category: .account, message: "认证诊断一")
         try await store.append(category: .system, message: "认证诊断二")
 
+        #expect(try await store.entries().map(\.message) == ["认证诊断二", "设备核验通过：Seal"])
+
         let reopened = SealLogStore(fileURL: fileURL, fileProtector: MarkerFileProtector())
         let entries = try await reopened.entries()
-        #expect(entries.map(\.message) == ["认证诊断二", "设备核验通过：Seal"])
+        #expect(entries.map(\.message) == ["设备核验通过：Seal"])
     }
 
     @Test
