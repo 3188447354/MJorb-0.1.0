@@ -1,3 +1,11 @@
+# 2026-10-21 — 证书关联守卫的变异检查必须限定函数体
+
+- **现象**：CI `39543784879` 的 `Check release safety invariants` 因两条证书关联变异检查未触发而失败。
+- **根因**：静态检查在整个 `CertificateRevocationImpact.swift` 中搜索表达式；其他函数恰好也有相同表达式，导致目标实现被删改时仍被旁边函数的文本“代过”。第二条变异还命中了更早的同名调用。
+- **修复**：静态检查改为分别检查 `associatedApps` 和 `installedAppsAssociated` 函数体；第二条变异锚点包含目标函数签名，确保只改到已安装 App 关联路径。生产证书关联逻辑不变。
+- **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：本机不运行源码守卫；该 CI 的守卫门已失败，Swift 回归仍在运行。修复提交后由新一轮 CI 验证守卫的变异自检与全套门。
+
 # 2026-10-21 — 离线卸载对账、账号应用归属、操作日志保留与配对灵动岛
 
 - **现象**：未连接 Wi-Fi / LocalDevVPN 时卸载的 App 仍显示在 Seal 的已安装列表；重新添加 Apple ID 后证书页和批量续签漏掉原账号下已签名的 App；操作日志偶尔消失，自更新显示成没有 App 名的“安装”；设备配对时 Live Activity 未出现并退回系统通知。

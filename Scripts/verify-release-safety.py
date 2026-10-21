@@ -3373,12 +3373,20 @@ def violations(load=read):
     # Seal 自身（belongsInInstalledList 恒为真）也会被漏掉。撤销影响评估仍必须走 affectedApps。
     cert_impact = load("Seal/Core/Signing/CertificateRevocationImpact.swift")
     cert_view = load("Seal/Features/Settings/SigningCertificateSettingsView.swift")
-    check("static func associatedApps(" in cert_impact
-          and "app.signingTargets.contains" in cert_impact,
+    cert_association = section_or_empty(
+        cert_impact,
+        "static func associatedApps(",
+        "static func accountAssociatedApps(",
+    )
+    cert_installed_association = section_or_empty(
+        cert_impact,
+        "static func installedAppsAssociated(",
+        "static func isActualSealSigner(",
+    )
+    check("app.signingTargets.contains" in cert_association,
           "Certificates: association lookup must include extension targets")
     check("static func affectedApps(" in cert_impact
-          and "static func installedAppsAssociated(" in cert_impact
-          and "associatedApps(serialNumber: serialNumber, apps: apps)" in cert_impact,
+          and "associatedApps(serialNumber: serialNumber, apps: apps)" in cert_installed_association,
           "Certificates: the installed-app list must reuse the association rule, not the stricter revocation-impact rule")
     cert_installed_apps = section(
         cert_view,
@@ -7411,8 +7419,18 @@ def main():
          "        )",
          "Certificates: UI must show full identity and associated apps"),
         ("Seal/Core/Signing/CertificateRevocationImpact.swift",
-         "associatedApps(serialNumber: serialNumber, apps: apps)",
-         "apps.filter { _ in false }",
+         "    static func installedAppsAssociated(\n"
+         "        serialNumber: String,\n"
+         "        apps: [AppRecord],\n"
+         "        installedBundleIdentifiers: Set<String>\n"
+         "    ) -> [AppRecord] {\n"
+         "        associatedApps(serialNumber: serialNumber, apps: apps)",
+         "    static func installedAppsAssociated(\n"
+         "        serialNumber: String,\n"
+         "        apps: [AppRecord],\n"
+         "        installedBundleIdentifiers: Set<String>\n"
+         "    ) -> [AppRecord] {\n"
+         "        apps.filter { _ in false }",
          "Certificates: the installed-app list must reuse the association rule"),
         # 2026-09-19：改成「先创建、撞 3022 才撤销」后，变异锚点移到 **3022 兜底**上 ✓
         #（关掉它 ⇒ 账号满时不再轮换 ⇒ 断言必须红 ✓）。
