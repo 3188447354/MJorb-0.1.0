@@ -48,6 +48,13 @@ struct PhonePairingPresentationPolicyTests {
         #expect(policy.showsPairingFileImport == false)
     }
 
+    @Test @MainActor
+    func liveActivityPreparationOutlastsThePhonePairingHostTimeout() {
+        #expect(
+            PairingLiveActivityController.preparationLifetime > PhonePairingHost.timeoutSeconds
+        )
+    }
+
     @Test
     func onlyTerminalPairingActivityStatesDismissWhenOpened() {
         #expect(PairingActivityAttributes.Stage.preparing.isTerminal == false)

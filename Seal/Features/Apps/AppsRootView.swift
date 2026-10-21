@@ -169,9 +169,6 @@ struct AppsRootView: View {
                 requestSettledBackgroundBatchResultPresentation()
                 await viewModel.syncSelfRecordOnLaunch()
                 await viewModel.reloadSelfRecordSnapshot()
-                // 发布自注册对账后的数据库版本，避免首屏先保留旧的 Seal 版本行。
-                // 后续维护仍可能补记录，因此末尾还会再加载一次。
-                await viewModel.load(force: true)
                 await settingsViewModel.load()
                 // ── 启动关键路径（阻塞首屏，只做最少必要）──
                 // 记录恢复（设备扫描发现 App）是新安装时列表有数据的唯一来源，

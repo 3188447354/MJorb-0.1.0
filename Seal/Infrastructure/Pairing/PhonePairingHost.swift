@@ -6,6 +6,9 @@ import Foundation
 /// remains the sole authority for the credential used by signing and install.
 @MainActor
 final class PhonePairingHost: NSObject {
+    /// Keep the foreground Live Activity visible through the Rust pairing wait window.
+    static let timeoutSeconds: TimeInterval = 180
+
     enum Event: Equatable {
         case requestingLocalNetwork
         case waitingForSystemConfirmation

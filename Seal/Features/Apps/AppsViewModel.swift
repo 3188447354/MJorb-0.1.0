@@ -1036,66 +1036,14 @@ final class AppsViewModel: ObservableObject {
             return false
         }
 
-        // 导入与已安装 IPA 相同（签名后的 Bundle ID 一致）会残留多条相同身份的记录，
-        // iOS 无法并存同 Bundle ID 的应用，这里按身份合并去重，只保留真实存在的一条。
-        var mutations = [await removeDuplicateInstalledRecords(installedRecords)]
-
+        var mutations: [Bool] = []
         do {
-            if let deviceSnapshot = await installedAppScanner?.scanUserApplications() {
-                let deviceBundleIdentifiers = Set(deviceSnapshot.compactMap {
-                    InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
-                })
-                guard InstalledAppRefreshProbePolicy.hasPositiveControl(
-                    controlBundleIdentifier: Bundle.main.bundleIdentifier ?? "",
-                    installedBundleIdentifiers: Array(deviceBundleIdentifiers)
-                ) else {
-                    try? await logStore?.append(
-                        category: .system,
-                        level: .warning,
-                        message: "已安装页设备清单核验中止：设备清单未包含正在运行的 Seal，本轮未移除记录。",
-                        code: "SEAL-INSTALL-739"
-                    )
-                    return InstalledAppRefreshPolicy.requiresReload(after: mutations)
-                }
-                guard operationCoordinator?.activeLease == nil else {
-                    installedAppRefreshPendingAfterOperation = true
-                    return InstalledAppRefreshPolicy.requiresReload(after: mutations)
-                }
-                let missingOnDevice = installedRecords.filter { app in
-                    guard app.isSeal == false,
-                          let bundleIdentifier = installedBundleIdentifier(for: app) else {
-                        return false
-                    }
-                    return InstalledAppRefreshProbePolicy.contains(
-                        bundleIdentifier,
-                        in: deviceBundleIdentifiers
-                    ) == false
-                }
-                for app in missingOnDevice {
-                    mutations.append(await markMissingOnDevice(app))
-                }
-                return InstalledAppRefreshPolicy.requiresReload(after: mutations)
-            }
-
-            // 🔴 **阳性对照**（2026-09-26，构建 49 真机复盘）。拿正在运行的 Seal 自己先问一次，
-            // 答不出来就整轮不删。姊妹路径（`DeviceInstalledAppScanner`、`DeviceProfileCleaner`）
-            // 都有这一步，唯独这里漏了 —— 而它们调的是**同一个** `Minimuxer.isAppInstalled`。
+            // 🔴 **阳性对照**：Lockdown 的 `isAppInstalled` 会把 RPC 失败与「没查到」
+            // 返回成同一个空结果，通道半坏时可能对每个 Bundle ID 静默答「没装」。
+            // 因此必须先确认 Seal 自己仍在设备清单里，之后才允许更新任何记录。
+            // 本机完整快照可离线完成这一步；快照不可用时才走设备 verifier。
             //
-            // 为什么必须有：Lockdown 路径下 `isAppInstalled` 的实现是 `inst.lookup(appId:) != nil`，
-            // 而 Rust 侧把 RPC 失败与「没查到」返回成**同一个空指针** ⇒ 通道半坏时它对**每一个**
-            // Bundle ID 都**静默答「没装」**（不抛错、只答否）。而 `InstalledAppDeviceVerifier`
-            // 只能抓到**抛错**的失败（404 / 超时 / 冷却），抓不到这种 ⇒ 没有这一步，
-            // 「通道说假话」与「App 真的没装」在代码里完全同形，而下游是 `delete`
-            //（连带 `fileStore.removeApp` 删掉本地文件）。
-            // 真机先例：本仓 `DeviceProfileCleaner` 的注释里就留着「阳性对照未通过
-            //（com.mjorb.seal.<TEAM_ID> 被答成未安装）」—— 同一个 API、同一台设备。
-            //
-            // 与「先问完、再动手」是两条**互补**的网：那条防「问一半通道坏了」，
-            // 这条防「通道从头到尾都在说假话」（那种情况下每条查询都成功返回 `false`）。
-            //
-            // 码用 `SEAL-INSTALL-739`（与同功能的 707「未完成」、708「跳过」同族）——
-            // ⚠️ **不能**复用 709：709 已经是 `MinimuxerInstallChannel` 的「安全握手未完成」，
-            // 同一个码说两件事会让用户查码表时得到错误解释。
+            // 同时遵守「先问完、再动手」：先收集全部缺失项，查询中断时不做部分清理。
             guard let controlBundleID = Bundle.main.bundleIdentifier,
                   controlBundleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
                 try? await logStore?.append(
@@ -1106,7 +1054,22 @@ final class AppsViewModel: ObservableObject {
                 )
                 return false
             }
-            let controlInstalled = try await InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID)
+
+            let deviceSnapshot = await installedAppScanner?.scanUserApplications()
+            let deviceBundleIdentifiers = deviceSnapshot.map { snapshot in
+                Set(snapshot.compactMap {
+                    InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+                })
+            }
+            let controlInstalled: Bool
+            if let deviceBundleIdentifiers {
+                controlInstalled = InstalledAppRefreshProbePolicy.hasPositiveControl(
+                    controlBundleIdentifier: Bundle.main.bundleIdentifier ?? "",
+                    installedBundleIdentifiers: Array(deviceBundleIdentifiers)
+                )
+            } else {
+                controlInstalled = try await InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID)
+            }
             guard controlInstalled else {
                 try? await logStore?.append(
                     category: .system,
@@ -1117,25 +1080,50 @@ final class AppsViewModel: ObservableObject {
                 return false
             }
 
-            // 🔴 **先问完、再动手**（2026-09-25 改）。旧实现是「边问边删」：只要循环中途
-            // 通道变坏（第 1 条已判「设备上没有」并被删掉、第 2 条才抛错），就会**删一半**。
-            // 现在先把「设备上确认不存在」的记录**全部收集完**，任何一条查询失败都**整轮中止、
-            // 一条都不删**（fail closed —— 与描述文件回收路径的约定一致）。
+            if operationCoordinator?.activeLease != nil {
+                installedAppRefreshPendingAfterOperation = true
+                return false
+            }
+
+            // 两种清单路径都先核实 Seal 阳性对照，再完整收集缺失项，最后才改记录。
+            // 这样查询失败或通道给出假阴性时，不会先删重复记录或只删列表的一部分。
             var missingOnDevice: [AppRecord] = []
-            for app in installedRecords {
-                guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
+            if let deviceBundleIdentifiers {
+                missingOnDevice = installedRecords.filter { app in
+                    guard app.isSeal == false,
+                          let bundleIdentifier = installedBundleIdentifier(for: app) else {
+                        return false
+                    }
+                    return InstalledAppRefreshProbePolicy.contains(
+                        bundleIdentifier,
+                        in: deviceBundleIdentifiers
+                    ) == false
+                }
+            } else {
+                for app in installedRecords {
+                    guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
 
-                let existsOnDevice = try await InstalledAppDeviceVerifier.isInstalled(
-                    bundleIdentifier: bundleIdentifier
-                )
-
-                if existsOnDevice == false {
-                    missingOnDevice.append(app)
+                    let existsOnDevice = try await InstalledAppDeviceVerifier.isInstalled(
+                        bundleIdentifier: bundleIdentifier
+                    )
+                    if existsOnDevice == false {
+                        missingOnDevice.append(app)
+                    }
                 }
             }
+
+            if operationCoordinator?.activeLease != nil {
+                installedAppRefreshPendingAfterOperation = true
+                return false
+            }
+
+            // 导入与已安装 IPA 相同（签名后的 Bundle ID 一致）会残留多条相同身份的记录，
+            // iOS 无法并存同 Bundle ID 的应用，这里按身份合并去重，只保留真实存在的一条。
+            mutations.append(await removeDuplicateInstalledRecords(installedRecords))
             for app in missingOnDevice {
                 mutations.append(await markMissingOnDevice(app))
             }
+            return InstalledAppRefreshPolicy.requiresReload(after: mutations)
         } catch {
             if InstalledAppRefreshFailure.shouldLogDiagnostic(for: error) {
                 try? await logStore?.append(

@@ -18,7 +18,7 @@ final class PairingLiveActivityController {
     private var expiresAt: Date?
     private var dismissTask: Task<Void, Never>?
 
-    private static let preparationLifetime: TimeInterval = 60
+    static let preparationLifetime: TimeInterval = PhonePairingHost.timeoutSeconds + 30
     private static let codeLifetime: TimeInterval = 180
     private static let completionLifetime: TimeInterval = 6
     private static let failureLifetime: TimeInterval = 12
@@ -57,6 +57,14 @@ final class PairingLiveActivityController {
         } else {
             await endOrphanedActivities()
         }
+        let extensionURL = Bundle.main.bundleURL.appending(
+            path: "PlugIns/SealLiveActivity.appex",
+            directoryHint: .isDirectory
+        )
+        guard FileManager.default.fileExists(atPath: extensionURL.path) else {
+            await logUnavailable("当前 Seal 安装包缺少配对实时活动扩展，配对码将改用系统通知显示。")
+            return false
+        }
         guard isEnabled else {
             await logUnavailable("系统未允许实时活动，配对码将改用系统通知显示。")
             return false
@@ -86,9 +94,16 @@ final class PairingLiveActivityController {
     /// 只在收到系统给出的真实六码后调用。若活动已不可用，调用方应切换到通知回退。
     @discardableResult
     func showCode(_ code: String) async -> Bool {
-        guard code.range(of: #"^\d{6}$"#, options: .regularExpression) != nil,
-              let activity,
-              stage == .preparing || stage == .code else {
+        guard code.range(of: #"^\d{6}$"#, options: .regularExpression) != nil else {
+            await logUnavailable("配对服务返回的配对码格式无效，无法更新实时活动。")
+            return false
+        }
+        guard let activity else {
+            await logUnavailable("配对码到达时实时活动已不存在，配对码将改用系统通知显示。")
+            return false
+        }
+        guard stage == .preparing || stage == .code else {
+            await logUnavailable("配对码到达时实时活动处于非配对状态，配对码将改用系统通知显示。")
             return false
         }
         guard activity.activityState == .active || activity.activityState == .stale else {
@@ -110,7 +125,10 @@ final class PairingLiveActivityController {
         }
         activityOperation = updateOperation
         await updateOperation.value
-        guard self.activity?.id == activityID, stage == .code else { return false }
+        guard self.activity?.id == activityID, stage == .code else {
+            await logUnavailable("更新配对码期间实时活动已被取消或替换，配对码将改用系统通知显示。")
+            return false
+        }
         guard activity.activityState == .active || activity.activityState == .stale else {
             await logUnavailable("配对实时活动更新后已不可用，配对码将改用系统通知显示。")
             finish()

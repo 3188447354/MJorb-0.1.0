@@ -4768,6 +4768,17 @@ def violations(load=read):
           and '"filename" : "icon@3x.png"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json")
           and '"scale" : "3x"' in load("SealLiveActivity/Assets.xcassets/SealBrandIconSmall.imageset/Contents.json"),
           "R119④: 灵动岛优先使用主 App 随活动传入的品牌图标，保留扩展资源回退与全彩渲染")
+    ipa_verifier = load("Scripts/verify-ipa.sh")
+    check("Seal IPA is missing the required SealLiveActivity widget extension" in ipa_verifier
+          and "NSExtension.NSExtensionPointIdentifier" in ipa_verifier
+          and "com.apple.widgetkit-extension" in ipa_verifier,
+          "R119⑤: 发布 IPA 必须含有 WidgetKit Live Activity 扩展，且扩展类型正确")
+    pairing_host = strip_comments(load("Seal/Infrastructure/Pairing/PhonePairingHost.swift"))
+    rust_pairing_host = load("Vendor/Minimuxer/RustBridge/src/phone_pairing.rs")
+    check("timeoutSeconds: TimeInterval = 180" in pairing_host
+          and "Duration::from_secs(180)" in rust_pairing_host
+          and "preparationLifetime: TimeInterval = PhonePairingHost.timeoutSeconds + 30" in pairing_controller,
+          "R119⑥: Live Activity 准备态必须覆盖 Rust 手机配对的完整等待窗口")
 
     # R125: 重装后 CoreData / Accounts.json 中的 UUID 索引会消失；接管判定仍须查找
     # 同一 Keychain service 下的旧账号条目，并按运行中的证书序列号验证私钥。

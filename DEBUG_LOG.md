@@ -1,3 +1,14 @@
+# 2026-10-21 — 配对灵动岛提前结束并静默回退通知
+
+- **现象**：手机配对没有持续显示在灵动岛，后来只看到系统通知；诊断日志没有对应的 ActivityKit 创建/更新失败原因。
+- **根因**：准备态 Live Activity 只保留 60 秒，而底层手机配对等待窗口是 180 秒；活动先被本地计时结束后，配对码到达时 `showCode` 因活动句柄缺失直接返回 `false`，调用方转发系统通知。配对码格式错误、状态不匹配及活动被并发替换也有静默返回分支。IPA 守卫只在扩展存在时检查它，缺失扩展的包也能通过。
+- **证据**：`Seal-log(39).txt` 的签名记录显示 Seal 的 `SealLiveActivity.appex` 被送入签名，并且本机描述文件续签覆盖主 App 与 `.LiveActivity` 两个目标；这排除了该次 Seal 内部签名链路漏签扩展。`Seal-log(37/38).txt` 记录了手机配对入口，但没有 ActivityKit 回退原因，与静默分支一致。专用小图文件本身为清晰的 72×72 蓝底白色 Seal 标志。
+- **修复**：准备态延长至配对服务 180 秒等待窗口之外；包内缺扩展、系统禁用、ActivityKit 创建失败、配对码无效、活动丢失/状态错配或更新期间被替换时分别记录原因。IPA 验证改为强制要求 `SealLiveActivity.appex`，并核验 `com.apple.widgetkit-extension` 扩展类型。
+- **同批修复**：启动列表首次读取移到关键维护之后；本机完整快照与远程设备核验统一先做 Seal 阳性对照、收集完全部缺失项后才修改记录，避免不可信清单删记录；设备操作互斥的等待后检查改为非重复守卫形式，保持变异检查能锁定入口闸门。
+- **限制**：用户在 iOS 设置关闭 Seal 实时活动时，系统仍会拒绝创建；应用不能绕过系统开关，只能明确记录原因并使用通知回退。
+- **涉及文件**：`Seal/Infrastructure/Pairing/PhonePairingHost.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealTests/Pairing/PhonePairingPresentationPolicyTests.swift`、`Scripts/verify-ipa.sh`、`Scripts/verify-release-safety.py`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`。
+- **验证状态**：待新一轮 CI；必须在真机确认手机配对等待超过 60 秒后仍保留灵动岛，并分别确认系统禁用/缺扩展时日志说明正确。Windows 本机不运行 Swift 测试或源码守卫。
+
 # 2026-10-21 — 诊断日志耗时精度在落盘后丢失
 
 - **现象**：操作摘要刚生成时按真实起止时间计算耗时，写入后日志页重载会出现秒数偏差。

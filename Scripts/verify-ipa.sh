@@ -27,6 +27,11 @@ done
 #      那是守卫自己的误报。
 #   ② 放行 `PlugIns/` **只能是精确匹配那一条目录条目**，不能当成前缀 ——
 #      写成前缀会把 `PlugIns/Evil.appex/…` 一起放进来，让守卫比原来更弱。
+if ! grep -q '^Payload/Seal\.app/PlugIns/SealLiveActivity\.appex/' <<<"$entries"; then
+  echo "Seal IPA is missing the required SealLiveActivity widget extension" >&2
+  exit 1
+fi
+
 allowed_exact=(
   "Payload/Seal.app/PlugIns/"
   "Payload/Seal.app/PlugIns/SealLiveActivity.appex/"
@@ -69,8 +74,13 @@ if grep -q '^Payload/Seal\.app/PlugIns/' <<<"$entries"; then
     activity_version="$(plutil -extract CFBundleShortVersionString raw "$info_dir/activity.plist")"
     main_build="$(plutil -extract CFBundleVersion raw "$info_dir/main.plist")"
     activity_build="$(plutil -extract CFBundleVersion raw "$info_dir/activity.plist")"
+    activity_extension_point="$(plutil -extract NSExtension.NSExtensionPointIdentifier raw "$info_dir/activity.plist")"
     if [[ "$main_version" != "$activity_version" || "$main_build" != "$activity_build" ]]; then
       echo "Seal and SealLiveActivity versions must match (main: $main_version/$main_build; extension: $activity_version/$activity_build)" >&2
+      exit 1
+    fi
+    if [[ "$activity_extension_point" != "com.apple.widgetkit-extension" ]]; then
+      echo "SealLiveActivity has an invalid NSExtensionPointIdentifier: $activity_extension_point" >&2
       exit 1
     fi
   fi
