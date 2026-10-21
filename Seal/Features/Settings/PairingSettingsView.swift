@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct PairingSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
+    @Environment(\.openURL) private var openURL
     /// 仅由安装/续签通道失败的恢复入口启用；正常进入设备页不额外打扰用户。
     let runsConnectionDiagnosticOnAppear: Bool
     @State private var isFileImporterPresented = false
@@ -131,6 +132,22 @@ struct PairingSettingsView: View {
                 }
             }
 
+            Text("需要设备连接时，请将 iPhone 与设备连到同一 Wi-Fi，并打开 LocalDevVPN。Seal 无法代替你切换 Wi-Fi。")
+                .font(.footnote)
+                .foregroundStyle(Color.sealTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if connectionDiagnosticFailed {
+                Button("打开 LocalDevVPN") {
+                    openURL(LocalDevVPNLink.enableAndReturn) { result in
+                        if case .discarded = result {
+                            openURL(LocalDevVPNLink.appStore)
+                        }
+                    }
+                }
+                .sealOutlineAction(cornerRadius: 12)
+            }
+
             Button(connectionDiagnosticIsRunning ? "正在检测…" : "重新检测") {
                 Task { await viewModel.testLocalDevVPN() }
             }
@@ -158,6 +175,11 @@ struct PairingSettingsView: View {
 
     private var connectionDiagnosticIsRunning: Bool {
         if case .running = viewModel.diagnosticState { return true }
+        return false
+    }
+
+    private var connectionDiagnosticFailed: Bool {
+        if case .failed = viewModel.diagnosticState { return true }
         return false
     }
 

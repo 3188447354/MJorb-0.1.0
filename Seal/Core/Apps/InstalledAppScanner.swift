@@ -19,6 +19,12 @@ final class InstalledAppScanner: Sendable {
     /// 扫描所有已安装的应用，返回 Bundle ID -> ScannedApp
     /// 使用 LSApplicationWorkspace 私有 API，旁加载可用。
     func scanAll() async -> [ScannedApp] {
+        await scanAllSnapshot() ?? []
+    }
+
+    /// `nil` 表示系统清单不可读取；空数组表示成功读到空清单。
+    /// 同步设备列表时必须区分两者，不能把读取失败当成“全部卸载”。
+    func scanAllSnapshot() async -> [ScannedApp]? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let apps = Self.scanSync()
@@ -39,19 +45,19 @@ final class InstalledAppScanner: Sendable {
         }
     }
 
-    private static func scanSync() -> [ScannedApp] {
+    private static func scanSync() -> [ScannedApp]? {
         // 模拟器上跳过：私有 API 在模拟器上行为不可靠，且模拟器里不会有 Seal 装过的 App
         #if targetEnvironment(simulator)
-        return []
+        return nil
         #endif
         guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type else {
-            return []
+            return nil
         }
         guard let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() else {
-            return []
+            return nil
         }
         guard let appList = workspace.perform(NSSelectorFromString("allInstalledApplications"))?.takeUnretainedValue() as? [NSObject] else {
-            return []
+            return nil
         }
 
         var result: [ScannedApp] = []

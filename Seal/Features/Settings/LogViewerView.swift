@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import MessageUI
 import UniformTypeIdentifiers
 
 /// 续签完成通知：AppsViewModel 发出，AppContainer 监听并停止后台保活（省电）。
@@ -19,6 +20,7 @@ struct LogViewerView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var entries: [SealLogEntry] = []
     @State private var exportDocument: LogExportDocument?
+    @State private var mailAttachment: LogMailAttachment?
     @State private var showClearConfirm = false
     @State private var selectedFailure: LogFailureDetail?
     @State private var exportFailure: ImportFailure?
@@ -26,6 +28,13 @@ struct LogViewerView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
+                Text("页面只显示最新 20 条结果；完整日志最多保留 1000 条，超出后会移除最早记录。无法解决时，可点邮件按钮发送日志至 mjorb@foxmail.com。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 12)
+
                 ForEach(entries) { entry in
                     LogEntryRow(entry: entry) { title, reason in
                         selectedFailure = LogFailureDetail(title: title, reason: reason)
@@ -59,6 +68,14 @@ struct LogViewerView: View {
                             .frame(width: 36, height: 36)
                             .glassSurface(cornerRadius: 18)
                     }
+                    Button(action: emailLogs) {
+                        Image(systemName: "envelope")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.accentColor)
+                            .frame(width: 36, height: 36)
+                            .glassSurface(cornerRadius: 18)
+                    }
+                    .accessibilityLabel("邮件发送日志")
                 }
             }
         }
@@ -84,6 +101,11 @@ struct LogViewerView: View {
         }
         .sheet(item: $exportDocument) { document in
             ShareSheet(activityItems: [document.url])
+        }
+        .sheet(item: $mailAttachment) { attachment in
+            LogMailComposer(attachmentData: attachment.data) {
+                mailAttachment = nil
+            }
         }
     }
 
@@ -112,6 +134,35 @@ struct LogViewerView: View {
                     title: "无法导出日志",
                     reason: error.localizedDescription,
                     recovery: "稍后重试",
+                    code: "SEAL-LOG-002"
+                )
+            }
+        }
+    }
+
+    private func emailLogs() {
+        Task {
+            do {
+                let url = try await viewModel.materializeLogExport()
+                guard let document = LogExportDocument(url: url) else {
+                    exportFailure = ImportFailure(
+                        title: "无法导出日志",
+                        reason: "日志文件写入后未找到。",
+                        recovery: "稍后重试",
+                        code: "SEAL-LOG-002"
+                    )
+                    return
+                }
+                guard MFMailComposeViewController.canSendMail() else {
+                    exportDocument = document
+                    return
+                }
+                mailAttachment = LogMailAttachment(data: try Data(contentsOf: document.url))
+            } catch {
+                exportFailure = ImportFailure(
+                    title: "无法准备日志邮件",
+                    reason: error.localizedDescription,
+                    recovery: "使用分享按钮导出日志",
                     code: "SEAL-LOG-002"
                 )
             }
@@ -289,7 +340,9 @@ private struct LogEntryRow: View {
 
     private func footer(_ summary: RenewalRoundSummary) -> String {
         let duration = RenewalRoundSummary.formatDuration(summary.totalDuration)
-        if summary.operation == .singleSigning || summary.operation == .singleRenewal {
+        if summary.operation == .singleSigning
+            || summary.operation == .singleRenewal
+            || summary.operation == .singleUpdate {
             let failed = summary.failedCount + summary.needsActionCount > 0
             return "共计 \(duration) · \(failed ? "失败" : "成功")"
         }
@@ -301,7 +354,7 @@ private struct LogEntryRow: View {
 
     private func marker(_ outcome: RenewalRoundItem.Outcome) -> String {
         switch outcome {
-        case .succeeded: "√"
+        case .succeeded: "✓"
         case .failed: "×"
         case .needsAction: "!"
         case .awaitingConfirmation: "·"
@@ -349,6 +402,50 @@ private struct LogFailureReasonSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+private struct LogMailAttachment: Identifiable {
+    let id = UUID()
+    let data: Data
+}
+
+private struct LogMailComposer: UIViewControllerRepresentable {
+    let attachmentData: Data
+    let onFinish: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onFinish: onFinish)
+    }
+
+    func makeUIViewController(context: Context) -> MFMailComposeViewController {
+        let composer = MFMailComposeViewController()
+        composer.mailComposeDelegate = context.coordinator
+        composer.setToRecipients(["mjorb@foxmail.com"])
+        composer.setSubject("Seal 诊断日志")
+        composer.setMessageBody("附件是 Seal 诊断日志。", isHTML: false)
+        composer.addAttachmentData(attachmentData, mimeType: "text/plain", fileName: "Seal-log.txt")
+        return composer
+    }
+
+    func updateUIViewController(_ controller: MFMailComposeViewController, context: Context) {
+        context.coordinator.onFinish = onFinish
+    }
+
+    final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
+        var onFinish: () -> Void
+
+        init(onFinish: @escaping () -> Void) {
+            self.onFinish = onFinish
+        }
+
+        func mailComposeController(
+            _ controller: MFMailComposeViewController,
+            didFinishWith result: MFMailComposeResult,
+            error: Error?
+        ) {
+            controller.dismiss(animated: true, completion: onFinish)
+        }
     }
 }
 

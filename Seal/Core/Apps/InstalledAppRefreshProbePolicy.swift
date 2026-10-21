@@ -16,4 +16,32 @@ enum InstalledAppRefreshProbePolicy {
     /// `BlockingCall` 超时不会停止底层 FFI。冷却期覆盖其默认 15 秒查询预算，避免连续下拉
     /// 不断叠加同一条死会话上的阻塞调用。
     static let timeoutCooldownSeconds: TimeInterval = 20
+
+    static func normalizedBundleIdentifier(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    /// 只在系统清单能找到正在运行的 Seal 时，才把它当作可信的完整设备快照。
+    static func hasPositiveControl(
+        controlBundleIdentifier: String?,
+        installedBundleIdentifiers: [String]
+    ) -> Bool {
+        guard let control = normalizedBundleIdentifier(controlBundleIdentifier) else { return false }
+        return installedBundleIdentifiers.contains {
+            normalizedBundleIdentifier($0) == control
+        }
+    }
+
+    static func contains(
+        _ bundleIdentifier: String?,
+        in installedBundleIdentifiers: Set<String>
+    ) -> Bool {
+        guard let bundleIdentifier = normalizedBundleIdentifier(bundleIdentifier) else { return false }
+        return installedBundleIdentifiers.contains(bundleIdentifier)
+            || installedBundleIdentifiers.contains {
+                normalizedBundleIdentifier($0) == bundleIdentifier
+            }
+    }
 }

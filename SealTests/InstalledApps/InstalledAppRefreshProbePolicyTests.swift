@@ -8,4 +8,36 @@ struct InstalledAppRefreshProbePolicyTests {
         #expect(InstalledAppRefreshProbePolicy.timeoutSeconds == 2)
         #expect(InstalledAppRefreshProbePolicy.timeoutCooldownSeconds > BlockingCall.queryTimeoutSeconds)
     }
+
+    @Test
+    func localSnapshotNeedsSealAsPositiveControl() {
+        #expect(
+            InstalledAppRefreshProbePolicy.hasPositiveControl(
+                controlBundleIdentifier: "com.mjorb.seal.device",
+                installedBundleIdentifiers: ["com.example.music"]
+            ) == false
+        )
+        #expect(
+            InstalledAppRefreshProbePolicy.hasPositiveControl(
+                controlBundleIdentifier: "com.mjorb.seal.device",
+                installedBundleIdentifiers: ["COM.MJORB.SEAL.DEVICE"]
+            )
+        )
+    }
+
+    @Test
+    func localSnapshotMatchesBundleIDsCaseInsensitively() {
+        #expect(
+            InstalledAppRefreshProbePolicy.contains(
+                "com.example.music",
+                in: ["COM.EXAMPLE.MUSIC"]
+            )
+        )
+        #expect(
+            InstalledAppRefreshProbePolicy.contains(
+                "com.example.video",
+                in: ["com.example.music"]
+            ) == false
+        )
+    }
 }

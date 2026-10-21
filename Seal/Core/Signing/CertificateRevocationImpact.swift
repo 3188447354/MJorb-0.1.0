@@ -42,17 +42,24 @@ enum CertificateRevocationImpact {
         }
     }
 
-    /// 证书卡片「本机已安装 App」清单展示用：与行标签（`associatedApps`）**同一套关联判定**
-    /// ——顶层序列号或任一签名 target 的序列号命中即算关联——再只保留本机视为已安装的记录。
-    ///
-    /// 为什么不能直接用 `affectedApps`：那个判定只看顶层 `certificateSerialNumber` 且要求
-    /// `state == .installed`，与行标签用的 `associatedApps` 不同源，于是同一张证书会出现
-    /// 「标签说本机已安装 App 在用、下面的清单却说暂无」的自相矛盾；Seal 自身
-    /// （`belongsInInstalledList` 恒为真）尤其容易被漏掉。
-    /// 撤销影响评估仍走 `affectedApps`（口径更严，只算真正会失效的已装应用），两者不要合并。
-    static func installedAppsAssociated(serialNumber: String, apps: [AppRecord]) -> [AppRecord] {
+    /// 只显示系统安装清单中确实存在、且签名记录关联此证书的 App。
+    /// 记录的 `state` 可能因卸载、重装或恢复而过期，不能用它证明设备上仍安装。
+    static func installedAppsAssociated(
+        serialNumber: String,
+        apps: [AppRecord],
+        installedBundleIdentifiers: Set<String>
+    ) -> [AppRecord] {
         associatedApps(serialNumber: serialNumber, apps: apps)
-            .filter(\.belongsInInstalledList)
+            .filter { app in
+                guard app.belongsInInstalledList else { return false }
+                let bundleIdentifier = app.mappedBundleIdentifier
+                    ?? app.preferredBundleIdentifier
+                    ?? app.originalBundleIdentifier
+                return InstalledAppRefreshProbePolicy.contains(
+                    bundleIdentifier,
+                    in: installedBundleIdentifiers
+                )
+            }
     }
 
     /// 该证书是否就是当前运行 Seal 的真实 CMS 签名者。
@@ -83,11 +90,25 @@ enum CertificateRevocationImpact {
     static func warningMessage(
         serialNumber: String,
         apps: [AppRecord],
-        isLocalCertificate: Bool
+        isLocalCertificate: Bool,
+        installedBundleIdentifiers: Set<String>? = nil
     ) -> String {
         var lines: [String] = []
 
-        let affected = affectedApps(serialNumber: serialNumber, apps: apps)
+        guard let installedBundleIdentifiers else {
+            lines.append("本机应用安装状态暂时无法读取，请重新扫描后再撤销证书。")
+            if isLocalCertificate {
+                lines.append("这是本机当前使用的证书，撤销后会同时清除本机证书。")
+            }
+            lines.append("证书一旦撤销无法恢复。")
+            return lines.joined(separator: "\n")
+        }
+
+        let affected = installedAppsAssociated(
+            serialNumber: serialNumber,
+            apps: apps,
+            installedBundleIdentifiers: installedBundleIdentifiers
+        )
         if affected.isEmpty {
             lines.append("本机没有已安装的应用在用这个证书。")
         } else {

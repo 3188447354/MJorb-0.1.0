@@ -7,6 +7,7 @@ struct SigningCertificateSettingsView: View {
     let certificateExportHandler: CertificateExportHandler
     @State private var selectedAccountID: UUID?
     @State private var certificatePendingRevocation: ApplePortalCertificateSnapshot?
+    @State private var installedBundleIdentifiers: Set<String>?
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -80,6 +81,7 @@ struct SigningCertificateSettingsView: View {
                 selectedAccountID = viewModel.activeAccount?.id
             }
             await viewModel.load()
+            await refreshInstalledBundleIdentifiers()
             await viewModel.refreshSelfManagementState()
             guard let account = activeAccount else { return }
             await viewModel.refreshCertificateHealthLocally(for: account)
@@ -87,6 +89,7 @@ struct SigningCertificateSettingsView: View {
         }
         .refreshable {
             await viewModel.load(force: true)
+            await refreshInstalledBundleIdentifiers()
             await viewModel.refreshSelfManagementState()
             guard let account = activeAccount else { return }
             await viewModel.refreshCertificateHealthLocally(for: account)
@@ -100,6 +103,23 @@ struct SigningCertificateSettingsView: View {
             return account
         }
         return viewModel.activeAccount
+    }
+
+    private func refreshInstalledBundleIdentifiers() async {
+        guard let controlBundleIdentifier = Bundle.main.bundleIdentifier,
+              let snapshot = await InstalledAppScanner().scanAllSnapshot(),
+              InstalledAppRefreshProbePolicy.hasPositiveControl(
+                controlBundleIdentifier: controlBundleIdentifier,
+                installedBundleIdentifiers: snapshot.map(\.bundleIdentifier)
+              ) else {
+            installedBundleIdentifiers = nil
+            return
+        }
+        installedBundleIdentifiers = Set(
+            snapshot.compactMap {
+                InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
+            }
+        )
     }
 
     private var selectableAccounts: [AppleAccountRecord] {
@@ -399,9 +419,14 @@ struct SigningCertificateSettingsView: View {
         } else if certificate.hasLocalPrivateKey {
             labels.append(.locallyUsable)
         }
-        if CertificateRevocationImpact.associatedApps(
+        guard let installedBundleIdentifiers else {
+            labels.append(.associationUnknown)
+            return labels
+        }
+        if CertificateRevocationImpact.installedAppsAssociated(
             serialNumber: certificate.serialNumber,
-            apps: relatedApps
+            apps: relatedApps,
+            installedBundleIdentifiers: installedBundleIdentifiers
         ).isEmpty == false {
             labels.append(.associatedOnThisDevice)
         }
@@ -465,7 +490,8 @@ struct SigningCertificateSettingsView: View {
         CertificateRevocationImpact.warningMessage(
             serialNumber: certificate.serialNumber,
             apps: relatedApps,
-            isLocalCertificate: false
+            isLocalCertificate: false,
+            installedBundleIdentifiers: installedBundleIdentifiers
         )
     }
 
@@ -579,11 +605,11 @@ struct SigningCertificateSettingsView: View {
 
     @ViewBuilder
     private func installedAppsSection(account: AppleAccountRecord) -> some View {
-        // 与上方「本机已安装 App 在用」行标签同源判定（顶层序列号 + 每个签名 target 的序列号），
-        // 否则会出现「标签说在用、清单说暂无」的矛盾，Seal 自身也会被漏掉。
+        // 序列号关联与 LaunchServices 当前安装 Bundle ID 必须同时命中，不能把历史记录当作本机现状。
         let installedApps = CertificateRevocationImpact.installedAppsAssociated(
             serialNumber: account.certificateSerialNumber ?? "",
-            apps: relatedApps
+            apps: relatedApps,
+            installedBundleIdentifiers: installedBundleIdentifiers ?? []
         )
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -595,7 +621,11 @@ struct SigningCertificateSettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(Color.sealTextSecondary)
             }
-            if installedApps.isEmpty {
+            if installedBundleIdentifiers == nil {
+                Text("无法读取本机安装清单")
+                    .font(.caption)
+                    .foregroundStyle(Color.sealTextSecondary)
+            } else if installedApps.isEmpty {
                 Text("暂无")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)

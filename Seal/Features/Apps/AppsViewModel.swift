@@ -129,6 +129,7 @@ final class AppsViewModel: ObservableObject {
     @Published var requestedSettingsRoute: SettingsRoute?
     @Published private(set) var signingChannelStatus: SigningChannelStatus = .idle
     @Published private(set) var installingCachedPackageAppID: UUID?
+    private var installedAppRefreshPendingAfterOperation = false
 
     private let workflow: ImportWorkflow?
     private let appStore: (any AppStore)?
@@ -856,6 +857,7 @@ final class AppsViewModel: ObservableObject {
         let category: SealLogEntry.Category
         switch operation {
         case .singleSigning: category = .signing
+        case .singleUpdate: category = .installation
         case .singleInstallation: category = .installation
         case .singleRenewal, .batchRenewal: category = .renewal
         }
@@ -897,11 +899,78 @@ final class AppsViewModel: ObservableObject {
     ///   同一次会话稍后就自愈）。⇒ 默认值必须在「**不打扰用户**」的那一侧；想弹阻断式提示
     ///   必须**显式**传 `true` —— 否则将来谁调用不带参数的版本，都会突然给用户弹窗。
     func refreshInstalledApps(userInitiated: Bool = false) async {
+        guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
+            return
+        }
         await load(force: true)
-        let changed = await reconcileInstalledAppsWithDevice(userInitiated: userInitiated)
+        guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
+            return
+        }
+        let duplicateChanged = await removeDuplicateInstalledRecords(installedApps)
+        if duplicateChanged { await load(force: true) }
+        guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
+            return
+        }
+        let localSnapshotChanged = await reconcileInstalledAppsFromLocalSnapshot()
+        guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
+            return
+        }
+        let changed: Bool
+        if let localSnapshotChanged {
+            changed = duplicateChanged || localSnapshotChanged
+        } else {
+            let deviceChanged = await reconcileInstalledAppsWithDevice(userInitiated: userInitiated)
+            changed = duplicateChanged || deviceChanged
+        }
         if changed {
             await load(force: true)
         }
+    }
+
+    /// 本机 LaunchServices 清单不依赖 Wi-Fi / LocalDevVPN，能直接确认外部卸载。
+    /// `nil` 表示快照不可用或阳性对照未通过，此时保留旧路径的远程核验兜底。
+    private func reconcileInstalledAppsFromLocalSnapshot() async -> Bool? {
+        guard let controlBundleIdentifier = Bundle.main.bundleIdentifier else { return nil }
+        let scanner = InstalledAppScanner()
+        guard let snapshot = await scanner.scanAllSnapshot() else { return nil }
+
+        let snapshotBundleIdentifiers = snapshot.map(\.bundleIdentifier)
+        guard InstalledAppRefreshProbePolicy.hasPositiveControl(
+            controlBundleIdentifier: controlBundleIdentifier,
+            installedBundleIdentifiers: snapshotBundleIdentifiers
+        ) else { return nil }
+
+        guard operationCoordinator?.activeLease == nil else { return nil }
+        let installedBundleIdentifiers = Set(
+            snapshotBundleIdentifiers.compactMap {
+                InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0)
+            }
+        )
+        let missingOnDevice = installedApps.filter { app in
+            guard app.isSeal == false,
+                  let bundleIdentifier = installedBundleIdentifier(for: app) else {
+                return false
+            }
+            return InstalledAppRefreshProbePolicy.contains(
+                bundleIdentifier,
+                in: installedBundleIdentifiers
+            ) == false
+        }
+        guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
+            return nil
+        }
+
+        var changed = false
+        for app in missingOnDevice {
+            let didMarkMissing = await markMissingOnDevice(app)
+            changed = changed || didMarkMissing
+        }
+        return changed
     }
 
     private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {
@@ -922,6 +991,7 @@ final class AppsViewModel: ObservableObject {
         //    可抢占」，它自己会让路；而这里是**用户主动打开已安装页**触发的核验，
         //    必须由它自己让路，否则就会去抢续签的设备会话。
         guard operationCoordinator?.activeLease == nil else {
+            installedAppRefreshPendingAfterOperation = true
             try? await logStore?.append(
                 category: .system,
                 message: "已安装页设备核验跳过：有前台操作正在进行（避免与其抢占同一条设备会话）",
@@ -2087,6 +2157,8 @@ final class AppsViewModel: ObservableObject {
         installingCachedPackageAppID = app.id
         defer { installingCachedPackageAppID = nil }
         let operationStartedAt = Date()
+        let installOperation: RenewalRoundOperation = app.replacesInstalledAppID == nil
+            ? .singleInstallation : .singleUpdate
         do {
             let installed = try await signingCoordinator.installSignedArtifact(
                 appID: app.id,
@@ -2098,7 +2170,7 @@ final class AppsViewModel: ObservableObject {
                 }
             )
             await appendSingleOperationRound(
-                operation: .singleInstallation,
+                operation: installOperation,
                 app: installed,
                 startedAt: operationStartedAt,
                 outcome: .succeeded
@@ -2109,7 +2181,7 @@ final class AppsViewModel: ObservableObject {
         } catch let failure as ImportFailure {
             alertFailure = failure
             await appendSingleOperationRound(
-                operation: .singleInstallation,
+                operation: installOperation,
                 app: app,
                 startedAt: operationStartedAt,
                 outcome: .failed,
@@ -2121,7 +2193,7 @@ final class AppsViewModel: ObservableObject {
                 code: "SEAL-SIGN-500")
             let failure = Self.unexpectedSigningFailure(error)
             await appendSingleOperationRound(
-                operation: .singleInstallation,
+                operation: installOperation,
                 app: app,
                 startedAt: operationStartedAt,
                 outcome: .failed,
@@ -3296,6 +3368,10 @@ final class AppsViewModel: ObservableObject {
         guard let signingCoordinator else { return }
         defer { signingTask = nil }
         let isRenewal = app.belongsInInstalledList
+        let isApplicationUpdate = app.replacesInstalledAppID != nil
+        let singleOperation: RenewalRoundOperation = isRenewal
+            ? .singleRenewal
+            : isApplicationUpdate ? .singleUpdate : .singleSigning
         let operationKind: OperationCoordinator.Kind = isRenewal ? .renewing : .signing
         guard let operationLease = await acquireOperation(operationKind, appID: app.id) else {
             if Task.isCancelled {
@@ -3335,7 +3411,7 @@ final class AppsViewModel: ObservableObject {
             let action: SigningHistoryRecord.Action = isRenewal ? .renew : .sign
             signingSession?.status = .succeeded(completed)
             await appendSingleOperationRound(
-                operation: isRenewal ? .singleRenewal : .singleSigning,
+                operation: singleOperation,
                 app: completed,
                 startedAt: operationStartedAt,
                 outcome: .succeeded
@@ -3361,7 +3437,7 @@ final class AppsViewModel: ObservableObject {
             signingSession?.status = .failed(failure)
 
             await appendSingleOperationRound(
-                operation: isRenewal ? .singleRenewal : .singleSigning,
+                operation: singleOperation,
                 app: app,
                 startedAt: operationStartedAt,
                 outcome: .failed,
@@ -3392,7 +3468,7 @@ final class AppsViewModel: ObservableObject {
             )
             signingSession?.status = .failed(failure)
             await appendSingleOperationRound(
-                operation: isRenewal ? .singleRenewal : .singleSigning,
+                operation: singleOperation,
                 app: app,
                 startedAt: operationStartedAt,
                 outcome: .failed,
@@ -3844,7 +3920,9 @@ final class AppsViewModel: ObservableObject {
         operationCoordinator?.end(lease)
         // 回前台时若刚好在签名/安装，设备核验会为了不抢 RSD 会话而跳过。
         // 操作结束后补一次合并刷新，让用户外部卸载的 App 不必等下一次前后台切换才消失。
-        guard [.signing, .installing, .renewing].contains(lease.kind) else { return }
+        let operationNeedsRefresh = [.signing, .installing, .renewing].contains(lease.kind)
+        guard operationNeedsRefresh || installedAppRefreshPendingAfterOperation else { return }
+        installedAppRefreshPendingAfterOperation = false
         Task { [weak self] in
             await Task.yield()
             await self?.refreshInstalledApps(userInitiated: false)

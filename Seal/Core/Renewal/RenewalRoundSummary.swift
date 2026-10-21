@@ -24,6 +24,7 @@ enum RenewalRoundOperation: String, Codable, Equatable, Sendable {
     case batchRenewal
     case singleRenewal
     case singleSigning
+    case singleUpdate
     case singleInstallation
 
     var headerLabel: String? {
@@ -31,6 +32,7 @@ enum RenewalRoundOperation: String, Codable, Equatable, Sendable {
         case .batchRenewal: nil
         case .singleRenewal: "单独续签"
         case .singleSigning: "单独签名"
+        case .singleUpdate: "更新"
         case .singleInstallation: "安装"
         }
     }
@@ -55,12 +57,13 @@ enum RenewalRoundOperation: String, Codable, Equatable, Sendable {
             case .shortcut: return "快捷指令签名"
             case .background: return "后台签名"
             }
+        case .singleUpdate: return "更新"
         case .singleInstallation: return "安装"
         }
     }
 
     var showsAppCount: Bool {
-        self != .singleSigning
+        self != .singleSigning && self != .singleUpdate
     }
 }
 

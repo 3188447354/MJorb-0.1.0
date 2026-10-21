@@ -101,6 +101,8 @@ struct AppsRootView: View {
                     }
                 )
                 .presentationDetents(operationDetents(for: app))
+                .presentationContentInteraction(.scrolls)
+                .presentationDragIndicator(.hidden)
             }
             .sheet(item: installedActionSheet, onDismiss: {
                 installedActionApp = nil
@@ -123,6 +125,8 @@ struct AppsRootView: View {
                     }
                 )
                 .presentationDetents(installedOperationDetents)
+                .presentationContentInteraction(.scrolls)
+                .presentationDragIndicator(.hidden)
             }
             .sheet(item: $viewModel.accountSelectionApp) { app in
                 AccountSelectionView(
@@ -158,6 +162,8 @@ struct AppsRootView: View {
                 standardAlert(failure)
             }
             .task {
+                // 启动时用设备隧道地址触发 LocalDevVPN 已配置的按需连接；探测独立运行，不阻塞首屏。
+                Task { _ = await LocalDevVPNOnDemandActivator().probeTunnel() }
                 // 后台续签已经得到终态时，通知进入必须先展示结果；不能被启动维护、
                 // 设备核验或列表加载拖住，造成用户得点几次应用才看到抽屉。
                 requestSettledBackgroundBatchResultPresentation()
@@ -186,6 +192,8 @@ struct AppsRootView: View {
                 guard phase == .active else { return }
                 requestSettledBackgroundBatchResultPresentation()
                 Task {
+                    await viewModel.syncSelfRecordOnLaunch()
+                    await viewModel.reloadSelfRecordSnapshot()
                     await viewModel.refreshInstalledApps(userInitiated: false)
                     if mode == .unsigned {
                         await viewModel.refreshUnsignedApps()
@@ -230,7 +238,10 @@ struct AppsRootView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .sealSelfRecordUpdated)) { _ in
                 // 自安装重启后，记录与证书派生状态必须同一轮发布。
-                Task { await viewModel.reloadSelfRecordSnapshot() }
+                Task {
+                    await viewModel.reloadSelfRecordSnapshot()
+                    await viewModel.load(force: true)
+                }
             }
         }
         .sealScreenBackground()
@@ -554,11 +565,11 @@ struct AppsRootView: View {
     private func operationDetents(for app: AppRecord) -> Set<PresentationDetent> {
         if app.belongsInInstalledList { return installedOperationDetents }
         let extraExtensionHeight = CGFloat(min(app.extensions.count, 4)) * 10
-        return [.height(CGFloat(660) + extraExtensionHeight), .large]
+        return [.height(CGFloat(660) + extraExtensionHeight)]
     }
 
     private var installedOperationDetents: Set<PresentationDetent> {
-        [.height(560), .large]
+        [.height(560)]
     }
 
     private var deleteAlertTitle: String {

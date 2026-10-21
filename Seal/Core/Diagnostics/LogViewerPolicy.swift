@@ -80,6 +80,8 @@ enum LogViewerPolicy {
             operation = .singleSigning
         } else if label.contains("单独续签") {
             operation = .singleRenewal
+        } else if label == "更新" {
+            operation = .singleUpdate
         } else if label == "安装" {
             operation = .singleInstallation
         } else {

@@ -115,7 +115,8 @@ struct CertificateRevocationImpactTests {
         let message = CertificateRevocationImpact.warningMessage(
             serialNumber: "AA11",
             apps: apps,
-            isLocalCertificate: true
+            isLocalCertificate: true,
+            installedBundleIdentifiers: Set(apps.map(\.originalBundleIdentifier))
         )
         #expect(message.contains("微信"))
         #expect(message.contains("短剧"))
@@ -128,10 +129,23 @@ struct CertificateRevocationImpactTests {
         let message = CertificateRevocationImpact.warningMessage(
             serialNumber: "AA11",
             apps: [makeApp(name: "Beta", serial: "BB22")],
-            isLocalCertificate: false
+            isLocalCertificate: false,
+            installedBundleIdentifiers: ["com.example.Beta"]
         )
         #expect(message.contains("没有已安装的应用"))
         #expect(message.contains("本机当前使用") == false)
+    }
+
+    @Test
+    func warningDoesNotClaimNoAppsWhenDeviceSnapshotIsUnavailable() {
+        let message = CertificateRevocationImpact.warningMessage(
+            serialNumber: "AA11",
+            apps: [makeApp(name: "Alpha", serial: "AA11")],
+            isLocalCertificate: false,
+            installedBundleIdentifiers: nil
+        )
+        #expect(message.contains("安装状态暂时无法读取"))
+        #expect(message.contains("没有已安装的应用") == false)
     }
 
     /// 真实签名者判定必须归一化前导 0：AltSign 剥 0、DER 保留 0 是同一张证书（坑位 1）。
@@ -218,7 +232,11 @@ struct CertificateRevocationImpactTests {
                 .map(\.name) == ["Alpha"]
         )
         #expect(
-            CertificateRevocationImpact.installedAppsAssociated(serialNumber: "AA11", apps: [app])
+            CertificateRevocationImpact.installedAppsAssociated(
+                serialNumber: "AA11",
+                apps: [app],
+                installedBundleIdentifiers: ["com.example.Alpha"]
+            )
                 .map(\.name) == ["Alpha"]
         )
         #expect(CertificateRevocationImpact.affectedApps(serialNumber: "AA11", apps: [app]).isEmpty)
@@ -231,7 +249,11 @@ struct CertificateRevocationImpactTests {
         let seal = makeTargetOnlyApp(name: "Seal", serial: "AA11", state: .signed, isSeal: true)
         #expect(CertificateRevocationImpact.affectedApps(serialNumber: "AA11", apps: [seal]).isEmpty)
         #expect(
-            CertificateRevocationImpact.installedAppsAssociated(serialNumber: "AA11", apps: [seal])
+            CertificateRevocationImpact.installedAppsAssociated(
+                serialNumber: "AA11",
+                apps: [seal],
+                installedBundleIdentifiers: ["com.example.Seal"]
+            )
                 .map(\.name) == ["Seal"]
         )
     }
@@ -243,6 +265,24 @@ struct CertificateRevocationImpactTests {
             makeApp(name: "Alpha", serial: "AA11", state: .imported),
             makeApp(name: "Beta", serial: "AA11", state: .signed)
         ]
-        #expect(CertificateRevocationImpact.installedAppsAssociated(serialNumber: "AA11", apps: apps).isEmpty)
+        #expect(
+            CertificateRevocationImpact.installedAppsAssociated(
+                serialNumber: "AA11",
+                apps: apps,
+                installedBundleIdentifiers: []
+            ).isEmpty
+        )
+    }
+
+    @Test
+    func installedAssociationRequiresBundleIDInLiveDeviceSnapshot() {
+        let app = makeApp(name: "Alpha", serial: "AA11", state: .installed)
+        #expect(
+            CertificateRevocationImpact.installedAppsAssociated(
+                serialNumber: "AA11",
+                apps: [app],
+                installedBundleIdentifiers: []
+            ).isEmpty
+        )
     }
 }

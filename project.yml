@@ -56,6 +56,7 @@ targets:
       - path: Shared
     resources:
       - path: Seal/Resources/Anisette
+      - path: SealLiveActivity/Resources/SealBrandIcon.png
     dependencies:
       - package: ZIPFoundation
       - package: AltSign
@@ -164,7 +165,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal
         PRODUCT_NAME: Seal
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: 0.1.43
+        MARKETING_VERSION: 0.1.44
         CURRENT_PROJECT_VERSION: 4
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
@@ -229,7 +230,7 @@ targets:
         #    代价：扩展会占用免费 Apple ID 每周 10 个 App ID 名额中的 1 个。
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.LiveActivity
         PRODUCT_NAME: SealLiveActivity
-        MARKETING_VERSION: 0.1.43
+        MARKETING_VERSION: 0.1.44
         CURRENT_PROJECT_VERSION: 4
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic

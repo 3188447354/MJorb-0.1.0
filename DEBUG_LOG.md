@@ -1,3 +1,14 @@
+# 2026-10-21 — 已安装列表、证书在用状态、日志和更新完成态不同步
+
+- **现象**：卸载的应用在重开 Seal 后仍留在已安装列表；证书页可能把已卸载 App 标成“本机已安装 App 在用”；Seal 更新后旧版本标签需手动刷新；诊断日志最多显示 20 条但没有说明，且缺少直接邮件发送入口；应用覆盖更新和普通安装共用“安装”标题；灵动岛图标灰色或模糊；签名/续签操作抽屉可上拉改变高度。
+- **根因**：已安装列表只靠需要 Wi-Fi/LocalDevVPN 的设备核验；证书页用持久化 AppRecord 状态推断实时安装；自记录变更通知只刷新证书快照、不重载 App 列表；日志 UI 按 20 条截取而未解释，Mail composer 未接入；更新日志没有独立 operation 类型；Live Activity 控制器从主 App Asset Catalog 读取扩展资源名，实际拿不到数据且 32/24 px 输出过小；两个操作抽屉同时声明固定高度和 `.large` detent。
+- **修复**：用 LaunchServices 本机快照同步已安装状态；区分清单读取失败与成功空清单，并要求运行中的 Seal 作为阳性对照，失败时回退原设备核验。事务期间延后刷新，结束后补做。证书页将本机安装 ID 与签名证书关联共同判定，未知时不允许撤销。Seal 自身记录变更与回前台时重载记录。日志页解释 20/1000 条规则，并增加预填收件人的原生邮件草稿与分享回退；更新操作独立归类，成功标记使用 `✓`。将正式图标 PNG 纳入主 App bundle 并渲染为 96 px。操作抽屉移除 `.large` detent，内容区保持滚动。
+- **连接引导**：Seal 启动时后台调用 `LocalDevVPNOnDemandActivator.probeTunnel()`，尝试触发已配置的按需隧道；失败页提示连接同一 Wi-Fi 与 LocalDevVPN，提供 `localdevvpn://enable?scheme=seal` 深链，返回时走既有诊断回调。iOS 加入 Wi-Fi 要求用户明确授权，不能静默切网。
+- **上游对照**：本批只改变列表同步、证书状态展示、日志分类和 UI，不改变签名/续签判定、Apple 请求、签名材料或安装事务；`docs/upstream-alignment.md` 已核对，SideStore/AltStore 没有等价的本机 LaunchServices 清单 UI 判据，未引入第二套签名/续签流程。
+- **回归覆盖**：增加本机清单阳性对照、Bundle ID 归一化、证书关联必须匹配实时安装快照、设备清单未知不得显示“无影响”、更新操作类型测试；原有日志最近 20 条测试继续覆盖展示上限。
+- **涉及文件**：`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Core/Signing/CertificateRevocationImpact.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Features/Settings/LogViewerView.swift`、`Seal/Features/Settings/PairingSettingsView.swift`、`Seal/Core/Renewal/RenewalRoundSummary.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealTests/InstalledApps/InstalledAppRefreshProbePolicyTests.swift`、`SealTests/Settings/CertificateRevocationImpactTests.swift`、`SealTests/Diagnostics/LogRoundTests.swift`、`docs/upstream-alignment.md`、`project.yml`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+- **验证状态**：本机 Windows 无 Swift/Xcode；未本地运行测试或源码守卫。修改后按项目流程由 iOS CI 编译与回归；需要真机确认 LaunchServices 返回实装应用、邮件草稿附件、LocalDevVPN 深链回跳及灵动岛渲染。
+
 # 2026-10-21 — CI 错误码清单未随源代码更新
 
 - **现象**：CI `39469835734` 第 2 次尝试的 Swift/UI 回归与签名器测试通过；`build-package` 在 `Audit source error identifiers` 因生成清单与仓库版本不一致失败。

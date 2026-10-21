@@ -63,6 +63,37 @@ struct LogViewerPolicyTests {
     }
 
     @Test
+    func applicationUpdateHasItsOwnSingleAppOperationType() {
+        let summary = RenewalRoundSummary(
+            roundNumber: 0,
+            triggerSource: .manual,
+            operation: .singleUpdate,
+            startedAt: Date(timeIntervalSince1970: 100),
+            endedAt: Date(timeIntervalSince1970: 102),
+            items: [
+                RenewalRoundItem(
+                    appName: "Demo",
+                    outcome: .succeeded,
+                    duration: 2,
+                    profileExpirationDate: nil,
+                    failureCode: nil,
+                    failureReason: nil,
+                    failureRecovery: nil
+                )
+            ]
+        )
+
+        #expect(summary.operation.displayTitle(triggerSource: .manual) == "更新")
+        #expect(summary.operation.showsAppCount == false)
+        #expect(LogViewerPolicy.operationSummary(for: SealLogEntry(
+            category: .installation,
+            message: summary.humanReadableMessage(),
+            operationResult: .success,
+            operationSummary: summary
+        ))?.operation == .singleUpdate)
+    }
+
+    @Test
     func displaysFinishedRoundsThatIncludeAppsNotRun() {
         let summary = RenewalRoundSummary(
             roundNumber: 1,
