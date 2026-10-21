@@ -1489,11 +1489,16 @@ actor ApplePortalSigningService {
                 code: "SEAL-AUTH-102d"
             )
         } catch ALTAppleAPIError.authenticationHandshakeFailed {
-            throw Self.failure(
+            throw ImportFailure(
                 title: "登录握手未通过",
                 reason: "与 Apple 的登录握手失败（常见原因：设备环境数据无效或系统时间偏差）。",
-                recovery: "核对系统时间后重试；仍失败请到「我的」页面重新验证该 Apple ID",
-                code: "SEAL-AUTH-102e"
+                recovery: "核对系统时间后重试；仍失败请检查 Anisette 设备环境。此错误不会把 Apple ID 标记为失效。",
+                code: "SEAL-AUTH-102e",
+                condition: .authenticationHandshakeRejected,
+                action: .waitThenRetry,
+                retryDisposition: .manual,
+                operation: .sign,
+                origin: .authentication
             )
         } catch let failure as ImportFailure {
             throw failure
@@ -1748,9 +1753,7 @@ actor ApplePortalSigningService {
         // ⇒ **Seal 的命根子证书被当成普通「无本机私钥」证书盲撤**。
         // 真机后果（构建 38，01:45:00）：签名 Guoguo 时撤销了 Seal 正在用的 …3DC8D5F3，
         // 随后那次自替换安装又没落盘 ⇒ Seal 停在「已被撤销证书签名的旧包」上，点开即闪退。
-        let runningIdentity = await MainActor.run {
-            SelfAppMetadata.current()?.installedIdentity
-        }
+        let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
         let sealActualSignerSerials: Set<String>
         let sealSignerConfirmed: Bool
         if let runningIdentity,

@@ -202,6 +202,36 @@ struct UpdateCheckerAssetTests {
     }
 
     @Test
+    func readsExactIPAAssetSizeFromGitHubReleaseMetadata() throws {
+        let json = """
+        {
+          "assets": [
+            {
+              "name": "Seal_0.1.30.ipa",
+              "browser_download_url": "https://github.com/3188447354/MJorb-0.1.0/releases/download/v0.1.30/Seal_0.1.30.ipa",
+              "size": 27158118
+            },
+            {
+              "name": "Seal_0.1.30.ipa.sha256",
+              "browser_download_url": "https://github.com/3188447354/MJorb-0.1.0/releases/download/v0.1.30/Seal_0.1.30.ipa.sha256",
+              "size": 78
+            },
+            {
+              "name": "untrusted.ipa",
+              "browser_download_url": "https://evil.example/untrusted.ipa",
+              "size": 10
+            }
+          ]
+        }
+        """
+        let assets = UpdateChecker.releaseAssets(fromGitHubAPI: Data(json.utf8))
+        let ipaURL = try #require(UpdateChecker.ipaDownloadURL(from: assets))
+
+        #expect(UpdateChecker.assetSize(for: ipaURL, in: assets) == 27_158_118)
+        #expect(assets.count == 2)
+    }
+
+    @Test
     func rejectsMalformedReleaseFeed() {
         #expect(UpdateChecker.releaseEntries(from: Data("not Atom".utf8), repo: "3188447354/MJorb-0.1.0") == nil)
     }

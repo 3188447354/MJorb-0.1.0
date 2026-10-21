@@ -16,6 +16,42 @@ import Testing
 /// 只有单测能证明它**真的出现在日志里**。
 struct DeviceProfileCleanerTests {
 
+    @Test
+    func timedOutNativeProfileCallHoldsInventoryGateUntilFfiReturns() async throws {
+        let gate = InstalledAppRefreshProbeGate()
+        let result = await DeviceProfileNativeCall.perform(gate: gate, seconds: 0.01) {
+            Thread.sleep(forTimeInterval: 0.15)
+            return true
+        }
+
+        #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
+        #expect(await gate.begin() == .inFlight)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(await gate.begin() == .coolingDown)
+    }
+
+    @Test
+    @MainActor
+    func timedOutNativeProfileCallKeepsDeviceLeaseUntilFfiReturns() async throws {
+        let coordinator = OperationCoordinator()
+        let renewal = try #require(coordinator.begin(.renewing))
+        let gate = InstalledAppRefreshProbeGate()
+        let result = await DeviceProfileNativeCall.perform(
+            gate: gate,
+            operationCoordinator: coordinator,
+            seconds: 0.01
+        ) {
+            Thread.sleep(forTimeInterval: 0.15)
+        }
+
+        #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
+        coordinator.end(renewal)
+        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
+
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(coordinator.begin(.scanningDeviceInventory) != nil)
+    }
+
     // MARK: - 默认摘要
 
     @Test

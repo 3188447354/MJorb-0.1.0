@@ -157,7 +157,7 @@ final class SettingsViewModel: ObservableObject {
     @Published private(set) var certificateInventoryLoadingIDs: Set<UUID> = []
     @Published private(set) var certificateInventoryFailures: [UUID: ImportFailure] = [:]
     @Published private(set) var certificateHealthStatuses: [UUID: CertificateHealthStatus] = [:]
-    @Published private(set) var isCertificateOperationRunning = false
+    private var certificateOperationAccountIDs: Set<UUID> = []
     @Published private(set) var notificationsEnabled = false
     @Published private(set) var reminderHours = 24
     @Published private(set) var notificationStatus = NotificationScheduleStatus.disabled
@@ -206,6 +206,8 @@ final class SettingsViewModel: ObservableObject {
     private var isPhonePairingAutomaticCheckRunning = false
     private var certificateInventoryRefreshGate = ApplePortalInventoryRefreshGate()
     private var hasLoaded = false
+    private var lastSelfManagementDiagnostic: String?
+    private var selfManagementRefreshGeneration = SettingsLoadGenerationGate()
     private var loadGeneration = SettingsLoadGenerationGate()
     private static let pairingAssistantInboxFileName = "SealPairing.mobiledevicepairing"
     private static let pairingAssistantSource = "Seal 配对助手"
@@ -330,7 +332,7 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func scanInstalledAppBundleIdentifiers(for candidates: [AppRecord]) async -> Set<String>? {
-        guard operationCoordinator?.activeLease == nil else { return nil }
+        guard operationCoordinator?.hasDeviceSessionConflict != true else { return nil }
         let potentialInstalledApps = candidates.filter { $0.belongsInInstalledList && $0.isSeal == false }
         if potentialInstalledApps.allSatisfy({
             $0.installedAppMarkerVersion == SealInstalledAppMarker.version
@@ -347,7 +349,7 @@ final class SettingsViewModel: ObservableObject {
         if let installedAppScanner,
            let controlBundleIdentifier = Bundle.main.bundleIdentifier,
            let applications = await installedAppScanner.scanUserApplications(),
-           operationCoordinator?.activeLease == nil {
+           operationCoordinator?.hasDeviceSessionConflict != true {
             let bundleIdentifiers = Set(applications.compactMap {
                 InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
             })
@@ -601,19 +603,17 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func createLocalCertificate(for account: AppleAccountRecord) async {
-        guard isCertificateOperationRunning == false,
-              let keychain,
+        guard let keychain,
               let accountRepository,
               let applePortalCertificateService else { return }
+        guard beginCertificateOperation(for: account.id) else { return }
+        defer { endCertificateOperation(for: account.id) }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 创建本地证书: 账号 \(account.id.uuidString.prefix(8))")
-        guard let operationLease = await acquireOperation(.managingCertificate) else {
+        guard let operationLease = await acquireOperation(.managingCertificate, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingCertificate)
             return
         }
         defer { releaseOperation(operationLease) }
-
-        isCertificateOperationRunning = true
-        defer { isCertificateOperationRunning = false }
 
         do {
             guard let storedSecret = try await keychain.load(accountID: account.id) else {
@@ -697,19 +697,17 @@ final class SettingsViewModel: ObservableObject {
         serialNumber: String,
         for account: AppleAccountRecord
     ) async {
-        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 撤销证书: 序列号 \(serialNumber.prefix(8))…, 账号 \(account.id.uuidString.prefix(8))")
-        guard isCertificateOperationRunning == false,
-              let keychain,
+        guard let keychain,
               let accountRepository,
               let applePortalCertificateService else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else {
+        guard beginCertificateOperation(for: account.id) else { return }
+        defer { endCertificateOperation(for: account.id) }
+        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 撤销证书: 序列号 \(serialNumber.prefix(8))…, 账号 \(account.id.uuidString.prefix(8))")
+        guard let operationLease = await acquireOperation(.managingCertificate, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingCertificate)
             return
         }
         defer { releaseOperation(operationLease) }
-
-        isCertificateOperationRunning = true
-        defer { isCertificateOperationRunning = false }
 
         var remoteRevocationConfirmed = false
         var recoveryJournalSaved = true
@@ -731,7 +729,7 @@ final class SettingsViewModel: ObservableObject {
 
             // 真实签名者 A 永远不可撤销：撤了当前运行的 Seal 立刻「不再可用」。
             // 身份读不出来时无法证明目标不是 A，一律拒绝（只相信真实 CMS 签名者）。
-            let runningIdentity = SelfAppMetadata.current()?.installedIdentity
+            let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
             guard runningIdentity?.canSafelyIdentifySigners == true,
                   let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
                 throw Self.failure(
@@ -836,20 +834,18 @@ final class SettingsViewModel: ObservableObject {
         serialNumber: String,
         for account: AppleAccountRecord
     ) async {
-        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 撤销证书并重建: 序列号 \(serialNumber.prefix(8))…, 账号 \(account.id.uuidString.prefix(8))")
-        guard isCertificateOperationRunning == false,
-              let keychain,
+        guard let keychain,
               let accountRepository,
               let applePortalCertificateService,
               let applePortalInventoryService else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else {
+        guard beginCertificateOperation(for: account.id) else { return }
+        defer { endCertificateOperation(for: account.id) }
+        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 撤销证书并重建: 序列号 \(serialNumber.prefix(8))…, 账号 \(account.id.uuidString.prefix(8))")
+        guard let operationLease = await acquireOperation(.managingCertificate, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingCertificate)
             return
         }
         defer { releaseOperation(operationLease) }
-
-        isCertificateOperationRunning = true
-        defer { isCertificateOperationRunning = false }
 
         var remoteRevocationConfirmed = false
         var recoveryJournalSaved = true
@@ -871,7 +867,7 @@ final class SettingsViewModel: ObservableObject {
 
             // 用户确认后、撤销前：重新拉远端清单 + 重新读取真实签名者 A。
             // 确认与执行之间状态可能已变化，撤销不可逆，绝不复用旧快照。
-            let runningIdentity = SelfAppMetadata.current()?.installedIdentity
+            let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
             guard runningIdentity?.canSafelyIdentifySigners == true,
                   let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
                 throw Self.failure(
@@ -1022,18 +1018,16 @@ final class SettingsViewModel: ObservableObject {
         for account: AppleAccountRecord,
         apps: [AppRecord]
     ) async -> CertificateCleanupPlan? {
-        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 准备证书清理: 账号 \(account.id.uuidString.prefix(8))")
-        guard isCertificateOperationRunning == false,
-              let keychain,
+        guard let keychain,
               let applePortalInventoryService else { return nil }
-        guard let operationLease = await acquireOperation(.managingCertificate) else {
+        guard beginCertificateOperation(for: account.id) else { return nil }
+        defer { endCertificateOperation(for: account.id) }
+        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 准备证书清理: 账号 \(account.id.uuidString.prefix(8))")
+        guard let operationLease = await acquireOperation(.managingCertificate, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingCertificate)
             return nil
         }
         defer { releaseOperation(operationLease) }
-
-        isCertificateOperationRunning = true
-        defer { isCertificateOperationRunning = false }
 
         do {
             guard let storedSecret = try await keychain.load(accountID: account.id) else {
@@ -1059,22 +1053,19 @@ final class SettingsViewModel: ObservableObject {
             // 「本机有可用私钥」必须查 keychain 里按 serial 保存的全部 P12（含历史 map），
             // 与签名链路 secret.p12(for:) 的无感复用口径一致；只看当前绑定会把仍可复用的
             // 历史证书误判成可撤销。
-            var localUsableSerials = Set<String>()
-            for certificate in inventory.certificates {
-                guard let data = secret.p12(for: certificate.serialNumber),
-                      let local = try? ALTCertificate(p12Data: data, password: nil) else { continue }
-                let localSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(local.serialNumber)
-                let remoteSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
-                if localSerial == remoteSerial {
-                    localUsableSerials.insert(remoteSerial)
+            let localUsableSerials = await LocalCertificateP12Inspection.matchingSerials(
+                inventory.certificates.compactMap { certificate in
+                    secret.p12(for: certificate.serialNumber).map { (certificate.serialNumber, $0) }
                 }
-            }
+            )
 
-            let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials()
+            let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(
+                using: operationCoordinator
+            )
             // Seal 自保护：真实签名证书永远不撤，避免手动清理把 Seal 自己变砖。
             // 只相信真实 CMS 签名者（installedIdentity），不信描述文件授权列表、不信 DB 记录。
             // 身份读不出来时无法证明任何一张证书不是 Seal 的命，计划整体阻断。
-            let runningIdentity = SelfAppMetadata.current()?.installedIdentity
+            let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
             guard let sealTarget = runningIdentity?.mainTarget,
                   (sealTarget.status == .complete || sealTarget.status == .signerIdentified),
                   sealTarget.signerSerialNumber.isEmpty == false else {
@@ -1116,21 +1107,19 @@ final class SettingsViewModel: ObservableObject {
         for account: AppleAccountRecord,
         apps: [AppRecord]
     ) async {
-        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 执行证书清理: 账号 \(account.id.uuidString.prefix(8))")
         guard plan.revocable.isEmpty == false,
-              isCertificateOperationRunning == false,
               let keychain,
               let accountRepository,
               let applePortalCertificateService,
               let applePortalInventoryService else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else {
+        guard beginCertificateOperation(for: account.id) else { return }
+        defer { endCertificateOperation(for: account.id) }
+        try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 执行证书清理: 账号 \(account.id.uuidString.prefix(8))")
+        guard let operationLease = await acquireOperation(.managingCertificate, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingCertificate)
             return
         }
         defer { releaseOperation(operationLease) }
-
-        isCertificateOperationRunning = true
-        defer { isCertificateOperationRunning = false }
 
         do {
             guard let storedSecret = try await keychain.load(accountID: account.id) else {
@@ -1153,20 +1142,15 @@ final class SettingsViewModel: ObservableObject {
                 secret: secret,
                 scope: .certificates
             )
-            var localUsableSerials = Set<String>()
-            for certificate in freshInventory.certificates {
-                guard let data = secret.p12(for: certificate.serialNumber),
-                      let local = try? ALTCertificate(p12Data: data, password: nil) else { continue }
-                let localSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(local.serialNumber)
-                let remoteSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
-                if localSerial == remoteSerial {
-                    localUsableSerials.insert(remoteSerial)
+            let localUsableSerials = await LocalCertificateP12Inspection.matchingSerials(
+                freshInventory.certificates.compactMap { certificate in
+                    secret.p12(for: certificate.serialNumber).map { (certificate.serialNumber, $0) }
                 }
-            }
+            )
             // 执行时重新核验设备引用，不能用空集合冒充之前核验过的真实清单。
             // 执行撤销前必须重新读取一次真实身份：signer 读不出来，或 signer 与生成计划时
             // 相比发生了变化（这段时间内 Seal 被换签），整批撤销停止。
-            let runningIdentity = SelfAppMetadata.current()?.installedIdentity
+            let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
             guard let sealTarget = runningIdentity?.mainTarget,
                   (sealTarget.status == .complete || sealTarget.status == .signerIdentified),
                   sealTarget.signerSerialNumber.isEmpty == false else {
@@ -1188,7 +1172,9 @@ final class SettingsViewModel: ObservableObject {
                     code: "SEAL-CERT-219"
                 )
             }
-            let freshDeviceReferenced = await DeviceProfileInspector.referencedCertificateSerials()
+            let freshDeviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(
+                using: operationCoordinator
+            )
             let freshPlan = CertificateCleanupPolicy.makePlan(
                 certificates: freshInventory.certificates,
                 apps: apps,
@@ -1356,9 +1342,19 @@ final class SettingsViewModel: ObservableObject {
             try await keychain.save(material.updatedSecret, for: originalAccount.id)
             guard let reloaded = try await keychain.load(accountID: originalAccount.id),
                   reloaded.certificateSerialNumber?.caseInsensitiveCompare(material.serialNumber) == .orderedSame,
-                  let p12 = reloaded.certificateP12,
-                  let parsed = try? ALTCertificate(p12Data: p12, password: nil),
-                  parsed.serialNumber.caseInsensitiveCompare(material.serialNumber) == .orderedSame else {
+                  let p12 = reloaded.certificateP12 else {
+                throw Self.failure(
+                    title: "本机证书校验失败",
+                    reason: "证书已由 Apple 创建，但本机重新读取时信息对不上。",
+                    recovery: "重新同步证书",
+                    code: "SEAL-CERT-208"
+                )
+            }
+            let inspection = await LocalCertificateP12Inspection.inspect(
+                p12,
+                expectedSerial: material.serialNumber
+            )
+            guard inspection.isReadable, inspection.serialMatches else {
                 throw Self.failure(
                     title: "本机证书校验失败",
                     reason: "证书已由 Apple 创建，但本机重新读取时信息对不上。",
@@ -1731,48 +1727,56 @@ final class SettingsViewModel: ObservableObject {
     /// 汇总 Seal 自管理状态：真实签名身份 + 未结算事务 + 签名者是否持有本机私钥。
     /// 只依赖本地数据（运行包 / 事务文件 / keychain），不访问网络。
     func refreshSelfManagementState() async {
+        let generation = selfManagementRefreshGeneration.issue()
         isSelfManagementLoading = true
-        defer { isSelfManagementLoading = false }
-        let identity = SelfAppMetadata.current()?.installedIdentity
+        defer {
+            if selfManagementRefreshGeneration.accepts(generation) {
+                isSelfManagementLoading = false
+            }
+        }
+        let identity = await SelfAppMetadata.installedIdentitySnapshot()
+        guard selfManagementRefreshGeneration.accepts(generation) else { return }
         let signer = (identity?.canSafelyIdentifySigners == true)
             ? identity?.mainTarget?.signerSerialNumber
             : nil
         sealActualSignerSerialNumber = signer
         // 事务文件读不出来按「无事务」处理；身份不可读已由 resolver 兜到恢复态。
         let transaction = try? await selfReplacementStore?.loadPending()
+        guard selfManagementRefreshGeneration.accepts(generation) else { return }
         var signerIsLocal = false
         if let signer, let keychain {
-            var secrets: [AccountSecret] = []
-            for account in accounts {
-                if let secret = try? await keychain.load(accountID: account.id) {
-                    secrets.append(secret)
+            // One Keychain enumeration covers both current and orphaned account UUIDs.
+            // P12 parsing is CPU-heavy; keep it off MainActor so certificate presentation
+            // cannot stall unrelated buttons while a self-replacement is being reconciled.
+            let secrets = (try? await keychain.loadAllSecrets()) ?? []
+            signerIsLocal = await Task.detached(priority: .utility) {
+                LocalSigningCertificateLookup.hasMatchingPrivateKey(
+                    serialNumber: signer,
+                    in: secrets
+                ) { secret, serial in
+                    SigningCertificateMaterialPolicy.availableCertificate(
+                        secret: secret,
+                        serialNumber: serial
+                    ) != nil
                 }
-            }
-            if let unindexedSecrets = try? await keychain.loadAllSecrets() {
-                secrets.append(contentsOf: unindexedSecrets)
-            }
-            signerIsLocal = LocalSigningCertificateLookup.hasMatchingPrivateKey(
-                serialNumber: signer,
-                in: secrets
-            ) { secret, serial in
-                SigningCertificateMaterialPolicy.availableCertificate(
-                    secret: secret,
-                    serialNumber: serial
-                ) != nil
-            }
+            }.value
         }
+        guard selfManagementRefreshGeneration.accepts(generation) else { return }
         let resolvedState = SelfManagementStateResolver.resolve(
             identity: identity,
             pendingTransaction: transaction,
             signerHasLocalPrivateKey: signerIsLocal
         )
         selfManagement = SelfManagementPresentation(resolvedState)
-        // 诊断：证书页排障全靠这条——实际签名者、状态、有无本机私钥、事务是否挂起，一次说清。
-        try? await logStore?.append(
-            category: .account,
-            message: "自管理状态：\(resolvedState.rawValue)，实际签名者：\(signer ?? "未知")，有本机私钥：\(signerIsLocal)，待确认事务：\(transaction != nil)",
-            code: "SEAL-SELF-130"
-        )
+        let diagnostic = "自管理状态：\(resolvedState.rawValue)，实际签名者：\(signer ?? "未知")，有本机私钥：\(signerIsLocal)，待确认事务：\(transaction != nil)"
+        if diagnostic != lastSelfManagementDiagnostic {
+            lastSelfManagementDiagnostic = diagnostic
+            try? await logStore?.append(
+                category: .account,
+                message: diagnostic,
+                code: "SEAL-SELF-130"
+            )
+        }
     }
 
     func refreshCertificateInventory(
@@ -1780,8 +1784,6 @@ final class SettingsViewModel: ObservableObject {
         force: Bool = true
     ) async {
         guard let keychain, let applePortalInventoryService else { return }
-        // 证书清单刷新时同步自管理状态；本地数据即可判定，网络失败不影响。
-        await refreshSelfManagementState()
         if force == false, certificateInventories[account.id] != nil { return }
         if force == false, certificateInventoryLoadingIDs.contains(account.id) { return }
 
@@ -1945,11 +1947,11 @@ final class SettingsViewModel: ObservableObject {
             return nil
         }
 
-        let localCertificate: ALTCertificate? = {
-            guard let p12 = secret.certificateP12 else { return nil }
-            return try? ALTCertificate(p12Data: p12, password: nil)
-        }()
-        let localSerialMatches = localCertificate?.serialNumber.caseInsensitiveCompare(serial) == .orderedSame
+        let localCertificate = await LocalCertificateP12Inspection.inspect(
+            secret.certificateP12,
+            expectedSerial: serial
+        )
+        let localSerialMatches = localCertificate.serialMatches
         let storedSerialMatches = secret.certificateSerialNumber?.caseInsensitiveCompare(serial) == .orderedSame
         let portalCertificate = inventory?.certificates.first {
             $0.serialNumber.caseInsensitiveCompare(serial) == .orderedSame
@@ -1957,13 +1959,11 @@ final class SettingsViewModel: ObservableObject {
 
         let portalPresence = portalStateOverride
             ?? (portalCertificate == nil ? .invalid : .valid)
-        let localValidity = localCertificate?.data
-            .flatMap(X509CertificateValidityReader.validity(from:))
         // Apple 已明确找不到这张证书时，不能再拿本机旧 P12 的 notAfter 当作有效期。
         // 否则会出现「卡片显示无效，下面却显示一个已撤销的未来日期」的误导。
         let expirationDate = portalPresence == .invalid
             ? nil
-            : (portalCertificate?.expirationDate ?? localValidity?.notAfter)
+            : (portalCertificate?.expirationDate ?? localCertificate.expirationDate)
 
         var relatedApps: [AppRecord] = []
         if let appStore {
@@ -2000,8 +2000,8 @@ final class SettingsViewModel: ObservableObject {
         return CertificateHealthStatus(
             serialNumber: serial,
             portalPresence: portalPresence,
-            p12Readable: localCertificate == nil ? .invalid : .valid,
-            localPrivateKey: localCertificate?.privateKey != nil
+            p12Readable: localCertificate.isReadable ? .valid : .invalid,
+            localPrivateKey: localCertificate.hasPrivateKey
                 && localSerialMatches
                 && storedSerialMatches ? .valid : .invalid,
             keychainReadable: .valid,
@@ -2425,7 +2425,7 @@ final class SettingsViewModel: ObservableObject {
     func deleteAccount(_ account: AppleAccountRecord) async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 删除账号: \(account.id.uuidString.prefix(8))")
         guard let accountRepository, let keychain else { return }
-        guard let operationLease = await acquireOperation(.managingAccount) else {
+        guard let operationLease = await acquireOperation(.managingAccount, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingAccount)
             return
         }
@@ -3575,7 +3575,7 @@ final class SettingsViewModel: ObservableObject {
     func resetCertificate(for account: AppleAccountRecord) async {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 重置证书: 账号 \(account.id.uuidString.prefix(8))")
         guard let accountRepository else { return }
-        guard let operationLease = await acquireOperation(.managingCertificate) else {
+        guard let operationLease = await acquireOperation(.managingCertificate, accountID: account.id) else {
             alertFailure = operationConflictFailure(requested: .managingCertificate)
             return
         }
@@ -3615,15 +3615,26 @@ final class SettingsViewModel: ObservableObject {
             )
     }
 
+    private func beginCertificateOperation(for accountID: UUID) -> Bool {
+        guard certificateOperationAccountIDs.contains(accountID) == false else { return false }
+        certificateOperationAccountIDs.insert(accountID)
+        return true
+    }
+
+    private func endCertificateOperation(for accountID: UUID) {
+        certificateOperationAccountIDs.remove(accountID)
+    }
+
     private func acquireOperation(
         _ kind: OperationCoordinator.Kind,
-        appID: UUID? = nil
+        appID: UUID? = nil,
+        accountID: UUID? = nil
     ) async -> OperationCoordinator.Lease? {
         guard let operationCoordinator else {
-            return .uncoordinated(kind, appID: appID)
+            return .uncoordinated(kind, appID: appID, accountID: accountID)
         }
         // 自动等待当前操作完成，不弹"暂时无法执行"弹窗
-        return await operationCoordinator.beginWaiting(kind, appID: appID)
+        return await operationCoordinator.beginWaiting(kind, appID: appID, accountID: accountID)
     }
 
     private func releaseOperation(_ lease: OperationCoordinator.Lease) {
@@ -3678,5 +3689,59 @@ final class SettingsViewModel: ObservableObject {
             recovery: recovery,
             code: code
         )
+    }
+}
+
+private enum LocalCertificateP12Inspection {
+    struct Result: Sendable {
+        let isReadable: Bool
+        let serialMatches: Bool
+        let hasPrivateKey: Bool
+        let expirationDate: Date?
+    }
+
+    static func inspect(_ p12: Data?, expectedSerial: String) async -> Result {
+        guard let p12 else {
+            return Result(
+                isReadable: false,
+                serialMatches: false,
+                hasPrivateKey: false,
+                expirationDate: nil
+            )
+        }
+        return await Task.detached(priority: .utility) {
+            guard let certificate = try? ALTCertificate(p12Data: p12, password: nil) else {
+                return Result(
+                    isReadable: false,
+                    serialMatches: false,
+                    hasPrivateKey: false,
+                    expirationDate: nil
+                )
+            }
+            let matches = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
+                == SigningCertificateSelectionPolicy.normalizedSerialNumber(expectedSerial)
+            let expirationDate = certificate.data
+                .flatMap(X509CertificateValidityReader.validity(from:))?.notAfter
+            return Result(
+                isReadable: true,
+                serialMatches: matches,
+                hasPrivateKey: certificate.privateKey.isEmpty == false,
+                expirationDate: expirationDate
+            )
+        }.value
+    }
+
+    static func matchingSerials(_ candidates: [(String, Data)]) async -> Set<String> {
+        await Task.detached(priority: .utility) {
+            Set(candidates.compactMap { serial, p12 -> String? in
+                guard let certificate = try? ALTCertificate(p12Data: p12, password: nil) else {
+                    return nil
+                }
+                let normalizedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(serial)
+                guard SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
+                    == normalizedSerial else { return nil }
+                return normalizedSerial
+            })
+        }.value
     }
 }

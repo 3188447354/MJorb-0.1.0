@@ -1,3 +1,77 @@
+# 2026-10-21 — Apple ID 被握手错误误标为凭据失效
+
+- **现象**：登录过的 Apple ID 在签名/续签遇到设备环境握手失败后会被持久化为“需要重新验证”；用户会误以为本地账号凭据丢失，并被引导再次登录。Apple 要求 2FA 时则仍需在账号认证流程输入验证码。
+- **根因**：`ApplePortalSigningService` 把 AltSign 的 `authenticationHandshakeFailed` 转成 `SEAL-AUTH-102e`；`AppleServiceFailurePolicy` 之前用 `SEAL-AUTH-102` 前缀识别错误凭据，错误地把设备环境/握手故障也归成 `.credentialsRejected`。证书请求 `102c` 本身也可能是限流或会话状态，不能据此断定密码错误。
+- **修复**：凭据失效改为显式码集合，只包含 `102`、`102a`、`102b`、`102d`；`102c` 与 `102e` 保持账号状态。握手失败出口现在明确标记 `.authenticationHandshakeRejected`，并提示检查系统时间和 Anisette 环境。新增策略回归覆盖并更新 R40 源码守卫及变异样本。
+- **上游对照**：SideStore 的 SideSign 将 `incorrectCredentials` 和 `authenticationHandshakeFailed` 分别建模；Seal 按这两种错误的语义分类，不再按编号前缀推断。
+- **边界**：Apple 的 2FA 挑战是服务端身份验证要求，已保存的密码/会话不能绕过；签名或续签遇到会话恢复时，验证码仍由用户在账号认证流程输入。旧版本已经写入 `.credentialsRejected` 的账号记录不带原始错误码，无法安全判断它是密码真错还是旧版误标；本修复不会自动清除此类状态，以免掩盖真实凭据拒绝。
+- **涉及文件**：`Seal/Core/Accounts/AppleServiceFailurePolicy.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`SealTests/Accounts/AppleServiceFailurePolicyTests.swift`、`Scripts/verify-release-safety.py`、`docs/error-catalog/auth.json`、生成的错误帮助索引与错误码清单、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **验证状态**：源码差异审查、错误目录生成、错误码清单生成与 `git diff --check` 通过；未运行 Swift 构建、测试或源码守卫，也未推送 CI。依项目纪律，Swift 编译与回归需交 CI；真机需覆盖有效密码下的 Anisette 握手失败不会改账号状态，以及明确 incorrect-credentials 仍能要求重新验证。
+
+# 2026-10-21 — 设备记录恢复在资源冲突后丢失重试
+
+- **现象**：设备记录恢复任务遇到正在运行的清单扫描、维护任务或其他操作后会跳过；当前刷新只检查“任务已启动”便清除待重试状态，释放设备/维护资源后没有统一续跑通知。另一个启动窗口是记录恢复已经报出设备清单不可用，但列表中仍有其他 App 记录时，后续自动刷新不会再次尝试。证书页回退到配对设备扫描时若碰上签名/安装占用，也不会在事务结束后补查。
+- **根因**：`MaintenanceGate.tryAcquire()` 对任何活动租约都非阻塞地返回 `nil`；`restoreRecordsIfIdle()` 原先把“未执行”“扫描来源不可用”和“成功但无变化”折叠成 `false`。`scheduleInstalledRecordRecovery()` 又只在扫描类型冲突时拒绝启动，没把 gate 的其他阻塞纳入调度状态。`OperationCoordinator` 与维护作业结束时没有通知待处理的清单刷新。
+- **修复**：恢复结果区分跳过、中途取消、来源不可用、失败和完成；待办只在完成或失败结算后清除。设备/维护租约释放后检查并续跑待处理的列表刷新或记录恢复。清单扫描冲突时合并一次刷新，维护恢复不在任何操作租约或其他维护任务期间启动；证书页只在设备写事务释放时重试一次，不会因离线扫描完成而自循环。无可用设备来源时保留记录并等待下次前台/手动刷新，不伪造卸载状态。
+- **边界**：LocalDevVPN / 配对设备不可用时，系统没有可靠的通道就绪通知；恢复任务会在前台刷新时重试，不能在通道未开启时声称设备清单已同步。
+- **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Application/AppContainer.swift`、`Seal/Core/Maintenance/AppMaintenanceJob.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`RELEASE_NOTES.md`。
+- **验证状态**：仅逐段核对控制流与回调时序，并运行 `git diff --check`；未运行 Swift 构建、测试或源码守卫，未推送 CI。仍需 CI 编译，以及真机验证清单扫描与维护任务交错后自动补跑、VPN 未就绪时保留记录、通道恢复后前台刷新补回应用。
+
+# 2026-10-21 — 证书清理与安装验收还有设备 FFI 绕过单飞闸门
+
+- **现象**：设备安装清单已和 profile 查询共用单飞闸门，但证书自动清理与安装结果核验仍存在另一条 `Provision.dumpProfiles` / `Minimuxer.isAppInstalled` 直连路径；在扫描、续签或安装交错时，仍可能并发访问同一设备服务。
+- **根因**：`SigningCoordinator.autoCleanOrphanCertificatesIfPossible` 漏传协调器；`MinimuxerInstallChannel.probeInstalled` 用独立 `offThread` 超时，没有占用共享闸门。描述文件清理重试调用 `Provision.resetProvider()` 也只替换 Swift provider，不能废弃 Rust RemotePairing 会话。
+- **修复**：证书引用读取与安装后逐项核验改用共享设备 FFI 执行器；协调器将原生调用与正在结束的父设备事务关联，超时或取消后租约保留到同步 FFI 真正返回。清理重试仅在前次原生调用已结束后定向废弃 RemotePairing RSD 缓存，不重置整条配对/安装通道。补回归覆盖：超时期间扫描仍互斥，同时导入和其他账号操作仍可并行。
+- **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Infrastructure/Installation/DeviceProfileCleaner.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、`Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Application/AppContainer.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`SealTests/Installation/DeviceProfileCleanerTests.swift`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **验证状态**：源码逐点核对并添加回归用例；依项目纪律未在 Windows 运行 Swift 构建、测试或源码守卫，未推送 CI。需 CI 编译/测试，并真机覆盖设备扫描、证书自动清理、profile-only 续签、安装后核验同时触发和原生 FFI 超时后的恢复。
+
+# 2026-10-21 — 设备清单重试被全局租约误挡与证书 profile 查询未单飞
+
+- **现象**：前台操作期间触发的设备记录恢复可能不再补跑；证书关联分析与安装清单扫描可能同时调用 `Provision.dumpProfiles`，造成设备查询互相干扰。
+- **根因**：扫回调度检查了 `hasActiveLease`，把无冲突的账号、导入和资料编辑也当成设备忙；证书页的 profile 引用读取没有进入已安装清单共用的设备探测闸门。
+- **修复**：扫回调度只检查 `scanningDeviceInventory` 的真实冲突，并在扫描期间收到新的显式刷新请求时合并补跑一次。证书 profile 引用读取现在与清单扫描共享单飞闸门和设备读租约；同步 FFI 超时后直到迟到调用真正完成才释放资源。增加回归用例覆盖设备读取之间互斥、与账号/导入并行。
+- **边界**：离线完整清单仍依赖系统可读的 LaunchServices 私有枚举；若系统两种枚举都不可用，则需要 LocalDevVPN 配对通道读取 installation proxy。两种来源都不可用时只能保留未知状态，不能可靠判断卸载；不伪造“已同步”。后台旧描述文件清理现与前台设备扫描共享单飞闸门和设备租约；还需真机验证维护任务与扫描交错时的实际恢复结果。
+- **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`SealTests/ApplicationOperationCoordinatorTests.swift`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`。
+- **验证状态**：只做源码审查并添加回归测试，未运行 Swift 构建/测试/守卫，未推送 CI。需 CI 编译回归；真机覆盖离线本机清单、VPN 扫回、证书页与列表同时读取，以及账号/导入操作与设备扫回并行。
+
+# 2026-10-21 — 启动时设备扫回过早与设备清单查询缺少写事务互斥
+
+- **现象**：Seal 启动时 LocalDevVPN 未就绪，设备侧载 App 扫回失败；用户稍后连接隧道并刷新已安装列表，仍不会补回缺失记录。安装代理/描述文件清单查询也可能在同步 FFI 尚未结束时与签名、安装或续签共用设备会话。
+- **根因**：完整记录恢复只接在启动关键维护路径，前台列表刷新只对账现有记录，没有重新调用恢复入口；设备扫描虽对读查询做单飞，但没有在 `OperationCoordinator` 中声明与设备写操作共享的资源，因而读写仍可能竞态。
+- **修复**：启动扫回可能早于 VPN；回到前台或手动刷新时，单飞地在后台重试恢复，包括本地部分记录仍在的情况；只有记录或图标实际恢复才重载列表，不阻塞刷新手势。安装代理、profile 枚举和逐项设备核验持有 `scanningDeviceInventory` 租约；签名、安装、续签和配对重置在该租约释放前不能开始，原生超时调用仍运行时租约保持到迟到完成回调。导入、本地资料编辑及账号操作不被该设备读租约锁住。
+- **上游对照**：SideStore 将托管 App 状态持久化，并在设备管理操作中按设备阶段调度；Seal 保留本地 LaunchServices 离线核验，同时补上通道恢复后的记录扫回重试和与设备写事务的窄资源互斥，不增加第二套安装记录来源。
+- **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Application/AppContainer.swift`、`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/InstalledAppDeviceVerifier.swift`、`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`SealTests/ApplicationOperationCoordinatorTests.swift`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`。
+- **验证状态**：新增租约并发回归用例；未运行 Swift 构建、测试或源码守卫，未推送 CI。需 CI 编译/回归，并真机验证启动时 VPN 未就绪、随后连接并刷新可补回记录；扫描超时后签名不与迟到 FFI 重叠；本地导入和账号操作仍可用。
+
+# 2026-10-21 — 设备清单双源合并与超时查询串行化
+
+- **现象**：部分已安装 App 不进入清单，扫描超时后继续发起的逐项查询会与原生设备查询重叠；断开配对通道时，旧记录无法被真实核验。
+- **根因**：LaunchServices 全量扫描选择“包含 Seal 的第一个结果”后立即返回，第二个 selector 独有的 App 被遗漏；`Provision.dumpProfiles`、`Minimuxer.installedApplications` 与 `isAppInstalled` 各自有独立闸门，同步 FFI 超时又不能取消原调用，因此串行路径超时后仍可能叠加下一次设备查询。
+- **修复**：本机清单合并 `allInstalledApplications` 和 `allApplications` 两源并按归一化 Bundle ID 去重；两源都不可读，或只能读到一个且缺少 Seal 阳性对照时，均返回不可用，不伪装为空清单/完整清单。设备端 profile、完整应用清单和逐项核验共用同一单飞闸门；原生调用迟到完成前不释放，超时后冷却。生产设备清单读取失败时本轮保留现有记录，不再紧接着逐应用探测；设备确认卸载仍只在完整可信快照中执行。
+- **边界**：LaunchServices 本机枚举不依赖 Wi-Fi / LocalDevVPN；两种本机枚举都不可用时，完整设备快照需要已配对的 installation proxy 通道。所有来源都不可用时不能可靠地区分“已卸载”和“暂时无法读取”，Seal 保留当前记录并等待可读来源恢复。
+- **上游对照**：SideStore 将托管 App 状态和图标按应用持久化；Seal 保留逐 App UTI 离线核验，并把两个本机枚举入口合并。SideStore 没有卸载重装后的私有 LaunchServices 扫描实现。
+- **涉及文件**：`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Features/Apps/InstalledAppDeviceVerifier.swift`、`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **验证状态**：未运行 Swift 构建、测试或静态守卫；只做源码审查。需 CI 编译/回归，并在真机覆盖两种 LaunchServices 来源互补、Wi-Fi/LocalDevVPN 断开、原生清单超时后再次刷新及确认卸载同步。
+
+# 2026-10-21 — 续签设备 FFI 超时后的事务长期占用
+
+- **现象**：描述文件续签的设备调用超时后，后续续签项仍等待设备租约，整批任务和同设备操作迟迟不返回；取消已安装清单检查后，旧查询仍可能与新查询叠加。
+- **根因**：① `SigningCertificateSettingsView` 在“等待安装确认”状态下每 2 秒重新读取签名身份、本机私钥和事务文件；这是无终止条件的轮询，且每轮都重新触发页面状态更新。② 启动自注册清除旧待安装标记时提前发通知，整个自注册结束后又发一次，导致列表和证书状态重复重载。③ `ProfileOnlyProvisioningProfileInstaller.installAndVerify` 在 `isBusy` 为真时无限轮询。同步设备 FFI 超时后不能取消，installer 为保护共享 misagent 正确保留 `isBusy`，但队列没有区分“正常执行中”和“超时后原生调用仍在后台”，后继续签就会无限等并继续持有前台批次租约。④ `InstalledAppDeviceVerifier` 的取消处理器在 FFI 未结束时就清闸门，20 秒冷却后可能叠加同一设备会话上的第二个查询。⑤ profile-only 准入前额外 dump 旧描述文件只生成诊断、不是安全边界；超时后 FFI 仍会运行并与注入读回争用设备服务。⑥ `AppContainer.live()` 在 MainActor 同步读取 Seal 自注册元数据，其中包含 CMS 签名、profile 和扩展解析，可能使启动 UI 暂时无响应。`OperationCoordinator` 旧单租约还把互不冲突的账号、导入和应用资料操作一并串行化。
+- **修复**：移除 2 秒轮询，安装确认只由启动对账完成通知刷新，保留手动检查按钮；并发刷新带代次，只允许最新读取结果发布。自注册中途不再发状态通知，只在完整对账返回后发一次。原生 profile 调用仍未结束时，排队续签项立即以 `SEAL-PROFILE-357` 失败返回并释放前台事务，不并发访问设备；原生调用真正返回后再释放 installer 租约。已安装清单查询用带 UUID 的租约，正常完成时释放，取消/超时后只由原生调用完成回调释放；未启动的工作也有单独结算，旧查询不能释放新租约。移除 profile-only 注入前的冗余设备清单 dump，保留写入后的逐份读回确认。自注册 CMS/profile 读取移到 utility 后台任务，页面主线程只组装轻量展示元数据。操作协调改为账号、应用和资源范围的并发租约；共享安装设备的操作仍串行。移除过时的 363 前置查询守卫与孤儿核验实现。
+- **上游对照**：SideStore `RefreshAppOperation` 直接获取并注入新 profile，不枚举旧 profile 清单作为准入条件；Seal 保留自己的注入后精确读回边界，并在超时后维持共享设备互斥。
+- **涉及文件**：`Seal/Core/Concurrency/HardTimeout.swift`、`Seal/Infrastructure/Installation/BlockingCall.swift`、`Seal/Features/Apps/InstalledAppDeviceVerifier.swift`、`Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/SelfAppMetadata.swift`、`Seal/Application/AppContainer.swift`、`Seal/Core/Maintenance/AppMaintenanceJob.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、对应 `SealTests/**`、`Scripts/verify-release-safety.py`、`docs/error-catalog/profile.json`、`docs/qa/log-code-index.md`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **验证状态**：源码与差异仍在审查；未运行 Swift 测试、静态守卫或 CI。需 CI 编译和回归；真机应覆盖单项续签、批量多个 profile-only 项、取消设备清单检查、原生 profile FFI 超时后独立账号操作仍可继续。
+
+# 2026-10-21 — 自更新结算、证书页阻塞、更新大小与设备扫描并发
+
+- **现象**：Seal 从应用内更新后停在待安装列表；签名证书页反复显示等待确认并拖慢其他操作；更新下载没有 MB 总量；离线扫回的已安装 App 缺图标；导入、证书等无关事务互相等待。
+- **根因**：① 自替换已确认新运行身份后，记录提交仍要求旧 Seal 行存在；设备卸载对账可能先删旧行，导致 `AppStoreError.invalidConfiguration`，自替换事务重复留在待结算态。队列成功状态又早于持久化记录写入。② 证书页私钥判定重复逐账号读 Keychain，再在 MainActor 解析 P12；应用列表的证书派生状态和证书清理分析也在主线程解析 P12。全局证书布尔状态同时挡住不同 Apple ID 的操作。复查还发现证书清理分析的设备 profile 引用查询直接运行同步 `Provision.dumpProfiles`，未设硬等待上限；共享 Apple Portal actor 也串行解析所有本机 P12，慢解析会排队其他账号查询。③ 更新资产页只提供 URL，不提供大小；GitHub 下载响应无 Content-Length 时 UI 只能不确定显示。④ 图标读取被排在 profile dump 与 installation proxy 之后。⑤ `OperationCoordinator` 单全局租约把独立工作也串行化。
+- **上游对照**：SideStore 将已安装 App 和图标缓存按应用持久化，进度按 Bundle ID 管理；其卸载对账仅在 App 管理事务期间跳过。SideStore 没有 Seal 这种设备扫描恢复路径。本地图标改为设备通道之外先从 LaunchServices 扫描；同一物理设备上的原生安装命令仍串行。
+- **修复**：缺失前驱时原子提交已确认的替换记录；若本地 Seal 行全部缺失则从正在运行的 Bundle 重建；只有 AppStore 成功提交后才结算批量成功。证书私钥检查改为一次 Keychain 全量枚举并将所有页面的 P12 解析移出主线程，派生结果带代次保护；去掉跨账号全局门。证书 profile 引用扫描改为 15 秒有界后台 FFI，未知仍按不可核验处理，并由底层工作完成后清理临时目录；Apple Portal actor 把历史 P12 解析放到 utility 任务，避免同 actor 的其他账号请求排队。更新检查读取 GitHub Release API 的 IPA `size`，进度回调缺 Content-Length 时使用可信资产大小，并保留 Release 页面回退。已知记录的图标恢复先于 profile/设备请求，图标枚举覆盖 LaunchServices 两个 selector。`OperationCoordinator` 改为应用/账号/资源冲突租约；签名、续签和 installd 保持设备互斥，互不冲突的本地导入、应用资料与账号范围工作可并行。
+- **回归覆盖**：缺失旧记录时自更新仍结算为已安装；不同账号证书操作与设备列表扫描不互相阻塞；Release API IPA 大小正确读取并过滤非 GitHub 资产；profile 与设备清单不可用时，已知记录图标仍会保存。
+- **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`Seal/Infrastructure/UpdateChecker.swift`、`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Features/UpdateNoticeView.swift`、对应 `SealTests/**`、`docs/upstream-alignment.md`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：只完成源码差异审查；遵循仓库规则，未在 Windows 本地运行 Swift 构建、测试或守卫。需 CI 编译/回归，并在真机检查更新实际 MB 进度、无 VPN 图标恢复、自更新后列表转正、证书页不再轮询及独立操作并行。签名/续签与安装仍需真机覆盖 Apple Portal 和设备 FFI。
+
 # 2026-10-21 — 证书撤销选择抽屉过长、CI 变异守卫锚点过期
 
 - **现象**：签名恢复时的“选择要撤销的证书”抽屉每张证书占用多行，证书较多时需要长距离滚动；CI `39555150272` 的源码守卫在 Swift 回归和签名器测试通过后失败，未进入 IPA 构建。

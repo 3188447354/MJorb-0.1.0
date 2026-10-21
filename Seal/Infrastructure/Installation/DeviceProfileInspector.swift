@@ -14,6 +14,7 @@ struct DeviceProfileInspector: Sendable {
     enum ProfileServiceProbeOutcome: Sendable {
         case ready
         case failed
+        case busy
         /// `BlockingCall` 超时并不表示 Rust FFI 已停止；调用方必须走污染闸门，
         /// 不能在同一传输上立即发起第二次 misagent 调用。
         case timedOut
@@ -25,107 +26,34 @@ struct DeviceProfileInspector: Sendable {
     /// `connect_to_rsd_services::<MisagentClient>()`。因此这里是实际写入服务的无副作用预热，
     /// 而不是仅凭 UDID/TCP 推断通道可用。
     static func probeProfileService(
+        using operationCoordinator: OperationCoordinator? = nil,
         onLateCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> ProfileServiceProbeOutcome {
         let fileManager = FileManager.default
         let workingDir = fileManager.temporaryDirectory
             .appendingPathComponent("seal-profile-probe-\(UUID().uuidString)", isDirectory: true)
-        let outcome = await BlockingCall.bounded(
+        let outcome = await DeviceProfileNativeCall.perform(
+            operationCoordinator: operationCoordinator,
             seconds: 8,
-            cancelsWorkOnTimeout: false,
-            onLateCompletion: { _ in await onLateCompletion() }
+            onNativeCompletion: onLateCompletion
         ) {
+            defer { try? fileManager.removeItem(at: workingDir) }
             _ = try Provision.dumpProfiles(docsPath: workingDir.path)
         }
-        // 只有 FFI 确认结束后才能删目录。超时时底层仍可能写入，提前删除会让
-        // 原本只读的健康探测变成新的 I/O 竞争；残留临时目录由系统的临时目录清理。
-        guard let outcome else { return .timedOut }
-        defer { try? fileManager.removeItem(at: workingDir) }
-        do {
-            try outcome.get()
-            return .ready
-        } catch {
-            return .failed
-        }
-    }
-
-    /// 安装后核对设备 profile 存储里是否出现本轮 Seal 的精确身份。
-    /// `nil` 表示设备通道或解析不可用；`false` 表示成功枚举但目标身份不存在。
-    static func containsProfile(
-        bundleIdentifier: String,
-        profileUUID: String,
-        certificateSerialNumber: String
-    ) async -> Bool? {
-        let fileManager = FileManager.default
-        let workingDir = fileManager.temporaryDirectory
-            .appendingPathComponent("seal-profile-verify-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fileManager.removeItem(at: workingDir) }
-
-        guard let dumpDir = try? Provision.dumpProfiles(docsPath: workingDir.path),
-              let profileURLs = try? fileManager.contentsOfDirectory(
-                at: URL(fileURLWithPath: dumpDir),
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-              ) else { return nil }
-
-        let expectedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(
-            certificateSerialNumber
-        )
-        let reader = ProvisioningProfileReader()
-        var parsed = 0
-        var handledUUIDs = Set<String>()
-        for fileURL in profileURLs {
-            guard let data = try? Data(contentsOf: fileURL),
-                  let details = try? reader.details(from: data) else { continue }
-            if let uuid = details.uuid, handledUUIDs.insert(uuid).inserted == false { continue }
-            parsed += 1
-            guard details.bundleIdentifier?.caseInsensitiveCompare(bundleIdentifier) == .orderedSame,
-                  details.uuid?.caseInsensitiveCompare(profileUUID) == .orderedSame else { continue }
-            return details.certificateSerialNumbers.contains {
-                SigningCertificateSelectionPolicy.normalizedSerialNumber($0) == expectedSerial
+        switch outcome {
+        case .completed(let result):
+            do {
+                try result.get()
+                return .ready
+            } catch {
+                return .failed
             }
+        case .unavailable:
+            return .busy
+        case .nativeCallMayStillBeRunning:
+            // 临时目录由仍在运行的 worker 拥有，结束时在 defer 中清理。
+            return .timedOut
         }
-        return parsed > 0 ? false : nil
-    }
-
-    /// 安装后从设备端读回的 profile 必须与本轮门户结果逐项一致。
-    /// UUID/证书一致还不足以证明 UI 所展示的创建与到期时间属于本轮文件。
-    static func containsProfile(
-        matching binding: ProvisioningProfileBinding,
-        certificateSerialNumber: String
-    ) async -> Bool? {
-        guard let profileUUID = binding.profileUUID, profileUUID.isEmpty == false else { return false }
-        let fileManager = FileManager.default
-        let workingDir = fileManager.temporaryDirectory
-            .appendingPathComponent("seal-profile-verify-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fileManager.removeItem(at: workingDir) }
-
-        guard let dumpDir = try? Provision.dumpProfiles(docsPath: workingDir.path),
-              let profileURLs = try? fileManager.contentsOfDirectory(
-                at: URL(fileURLWithPath: dumpDir),
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-              ) else { return nil }
-
-        let expectedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificateSerialNumber)
-        let reader = ProvisioningProfileReader()
-        var parsed = 0
-        var handledUUIDs = Set<String>()
-        for fileURL in profileURLs {
-            guard let data = try? Data(contentsOf: fileURL),
-                  let details = try? reader.details(from: data) else { continue }
-            if let uuid = details.uuid, handledUUIDs.insert(uuid).inserted == false { continue }
-            parsed += 1
-            guard details.bundleIdentifier?.caseInsensitiveCompare(binding.bundleIdentifier) == .orderedSame,
-                  details.uuid?.caseInsensitiveCompare(profileUUID) == .orderedSame,
-                  details.creationDate == binding.creationDate,
-                  details.expirationDate == binding.expirationDate,
-                  details.certificateSerialNumbers.contains(where: {
-                      SigningCertificateSelectionPolicy.normalizedSerialNumber($0) == expectedSerial
-                  }) else { continue }
-            return true
-        }
-        return parsed > 0 ? false : nil
     }
 
     /// 批量核验：一次 dump + 全量 CMS 解析，核验全部 bindings。
@@ -133,48 +61,56 @@ struct DeviceProfileInspector: Sendable {
     /// 供 `installAndVerify` 一次注入全部后统一核验，避免每份 profile 各做一次秒级 dump。
     static func containsProfiles(
         matching bindings: [ProvisioningProfileBinding],
-        certificateSerialNumber: String
-    ) async -> [Bool?] {
+        certificateSerialNumber: String,
+        using operationCoordinator: OperationCoordinator? = nil,
+        onNativeCompletion: @escaping @Sendable () async -> Void = {}
+    ) async -> DeviceProfileNativeCall.Outcome<[Bool?]> {
         let fileManager = FileManager.default
         let workingDir = fileManager.temporaryDirectory
             .appendingPathComponent("seal-profile-verify-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fileManager.removeItem(at: workingDir) }
+        return await DeviceProfileNativeCall.perform(
+            operationCoordinator: operationCoordinator,
+            seconds: 30,
+            onNativeCompletion: onNativeCompletion
+        ) {
+            defer { try? fileManager.removeItem(at: workingDir) }
 
-        guard let dumpDir = try? Provision.dumpProfiles(docsPath: workingDir.path),
-              let profileURLs = try? fileManager.contentsOfDirectory(
-                at: URL(fileURLWithPath: dumpDir),
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-              ) else { return bindings.map { _ in nil } }
+            guard let dumpDir = try? Provision.dumpProfiles(docsPath: workingDir.path),
+                  let profileURLs = try? fileManager.contentsOfDirectory(
+                    at: URL(fileURLWithPath: dumpDir),
+                    includingPropertiesForKeys: nil,
+                    options: [.skipsHiddenFiles]
+                  ) else { return bindings.map { _ in nil } }
 
-        let expectedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificateSerialNumber)
-        let reader = ProvisioningProfileReader()
-        // 一次解析全部，建 (bundleID.lowercased, uuid.lowercased) -> (creation, expiration, serials) 索引
-        var index: [String: (creation: Date?, expiration: Date?, serials: [String])] = [:]
-        var parsed = 0
-        var handledUUIDs = Set<String>()
-        for fileURL in profileURLs {
-            guard let data = try? Data(contentsOf: fileURL),
-                  let details = try? reader.details(from: data) else { continue }
-            if let uuid = details.uuid, handledUUIDs.insert(uuid).inserted == false { continue }
-            parsed += 1
-            guard let bid = details.bundleIdentifier?.lowercased(),
-                  let uuid = details.uuid?.lowercased() else { continue }
-            index["\(bid)|\(uuid)"] = (details.creationDate, details.expirationDate, details.certificateSerialNumbers)
-        }
-        guard parsed > 0 else { return bindings.map { _ in nil } }
-
-        return bindings.map { binding in
-            guard let profileUUID = binding.profileUUID, profileUUID.isEmpty == false,
-                  let entry = index["\(binding.bundleIdentifier.lowercased())|\(profileUUID.lowercased())"] else {
-                return false
+            let expectedSerial = SigningCertificateSelectionPolicy.normalizedSerialNumber(certificateSerialNumber)
+            let reader = ProvisioningProfileReader()
+            // 一次解析全部，建 (bundleID.lowercased, uuid.lowercased) -> (creation, expiration, serials) 索引
+            var index: [String: (creation: Date?, expiration: Date?, serials: [String])] = [:]
+            var parsed = 0
+            var handledUUIDs = Set<String>()
+            for fileURL in profileURLs {
+                guard let data = try? Data(contentsOf: fileURL),
+                      let details = try? reader.details(from: data) else { continue }
+                if let uuid = details.uuid, handledUUIDs.insert(uuid).inserted == false { continue }
+                parsed += 1
+                guard let bid = details.bundleIdentifier?.lowercased(),
+                      let uuid = details.uuid?.lowercased() else { continue }
+                index["\(bid)|\(uuid)"] = (details.creationDate, details.expirationDate, details.certificateSerialNumbers)
             }
-            guard entry.creation == binding.creationDate,
-                  entry.expiration == binding.expirationDate,
-                  entry.serials.contains(where: {
-                      SigningCertificateSelectionPolicy.normalizedSerialNumber($0) == expectedSerial
-                  }) else { return false }
-            return true
+            guard parsed > 0 else { return bindings.map { _ in nil } }
+
+            return bindings.map { binding in
+                guard let profileUUID = binding.profileUUID, profileUUID.isEmpty == false,
+                      let entry = index["\(binding.bundleIdentifier.lowercased())|\(profileUUID.lowercased())"] else {
+                    return false
+                }
+                guard entry.creation == binding.creationDate,
+                      entry.expiration == binding.expirationDate,
+                      entry.serials.contains(where: {
+                          SigningCertificateSelectionPolicy.normalizedSerialNumber($0) == expectedSerial
+                      }) else { return false }
+                return true
+            }
         }
     }
 
@@ -183,19 +119,25 @@ struct DeviceProfileInspector: Sendable {
     /// 返回 `nil` 表示**无法核验**（未连接设备/隧道不可用/dump 或解析失败），
     /// 调用方必须按「未核验」降级处理，绝不能当成「设备上没有引用」。
     /// 返回空集仅当设备端确实一份描述文件都没有。
-    static func referencedCertificateSerials() async -> Set<String>? {
-        let fileManager = FileManager.default
-        let workingDir = fileManager.temporaryDirectory
+    static func referencedCertificateSerials(
+        using operationCoordinator: OperationCoordinator? = nil
+    ) async -> Set<String>? {
+        let workingDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("seal-profile-inspect-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fileManager.removeItem(at: workingDir) }
-
-        let dumpDir: String
-        do {
-            dumpDir = try Provision.dumpProfiles(docsPath: workingDir.path)
-        } catch {
-            return nil
+        let outcome = await DeviceProfileNativeCall.perform(
+            operationCoordinator: operationCoordinator,
+            seconds: BlockingCall.queryTimeoutSeconds
+        ) {
+            return try Self.readReferencedCertificateSerials(in: workingDir)
         }
+        guard case .completed(let result) = outcome else { return nil }
+        do { return try result.get() } catch { return nil }
+    }
 
+    private static func readReferencedCertificateSerials(in workingDir: URL) throws -> Set<String>? {
+        let fileManager = FileManager.default
+        defer { try? fileManager.removeItem(at: workingDir) }
+        let dumpDir = try Provision.dumpProfiles(docsPath: workingDir.path)
         let dumpURL = URL(fileURLWithPath: dumpDir)
         guard let profileURLs = try? fileManager.contentsOfDirectory(
             at: dumpURL,

@@ -13,8 +13,8 @@ enum InstalledAppRefreshProbePolicy {
     /// **整体跳过**（不探测、不报错、不弹窗）。
     static let timeoutSeconds: Double = 2
 
-    /// `BlockingCall` 超时不会停止底层 FFI。冷却期覆盖其默认 15 秒查询预算，避免连续下拉
-    /// 不断叠加同一条死会话上的阻塞调用。
+    /// `BlockingCall` 超时不会停止底层 FFI。原生调用结束后仍留短暂冷却，避免连续操作
+    /// 立即叠加到刚发生超时的设备会话上。
     static let timeoutCooldownSeconds: TimeInterval = 20
 
     static func normalizedBundleIdentifier(_ value: String?) -> String? {
@@ -58,5 +58,37 @@ enum InstalledAppRefreshProbePolicy {
             || installedBundleIdentifiers.contains {
                 normalizedBundleIdentifier($0) == bundleIdentifier
             }
+    }
+}
+
+/// Device inventory and misagent profile operations share one device-session gate.
+/// A timeout cannot cancel the synchronous FFI, so the gate stays occupied until its native
+/// call completes; this prevents a timed-out read, injection, or cleanup from overlapping the next call.
+actor InstalledAppRefreshProbeGate {
+    enum Availability: Equatable {
+        case ready(UUID)
+        case inFlight
+        case coolingDown
+    }
+
+    static let shared = InstalledAppRefreshProbeGate()
+
+    private var activeProbeID: UUID?
+    private var cooldownUntil = Date.distantPast
+
+    func begin() -> Availability {
+        guard Date() >= cooldownUntil else { return .coolingDown }
+        guard activeProbeID == nil else { return .inFlight }
+        let probeID = UUID()
+        activeProbeID = probeID
+        return .ready(probeID)
+    }
+
+    func finish(probeID: UUID, timedOut: Bool) {
+        guard activeProbeID == probeID else { return }
+        activeProbeID = nil
+        if timedOut {
+            cooldownUntil = Date().addingTimeInterval(InstalledAppRefreshProbePolicy.timeoutCooldownSeconds)
+        }
     }
 }

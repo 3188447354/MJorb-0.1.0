@@ -67,7 +67,10 @@ Seal 的是**自己的 wrapper**（`struct AnisetteV3Client: AnisetteEnvironment
 
 | 日期 | 对照对象 | Seal 侧 | 上游做法 | 结论 |
 |---|---|---|---|---|
-| **2026-10-21** | **卸载后的已安装列表与证书使用标签** | Seal 原先给每个已签 App 写入同一个 `com.mjorb.seal.installed-app` UTI，且没有读取这个标记；卸载后只依赖 LaunchServices 全量枚举，`allInstalledApplications` 返回空数组时还会提前退出，不尝试 `allApplications`。证书页没有设备清单回退。 | SideStore `InstalledApp.installedAppUTI` 以重签后的 Bundle ID 生成独立 UTI（`io.sidestore.Installed.<bundleID>`）；`AppManager.reconcileInstalledApps()` 用 `UTType(...).isDeclared` 清理已卸载的托管记录，同时跳过正在管理的 App。其全量续签选择仍来自本地活动记录。SideInstaller 是首次部署 SideStore / LiveContainer 的设备端引导工具，不负责 SideStore AppManager 的卸载对账。源码：[SideInstaller](https://github.com/FrizzleM/SideInstaller)。源码：[InstalledApp.swift](https://github.com/SideStore/SideStore/blob/develop/AltStore/Core/Model/InstalledApp.swift)、[AppManager.swift](https://github.com/SideStore/SideStore/blob/develop/AltStore/Managing%20Apps/AppManager.swift)。 | **跟逐 App UTI 标记**：Seal 新签安装包添加 Bundle ID 独有 UTI，安装后读取实际 IPA 的主 Info.plist 确认标记存在才记录版本；旧版本记录不把缺少新标记误判成卸载。LaunchServices 非空快照优先；两种系统枚举都返回空或不可读时，用带 Seal 阳性对照的 installation proxy 全量用户 App 清单兜底。证书页共用本机/设备完整清单；两者不可用时逐条核验新标记，旧记录无法确认时保留未知状态，不伪报“未安装”。Seal 按现有产品语义把确认卸载的记录移出“已安装”列表、保留本地 IPA 和签名材料；不照搬 SideStore 删除本地托管记录。 |
+| **2026-10-21** | **Apple ID 被误标为凭据失效** | Seal 曾把整个 `SEAL-AUTH-102*` 前缀归为凭据拒绝；其中证书请求的模糊认证状态 `102c` 和设备环境握手失败 `102e` 会把本地账号错误改成“需要重新验证”。 | SideStore 的 SideSign 将 `incorrectCredentials` 与 `authenticationHandshakeFailed` 定义为不同错误；认证实现区分错误类型。[SideSign 错误类型](https://github.com/SideStore/SideSign/blob/main/Sources/Models/Errors.swift)、[SideSign 认证实现](https://github.com/SideStore/SideSign/blob/main/Sources/DeveloperPortal/Authentication.swift)。 | **跟明确错误语义，不按编号前缀推测**：只有显式凭据拒绝码会改账号验证状态；会话模糊错误与环境握手错误保持账号状态，允许重试。Apple 重新认证若要求 2FA，仍必须由用户在账号认证流程提供验证码。 |
+| **2026-10-21** | **misagent 探测、描述文件注入与清单扫描的并发边界** | Seal 的 profile 清理、profile-only 健康探测/注入/写后读回、证书引用检查、安装后已安装核验和设备清单曾有不同闸门或漏传协调器；超时只停止等待，父租约过早释放后可与旧 FFI 重叠。 | SideStore 用户报告 #1443 记录到 Refresh All 中两个 `misagent_install` 近乎同时启动并出现 `BrokenPipe`；维护者回复称 idevice 内部会串行化，因此不能把该报告当成上游已确认的根因。参考：[SideStore #1443](https://github.com/SideStore/SideStore/issues/1443)。 | **按本仓实际 FFI 收口**：健康探测、注入、读回、清理、安装后核验和设备清单共享单飞闸门；非取消调用超时后保留设备租约，直到原生调用返回。清理重试只废弃 RemotePairing 的 Rust RSD 缓存，不重置整条安装会话；账号、导入和本地资料操作继续并行。SideStore 的实现细节不作为 Seal 安全保证。 |
+| **2026-10-21** | **设备清单不可用时的图标恢复与事务并发** | Seal 的设备记录恢复先等描述文件和 installation proxy；因此本来只依赖 LaunchServices 的已知 App 图标也被 LocalDevVPN 挂起。操作租约原为全局单槽；证书页还有跨账号布尔门。 | SideStore 已安装 App 图标通过每个 `InstalledApp` 记录与应用支持目录的 `alternateIconURL` 持久化；`AppManager` 仅在卸载对账时暂停于任一 App 管理任务，签名/安装进度按 Bundle ID 独立追踪。SideStore 不提供卸载重装后的本机私有 LaunchServices 扫图标路径。源码：[InstalledApp.swift](https://github.com/SideStore/SideStore/blob/develop/AltStore/Core/Model/InstalledApp.swift)、[AppManager.swift](https://github.com/SideStore/SideStore/blob/develop/AltStore/Managing%20Apps/AppManager.swift)。 | **跟分资源状态、不照搬上游存储条件**：Seal 的 LaunchServices 图标扫描先于任何配对设备调用，直接修已知记录；设备安装命令继续串行。操作租约改成按应用/账号/资源冲突判断，证书运行状态按账号独立；安装、签名/续签仍共享设备事务互斥，因为本仓 FFI 安装命令不可取消且必须在同一 RemotePairing 会话上传安装。 |
+| **2026-10-21** | **卸载后的已安装列表与证书使用标签** | Seal 原先给每个已签 App 写入同一个 `com.mjorb.seal.installed-app` UTI，且没有读取这个标记；LaunchServices 全量扫描按“第一个包含 Seal 的 selector”提前返回，可能漏掉另一 selector 独有的 App。设备端 profile、完整安装清单与逐项核验又没有共用查询闸门，原生 FFI 超时后继续查询会重叠。 | SideStore `InstalledApp.installedAppUTI` 以重签后的 Bundle ID 生成独立 UTI（`io.sidestore.Installed.<bundleID>`）；`AppManager.reconcileInstalledApps()` 用 `UTType(...).isDeclared` 清理已卸载的托管记录，同时跳过正在管理的 App。其全量续签选择仍来自本地活动记录。SideInstaller 是首次部署 SideStore / LiveContainer 的设备端引导工具，不负责 SideStore AppManager 的卸载对账。源码：[SideInstaller](https://github.com/FrizzleM/SideInstaller)。源码：[InstalledApp.swift](https://github.com/SideStore/SideStore/blob/develop/AltStore/Core/Model/InstalledApp.swift)、[AppManager.swift](https://github.com/SideStore/SideStore/blob/develop/AltStore/Managing%20Apps/AppManager.swift)。 | **跟逐 App UTI 标记与持久化应用状态**：Seal 新签安装包添加 Bundle ID 独有 UTI，安装后从待安装 IPA 的主 `Info.plist` 确认标记存在才持久化标记版本。LaunchServices 两个 selector 合并并按 Bundle ID 去重；若只有一个 selector 可读且没有 Seal 阳性对照，则不当成完整快照，再转 installation proxy 完整用户 App 清单。设备端 profile / 完整清单 / 逐项核验共享原生调用单飞闸门，超时不取消底层 FFI，也不再紧接着叠加查询。设备来源不可用时保留旧记录为未知；Seal 按现有产品语义把确认卸载的记录移出“已安装”列表、保留本地 IPA 和签名材料。 |
 | **2026-10-20** | **批量续签的应用归属** | 续签规划此前只检查 `belongsInInstalledList`，设备扫回、只有 Apple profile 信息的第三方应用也会进入队列并显示“需要导入 IPA”；这些记录没有实际签名证书序列号与设备标识，无法证明由 Seal 签出。 | AltStore FAQ 将 “My Apps” 定义为由 AltStore 侧载的 App 列表，没有把任意设备安装项当作自身管理记录；[AltStore FAQ](https://github.com/altstoreio/FAQ/blob/main/altstore-world/your-altstore.md)。 | **跟管理归属边界**：批量续签只纳入 Seal 自身或具备持久化签名身份（映射 Bundle ID、Team、证书序列号〔可记录在签名 target〕、签名设备标识和 profile 到期时间）的已安装记录。设备扫描记录继续留在“已安装”，不进续签队列；完整签名证据缺 accountID 时仍进入队列并提示恢复账号。 |
 | **2026-10-20** | **Apple ID 会话失效后的凭据恢复** | Apple ID 密码已加密保存在 Keychain，`AppleAccountClient.reauthenticate` 已实现但没有调用点；签名 / 续签遇到旧 authToken 只退避，随后要求用户手动重新验证；5 分钟 Team 缓存可能跳过真实会话检查。 | AltStore / SideStore 不自动用保存的 Apple ID 密码处理 1100，会话恢复由用户重新登录。 | **因 Seal 的用户要求不跟手动登录**：在绕过 Team 缓存的只读查询反复确认会话失效后，才尝试已有密码；确认 Apple ID 与原 Team 一致后保存新会话并保留 P12。签名 / 续签不自动提交 2FA；Apple 要求验证码时，失败恢复按钮直达现有账号认证表单，由用户输入 Apple 验证码。相同 Apple ID + Team 会合并原账号记录并保留 P12。不会因一次 App ID / 证书写请求失败而重放整条签名事务。 |
 | **2026-10-20** | **Seal 自更新的应用身份与本机数据** | 自更新此前只比较 Team；运行签名身份缺失时会跳过比较，且没有确认目标 Bundle ID 是否仍是当前安装包身份，可能更换应用容器与 Keychain 访问组。 | SideStore `ResignAppOperation` 用 `targetBundleIdentifier` 确定重签目标；重签 SideStore 自身时也写入当前证书序列号和 P12 材料。 | **跟身份驱动签名，并增加本地保护门**：自更新前必须读到运行包 Team ID / Bundle ID；更新账号 Team 与目标 Bundle ID 必须匹配运行身份，否则停止覆盖。这样保留 app container 与 Keychain group；此身份门是 Seal 对自身账号保留要求的补充。源码对照：[SideStore `ResignAppOperation.swift`](https://github.com/SideStore/SideStore/blob/develop/SideStore/Core/Operations/PipelineOperations/ResignAppOperation.swift)。 |
@@ -372,6 +375,15 @@ on 4.5.2」✗。
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift`。
 
+### 2026-10-21 Apple ID 会话保留与失效状态判定
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 已保存会话 | SideStore `AuthManager.getAuthenticatedSession()` 通过 `TaskChainCoalescer` 合并并发会话读取，缺少本地 token 才返回未登录；登录后同时保存 Apple ID、密码与 token。 | Seal 保留账号、密码、token 和证书私钥于独立 Keychain 条目；会话过期时先重试只读 Team 查询，再用已保存密码恢复同一账号与 Team。Apple 要求 2FA 时仍交给用户完成。 |
+| 错误到账号状态 | SideStore 将认证登录过程与后续签名错误分开处理；设备环境错误不是密码被拒绝的证据。 | 不以 `SEAL-AUTH-102` 前缀整体推断密码错误。只有明确的凭据拒绝代码写入 `needsVerification`；证书请求暂拒与登录握手失败不改变账号状态。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Auth/AuthManager.swift` 的 `getAuthenticatedSession()`、`upstream/SideStore/SideStore/Core/Operations/StandaloneOperations/SignInOperation.swift` 的凭据保存路径。这里沿用会话与登录态分离的边界；Seal 的自动会话恢复仍通过现有 Apple Portal 服务执行，不绕过 Apple 2FA。
+
 ### 2026-10-20 Seal 自替换后的续签状态
 
 | 对照项 | SideStore 实际做法 | Seal 处置 |
@@ -381,6 +393,14 @@ on 4.5.2」✗。
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/VerifyCertificateOperation.swift`。
 
+### 2026-10-21 profile-only 续签的设备会话占用
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 描述文件续签前置查询 | SideStore `RefreshAppOperation` 直接取新 profile 并注入；不会先 dump 设备旧 profile 清单作为准入条件。 | **跟**：移除只写诊断的旧 profile 前置枚举；保留注入后逐份精确读回，作为设备端成功边界。同步修正超时后的排队语义：底层原生调用未返回时不并发发起第二次设备调用，也不让后继事务无限占有前台租约。 |
+
+对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/RefreshAppOperation.swift`。
+
 ### 2026-10-20 App Store 瘦身设备白名单
 
 | 对照项 | SideStore 实际做法 | Seal 处置 |
@@ -388,3 +408,11 @@ on 4.5.2」✗。
 | 同设备系列 IPA 安装 | SideStore 的重签路径没有按 `UISupportedDevices` 建立应用层设备型号拒绝规则；该键只会随输入 Info.plist 进入产物。 | 跟随“不加 Seal 设备型号拦截”的边界：完整签名前从主 App 和扩展 Info.plist 移除 App Store 瘦身白名单；保留 `UIDeviceFamily`、最低系统版本、架构和 entitlements，由 iOS 检查真实兼容性。 |
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/RefreshAppOperation.swift`。这里采取的是移除仅由 App Store thinning 生成的型号白名单，不仿造或修改系统安装服务的兼容性判定。
+
+### 2026-10-21 — 设备清单恢复重试与设备会话租约
+
+| 对照项 | SideStore 实际做法 | Seal 处置 |
+|---|---|---|
+| 托管 App 状态恢复 | SideStore 将已安装托管 App 及图标缓存到本地，并在设备操作流程中更新状态；它没有 Seal 这种“启动时 VPN 未就绪、之后从 profile 与 installation proxy 扫回”的恢复链路。 | 保留 LaunchServices 离线同步；若首次启动扫回发生在通道未就绪时，回到前台或手动刷新会后台重试恢复，包括部分缺失的本地记录。安装清单、逐项核验和证书页 profile 引用读取共用设备探测闸门，并由设备读租约与签名/安装/续签互斥；迟到 FFI 完成前不释放。恢复调度按设备资源冲突检查，不再被账号或本地导入事务挡住。 |
+
+对照源码：SideStore `d97ec133719d79916675bdaf722b82a8d091d545` 的 `SideStore/Core/Operations/` 与本仓 `AppRecordRecovery`、`OperationCoordinator`。Seal 的扫回范围仍只包括能够由有效设备 profile 与安装代理共同确认的托管侧载应用；通道不可用时不把未知状态伪造成卸载或空清单。

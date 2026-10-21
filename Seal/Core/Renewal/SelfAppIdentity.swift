@@ -54,12 +54,21 @@ enum SelfAppRecordSelection {
         in records: [AppRecord],
         currentBundleIdentifier: String
     ) -> AppRecord? {
-        records.first { record in
-            record.isSeal && matchesSealBundleIdentifier(
-                currentBundleIdentifier,
-                record: record
-            )
-        }
+        records
+            .filter { record in
+                record.isSeal && matchesSealBundleIdentifier(
+                    currentBundleIdentifier,
+                    record: record
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.belongsInInstalledList != rhs.belongsInInstalledList {
+                    return lhs.belongsInInstalledList
+                }
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                return lhs.importedAt > rhs.importedAt
+            }
+            .first
     }
 
     static func preferredExistingSealRecordForImportedIPA(

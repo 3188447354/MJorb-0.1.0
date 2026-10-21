@@ -16,6 +16,25 @@
         "Seal/Core/Signing/SigningCoordinator.swift:signAndInstall",
         "Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift:installAndVerify"
       ]
+    },
+    {
+      "code": "SEAL-PROFILE-357",
+      "kind": "failure",
+      "confidence": "conditional",
+      "summary": "上一项设备描述文件原生调用超时后仍未返回；本项续签没有开始，以免并发争用同一设备会话。",
+      "notEvidenceOf": [
+        "不表示本项描述文件已注入或续签成功。",
+        "不表示 Apple ID 或签名证书失效。"
+      ],
+      "actions": [
+        {"title": "查看前一项续签的最终结果"},
+        {"title": "等待设备通道恢复后，单独重试未开始的 App"},
+        {"title": "如持续出现，导出诊断日志检查设备连接"}
+      ],
+      "supportData": ["同一轮的 SEAL-PROFILE-352 / SEAL-PROFILE-353", "设备通道诊断"],
+      "source": [
+        "Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift:installAndVerify"
+      ]
     }
   ]
 }

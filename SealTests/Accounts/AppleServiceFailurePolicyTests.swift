@@ -279,4 +279,35 @@ struct AppleServiceFailurePolicyTests {
         #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure) == false)
     }
 
+    @Test(arguments: ["SEAL-AUTH-102c", "SEAL-AUTH-102e"])
+    func ambiguousAuthAndHandshakeFailuresDoNotInvalidateSavedAccount(code: String) {
+        let failure = ImportFailure(
+            title: "登录握手未通过",
+            reason: "Apple 登录握手或认证状态暂不可用。",
+            recovery: "检查设备环境后重试。",
+            code: code
+        )
+
+        #expect(AppleServiceFailurePolicy.verificationFailureReason(for: failure) == nil)
+        #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure) == false)
+    }
+
+    @Test
+    func structuredAuthenticationHandshakeFailureDoesNotInvalidateSavedAccount() {
+        let failure = ImportFailure(
+            title: "登录握手未通过",
+            reason: "Apple 拒绝了设备环境握手。",
+            recovery: "检查系统时间和 Anisette 环境后重试。",
+            code: "SEAL-AUTH-102e",
+            condition: .authenticationHandshakeRejected,
+            action: .waitThenRetry,
+            retryDisposition: .manual,
+            operation: .sign,
+            origin: .authentication
+        )
+
+        #expect(AppleServiceFailurePolicy.verificationFailureReason(for: failure) == nil)
+        #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure) == false)
+    }
+
 }

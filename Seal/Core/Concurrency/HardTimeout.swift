@@ -26,9 +26,13 @@ enum HardTimeout {
         seconds: TimeInterval,
         cancelsWorkOnTimeout: Bool = true,
         onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)? = nil,
+        onWorkNeverStarted: (@Sendable () async -> Void)? = nil,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let state = RaceState<T>(onLateCompletion: onLateCompletion)
+        let state = RaceState<T>(
+            onLateCompletion: onLateCompletion,
+            onWorkNeverStarted: onWorkNeverStarted
+        )
         // 父任务取消必须**立刻**解除挂起：只靠超时或工作自己结束来恢复的话，
         // 「取消一次大包上传」会把 OperationCoordinator 的全局单槽占住好几分钟
         // （调用方的 `defer releaseOperation` 根本走不到）。
@@ -52,12 +56,17 @@ enum HardTimeout {
         private var work: Task<Void, Never>?
         private var cancelsWorkOnTimeout = true
         private let onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)?
+        private let onWorkNeverStarted: (@Sendable () async -> Void)?
         /// 「谁先落地谁赢」：超时、工作完成、父任务取消三方竞速，
         /// 也用来处理 `onCancel` 早于 `store` 的时序（任务建立前就已被取消）。
         private var settled = false
 
-        init(onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)?) {
+        init(
+            onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)?,
+            onWorkNeverStarted: (@Sendable () async -> Void)?
+        ) {
             self.onLateCompletion = onLateCompletion
+            self.onWorkNeverStarted = onWorkNeverStarted
         }
 
         func store(_ continuation: CheckedContinuation<T, Error>) {
@@ -80,6 +89,9 @@ enum HardTimeout {
             lock.lock()
             guard settled == false else {
                 lock.unlock()
+                if let onWorkNeverStarted {
+                    Task { await onWorkNeverStarted() }
+                }
                 return
             }
             cancelsWorkOnTimeout = cancelsOnTimeout

@@ -54,7 +54,7 @@ struct UpdateChecker {
                 return .latest
             }
 
-            let (ipaDownloadURL, sha256DownloadURL) = await Self.releaseAssetURLs(
+            let (ipaDownloadURL, sha256DownloadURL, ipaDownloadSize) = await Self.releaseAssetURLs(
                 repo: repo,
                 tag: release.tag
             )
@@ -65,7 +65,8 @@ struct UpdateChecker {
                 message: release.message,
                 downloadURL: release.pageURL,
                 ipaDownloadURL: ipaDownloadURL,
-                sha256DownloadURL: sha256DownloadURL
+                sha256DownloadURL: sha256DownloadURL,
+                ipaDownloadSize: ipaDownloadSize
             ))
         } catch {
             return .unavailable(.network)
@@ -150,28 +151,75 @@ struct UpdateChecker {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func releaseAssetURLs(repo: String, tag: String) async -> (URL?, URL?) {
+    private static func releaseAssetURLs(repo: String, tag: String) async -> (URL?, URL?, Int64?) {
         guard let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let url = URL(string: "https://github.com/\(repo)/releases/expanded_assets/\(encodedTag)") else {
-            return (nil, nil)
+              let apiURL = URL(string: "https://api.github.com/repos/\(repo)/releases/tags/\(encodedTag)") else {
+            return (nil, nil, nil)
         }
         do {
-            let (data, response) = try await fetch(url)
+            let (data, response) = try await fetch(apiURL, accept: "application/vnd.github+json")
+            if response.statusCode == 200 {
+                let assets = releaseAssets(fromGitHubAPI: data)
+                if let ipaURL = ipaDownloadURL(from: assets),
+                   let checksumURL = sha256DownloadURL(from: assets) {
+                    return (ipaURL, checksumURL, assetSize(for: ipaURL, in: assets))
+                }
+            }
+        } catch {
+            // The public API can be rate limited. Keep the existing page fallback below;
+            // download progress then uses the response Content-Length when available.
+        }
+
+        guard let pageURL = URL(string: "https://github.com/\(repo)/releases/expanded_assets/\(encodedTag)") else {
+            return (nil, nil, nil)
+        }
+        do {
+            let (data, response) = try await fetch(pageURL)
             guard response.statusCode == 200,
                   let baseURL = response.url,
                   isTrustedDownloadURL(baseURL),
                   let html = String(data: data, encoding: .utf8) else {
-                return (nil, nil)
+                return (nil, nil, nil)
             }
             let assets = releaseAssets(from: html, relativeTo: baseURL)
             guard let ipaURL = ipaDownloadURL(from: assets),
                   let checksumURL = sha256DownloadURL(from: assets) else {
-                return (nil, nil)
+                return (nil, nil, nil)
             }
-            return (ipaURL, checksumURL)
+            return (ipaURL, checksumURL, nil)
         } catch {
-            return (nil, nil)
+            return (nil, nil, nil)
         }
+    }
+
+    static func releaseAssets(fromGitHubAPI data: Data) -> [[String: Any]] {
+        guard let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let assets = release["assets"] as? [[String: Any]] else { return [] }
+        return assets.compactMap { asset in
+            guard let name = asset["name"] as? String,
+                  let rawURL = asset["browser_download_url"] as? String,
+                  let url = URL(string: rawURL),
+                  isTrustedDownloadURL(url) else { return nil }
+            var normalized: [String: Any] = [
+                "name": name,
+                "browser_download_url": url.absoluteString
+            ]
+            if let size = asset["size"] as? NSNumber, size.int64Value > 0 {
+                normalized["size"] = size.int64Value
+            }
+            return normalized
+        }
+    }
+
+    static func assetSize(for url: URL, in assets: [[String: Any]]) -> Int64? {
+        let matches = assets.compactMap { asset -> Int64? in
+            guard let rawURL = asset["browser_download_url"] as? String,
+                  URL(string: rawURL)?.absoluteString == url.absoluteString,
+                  let size = asset["size"] as? Int64,
+                  size > 0 else { return nil }
+            return size
+        }
+        return matches.count == 1 ? matches[0] : nil
     }
 
     static func releaseAssets(from html: String, relativeTo baseURL: URL) -> [[String: Any]] {
@@ -341,6 +389,7 @@ struct UpdateNotice: Identifiable, Sendable {
     let downloadURL: URL?
     let ipaDownloadURL: URL?
     let sha256DownloadURL: URL?
+    let ipaDownloadSize: Int64?
 }
 
 enum UpdateNoticeContentPolicy {

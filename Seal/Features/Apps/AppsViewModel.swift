@@ -35,12 +35,14 @@ final class AppsViewModel: ObservableObject {
     /// 会出现**文案与颜色不同帧**：详情页的颜色读的是当前记录、已经变了，
     /// 而「需重新签名」文案读的是这份快照、还停在旧序列号上，要等下一次 `load()` 才消失
     ///（2026-10-08 真机：重新续签 + 安装替换 Seal 后正是这个现象）。
-    /// ⇒ 非初始化路径上任何写入 `apps` 的地方都必须紧接着调用 `refreshCertAvailability()`。
+    /// ⇒ 非初始化路径上任何写入 `apps` 的地方都必须紧接着异步刷新派生状态；P12 解析在后台完成。
     @Published private(set) var localCertificateAvailabilityByAppID:
         [UUID: ProfileOnlyRenewalPolicy.LocalCertificateAvailability] = [:]
     /// 一次 Keychain 读取的结果（与 `fullAccountEmails` 同批）。
     /// 存下来是为了让上面那份派生状态能在**记录变化时**就地重算 —— 不必再读一次钥匙串。
     private var accountSecrets: [UUID: AccountSecret] = [:]
+    private var certificateAvailabilityGeneration = 0
+    private var selfRecordSnapshotGeneration = 0
     @Published private(set) var activeAccountID: UUID?
     @Published private(set) var iconData: [UUID: Data]
     /// 解码后的图标缓存（性能优化 2026-10-04）：`UIImage(data:)` 的 PNG/JPEG 解码
@@ -130,6 +132,9 @@ final class AppsViewModel: ObservableObject {
     @Published private(set) var signingChannelStatus: SigningChannelStatus = .idle
     @Published private(set) var installingCachedPackageAppID: UUID?
     private var installedAppRefreshPendingAfterOperation = false
+    private var installedRecordRecoveryPendingAfterOperation = false
+    private var installedRecordRecoveryRetryArmed = false
+    private var installedAppRefreshInProgressCount = 0
 
     private let workflow: ImportWorkflow?
     private let appStore: (any AppStore)?
@@ -148,6 +153,7 @@ final class AppsViewModel: ObservableObject {
     private let operationCoordinator: OperationCoordinator?
     private let installedAppScanner: (any InstalledAppScanning)?
     private let maintenanceJob: AppMaintenanceJob?
+    private var installedRecordRecoveryTask: Task<Void, Never>?
     private var signingTask: Task<Void, Never>?
     private var batchRefreshTask: Task<Void, Never>?
     private var channelTask: Task<Bool, Never>?
@@ -578,12 +584,14 @@ final class AppsViewModel: ObservableObject {
                 // ⚠️ **一次** Keychain 读取同时喂两个用途（邮箱 + 本机证书状态）：
                 // 拆成两次读会把 N 个账号的钥匙串访问翻倍，而它们本来就要一起用。
                 let secrets = await self.loadAccountSecrets(for: fetchedAccounts)
-                guard await self.isCurrentLoad(generation) else { return }
-                await MainActor.run {
+                let accepted = await MainActor.run {
+                    guard self.loadGeneration == generation else { return false }
                     self.accountSecrets = secrets
                     self.fullAccountEmails = secrets.mapValues { $0.email }
-                    self.refreshCertAvailability()
+                    return true
                 }
+                guard accepted else { return }
+                await self.refreshCertAvailability()
 
                 var icons: [UUID: Data] = [:]
                 if let fileStore = self.fileStore {
@@ -641,16 +649,24 @@ final class AppsViewModel: ObservableObject {
     /// 用户可在两者之间打开抽屉并看到过期的“需重新签名”。
     func reloadSelfRecordSnapshot() async {
         guard let appStore else { return }
+        loadGeneration += 1
+        let loadToken = loadGeneration
+        selfRecordSnapshotGeneration += 1
+        let generation = selfRecordSnapshotGeneration
         do {
             let fetchedApps = try await appStore.fetchAll()
             let fetchedAccounts = try await accountRepository?.fetchAll() ?? []
             let secrets = await loadAccountSecrets(for: fetchedAccounts)
+            guard generation == selfRecordSnapshotGeneration,
+                  loadToken == loadGeneration else { return }
 
             apps = fetchedApps
             accounts = fetchedAccounts
             accountSecrets = secrets
             fullAccountEmails = secrets.mapValues(\.email)
-            refreshCertAvailability()
+            await refreshCertAvailability()
+            guard generation == selfRecordSnapshotGeneration,
+                  loadToken == loadGeneration else { return }
             hasLoaded = true
         } catch {
             try? await logStore?.append(
@@ -690,7 +706,22 @@ final class AppsViewModel: ObservableObject {
     /// 返回 true 表示补回了记录或图标，调用方应当重新 `load()`。
     func runEssentialMaintenanceIfIdle() async -> Bool {
         guard let maintenanceJob else { return false }
-        return await maintenanceJob.restoreRecordsIfIdle()
+        switch await maintenanceJob.restoreRecordsIfIdle() {
+        case .completed(let changed):
+            installedRecordRecoveryPendingAfterOperation = false
+            installedRecordRecoveryRetryArmed = false
+            return changed
+        case .skipped, .aborted:
+            installedRecordRecoveryPendingAfterOperation = true
+            return false
+        case .unavailable:
+            installedRecordRecoveryPendingAfterOperation = true
+            return false
+        case .failed(let changed):
+            installedRecordRecoveryPendingAfterOperation = false
+            installedRecordRecoveryRetryArmed = false
+            return changed
+        }
     }
 
     /// 启动非关键路径：孤儿文件清理 + 设备端旧描述文件清理。
@@ -797,11 +828,21 @@ final class AppsViewModel: ObservableObject {
     /// 判据一律走 `ProfileOnlyRenewalPolicy`（与续签准入同源，R85②），这里只负责「什么时候算」。
     /// 在钥匙串快照与 `apps` 已配对时调用。签名成功会先写入完成记录、再重读钥匙串，
     /// 这样抽屉不会继续拿旧序列号显示“需重新签名”。
-    private func refreshCertAvailability() {
-        localCertificateAvailabilityByAppID = ProfileOnlyRenewalPolicy.availabilityByAppID(
-            apps: apps,
-            secretsByAccount: accountSecrets
-        )
+    private func refreshCertAvailability() async {
+        certificateAvailabilityGeneration += 1
+        let generation = certificateAvailabilityGeneration
+        let currentApps = apps
+        let currentSecrets = accountSecrets
+        let availability = await Task.detached(priority: .utility) {
+            ProfileOnlyRenewalPolicy.availabilityByAppID(
+                apps: currentApps,
+                secretsByAccount: currentSecrets
+            )
+        }.value
+        guard generation == certificateAvailabilityGeneration,
+              apps == currentApps,
+              accountSecrets == currentSecrets else { return }
+        localCertificateAvailabilityByAppID = availability
     }
 
     /// 签名成功后直接置 `.ready`：刚用私钥签完，本机一定有，不等钥匙串重读。
@@ -824,7 +865,7 @@ final class AppsViewModel: ObservableObject {
         guard secrets.isEmpty == false || accounts.isEmpty else { return }
         accountSecrets = secrets
         fullAccountEmails = secrets.mapValues(\.email)
-        refreshCertAvailability()
+        await refreshCertAvailability()
         // 成功签名是比一次短暂 Keychain 读取更强的事实；保留该确定状态直到下次完整加载复核。
         markLocalCertificateReady(for: completed.id)
     }
@@ -906,24 +947,37 @@ final class AppsViewModel: ObservableObject {
     ///   （真机构建 37：三次 `SEAL-INSTALL-707` 全部落在冷启动或自替换重启后的十几秒内，
     ///   同一次会话稍后就自愈）。⇒ 默认值必须在「**不打扰用户**」的那一侧；想弹阻断式提示
     ///   必须**显式**传 `true` —— 否则将来谁调用不带参数的版本，都会突然给用户弹窗。
-    func refreshInstalledApps(userInitiated: Bool = false) async {
-        guard operationCoordinator?.activeLease == nil else {
+    func refreshInstalledApps(
+        userInitiated: Bool = false,
+        retryDeviceRecordRecovery: Bool = false
+    ) async {
+        installedAppRefreshInProgressCount += 1
+        defer {
+            installedAppRefreshInProgressCount -= 1
+            if installedAppRefreshInProgressCount == 0 {
+                resumePendingInstalledAppWork()
+            }
+        }
+        if retryDeviceRecordRecovery {
+            installedRecordRecoveryPendingAfterOperation = true
+        }
+        guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return
         }
         await load(force: true)
-        guard operationCoordinator?.activeLease == nil else {
+        guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return
         }
         let duplicateChanged = await removeDuplicateInstalledRecords(installedApps)
         if duplicateChanged { await load(force: true) }
-        guard operationCoordinator?.activeLease == nil else {
+        guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return
         }
         let localReconciliation = await reconcileInstalledAppsFromLocalSnapshot()
-        guard operationCoordinator?.activeLease == nil else {
+        guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return
         }
@@ -937,6 +991,82 @@ final class AppsViewModel: ObservableObject {
         if changed {
             await load(force: true)
         }
+        // 启动扫回可能早于 LocalDevVPN 就绪。回到前台或用户主动刷新时重试完整恢复，
+        // 也覆盖“部分记录还在、部分记录缺失”的情况；启动后的自动刷新只在列表仍为空时补试。
+        let hasThirdPartyInstalledRecords = installedApps.contains {
+            $0.isSeal == false && $0.belongsInInstalledList
+        }
+        if retryDeviceRecordRecovery
+            || installedRecordRecoveryPendingAfterOperation
+            || hasThirdPartyInstalledRecords == false {
+            installedRecordRecoveryPendingAfterOperation = true
+            installedRecordRecoveryRetryArmed = true
+            _ = scheduleInstalledRecordRecovery()
+        }
+    }
+
+    @discardableResult
+    private func scheduleInstalledRecordRecovery() -> Bool {
+        guard let maintenanceJob,
+              installedRecordRecoveryTask == nil,
+              maintenanceJob.hasActiveWork == false,
+              operationCoordinator?.hasActiveLease != true,
+              operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true else {
+            return false
+        }
+        installedRecordRecoveryTask = Task { [weak self, maintenanceJob] in
+            let attempt = await maintenanceJob.restoreRecordsIfIdle()
+            guard let self else { return }
+            self.installedRecordRecoveryTask = nil
+            switch attempt {
+            case .completed(let changed):
+                self.installedRecordRecoveryPendingAfterOperation = false
+                self.installedRecordRecoveryRetryArmed = false
+                if changed {
+                    await self.load(force: true)
+                }
+            case .unavailable:
+                self.installedRecordRecoveryRetryArmed = false
+            case .failed(let changed):
+                self.installedRecordRecoveryPendingAfterOperation = false
+                self.installedRecordRecoveryRetryArmed = false
+                if changed {
+                    await self.load(force: true)
+                }
+            case .skipped, .aborted:
+                self.installedRecordRecoveryPendingAfterOperation = true
+                self.installedRecordRecoveryRetryArmed = true
+                if maintenanceJob.hasActiveWork == false,
+                   self.operationCoordinator?.hasActiveLease != true {
+                    self.resumePendingInstalledAppWork()
+                }
+            }
+        }
+        return true
+    }
+
+    func resumePendingInstalledAppWork() {
+        guard installedAppRefreshInProgressCount == 0,
+              operationCoordinator?.hasActiveLease != true else {
+            return
+        }
+        if installedAppRefreshPendingAfterOperation {
+            installedAppRefreshPendingAfterOperation = false
+            let retryDeviceRecordRecovery = installedRecordRecoveryPendingAfterOperation
+            Task { [weak self] in
+                await Task.yield()
+                await self?.refreshInstalledApps(
+                    userInitiated: false,
+                    retryDeviceRecordRecovery: retryDeviceRecordRecovery
+                )
+            }
+            return
+        }
+        guard installedRecordRecoveryPendingAfterOperation,
+              installedRecordRecoveryRetryArmed else {
+            return
+        }
+        _ = scheduleInstalledRecordRecovery()
     }
 
     /// 本机 LaunchServices 清单不依赖 Wi-Fi / LocalDevVPN，能直接确认外部卸载。
@@ -956,7 +1086,7 @@ final class AppsViewModel: ObservableObject {
             return await reconcileInstalledAppsFromMarkers()
         }
 
-        guard operationCoordinator?.activeLease == nil else { return (false, false) }
+        guard operationCoordinator?.hasDeviceSessionConflict != true else { return (false, false) }
         let installedBundleIdentifiers = Set(
             snapshotBundleIdentifiers.compactMap {
                 InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0)
@@ -972,7 +1102,7 @@ final class AppsViewModel: ObservableObject {
                 in: installedBundleIdentifiers
             ) == false
         }
-        guard operationCoordinator?.activeLease == nil else {
+        guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return (false, false)
         }
@@ -989,7 +1119,7 @@ final class AppsViewModel: ObservableObject {
     /// even when LaunchServices enumeration and the paired-device tunnel are unavailable.
     /// Legacy records still require a complete inventory because older Seal builds used one shared UTI.
     private func reconcileInstalledAppsFromMarkers() async -> (isComplete: Bool, changed: Bool) {
-        guard operationCoordinator?.activeLease == nil else { return (false, false) }
+        guard operationCoordinator?.hasDeviceSessionConflict != true else { return (false, false) }
         let candidates = installedApps.filter { $0.isSeal == false }
         guard candidates.allSatisfy({ $0.installedAppMarkerVersion == SealInstalledAppMarker.version }) else {
             return (false, false)
@@ -998,7 +1128,7 @@ final class AppsViewModel: ObservableObject {
             guard let bundleIdentifier = installedBundleIdentifier(for: app) else { return false }
             return SealInstalledAppMarker.isDeclared(for: bundleIdentifier) == false
         }
-        guard operationCoordinator?.activeLease == nil else {
+        guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return (false, false)
         }
@@ -1026,11 +1156,12 @@ final class AppsViewModel: ObservableObject {
         // ⚠️ 这与 `MaintenanceGate` 是**两条不同的闸门**：维护作业是「低优先级、
         //    可抢占」，它自己会让路；而这里是**用户主动打开已安装页**触发的核验，
         //    必须由它自己让路，否则就会去抢续签的设备会话。
-        guard operationCoordinator?.activeLease == nil else {
+        guard operationCoordinator?.hasDeviceSessionConflict != true,
+              operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true else {
             installedAppRefreshPendingAfterOperation = true
             try? await logStore?.append(
                 category: .system,
-                message: "已安装页设备核验跳过：有前台操作正在进行（避免与其抢占同一条设备会话）",
+                message: "已安装页设备核验跳过：设备会话正被其他操作或清单扫描占用",
                 code: "SEAL-INSTALL-708"
             )
             return false
@@ -1055,7 +1186,32 @@ final class AppsViewModel: ObservableObject {
                 return false
             }
 
-            let deviceSnapshot = await installedAppScanner?.scanUserApplications()
+            let deviceSnapshot: [DeviceInstalledApplicationSummary]?
+            if let installedAppScanner {
+                guard let snapshot = await installedAppScanner.scanUserApplications() else {
+                    if operationCoordinator?.hasConflict(for: .scanningDeviceInventory) == true {
+                        installedAppRefreshPendingAfterOperation = true
+                    }
+                    try? await logStore?.append(
+                        category: .system,
+                        level: .warning,
+                        message: "已安装页完整设备清单不可用；本轮保留现有记录，不继续发起逐应用查询。",
+                        code: "SEAL-INSTALL-707"
+                    )
+                    if userInitiated {
+                        alertFailure = ImportFailure(
+                            title: "无法读取已安装应用",
+                            reason: "设备没有返回完整应用清单，本轮没有更改已安装记录。",
+                            recovery: "确认手机已解锁、与 Seal 在同一 Wi-Fi，并已打开 LocalDevVPN 后重试",
+                            code: "SEAL-INSTALL-707"
+                        )
+                    }
+                    return false
+                }
+                deviceSnapshot = snapshot
+            } else {
+                deviceSnapshot = nil
+            }
             let deviceBundleIdentifiers = deviceSnapshot.map { snapshot in
                 Set(snapshot.compactMap {
                     InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
@@ -1068,7 +1224,10 @@ final class AppsViewModel: ObservableObject {
                     installedBundleIdentifiers: Array(deviceBundleIdentifiers)
                 )
             } else {
-                controlInstalled = try await InstalledAppDeviceVerifier.isInstalled(bundleIdentifier: controlBundleID)
+                controlInstalled = try await InstalledAppDeviceVerifier.isInstalled(
+                    bundleIdentifier: controlBundleID,
+                    operationCoordinator: operationCoordinator
+                )
             }
             guard controlInstalled else {
                 try? await logStore?.append(
@@ -1080,7 +1239,7 @@ final class AppsViewModel: ObservableObject {
                 return false
             }
 
-            if operationCoordinator?.activeLease != nil {
+            if operationCoordinator?.hasDeviceSessionConflict == true {
                 installedAppRefreshPendingAfterOperation = true
                 return false
             }
@@ -1104,7 +1263,8 @@ final class AppsViewModel: ObservableObject {
                     guard let bundleIdentifier = installedBundleIdentifier(for: app) else { continue }
 
                     let existsOnDevice = try await InstalledAppDeviceVerifier.isInstalled(
-                        bundleIdentifier: bundleIdentifier
+                        bundleIdentifier: bundleIdentifier,
+                        operationCoordinator: operationCoordinator
                     )
                     if existsOnDevice == false {
                         missingOnDevice.append(app)
@@ -1112,7 +1272,7 @@ final class AppsViewModel: ObservableObject {
                 }
             }
 
-            if operationCoordinator?.activeLease != nil {
+            if operationCoordinator?.hasDeviceSessionConflict == true {
                 installedAppRefreshPendingAfterOperation = true
                 return false
             }
@@ -1493,6 +1653,14 @@ final class AppsViewModel: ObservableObject {
         record: AppRecord
     ) async {
         guard let requested else { return }
+        if record.isSeal, record.belongsInInstalledList == false {
+            try? await logStore?.append(
+                category: .installation,
+                level: .info,
+                message: "Seal 更新包已导入待安装列表；当前运行版记录会在新版安装确认后更新。"
+            )
+            return
+        }
         if record.belongsInInstalledList {
             try? await logStore?.append(
                 category: .installation,
@@ -1725,10 +1893,11 @@ final class AppsViewModel: ObservableObject {
         // Seal 覆盖安装必须保留运行包的 Team 与 Bundle ID：两者共同决定应用容器和
         // Keychain 访问组。身份读不到或目标不一致时停止，避免更新后 Apple ID 与本机数据丢失。
         if app.isSeal {
-            guard let currentSeal = SelfAppMetadata.current(includeIcon: false),
-                  let currentSealTeam = currentSeal.signingTeamIdentifier,
-                  currentSealTeam.isEmpty == false,
-                  currentSeal.bundleIdentifier.isEmpty == false else {
+            guard let currentSeal = await SelfAppMetadata.installedIdentitySnapshot(),
+                  currentSeal.canSafelyIdentifySigners,
+                  let currentSealTarget = currentSeal.mainTarget,
+                  currentSealTarget.teamIdentifier.isEmpty == false,
+                  currentSealTarget.bundleIdentifier.isEmpty == false else {
                 alertFailure = ImportFailure(
                     title: "无法确认当前 Seal 身份",
                     reason: "Seal 无法读取当前安装包的 Team ID 或 Bundle ID。为保护 Apple ID、证书和本机数据，本次更新已停止。",
@@ -1742,6 +1911,7 @@ final class AppsViewModel: ObservableObject {
                 )
                 return
             }
+            let currentSealTeam = currentSealTarget.teamIdentifier
 
             let targetBundleIdentifier: String
             do {
@@ -1766,10 +1936,10 @@ final class AppsViewModel: ObservableObject {
                 )
                 return
             }
-            guard targetBundleIdentifier.caseInsensitiveCompare(currentSeal.bundleIdentifier) == .orderedSame else {
+            guard targetBundleIdentifier.caseInsensitiveCompare(currentSealTarget.bundleIdentifier) == .orderedSame else {
                 alertFailure = ImportFailure(
                     title: "Seal 更新包身份不一致",
-                    reason: "当前 Seal 的 Bundle ID 是 \(currentSeal.bundleIdentifier)，更新包是 \(targetBundleIdentifier)。不同 Bundle ID 会被系统视为另一款 App，原有 Apple ID 和本机数据无法迁移。",
+                    reason: "当前 Seal 的 Bundle ID 是 \(currentSealTarget.bundleIdentifier)，更新包是 \(targetBundleIdentifier)。不同 Bundle ID 会被系统视为另一款 App，原有 Apple ID 和本机数据无法迁移。",
                     recovery: "重新导入与当前 Seal Bundle ID 相同的更新包",
                     code: "SEAL-SELF-117",
                     condition: .signedArtifactInvalid,
@@ -2209,7 +2379,11 @@ final class AppsViewModel: ObservableObject {
             return false
         }
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 安装已签名包: \(app.displayName) (\(app.id.uuidString.prefix(8)))")
-        guard let operationLease = await acquireOperation(.installing, appID: app.id) else {
+        guard let operationLease = await acquireOperation(
+            .installing,
+            appID: app.id,
+            accountID: app.accountID
+        ) else {
             alertFailure = operationConflictFailure(requested: .installing)
             return false
         }
@@ -2457,16 +2631,15 @@ final class AppsViewModel: ObservableObject {
     ///   · 反过来，用户手动点的请求被后台批量挡住时必须有可见反馈（见
     ///     `operationInProgressFailure`）。
     ///
-    /// ⚠️ 除两个任务外还要看 `operationCoordinator.activeLease`：导入配对文件、
-    /// 管理证书等操作**不经过这两个任务**，但它们同样占着设备通道 —— 只看任务会让
-    /// 后台触发在这种情况下照旧点火，然后在 `runBatchRefresh` 的取锁处白等 30 秒。
+    /// ⚠️ 除两个任务外还要看续签冲突判定：批量续签跨全部账号，必须避开同账号会话变更
+    /// 和所有共享设备通道的签名、安装、续签；本地导入与不冲突的账号操作可以并行。
     ///
     /// ⚠️ **与 `hasActiveRenewalWork` 的区别是「那项操作会不会把应用续完」**：
     /// 让位通知只发给后者为假的情况（见 `refreshAllFromBackgroundTrigger`）。
     private var hasActiveSigningWork: Bool {
         backgroundTriggerAdmissionPending
             || hasActiveRenewalWork
-            || operationCoordinator?.activeLease != nil
+            || operationCoordinator?.hasConflict(for: .renewing) == true
     }
 
     /// 是否有**签名 / 续签**正在跑（即「那一轮本身会把应用续完」）。
@@ -2482,7 +2655,7 @@ final class AppsViewModel: ObservableObject {
     private var activeOperationDescription: String {
         if batchRefreshTask != nil { return "「续签全部应用」" }
         if signingTask != nil { return "单应用签名 / 续签" }
-        if let lease = operationCoordinator?.activeLease { return "「\(lease.kind.title)」" }
+        if let lease = operationCoordinator?.blockingLease(for: .renewing) { return "「\(lease.kind.title)」" }
         return "另一项操作"
     }
 
@@ -3437,7 +3610,11 @@ final class AppsViewModel: ObservableObject {
             ? .singleRenewal
             : isApplicationUpdate ? .singleUpdate : .singleSigning
         let operationKind: OperationCoordinator.Kind = isRenewal ? .renewing : .signing
-        guard let operationLease = await acquireOperation(operationKind, appID: app.id) else {
+        guard let operationLease = await acquireOperation(
+            operationKind,
+            appID: app.id,
+            accountID: account.id
+        ) else {
             if Task.isCancelled {
                 signingSession = nil
             } else if let operationCoordinator {
@@ -3971,29 +4148,31 @@ final class AppsViewModel: ObservableObject {
 
     private func acquireOperation(
         _ kind: OperationCoordinator.Kind,
-        appID: UUID? = nil
+        appID: UUID? = nil,
+        accountID: UUID? = nil
     ) async -> OperationCoordinator.Lease? {
         guard backgroundTriggerAdmissionPending == false else { return nil }
         guard let operationCoordinator else {
-            return .uncoordinated(kind, appID: appID)
+            return .uncoordinated(kind, appID: appID, accountID: accountID)
         }
         // 自动等待当前操作完成，不弹"暂时无法执行"弹窗
-        return await operationCoordinator.beginWaiting(kind, appID: appID)
+        return await operationCoordinator.beginWaiting(kind, appID: appID, accountID: accountID)
     }
 
 
 
 
     private func releaseOperation(_ lease: OperationCoordinator.Lease) {
-        operationCoordinator?.end(lease)
         // 回前台时若刚好在签名/安装，设备核验会为了不抢 RSD 会话而跳过。
         // 操作结束后补一次合并刷新，让用户外部卸载的 App 不必等下一次前后台切换才消失。
         let operationNeedsRefresh = [.signing, .installing, .renewing].contains(lease.kind)
-        guard operationNeedsRefresh || installedAppRefreshPendingAfterOperation else { return }
-        installedAppRefreshPendingAfterOperation = false
-        Task { [weak self] in
-            await Task.yield()
-            await self?.refreshInstalledApps(userInitiated: false)
+        if operationNeedsRefresh {
+            installedAppRefreshPendingAfterOperation = true
+        }
+        if let operationCoordinator {
+            operationCoordinator.end(lease)
+        } else if operationNeedsRefresh || installedAppRefreshPendingAfterOperation {
+            resumePendingInstalledAppWork()
         }
     }
 

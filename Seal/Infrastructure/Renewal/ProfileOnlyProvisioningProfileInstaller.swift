@@ -102,19 +102,6 @@ actor ProfileOnlyProvisioningProfileInstaller {
         keepaliveTask = nil
     }
 
-    /// 标记通道已污染（供 `SigningCoordinator` 在 `SEAL-PROFILE-363` 为
-    /// `.unavailable` 时调用）。
-    ///
-    /// 2026-10-03 真机：后台冷启动时设备枚举不可用（363），但代码仍拿这条坏通道
-    /// 去注入 ⇒ 30 秒超时 ⇒ 8/16 秒退避 ⇒ 重试 ⇒ 一轮烧掉 59 秒。
-    /// 363 的 `.unavailable` 已经证明通道坏了，提前标记后 `installAndVerify`
-    /// 会在**拿锁后、注入前**就重置通道，省掉在坏通道上的无效尝试。
-    /// ⚠️ 只在 `.unavailable` 时调：`.mismatched`（设备上没有这份 profile）不是
-    /// 通道问题，重置帮不上忙。
-    func markTainted() {
-        taint.markTainted()
-    }
-
     /// 与 Apple Portal 请求并行预热实际执行 profile 注入的设备服务。
     /// 正在写入时不另起探测，避免和 `misagent` 的进程级传输竞争。
     ///
@@ -135,6 +122,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
         _ materials: [ProfileOnlyProfileMaterial],
         certificateSerialNumber: String,
         channel: any InstallChannel,
+        operationCoordinator: OperationCoordinator? = nil,
         // 污染自愈时留痕（`SEAL-PROFILE-355`），由调用方传入日志闭包。
         onTaintHealed: @Sendable () async -> Void = {}
     ) async throws {
@@ -142,6 +130,15 @@ actor ProfileOnlyProvisioningProfileInstaller {
         // 前驱一入场，后继的门闩也会完成。这里持有 isBusy 直到所有设备操作与读回结束。
         while isBusy {
             try Task.checkCancellation()
+            // 原生同步 FFI 超时后不会停止。保持租约直到它真正返回是设备安全边界；
+            // 但后继不能无限等待并继续占用前台事务租约，否则一项卡住会拖住整批续签。
+            guard operationLease.holdBusyUntilCompletion == false else {
+                throw failure(
+                    reason: "上一项设备描述文件操作超时，底层调用仍未返回；本项未开始。",
+                    code: "SEAL-PROFILE-357",
+                    recovery: "等待设备通道恢复后重试；本次未开始的 App 可单独续签。"
+                )
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         try Task.checkCancellation()
@@ -166,28 +163,44 @@ actor ProfileOnlyProvisioningProfileInstaller {
 
         for material in materials {
             try Task.checkCancellation()
-            try await inject(material, using: channel)
+            try await inject(
+                material,
+                using: channel,
+                operationCoordinator: operationCoordinator
+            )
         }
 
         // ── 批量读回核验（性能优化）：全部注入完后一次 dump + 全量解析，
         // 逐份核验，避免每份各做一次秒级 dump（2026-10-04）。
-        let results: [Bool?]
         operationLease.beginNativeOperation()
-        do {
-            results = try await HardTimeout.run(
-                seconds: 30,
-                cancelsWorkOnTimeout: false,
-                onLateCompletion: { [weak self] _ in
-                    await self?.nativeProfileOperationDidComplete()
-                }
-            ) {
-                await DeviceProfileInspector.containsProfiles(
-                    matching: materials.map(\.binding),
-                    certificateSerialNumber: certificateSerialNumber
+        let readback = await DeviceProfileInspector.containsProfiles(
+            matching: materials.map(\.binding),
+            certificateSerialNumber: certificateSerialNumber,
+            using: operationCoordinator,
+            onNativeCompletion: { [weak self] in
+                await self?.nativeProfileOperationDidComplete()
+            }
+        )
+        let results: [Bool?]
+        switch readback {
+        case .completed(let result):
+            releaseBusyAfterNativeCompletionIfNeeded()
+            do {
+                results = try result.get()
+            } catch {
+                throw failure(
+                    reason: "设备端读取本轮注入的描述文件失败：\(error)",
+                    code: "SEAL-PROFILE-354"
                 )
             }
+        case .unavailable:
             releaseBusyAfterNativeCompletionIfNeeded()
-        } catch {
+            throw failure(
+                reason: "设备描述文件服务正被另一项设备查询占用；本轮没有并发读取。",
+                code: "SEAL-OP-001",
+                recovery: "等待当前设备操作结束后重试。"
+            )
+        case .nativeCallMayStillBeRunning:
             _ = operationLease.timedOut()
             taint.markTainted()
             throw failure(
@@ -245,22 +258,35 @@ actor ProfileOnlyProvisioningProfileInstaller {
     /// 避免把可恢复的冷 RSD 会话交给外层 8 秒退避；超时仍按污染路径处理。
     private func inject(
         _ material: ProfileOnlyProfileMaterial,
-        using channel: any InstallChannel
+        using channel: any InstallChannel,
+        operationCoordinator: OperationCoordinator?
     ) async throws {
         var recoveredConnection = false
 
         while true {
             operationLease.beginNativeOperation()
-            let injection = await BlockingCall.bounded(
+            let injection = await DeviceProfileNativeCall.perform(
+                operationCoordinator: operationCoordinator,
                 seconds: 30,
-                cancelsWorkOnTimeout: false,
-                onLateCompletion: { [weak self] _ in
+                onNativeCompletion: { [weak self] in
                     await self?.nativeProfileOperationDidComplete()
                 }
             ) {
                 try Minimuxer.installProvisioningProfile(profile: material.data)
             }
-            guard let injection else {
+            let result: Result<Void, Error>
+            switch injection {
+            case .completed(let completed):
+                releaseBusyAfterNativeCompletionIfNeeded()
+                result = completed
+            case .unavailable:
+                releaseBusyAfterNativeCompletionIfNeeded()
+                throw failure(
+                    reason: "设备描述文件服务正被另一项设备查询占用；本轮没有并发写入。",
+                    code: "SEAL-OP-001",
+                    recovery: "等待当前设备操作结束后重试。"
+                )
+            case .nativeCallMayStillBeRunning:
                 _ = operationLease.timedOut()
                 taint.markTainted()
                 throw failure(
@@ -268,10 +294,9 @@ actor ProfileOnlyProvisioningProfileInstaller {
                     code: "SEAL-PROFILE-352"
                 )
             }
-            releaseBusyAfterNativeCompletionIfNeeded()
 
             do {
-                try injection.get()
+                try result.get()
                 return
             } catch {
                 guard recoveredConnection == false,
@@ -306,11 +331,15 @@ actor ProfileOnlyProvisioningProfileInstaller {
         }
     }
 
-    private func failure(reason: String, code: String) -> ImportFailure {
+    private func failure(
+        reason: String,
+        code: String,
+        recovery: String = "确认 LocalDevVPN 与设备连接后重试；不要在未确认前删除旧描述文件"
+    ) -> ImportFailure {
         ImportFailure(
             title: "描述文件续签未确认",
             reason: reason,
-            recovery: "确认 LocalDevVPN 与设备连接后重试；不要在未确认前删除旧描述文件",
+            recovery: recovery,
             code: code
         )
     }

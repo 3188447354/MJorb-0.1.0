@@ -38,6 +38,7 @@ enum BlockingCall {
         seconds: Double,
         cancelsWorkOnTimeout: Bool = true,
         onLateCompletion: (@Sendable (Result<T, HardTimeout.LateCompletionError>) async -> Void)? = nil,
+        onWorkNeverStarted: (@Sendable () async -> Void)? = nil,
         _ work: @Sendable @escaping () throws -> T
     ) async -> Result<T, Error>? {
         do {
@@ -54,7 +55,8 @@ enum BlockingCall {
                         }
                     case .failure(let error): await onLateCompletion(.failure(error))
                     }
-                }
+                },
+                onWorkNeverStarted: onWorkNeverStarted
             ) {
                 Outcome(result: Result(catching: work))
             }

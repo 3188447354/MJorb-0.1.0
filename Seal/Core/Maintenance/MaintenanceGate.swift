@@ -47,7 +47,7 @@ final class MaintenanceGate: MaintenanceLeasing {
 
     /// 当前是否空闲（无前台操作、无维护作业在跑）。
     var isIdle: Bool {
-        coordinator.activeLease == nil && runningToken == nil
+        coordinator.hasActiveLease == false && runningToken == nil
     }
 
     /// 空闲时发放租约；已有前台操作或维护作业在跑时返回 nil。
@@ -55,7 +55,7 @@ final class MaintenanceGate: MaintenanceLeasing {
     /// 注意这是**非阻塞**的：拿到 nil 的调用方应当直接跳过本轮，
     /// 而不是等待或重试 —— 维护作业没有「必须现在跑」的语义。
     func tryAcquire() -> UUID? {
-        guard coordinator.activeLease == nil, runningToken == nil else {
+        guard coordinator.hasActiveLease == false, runningToken == nil else {
             skippedRounds += 1
             return nil
         }
@@ -72,6 +72,6 @@ final class MaintenanceGate: MaintenanceLeasing {
     /// 关键检查点：租约已被取代，或前台操作已经启动 → 作业必须立即退出。
     func shouldAbort(_ token: UUID) -> Bool {
         guard runningToken == token else { return true }
-        return coordinator.activeLease != nil
+        return coordinator.hasActiveLease
     }
 }

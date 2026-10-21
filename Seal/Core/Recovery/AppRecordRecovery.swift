@@ -100,6 +100,7 @@ actor AppRecordRecovery {
     /// `reconcileInstalledAppsWithDevice` 的「先问完再动手」是同一条纪律。
     private func recoverRecordsFromDeviceProfiles() async -> InstalledRecordRecoverySummary {
         var summary = InstalledRecordRecoverySummary()
+        let storedRecords = (try? await appStore.fetchAll()) ?? []
         // 没接线就**完全不碰设备**（测试 / 预览走这里）。`skipped-not-wired` 必须与
         // `skipped-no-candidates` 分得开 —— 前者是「没人接这根线」（配置问题），
         // 后者是「接了线、设备端确实没有可补的」（正常结论）。
@@ -107,10 +108,15 @@ actor AppRecordRecovery {
             summary.stage = "skipped-not-wired"
             return summary
         }
+        // Known records recover icons through LaunchServices alone. Run that local lookup
+        // before any profile or installation-proxy request, so an unavailable tunnel cannot
+        // suppress icon repair for records already known to Seal.
+        let iconRecovery = await recoverMissingIcons(for: storedRecords, scanner: deviceScanner)
+        summary.iconsUpdated = iconRecovery.updatedCount
         // 先 dump（新记录候选需要它）；拿不到时仍可为已存在的记录补图标，
         // 但绝不能把「读不到」当成「设备上没有」并创建新记录。
         let profiles = await deviceScanner.scanProfileSummaries()
-        let records = (try? await appStore.fetchAll()) ?? []
+        let records = (try? await appStore.fetchAll()) ?? iconRecovery.records
         var accounts: [AppleAccountRecord] = []
         if let accountsProvider {
             accounts = await accountsProvider()
@@ -226,6 +232,50 @@ actor AppRecordRecovery {
             }
         }
         return summary
+    }
+
+    private func recoverMissingIcons(
+        for sourceRecords: [AppRecord],
+        scanner: any InstalledAppScanning
+    ) async -> (records: [AppRecord], updatedCount: Int) {
+        var records = sourceRecords
+        var bundleIdentifierByRecordID: [UUID: String] = [:]
+        for record in records where record.isSeal == false && record.belongsInInstalledList {
+            let hasReadableIcon = AppIconDataResolver.iconRelativePaths(for: record).contains { path in
+                (try? fileStore.read(relativePath: path)) != nil
+            }
+            guard hasReadableIcon == false else { continue }
+            let bundleIdentifier = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(
+                record.mappedBundleIdentifier
+                    ?? record.preferredBundleIdentifier
+                    ?? record.originalBundleIdentifier
+            )
+            bundleIdentifierByRecordID[record.id] = bundleIdentifier
+        }
+        guard bundleIdentifierByRecordID.isEmpty == false else { return (records, 0) }
+
+        let icons = await scanner.scanIconData(
+            for: Set(bundleIdentifierByRecordID.values)
+        )
+        var updatedCount = 0
+        for index in records.indices {
+            let recordID = records[index].id
+            guard let bundleIdentifier = bundleIdentifierByRecordID[recordID],
+                  let iconData = icons[bundleIdentifier],
+                  let iconPath = try? await fileStore.storeIcon(data: iconData, appID: recordID) else {
+                continue
+            }
+            var updated = records[index]
+            updated.iconRelativePath = iconPath
+            do {
+                try await appStore.save(updated)
+                records[index] = updated
+                updatedCount += 1
+            } catch {
+                continue
+            }
+        }
+        return (records, updatedCount)
     }
 
     private func recoverPendingFileTransactions() async throws {

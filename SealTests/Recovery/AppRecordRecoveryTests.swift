@@ -163,6 +163,47 @@ struct AppRecordRecoveryTests {
         #expect(try await environment.fileStore.read(relativePath: iconPath) == iconData)
     }
 
+    @Test
+    func repairsKnownRecordIconWhenProfileAndDeviceListScansAreUnavailable() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let bundleIdentifier = "com.example.demo.ABCDE12345"
+        let appID = UUID()
+        let iconData = try #require(
+            Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
+        )
+        try await environment.appStore.save(
+            AppRecord(
+                id: appID,
+                originalBundleIdentifier: "com.example.demo",
+                mappedBundleIdentifier: bundleIdentifier,
+                name: "Demo",
+                version: "1.0",
+                buildNumber: "1",
+                size: 0,
+                state: .installed,
+                signingTeamID: "ABCDE12345",
+                ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
+                needsIPAImport: true,
+                importedAt: Date()
+            )
+        )
+
+        let summary = try await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            deviceScanner: OfflineIconInstalledAppScanner(
+                bundleIdentifier: bundleIdentifier,
+                iconData: iconData
+            )
+        ).restoreMissingRecords()
+
+        let record = try #require(try await environment.appStore.fetchAll().first)
+        let iconPath = try #require(record.iconRelativePath)
+        #expect(summary.iconsUpdated == 1)
+        #expect(try await environment.fileStore.read(relativePath: iconPath) == iconData)
+    }
+
     private func makeEnvironment() throws -> Environment {
         let root = FileManager.default.temporaryDirectory.appending(
             path: "SealRecoveryTests-\(UUID().uuidString)",
@@ -223,5 +264,25 @@ private extension AppRecordRecoveryTests {
         ) async -> Set<String>? {
             Set(candidates.map(InstalledRecordRecoveryPolicy.normalizedBundleIdentifier))
         }
+    }
+
+    struct OfflineIconInstalledAppScanner: InstalledAppScanning {
+        let bundleIdentifier: String
+        let iconData: Data
+
+        func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? { nil }
+
+        func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+
+        func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
+            normalizedBundleIdentifiers.contains(bundleIdentifier.lowercased())
+                ? [bundleIdentifier.lowercased(): iconData]
+                : [:]
+        }
+
+        func scanConfirmedInstalledBundleIdentifiers(
+            candidates: [String],
+            positiveControl: String?
+        ) async -> Set<String>? { nil }
     }
 }

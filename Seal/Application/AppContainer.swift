@@ -112,15 +112,19 @@ struct AppContainer {
             AltSignLogging.relay = { message in
                 Task { try? await logStore.append(category: .account, level: .info, message: message) }
             }
+            let operationCoordinator = OperationCoordinator()
             let installChannel = MinimuxerInstallChannel(
                 pairingStore: pairingStore,
                 logDirectory: sealDirectory.appending(
                     path: AppConfiguration.Paths.minimuxerLogsSubdirectory,
                     directoryHint: .isDirectory
                 ),
-                logStore: logStore
+                logStore: logStore,
+                operationCoordinator: operationCoordinator
             )
-            let operationCoordinator = OperationCoordinator()
+            let deviceInstalledAppScanner = DeviceInstalledAppScanner(
+                operationCoordinator: operationCoordinator
+            )
             let workflow = ImportWorkflow(
                 parser: IPAParserService(),
                 fileStore: fileStore,
@@ -161,7 +165,8 @@ struct AppContainer {
                 portal: portalSessionService,
                 logStore: logStore,
                 selfReplacement: selfReplacement,
-                certificateRecoveryJournal: certificateRecoveryJournal
+                certificateRecoveryJournal: certificateRecoveryJournal,
+                operationCoordinator: operationCoordinator
             )
             let refreshQueueStore = RefreshQueueStore(
                 fileURL: sealDirectory.appending(path: AppConfiguration.Paths.refreshQueueFile)
@@ -207,11 +212,12 @@ struct AppContainer {
                 },
                 // 生产路径接上真扫描器。**漏接线不会编译失败**，只会让扫回永远停在
                 // `skipped-not-wired`（静默失效）—— 守卫 R80 的 `Scan/wire` 钉住它。
-                deviceScanner: DeviceInstalledAppScanner.live
+                deviceScanner: deviceInstalledAppScanner
             )
-            let selfAppRegistrar = SelfAppMetadata.current().map {
-                SelfAppRegistrar(
-                    metadata: $0,
+            let selfAppRegistrarTask = Task { @MainActor in
+                guard let metadata = await SelfAppMetadata.loadCurrentAsync() else { return nil }
+                return SelfAppRegistrar(
+                    metadata: metadata,
                     appStore: appStore,
                     accountRepository: accountRepository,
                     fileStore: fileStore,
@@ -219,7 +225,8 @@ struct AppContainer {
                     profileCleaner: DeviceProfileCleaner(
                         readRunningIdentity: {
                             try identityReader.read(bundleURL: Bundle.main.bundleURL)
-                        }
+                        },
+                        operationCoordinator: operationCoordinator
                     ),
                     keychain: keychain,
                     logStore: logStore,
@@ -229,36 +236,45 @@ struct AppContainer {
             }
             // 维护作业：记录恢复 / Seal 自注册 / 孤儿文件清理 / 设备端旧描述文件清理。
             // 通过 MaintenanceGate 只在空闲时运行，永不阻塞用户的前台操作。
+            let maintenanceGate = MaintenanceGate(coordinator: operationCoordinator)
             let maintenanceJob = AppMaintenanceJob(
-                gate: MaintenanceGate(coordinator: operationCoordinator),
+                gate: maintenanceGate,
                 appStore: appStore,
                 fileStore: fileStore,
                 recovery: appRecordRecovery,
-                selfAppRegistrar: selfAppRegistrar,
+                selfAppRegistrarTask: selfAppRegistrarTask,
                 logStore: logStore,
-                profileSweeper: DeviceProfileCleaner()
+                profileSweeper: DeviceProfileCleaner(operationCoordinator: operationCoordinator)
             )
 
+            let appsViewModel = AppsViewModel(
+                workflow: workflow,
+                appStore: appStore,
+                fileStore: fileStore,
+                accountRepository: accountRepository,
+                keychain: keychain,
+                signingCoordinator: signingCoordinator,
+                installChannel: installChannel,
+                renewalCoordinator: renewalCoordinator,
+                logStore: logStore,
+                signingHistoryStore: signingHistoryStore,
+                notificationScheduler: notificationScheduler,
+                notificationPreferences: notificationPreferences,
+                backgroundRenewalNotifier: BackgroundRenewalNotifier(),
+                signingPreferenceStore: signingPreferenceStore,
+                operationCoordinator: operationCoordinator,
+                installedAppScanner: deviceInstalledAppScanner,
+                maintenanceJob: maintenanceJob
+            )
+            operationCoordinator.onLeaseReleased = { [weak appsViewModel] in
+                appsViewModel?.resumePendingInstalledAppWork()
+            }
+            maintenanceJob.onWorkEnded = { [weak appsViewModel] in
+                appsViewModel?.resumePendingInstalledAppWork()
+            }
+
             return AppContainer(
-                appsViewModel: AppsViewModel(
-                    workflow: workflow,
-                    appStore: appStore,
-                    fileStore: fileStore,
-                    accountRepository: accountRepository,
-                    keychain: keychain,
-                    signingCoordinator: signingCoordinator,
-                    installChannel: installChannel,
-                    renewalCoordinator: renewalCoordinator,
-                    logStore: logStore,
-                    signingHistoryStore: signingHistoryStore,
-                    notificationScheduler: notificationScheduler,
-                    notificationPreferences: notificationPreferences,
-                    backgroundRenewalNotifier: BackgroundRenewalNotifier(),
-                    signingPreferenceStore: signingPreferenceStore,
-                    operationCoordinator: operationCoordinator,
-                    installedAppScanner: DeviceInstalledAppScanner.live,
-                    maintenanceJob: maintenanceJob
-                ),
+                appsViewModel: appsViewModel,
                 settingsViewModel: SettingsViewModel(
                     accountRepository: accountRepository,
                     keychain: keychain,
@@ -278,7 +294,7 @@ struct AppContainer {
                     anisetteEnvironment: anisetteProvider,
                     signingPreferenceStore: signingPreferenceStore,
                     operationCoordinator: operationCoordinator,
-                    installedAppScanner: DeviceInstalledAppScanner.live,
+                    installedAppScanner: deviceInstalledAppScanner,
                     selfReplacementStore: transactionStore,
                     certificateRecoveryJournal: certificateRecoveryJournal
                 ),

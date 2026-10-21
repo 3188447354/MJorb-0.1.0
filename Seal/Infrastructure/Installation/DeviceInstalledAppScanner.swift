@@ -19,7 +19,7 @@ struct DeviceInstalledApplicationSummary: Equatable, Sendable {
 /// 最坏情况白等 15 秒，还可能直接崩掉整个测试进程。
 ///
 /// 本仓对「会碰设备」的依赖一律**注入 ＋ 默认 nil**（同 `StaleProfileSweeping`），
-/// 生产路径由 `AppContainer` 接上 `DeviceInstalledAppScanner.live`。
+/// 生产路径由 `AppContainer` 接上带 `OperationCoordinator` 的扫描器实例。
 /// `nil` 的后果必须留 stage（`skipped-not-wired`）—— 否则「没人接这根线」会被
 /// 读成「设备端确实没有可补的」，扫回静默失效。
 protocol InstalledAppScanning: Sendable {
@@ -35,6 +35,7 @@ protocol InstalledAppScanning: Sendable {
     func scanUserApplications() async -> [DeviceInstalledApplicationSummary]?
 
     /// 按归一化 Bundle ID 读取本机 LaunchServices 图标；失败或不可用时返回空字典。
+    /// Reads icon bytes from local LaunchServices metadata; this call does not use the paired device channel.
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data]
 
     /// 阳性对照 ＋ 逐条设备核验，**先问完再动手**。
@@ -51,28 +52,49 @@ extension InstalledAppScanning {
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] { [:] }
 }
 
+/// Scoped lease for synchronous device-inventory FFI. A timeout cannot cancel native work,
+/// so the lease remains active until the late-completion callback releases it.
+enum InstalledAppInventoryOperationLease {
+    static func begin(using coordinator: OperationCoordinator?) async -> OperationCoordinator.Lease? {
+        if let coordinator {
+            return await coordinator.begin(.scanningDeviceInventory)
+        }
+        return .uncoordinated(.scanningDeviceInventory, appID: nil, accountID: nil)
+    }
+
+    static func end(
+        _ lease: OperationCoordinator.Lease,
+        using coordinator: OperationCoordinator?
+    ) async {
+        await coordinator?.end(lease)
+    }
+}
+
 /// 设备端「已验证侧载应用」的只读扫描：读取描述文件和安装代理的用户应用清单。
 ///
 /// 与 `DeviceProfileInspector` / `DeviceProfileCleaner` 共用同一条 misagent dump 通道，
 /// 并通过 InstallationProxy 读取已安装应用；**绝不删除任何文件**、也**不落任何状态**。
 ///
-/// ⚠️ 两个入口都是同步阻塞 FFI（`Provision.dumpProfiles` / `Minimuxer.isAppInstalled`），
+/// ⚠️ 两个入口都是同步阻塞 FFI（`Provision.dumpProfiles` / `Minimuxer.installedApplications`），
 /// 在一条已死的 RSD 缓存会话上**不报错、只阻塞到操作系统放弃** ⇒ 必须有界。
-/// 查询类调用用 `BlockingCall.bounded`（超时只表示「本次放弃等待」，没有副作用要撤销）。
+/// 查询类调用用 `BlockingCall.bounded`；设备会话租约在原生调用真正结束前不会释放。
 struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
-    /// 生产路径用的实例（`AppContainer` 接线）。测试一律不接。
-    static let live = DeviceInstalledAppScanner()
+    private let operationCoordinator: OperationCoordinator?
+
+    init(operationCoordinator: OperationCoordinator? = nil) {
+        self.operationCoordinator = operationCoordinator
+    }
 
     func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? {
-        await Self.profileSummaries()
+        await profileSummaries()
     }
 
     func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
-        await Self.validatedUserApplications()
+        await validatedUserApplications()
     }
 
     func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? {
-        await Self.userApplications()
+        await userApplications()
     }
 
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
@@ -85,7 +107,8 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
     ) async -> Set<String>? {
         await Self.confirmedInstalledBundleIdentifiers(
             candidates: candidates,
-            positiveControl: positiveControl
+            positiveControl: positiveControl,
+            operationCoordinator: operationCoordinator
         )
     }
 
@@ -93,28 +116,74 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
     ///
     /// - Returns: `nil` = **无法核验**（未连接设备 / 隧道不可用 / dump 或解析失败）。
     ///   调用方必须按「不知道」处理（本轮不建任何记录）；返回空数组仅当设备端确实一份都没有。
-    static func profileSummaries() async -> [DeviceProvisioningProfileSummary]? {
+    private func profileSummaries() async -> [DeviceProvisioningProfileSummary]? {
+        guard let operationLease = await InstalledAppInventoryOperationLease.begin(
+            using: operationCoordinator
+        ) else { return nil }
+        let probeID: UUID
+        switch await InstalledAppRefreshProbeGate.shared.begin() {
+        case .ready(let id):
+            probeID = id
+        case .inFlight, .coolingDown:
+            await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+            return nil
+        }
         let outcome = await BlockingCall.bounded(
-            seconds: BlockingCall.queryTimeoutSeconds
+            seconds: BlockingCall.queryTimeoutSeconds,
+            cancelsWorkOnTimeout: false,
+            onLateCompletion: { _ in
+                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)
+                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+            },
+            onWorkNeverStarted: {
+                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+            }
         ) {
             readProfileSummaries()
         }
-        guard let outcome, case .success(let summaries) = outcome else { return nil }
+        guard let outcome else { return nil }
+        await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+        await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+        guard case .success(let summaries) = outcome else { return nil }
         return summaries
     }
 
-    static func validatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+    private func validatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
         guard let applications = await userApplications() else { return nil }
         return applications.filter { $0.profileValidated == true }
     }
 
-    static func userApplications() async -> [DeviceInstalledApplicationSummary]? {
+    private func userApplications() async -> [DeviceInstalledApplicationSummary]? {
+        guard let operationLease = await InstalledAppInventoryOperationLease.begin(
+            using: operationCoordinator
+        ) else { return nil }
+        let probeID: UUID
+        switch await InstalledAppRefreshProbeGate.shared.begin() {
+        case .ready(let id):
+            probeID = id
+        case .inFlight, .coolingDown:
+            await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+            return nil
+        }
         let outcome = await BlockingCall.bounded(
-            seconds: BlockingCall.queryTimeoutSeconds
+            seconds: BlockingCall.queryTimeoutSeconds,
+            cancelsWorkOnTimeout: false,
+            onLateCompletion: { _ in
+                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)
+                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+            },
+            onWorkNeverStarted: {
+                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+            }
         ) {
             try Minimuxer.installedApplications()
         }
-        guard let outcome, case .success(let applications) = outcome else { return nil }
+        guard let outcome else { return nil }
+        await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+        await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
+        guard case .success(let applications) = outcome else { return nil }
         return applications.map { application in
             DeviceInstalledApplicationSummary(
                 bundleIdentifier: application.bundleIdentifier,
@@ -155,14 +224,16 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
     /// 一串 2 秒超时的串行等待。候选为空时**一次设备查询都不发**。
     static func confirmedInstalledBundleIdentifiers(
         candidates: [String],
-        positiveControl: String?
+        positiveControl: String?,
+        operationCoordinator: OperationCoordinator? = nil
     ) async -> Set<String>? {
         guard candidates.isEmpty == false else { return [] }
 
         if let positiveControl,
            positiveControl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             let control = try? await InstalledAppDeviceVerifier.isInstalled(
-                bundleIdentifier: positiveControl
+                bundleIdentifier: positiveControl,
+                operationCoordinator: operationCoordinator
             )
             guard control == true else { return nil }
         }
@@ -170,7 +241,8 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
         var confirmed: Set<String> = []
         for candidate in candidates {
             guard let installed = try? await InstalledAppDeviceVerifier.isInstalled(
-                bundleIdentifier: candidate
+                bundleIdentifier: candidate,
+                operationCoordinator: operationCoordinator
             ) else { return nil }
             if installed {
                 confirmed.insert(InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(candidate))

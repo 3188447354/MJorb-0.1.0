@@ -143,10 +143,6 @@ actor SelfAppRegistrar {
                 message: "Seal 启动检测到 build 号变化（记录 \(existing.buildNumber ?? "-") → 运行 \(metadata.buildNumber ?? "-")），已清掉待安装标记",
                 code: "SEAL-SELF-120"
             )
-            // 通知 UI 立刻刷新，标签秒消失，不残存
-            await MainActor.run {
-                NotificationCenter.default.post(name: .sealSelfRecordUpdated, object: nil)
-            }
         }
         let id = existing?.id ?? fixedSealID
         try await atomicallyUpdateSealRecord(id: id, existing: existing, accounts: accounts)
@@ -366,6 +362,28 @@ actor SelfAppRegistrar {
             return false
         case .settle:
             let settled = try await selfReplacement.settle()
+            if let existing {
+                let recordToPromote = SelfAppRecordSelection.importedReplacement(
+                    for: existing,
+                    in: allRecords
+                ) ?? existing
+                try await atomicallyApplyInstalledIdentity(
+                    settled.installedIdentity,
+                    to: recordToPromote,
+                    accounts: accounts
+                )
+            } else {
+                // The device confirms the new Seal identity, but device reconciliation may
+                // already have removed every local predecessor. Rebuild the installed row
+                // from the running bundle before declaring the update or batch renewal done.
+                try await atomicallyUpdateSealRecord(
+                    id: fixedSealID,
+                    existing: nil,
+                    accounts: accounts
+                )
+            }
+            // A confirmed runtime identity is not a completed user operation until its
+            // durable AppStore row has also been committed.
             await settlePendingBatchSealResult(to: .completed)
             if let main = settled.installedIdentity.mainTarget {
                 let expiry = SealLogTextFormatter.diagnosticTimestamp(main.profileExpirationDate)
@@ -389,17 +407,6 @@ actor SelfAppRegistrar {
                     code: "SEAL-SELF-113",
                     operationResult: .success,
                     operationSummary: summary
-                )
-            }
-            if let existing {
-                let recordToPromote = SelfAppRecordSelection.importedReplacement(
-                    for: existing,
-                    in: allRecords
-                ) ?? existing
-                try await atomicallyApplyInstalledIdentity(
-                    settled.installedIdentity,
-                    to: recordToPromote,
-                    accounts: accounts
                 )
             }
             // 先推进记录，再精准清理：清理发生时记录必须已指向候选身份，

@@ -207,17 +207,17 @@ enum ProfileOnlyRenewalPolicy {
 
     /// 从「运行包身份」构造 `LiveProfileOnlyIdentity`。任何一项读不出来都返回 nil —— **绝不猜**。
     ///
-    /// - Parameter installedIdentity: `SelfAppMetadata.current()?.installedIdentity`。
+/// - Parameter installedIdentity: `SelfAppMetadata.installedIdentitySnapshot()` 的结果。
     ///   要求每个当前安装目标的 Bundle ID 与 CMS 签名者可读；扩展 Team 缺失时仅继承主程序 Team，
     ///   且所有目标仍必须由同一证书签名。描述文件缺失或失效不阻止恢复。
     ///
-    /// - Parameter runningVersion: `SelfAppMetadata.current()?.version` —— **正在运行的那个包**
+/// - Parameter runningVersion: 从运行签名身份快照取得的**正在运行的那个包**
     ///   的版本。它与记录里的 `version` 是两件事：记录描述「已导入的源包」，可能更新。
     ///   读不到（空串）时整体放弃，**不猜**（空串会被 `Version.compare` 当成 0，
     ///   与任何真实版本都不等 ⇒ 会误判成「有待安装更新」）。
     ///
-    /// ⚠️ 调用方**必须**只在「这确实是该 app 自己的运行包」时调用 —— `SelfAppMetadata.current()`
-    /// 读的是 `Bundle.main`，对第三方 App 用它会读成 **Seal 自己**的身份（假阳性）。
+/// ⚠️ 调用方**必须**只在「这确实是该 app 自己的运行包」时调用 —— 身份快照
+/// 读的是 `Bundle.main`，对第三方 App 用它会读成 **Seal 自己**的身份（假阳性）。
     /// 见 `SigningCoordinator.liveProfileOnlyIdentity(for:)`。
     static func liveIdentity(
         installedIdentity: InstalledIdentity?,

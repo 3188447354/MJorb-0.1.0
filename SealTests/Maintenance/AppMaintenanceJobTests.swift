@@ -541,7 +541,7 @@ struct AppMaintenanceJobTests {
             appStore: store,
             fileStore: fixture.fileStore,
             recovery: recovery,
-            selfAppRegistrar: nil,
+            selfAppRegistrarTask: nil,
             logStore: nil,
             profileSweeper: profileSweeper
         )

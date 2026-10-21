@@ -16,6 +16,70 @@
 import Foundation
 @preconcurrency import Minimuxer
 
+/// Serializes profile, installed-app, and cleanup calls that share the device session.
+/// A timed-out native call keeps the shared gate until the FFI really returns.
+enum DeviceProfileNativeCall {
+    enum Outcome<Value: Sendable> {
+        case completed(Result<Value, Error>)
+        case unavailable
+        case nativeCallMayStillBeRunning
+    }
+
+    static func perform<T: Sendable>(
+        gate: InstalledAppRefreshProbeGate = .shared,
+        operationCoordinator: OperationCoordinator? = nil,
+        seconds: Double = BlockingCall.queryTimeoutSeconds,
+        onNativeCompletion: @Sendable () async -> Void = {},
+        _ work: @Sendable @escaping () throws -> T
+    ) async -> Outcome<T> {
+        let probeID: UUID
+        switch await gate.begin() {
+        case .ready(let id): probeID = id
+        case .inFlight, .coolingDown: return .unavailable
+        }
+        let operationLease: OperationCoordinator.Lease?
+        if let operationCoordinator {
+            guard let lease = await operationCoordinator.acquireNativeDeviceSessionLease() else {
+                await gate.finish(probeID: probeID, timedOut: false)
+                return .unavailable
+            }
+            operationLease = lease
+        } else {
+            operationLease = nil
+        }
+        let releaseOperationLease: @Sendable () async -> Void = {
+            if let operationLease {
+                await operationCoordinator?.releaseDeviceSessionLeaseAfterNativeCall(operationLease)
+            }
+        }
+
+        let outcome = await BlockingCall.bounded(
+            seconds: seconds,
+            cancelsWorkOnTimeout: false,
+            onLateCompletion: { _ in
+                await gate.finish(probeID: probeID, timedOut: true)
+                await releaseOperationLease()
+                await onNativeCompletion()
+            },
+            onWorkNeverStarted: {
+                await gate.finish(probeID: probeID, timedOut: false)
+                await releaseOperationLease()
+                await onNativeCompletion()
+            },
+            work
+        )
+        guard let outcome else { return .nativeCallMayStillBeRunning }
+        await gate.finish(probeID: probeID, timedOut: false)
+        await releaseOperationLease()
+        return .completed(outcome)
+    }
+}
+
+private struct DeviceProfileNativeCallUnavailable: Error, CustomStringConvertible {
+    let nativeCallMayStillBeRunning: Bool
+    var description: String { "设备原生调用仍在运行或清单查询闸门暂不可用" }
+}
+
 /// `dumpProfiles` 重试耗尽后抛出的错误，**携带真实尝试次数**。
 ///
 /// 为什么必须是独立类型、而不是直接抛底层错误：`summary.dumpAttempts` 原来只在
@@ -30,6 +94,8 @@ struct DumpProfilesFailure: Error {
     let attempts: Int
     /// 最后一次的底层错误。
     let underlying: any Error
+    /// True means cleanup ownership was handed to the native completion callback.
+    var nativeCallMayStillBeRunning = false
 }
 
 /// 一次清理的执行摘要。清理是「最佳努力」、永不抛出，
@@ -43,6 +109,8 @@ struct ProfileCleanupSummary: Sendable, Equatable {
     var firstError: String?
     /// dump 阶段实际尝试了几次（含首次）。> 1 说明前几次撞上了设备不可达。
     var dumpAttempts = 1
+    /// The device-operation lease is released by the native completion callback when true.
+    var nativeCallPending = false
 
     // ── 旧 Team 变体（孤儿）回收的计数 ────────────────────────────────────────
     // 这四个数分开记，是为了让「一条都没删」能归因到具体原因：
@@ -172,9 +240,14 @@ protocol StaleProfileSweeping: Sendable {
 struct DeviceProfileCleaner: Sendable {
     /// 清理前重读运行身份的入口；缺失时一律跳过，绝不在身份不明时删除 profile。
     private let readRunningIdentity: (@Sendable () throws -> InstalledIdentity)?
+    private let operationCoordinator: OperationCoordinator?
 
-    init(readRunningIdentity: (@Sendable () throws -> InstalledIdentity)? = nil) {
+    init(
+        readRunningIdentity: (@Sendable () throws -> InstalledIdentity)? = nil,
+        operationCoordinator: OperationCoordinator? = nil
+    ) {
         self.readRunningIdentity = readRunningIdentity
+        self.operationCoordinator = operationCoordinator
     }
 
     /// 删除设备端与 `bundleIdentifier` 相同、但 UUID ≠ `keepingProfileUUID` 的旧描述文件。
@@ -189,7 +262,9 @@ struct DeviceProfileCleaner: Sendable {
         for bundleIdentifier: String,
         keeping keepingProfileUUID: String?,
         protectedBundleIDs: Set<String>,
-        reclaimSealOrphans: Bool = false
+        reclaimSealOrphans: Bool = false,
+        operationCoordinator: OperationCoordinator? = nil,
+        onNativeCallCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> ProfileCleanupSummary {
         guard let keepingProfileUUID,
               keepingProfileUUID.isEmpty == false,
@@ -199,7 +274,9 @@ struct DeviceProfileCleaner: Sendable {
         return await removeStaleProfiles(
             keepingByBundleID: [bundleIdentifier: keepingProfileUUID],
             protectedBundleIDs: protectedBundleIDs,
-            reclaimSealOrphans: reclaimSealOrphans
+            reclaimSealOrphans: reclaimSealOrphans,
+            operationCoordinator: operationCoordinator,
+            onNativeCallCompletion: onNativeCallCompletion
         )
     }
 
@@ -216,7 +293,9 @@ struct DeviceProfileCleaner: Sendable {
     static func removeStaleProfiles(
         keepingByBundleID: [String: String],
         protectedBundleIDs: Set<String>,
-        reclaimSealOrphans: Bool = false
+        reclaimSealOrphans: Bool = false,
+        operationCoordinator: OperationCoordinator? = nil,
+        onNativeCallCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> ProfileCleanupSummary {
         var normalized: [String: String] = [:]
         for (bundleID, uuid) in keepingByBundleID {
@@ -231,7 +310,9 @@ struct DeviceProfileCleaner: Sendable {
         return await removeProfiles(
             keepingByBundleID: normalized,
             protectedBundleIDs: protectedBundleIDs,
-            reclaimSealOrphans: reclaimSealOrphans
+            reclaimSealOrphans: reclaimSealOrphans,
+            operationCoordinator: operationCoordinator,
+            onNativeCallCompletion: onNativeCallCompletion
         )
     }
 
@@ -257,18 +338,48 @@ struct DeviceProfileCleaner: Sendable {
     /// 「清理不可用」，而是「撞上瞬时不可达就白丢一次机会」—— 下一次机会要等到下次安装
     /// 或下次启动，而 profile 在此期间继续累积。
     ///
-    /// 每次重试前 `Provision.resetProvider()`：provider 可能缓存着一条已经断开的 RSD 连接，
-    /// 不重置的话重试还是走同一条死路。
-    private static func dumpProfiles(docsPath: String) async throws -> (path: String, attempts: Int) {
+    /// Retry only after the previous native call has returned. `Provision.resetProvider()` only
+    /// replaces its stateless Swift provider; it does not invalidate Rust's cached RSD session.
+    /// The shared device lease makes this targeted RSD invalidation safe from concurrent install work.
+    private static func dumpProfiles(
+        docsPath: String,
+        operationCoordinator: OperationCoordinator?,
+        onNativeCallCompletion: @escaping @Sendable () async -> Void
+    ) async throws -> (path: String, attempts: Int) {
         for attempt in 1...dumpAttemptLimit {
             if attempt > 1 {
-                // 先重置再等：重置拆掉缓存的死连接，等待让 RSD / 隧道有时间恢复。
-                Provision.resetProvider()
+                // 先废弃已失效的 RSD 会话，再等待隧道恢复；Lockdown 下该调用为空操作。
+                Minimuxer.invalidateRemotePairingConnection()
                 try? await Task.sleep(nanoseconds: dumpRetryDelayNanoseconds)
             }
             do {
-                return (try Provision.dumpProfiles(docsPath: docsPath), attempt)
+                let outcome = await DeviceProfileNativeCall.perform(
+                    operationCoordinator: operationCoordinator,
+                    onNativeCompletion: {
+                        try? FileManager.default.removeItem(atPath: docsPath)
+                        await onNativeCallCompletion()
+                    }
+                ) {
+                    try Provision.dumpProfiles(docsPath: docsPath)
+                }
+                switch outcome {
+                case .completed(let result):
+                    return (try result.get(), attempt)
+                case .unavailable:
+                    throw DeviceProfileNativeCallUnavailable(nativeCallMayStillBeRunning: false)
+                case .nativeCallMayStillBeRunning:
+                    throw DeviceProfileNativeCallUnavailable(nativeCallMayStillBeRunning: true)
+                }
             } catch {
+                // A timed-out synchronous FFI continues in the background. Do not retry over
+                // the same misagent session; let the next maintenance pass retry after it ends.
+                if let unavailable = error as? DeviceProfileNativeCallUnavailable {
+                    throw DumpProfilesFailure(
+                        attempts: attempt,
+                        underlying: error,
+                        nativeCallMayStillBeRunning: unavailable.nativeCallMayStillBeRunning
+                    )
+                }
                 // 最后一次也要把「试了几次」带出去 —— 调用方靠它写日志（见 `DumpProfilesFailure`）。
                 if attempt == dumpAttemptLimit {
                     throw DumpProfilesFailure(attempts: attempt, underlying: error)
@@ -295,20 +406,25 @@ struct DeviceProfileCleaner: Sendable {
     /// 不能有两个并发 installd 命令）。缓存连接失效的代价已经由**阳性对照**兜住 ——
     /// 那种情况下对照会抛错或答错，直接中止整轮，方向是安全的。
     private static func probeInstalled(
-        bundleID: String
+        bundleID: String,
+        operationCoordinator: OperationCoordinator?
     ) async -> ProfileReclaimPolicy.InstallProbe {
         // ⚠️ **必须有界**（2026-09-17 补）：`isAppInstalled` 是同步阻塞 FFI，在一条已死的
         // RSD 缓存会话上**不报错、只阻塞到操作系统放弃** —— 与安装路径同一个失败模式。
         // 只放到 `Task.detached` 是不够的：那只是挪出主线程，**阻塞本身仍然无界**，
         // 而这条路径跑在维护期，一次无界阻塞会让**整轮维护永远完不成**（且日志里毫无线索）。
         // 超时按 `unavailable` 处理 ⇒ 按 `ProfileReclaimPolicy` 的既有约定**整轮中止**（fail closed）。
-        guard let outcome = await BlockingCall.bounded(seconds: BlockingCall.queryTimeoutSeconds, {
+        let outcome = await DeviceProfileNativeCall.perform(
+            operationCoordinator: operationCoordinator,
+            seconds: BlockingCall.queryTimeoutSeconds
+        ) {
             try Minimuxer.isAppInstalled(bundleId: bundleID)
-        }) else {
+        }
+        guard case .completed(let result) = outcome else {
             return .unavailable
         }
         do {
-            return try outcome.get() ? .installed : .notInstalled
+            return try result.get() ? .installed : .notInstalled
         } catch {
             return .unavailable
         }
@@ -343,17 +459,20 @@ struct DeviceProfileCleaner: Sendable {
     }
 
     private static func probeInstalledWithDuration(
-        bundleID: String
+        bundleID: String,
+        operationCoordinator: OperationCoordinator?
     ) async -> TimedProbe {
         let started = Date()
-        let probe = await probeInstalled(bundleID: bundleID)
+        let probe = await probeInstalled(bundleID: bundleID, operationCoordinator: operationCoordinator)
         return TimedProbe(probe: probe, seconds: Date().timeIntervalSince(started))
     }
 
     private static func removeProfiles(
         keepingByBundleID: [String: String],
         protectedBundleIDs: Set<String>,
-        reclaimSealOrphans: Bool
+        reclaimSealOrphans: Bool,
+        operationCoordinator: OperationCoordinator?,
+        onNativeCallCompletion: @escaping @Sendable () async -> Void = {}
     ) async -> ProfileCleanupSummary {
         var summary = ProfileCleanupSummary()
         let reader = ProvisioningProfileReader()
@@ -361,15 +480,34 @@ struct DeviceProfileCleaner: Sendable {
         let workingDir = fileManager.temporaryDirectory
             .appendingPathComponent("seal-profile-clean-\(UUID().uuidString)", isDirectory: true)
 
-        defer { try? fileManager.removeItem(at: workingDir) }
+        var cleanupDeferredToNativeCall = false
+        defer {
+            if cleanupDeferredToNativeCall == false {
+                try? fileManager.removeItem(at: workingDir)
+            }
+        }
 
         /// 删一份并记下首个错误。抽成局部函数，避免「保留集合」与「孤儿回收」
         /// 两条路径各写一遍同样的 do/catch —— 那种重复迟早会漂移成
         /// 「修了一条、漏了另一条」，本仓库反复踩过。
         /// 返回是否删除成功；计数由调用方按自己的口径累加（`removed` / `reclaimed`）。
-        func removeProfile(_ uuid: String) -> Bool {
-            do {
+        func removeProfile(_ uuid: String) async -> Bool? {
+            let outcome = await DeviceProfileNativeCall.perform(
+                operationCoordinator: operationCoordinator,
+                onNativeCompletion: onNativeCallCompletion
+            ) {
                 try Provision.removeProvisioningProfile(id: uuid)
+            }
+            guard case .completed(let result) = outcome else {
+                summary.stage = "remove"
+                summary.firstError = "设备原生调用仍在运行或清单查询闸门暂不可用；已停止本轮删除"
+                if case .nativeCallMayStillBeRunning = outcome {
+                    summary.nativeCallPending = true
+                }
+                return nil
+            }
+            do {
+                try result.get()
                 return true
             } catch {
                 if summary.firstError == nil {
@@ -381,7 +519,11 @@ struct DeviceProfileCleaner: Sendable {
 
         let dump: (path: String, attempts: Int)
         do {
-            dump = try await dumpProfiles(docsPath: workingDir.path)
+            dump = try await dumpProfiles(
+                docsPath: workingDir.path,
+                operationCoordinator: operationCoordinator,
+                onNativeCallCompletion: onNativeCallCompletion
+            )
         } catch {
             summary.stage = "dump"
             // 失败路径也要记下**真实尝试次数**：原来这里提前 `return`，
@@ -391,6 +533,8 @@ struct DeviceProfileCleaner: Sendable {
             if let dumpFailure = error as? DumpProfilesFailure {
                 summary.dumpAttempts = dumpFailure.attempts
                 summary.firstError = String(describing: dumpFailure.underlying)
+                cleanupDeferredToNativeCall = dumpFailure.nativeCallMayStillBeRunning
+                summary.nativeCallPending = dumpFailure.nativeCallMayStillBeRunning
             } else {
                 summary.firstError = String(describing: error)
             }
@@ -458,7 +602,8 @@ struct DeviceProfileCleaner: Sendable {
             if let keepingUUID = keepingByBundleID[loweredBundleID] {
                 summary.matched += 1
                 if profileUUID.lowercased() == keepingUUID { continue }
-                if removeProfile(profileUUID) { summary.removed += 1 } else { summary.removeFailed += 1 }
+                guard let removed = await removeProfile(profileUUID) else { return summary }
+                if removed { summary.removed += 1 } else { summary.removeFailed += 1 }
                 continue
             }
 
@@ -492,7 +637,10 @@ struct DeviceProfileCleaner: Sendable {
             summary.reclaimAborted = "无阳性对照 Bundle ID"
             return summary
         }
-        let firstControlProbe = await probeInstalledWithDuration(bundleID: controlBundleID)
+        let firstControlProbe = await probeInstalledWithDuration(
+            bundleID: controlBundleID,
+            operationCoordinator: operationCoordinator
+        )
         let positiveControlPassed = firstControlProbe.probe == .installed
         guard positiveControlPassed else {
             // ⚠️ **判别性诊断**（2026-09-19 真机，构建 141）：
@@ -513,11 +661,17 @@ struct DeviceProfileCleaner: Sendable {
             //    「通道**持续**撒谎」分开 ✓ —— 两者的处置不同（前者等下一次维护即可 ✓，
             //    后者要查连接重建 ✓）。真机构建 175 实测：两次中止都在**刚启动**
             //（冷启动后 22 秒 / 自替换重启后 60 秒），16 秒后再跑就正常了 ✓。
-            let secondControlProbe = await probeInstalledWithDuration(bundleID: controlBundleID)
+            let secondControlProbe = await probeInstalledWithDuration(
+                bundleID: controlBundleID,
+                operationCoordinator: operationCoordinator
+            )
             // ② 系统 App（原判据保留）
             var channelDiagnostics: [String] = []
             for sample in ["com.apple.Preferences", "com.apple.mobilesafari"] {
-                let sampleProbe = await probeInstalledWithDuration(bundleID: sample)
+                let sampleProbe = await probeInstalledWithDuration(
+                    bundleID: sample,
+                    operationCoordinator: operationCoordinator
+                )
                 channelDiagnostics.append("\(sample)=\(sampleProbe)")
             }
             summary.reclaimAborted = "阳性对照未通过（\(controlBundleID)："
@@ -537,7 +691,10 @@ struct DeviceProfileCleaner: Sendable {
         var probes: [(uuid: String, bundleID: String, probe: ProfileReclaimPolicy.InstallProbe)] = []
         var reclaimAbortReason: String?
         for candidate in reclaimCandidates {
-            let probe = await probeInstalled(bundleID: candidate.bundleID)
+            let probe = await probeInstalled(
+                bundleID: candidate.bundleID,
+                operationCoordinator: operationCoordinator
+            )
             if probe == .unavailable {
                 summary.reclaimUnverified += 1
                 reclaimAbortReason = "核验通道不可信（\(candidate.bundleID)：\(probe.logName)）"
@@ -581,7 +738,8 @@ struct DeviceProfileCleaner: Sendable {
                     summary.reclaimKeptExtension += 1
                     continue
                 }
-                if removeProfile(entry.uuid) { summary.reclaimed += 1 } else { summary.removeFailed += 1 }
+                guard let removed = await removeProfile(entry.uuid) else { return summary }
+                if removed { summary.reclaimed += 1 } else { summary.removeFailed += 1 }
             case .abortPass:
                 // 走不到这里：`unavailable` 在上面就已经 break 并整轮返回了。
                 // 保留这个分支是为了让「决策函数的三个分支都被显式处理」在形状上成立 ——
@@ -601,11 +759,32 @@ extension DeviceProfileCleaner: StaleProfileSweeping {
         protectedBundleIDs: Set<String>,
         reclaimSealOrphans: Bool
     ) async -> ProfileCleanupSummary {
-        await Self.removeStaleProfiles(
-            keepingByBundleID: keepingByBundleID,
-            protectedBundleIDs: protectedBundleIDs,
-            reclaimSealOrphans: reclaimSealOrphans
-        )
+        await withDeviceProfileMaintenanceLease { onNativeCallCompletion in
+            await Self.removeStaleProfiles(
+                keepingByBundleID: keepingByBundleID,
+                protectedBundleIDs: protectedBundleIDs,
+                reclaimSealOrphans: reclaimSealOrphans,
+                operationCoordinator: operationCoordinator,
+                onNativeCallCompletion: onNativeCallCompletion
+            )
+        }
+    }
+
+    private func withDeviceProfileMaintenanceLease(
+        _ operation: (@Sendable () async -> Void) async -> ProfileCleanupSummary
+    ) async -> ProfileCleanupSummary {
+        guard let operationCoordinator else { return await operation({}) }
+        guard let lease = await operationCoordinator.begin(.managingDeviceProfiles) else {
+            return ProfileCleanupSummary(stage: "skipped-device-busy")
+        }
+        let releaseLease: @Sendable () async -> Void = {
+            await operationCoordinator.end(lease)
+        }
+        let summary = await operation(releaseLease)
+        if summary.nativeCallPending == false {
+            await releaseLease()
+        }
+        return summary
     }
 }
 
@@ -626,29 +805,33 @@ extension DeviceProfileCleaner: SelfReplacementProfileCleaning {
     /// ⇒ `request.protectedBundleIDs` 是这条路径**唯一**能保护扩展的东西，
     /// 它为空时 `removeProfiles` 会 fail closed（整轮不回收）。
     func removeStaleProfiles(_ request: ProfileCleanupRequest) async -> ProfileCleanupSummary {
-        guard let readRunningIdentity else {
-            return ProfileCleanupSummary(stage: "skipped-identity-unavailable")
+        await withDeviceProfileMaintenanceLease { onNativeCallCompletion in
+            guard let readRunningIdentity else {
+                return ProfileCleanupSummary(stage: "skipped-identity-unavailable")
+            }
+            let identity: InstalledIdentity
+            do {
+                identity = try readRunningIdentity()
+            } catch {
+                var summary = ProfileCleanupSummary(stage: "skipped-identity-unavailable")
+                summary.firstError = String(describing: error)
+                return summary
+            }
+            guard identity.isComplete else {
+                return ProfileCleanupSummary(stage: "skipped-identity-unavailable")
+            }
+            guard let mainProfileUUID = identity.mainTarget?.profileUUID,
+                  mainProfileUUID.caseInsensitiveCompare(request.keepingProfileUUID) == .orderedSame else {
+                return ProfileCleanupSummary(stage: "skipped-identity-changed")
+            }
+            return await Self.removeStaleProfiles(
+                for: request.bundleIdentifier,
+                keeping: request.keepingProfileUUID,
+                protectedBundleIDs: request.protectedBundleIDs,
+                reclaimSealOrphans: true,
+                operationCoordinator: operationCoordinator,
+                onNativeCallCompletion: onNativeCallCompletion
+            )
         }
-        let identity: InstalledIdentity
-        do {
-            identity = try readRunningIdentity()
-        } catch {
-            var summary = ProfileCleanupSummary(stage: "skipped-identity-unavailable")
-            summary.firstError = String(describing: error)
-            return summary
-        }
-        guard identity.isComplete else {
-            return ProfileCleanupSummary(stage: "skipped-identity-unavailable")
-        }
-        guard let mainProfileUUID = identity.mainTarget?.profileUUID,
-              mainProfileUUID.caseInsensitiveCompare(request.keepingProfileUUID) == .orderedSame else {
-            return ProfileCleanupSummary(stage: "skipped-identity-changed")
-        }
-        return await Self.removeStaleProfiles(
-            for: request.bundleIdentifier,
-            keeping: request.keepingProfileUUID,
-            protectedBundleIDs: request.protectedBundleIDs,
-            reclaimSealOrphans: true
-        )
     }
 }

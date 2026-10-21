@@ -35,6 +35,18 @@ struct SelfAppMetadata: Sendable {
     @MainActor
     private static let cacheTTL: TimeInterval = 10
 
+    private struct ParsedRunningBundleMetadata: Sendable {
+        let expirationDate: Date?
+        let teamIdentifier: String?
+        let applicationIdentifier: String?
+        let profileUUID: String?
+        let profileName: String?
+        let profileCreationDate: Date?
+        let certificateSerialNumbers: [String]
+        let installedIdentity: InstalledIdentity?
+        let extensionRecords: [AppExtensionRecord]?
+    }
+
     @MainActor
     static func invalidateCache() {
         cachedMetadata = nil
@@ -102,6 +114,78 @@ struct SelfAppMetadata: Sendable {
         )
         cachedMetadata = (result, Date())
         return result
+    }
+
+    /// Loads Seal's registration metadata without parsing CMS signatures or provisioning
+    /// profiles on the main actor during application startup.
+    @MainActor
+    static func loadCurrentAsync() async -> SelfAppMetadata? {
+        if let cached = cachedMetadata,
+           Date().timeIntervalSince(cached.at) < cacheTTL,
+           cached.value.iconData != nil {
+            return cached.value
+        }
+
+        let bundle = Bundle.main
+        guard let bundleIdentifier = bundle.bundleIdentifier else { return nil }
+        let bundleURL = bundle.bundleURL
+        let originalBundleIdentifier = bundle.object(
+            forInfoDictionaryKey: "SealOriginalBundleIdentifier"
+        ) as? String
+        let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+            ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
+            ?? "Seal"
+        let version = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.0"
+        let buildNumber = (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "1"
+
+        let parsed = await Task.detached(priority: .utility) {
+            let profileURL = bundleURL.appending(path: "embedded.mobileprovision")
+            let profileDetails = (try? Data(contentsOf: profileURL, options: .mappedIfSafe))
+                .flatMap { try? ProvisioningProfileReader().details(from: $0) }
+            let identity = try? AppBundleSigningIdentityReader().read(bundleURL: bundleURL)
+            return ParsedRunningBundleMetadata(
+                expirationDate: profileDetails?.expirationDate,
+                teamIdentifier: profileDetails?.teamIdentifier,
+                applicationIdentifier: profileDetails?.applicationIdentifier,
+                profileUUID: profileDetails?.uuid,
+                profileName: profileDetails?.name,
+                profileCreationDate: profileDetails?.creationDate,
+                certificateSerialNumbers: profileDetails?.certificateSerialNumbers ?? [],
+                installedIdentity: identity,
+                extensionRecords: readExtensionRecords(bundleURL: bundleURL, installedIdentity: identity)
+            )
+        }.value
+
+        let result = SelfAppMetadata(
+            bundleURL: bundleURL,
+            bundleIdentifier: bundleIdentifier,
+            originalBundleIdentifier: originalBundleIdentifier,
+            name: name,
+            version: version,
+            buildNumber: buildNumber,
+            iconData: iconData(bundle: bundle),
+            expirationDate: parsed.expirationDate,
+            signingTeamIdentifier: parsed.teamIdentifier,
+            signingApplicationIdentifier: parsed.applicationIdentifier,
+            provisioningProfileUUID: parsed.profileUUID,
+            provisioningProfileName: parsed.profileName,
+            provisioningProfileCreationDate: parsed.profileCreationDate,
+            certificateSerialNumbers: parsed.certificateSerialNumbers,
+            installedIdentity: parsed.installedIdentity,
+            extensionRecords: parsed.extensionRecords
+        )
+        cachedMetadata = (result, Date())
+        return result
+    }
+
+    /// Reads only the running app's signed identity off the UI actor.
+    /// Signing and certificate safety checks need the Mach-O CMS signer, not the icon or
+    /// other presentation metadata that `current()` also gathers.
+    static func installedIdentitySnapshot() async -> InstalledIdentity? {
+        let bundleURL = Bundle.main.bundleURL
+        return await Task.detached(priority: .utility) {
+            try? AppBundleSigningIdentityReader().read(bundleURL: bundleURL)
+        }.value
     }
 
     static func readExtensionRecords(

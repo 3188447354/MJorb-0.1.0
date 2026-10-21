@@ -85,6 +85,7 @@
 | `SEAL-PROFILE-353` | 设备端读回描述文件超过 30 秒未完成 —— **警告级**。同样置污染标记 | `ProfileOnlyProvisioningProfileInstaller.swift` |
 | `SEAL-PROFILE-354` | 注入报成功但设备端**读不回**该描述文件 ⇒ 本地到期日未更新（终态失败，不重试） | `ProfileOnlyProvisioningProfileInstaller.swift` |
 | `SEAL-PROFILE-355` | 上一次描述文件设备操作超时留下的传输可能仍被占用，**已重置并重新建立设备通道后继续** —— **警告级**。看到它说明刚自愈过一次通道抖动；没有它时「一次超时毒掉后续**全部**续签」在日志上完全看不出来 | `SigningCoordinator.swift` |
+| `SEAL-PROFILE-357` | 上一项描述文件原生调用超时后仍未返回；本项没有开始，队列立即失败返回以释放前台事务，不与旧设备调用并发 | `ProfileOnlyProvisioningProfileInstaller.swift` |
 
 ## 后台保活 / 后台续签
 

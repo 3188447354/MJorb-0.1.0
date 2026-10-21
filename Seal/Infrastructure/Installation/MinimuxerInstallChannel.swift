@@ -89,6 +89,7 @@ actor MinimuxerInstallChannel: InstallChannel {
     private let pairingStore: PairingStore
     private let logDirectory: URL
     private let onDemandActivator: any VPNOnDemandActivating
+    private let operationCoordinator: OperationCoordinator?
     /// 安装链路自己的日志出口（可选：测试桩与预览不传）。
     ///
     /// 2026-09-16 之前这条链路**一行日志都没有**：真机日志里 Seal 自替换在
@@ -328,12 +329,14 @@ actor MinimuxerInstallChannel: InstallChannel {
         pairingStore: PairingStore,
         logDirectory: URL,
         onDemandActivator: any VPNOnDemandActivating = LocalDevVPNOnDemandActivator(),
-        logStore: SealLogStore? = nil
+        logStore: SealLogStore? = nil,
+        operationCoordinator: OperationCoordinator? = nil
     ) {
         self.pairingStore = pairingStore
         self.logDirectory = logDirectory
         self.onDemandActivator = onDemandActivator
         self.logStore = logStore
+        self.operationCoordinator = operationCoordinator
     }
 
     func start() async throws -> String {
@@ -436,6 +439,7 @@ actor MinimuxerInstallChannel: InstallChannel {
 
         while true {
             switch await DeviceProfileInspector.probeProfileService(
+                using: operationCoordinator,
                 onLateCompletion: onLateCompletion
             ) {
             case .ready:
@@ -446,6 +450,8 @@ actor MinimuxerInstallChannel: InstallChannel {
                 // ProfileOnlyProvisioningProfileInstaller 会把这个码标为污染，下一轮
                 // 通过既有的 reset + start 流程切换到新传输。
                 throw Self.profileServiceTimeoutFailure
+            case .busy:
+                throw Self.profileServiceBusyFailure
             case .failed:
                 break
             }
@@ -1572,20 +1578,27 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// `Device.getFirstDevice()` 失败也返回 nil）⇒ 拿它当判据会在隧道抖动时
     /// 把「装好了」读成「没装」。
     ///
-    /// ⚠️ `offThread(seconds:)` 是**有界等待**（到点返回），但里面的同步阻塞 FFI
-    /// 不会因此停下 —— 所以单次预算必须短到「遗弃它也不心疼」的量级，
-    /// 这正是构建 184 卡 12 分钟的机制。这里沿用 `BlockingCall.queryTimeoutSeconds`。
+    /// `BlockingCall.bounded` 超时只结束等待，不会停止同步 FFI；共享执行器会保留闸门
+    /// 与设备租约直到原生调用真正返回。单次等待仍沿用 `BlockingCall.queryTimeoutSeconds`。
     ///
-    /// 与 `DeviceProfileCleaner.probeInstalled` 形状相同但**刻意不共用**：那条路径
-    /// 明确不许调 `Install.resetProvider()`（R05），硬合并会把约束带错地方。
+    /// 与设备清单、描述文件操作共用单飞闸门；超时后底层 FFI 仍运行，
+    /// 由 `DeviceProfileNativeCall` 保留设备租约直到它真正返回。
     private func probeInstalled(bundleID: String) async -> ProfileReclaimPolicy.InstallProbe {
-        let outcome = await offThread(seconds: BlockingCall.queryTimeoutSeconds) {
+        let outcome = await DeviceProfileNativeCall.perform(
+            operationCoordinator: operationCoordinator,
+            seconds: BlockingCall.queryTimeoutSeconds
+        ) {
             try Minimuxer.isAppInstalled(bundleId: bundleID)
         }
         switch outcome {
-        case .some(.success(true)): return .installed
-        case .some(.success(false)): return .notInstalled
-        case .some(.failure), .none: return .unavailable
+        case .completed(let result):
+            switch result {
+            case .success(true): return .installed
+            case .success(false): return .notInstalled
+            case .failure: return .unavailable
+            }
+        case .unavailable, .nativeCallMayStillBeRunning:
+            return .unavailable
         }
     }
     #endif
@@ -2009,6 +2022,15 @@ actor MinimuxerInstallChannel: InstallChannel {
         reason: "描述文件服务在 8 秒内未返回。Seal 将在下一次续签前重建设备通道，避免与仍在结束的旧操作并发。",
         recovery: "保持 Wi-Fi 与 LocalDevVPN 连接后重试",
         code: "SEAL-PROFILE-355t"
+    )
+
+    private static let profileServiceBusyFailure = ImportFailure(
+        title: "设备正在处理其他操作",
+        reason: "设备描述文件服务正被清单扫描或维护占用；Seal 没有重置连接，也没有并发启动新的设备请求。",
+        recovery: "等待当前设备操作结束后重试",
+        code: "SEAL-OP-001",
+        operation: .renewal,
+        origin: .deviceChannel
     )
 
     private static let channelTimeoutFailure = ImportFailure(

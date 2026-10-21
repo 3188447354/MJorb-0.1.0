@@ -8,8 +8,7 @@ import Foundation
 ///
 /// UI 层的 isSeal（显示文案、排序）是表现层逻辑，不收进这里。
 protocol RenewalPolicy: Sendable {
-    /// 生产实时身份。第三方返回 nil（`SelfAppMetadata.current()` 读的是
-    /// `Bundle.main`，对第三方调用会得到 Seal 自己的身份，造成假阳性）。
+    /// 生产实时身份。第三方返回 nil；Seal 的签名身份从运行包后台读取。
     func liveIdentity(for app: AppRecord) async -> LiveProfileOnlyIdentity?
 
     /// 准入判定：内部调用 `ProfileOnlyRenewalPolicy.evaluate`。
@@ -53,10 +52,10 @@ struct DefaultRenewalPolicy: RenewalPolicy, Sendable {
 /// Seal 自身的规矩：自管理应用的特殊 lifecycle 收拢于此。
 struct SelfManagedRenewalPolicy: RenewalPolicy, Sendable {
     func liveIdentity(for app: AppRecord) async -> LiveProfileOnlyIdentity? {
-        let metadata = await MainActor.run { SelfAppMetadata.current() }
+        let installedIdentity = await SelfAppMetadata.installedIdentitySnapshot()
         return ProfileOnlyRenewalPolicy.liveIdentity(
-            installedIdentity: metadata?.installedIdentity,
-            runningVersion: metadata?.version,
+            installedIdentity: installedIdentity,
+            runningVersion: installedIdentity?.version,
             app: app
         )
     }

@@ -276,6 +276,145 @@ struct SelfAppRegistrarTests {
     }
 
     @Test
+    func prefersInstalledSealRecordOverNewerPendingSelfUpdate() {
+        let installed = AppRecord(
+            originalBundleIdentifier: "com.mjorb.seal",
+            mappedBundleIdentifier: "com.mjorb.seal.tteam000001",
+            name: "Seal",
+            version: "1.0",
+            buildNumber: "1",
+            size: 1,
+            state: .installed,
+            ipaRelativePath: "Apps/installed/Original.ipa",
+            preferredBundleIdentifier: "com.mjorb.seal.tteam000001",
+            isSeal: true,
+            importedAt: Date(timeIntervalSince1970: 100)
+        )
+        let pendingUpdate = AppRecord(
+            originalBundleIdentifier: "com.mjorb.seal",
+            mappedBundleIdentifier: "com.mjorb.seal.tteam000001",
+            name: "Seal",
+            version: "1.1",
+            buildNumber: "2",
+            size: 1,
+            state: .imported,
+            ipaRelativePath: "Apps/update/Original.ipa",
+            preferredBundleIdentifier: "com.mjorb.seal.tteam000001",
+            isSeal: true,
+            isPinned: true,
+            importedAt: Date(timeIntervalSince1970: 200),
+            replacesInstalledAppID: installed.id
+        )
+
+        #expect(
+            SelfAppRecordSelection.preferredExistingSealRecord(
+                in: [pendingUpdate, installed],
+                currentBundleIdentifier: "com.mjorb.seal.tteam000001"
+            )?.id == installed.id
+        )
+    }
+
+    @Test
+    func settlesInstalledSelfUpdateWhenPreviousRecordWasAlreadyRemoved() async throws {
+        let fixture = try makeSealFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let previousRecordID = UUID()
+        let updateID = UUID()
+        let updatePath = "Apps/\(updateID.uuidString)/Original.ipa"
+        let updateURL = fixture.root
+            .appending(path: "Documents", directoryHint: .isDirectory)
+            .appending(path: updatePath)
+        try FileManager.default.createDirectory(
+            at: updateURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("installed-update".utf8).write(to: updateURL)
+        var pendingUpdate = AppRecord(
+            id: updateID,
+            originalBundleIdentifier: "com.mjorb.seal",
+            mappedBundleIdentifier: "com.mjorb.seal",
+            name: "Seal",
+            version: "1.0",
+            buildNumber: "1",
+            size: 100,
+            state: .signed,
+            accountID: UUID(),
+            signingTeamID: "TEAM000001",
+            ipaRelativePath: updatePath,
+            hasPendingSelfUpdateSource: true,
+            pendingUpdateSourceFingerprint: "confirmed-update",
+            isSeal: true,
+            isPinned: true,
+            importedAt: .now,
+            replacesInstalledAppID: previousRecordID
+        )
+        pendingUpdate.signedArtifactStatus = .available
+        try await fixture.appStore.save(pendingUpdate)
+
+        let expiry = Date(timeIntervalSince1970: 1_750_000_000)
+        let runningIdentity = InstalledIdentity(
+            bundleURL: fixture.currentBundle,
+            version: "1.0",
+            buildNumber: "1",
+            targets: [
+                SignedTargetIdentity(
+                    kind: .mainApp,
+                    bundleIdentifier: "com.mjorb.seal",
+                    teamIdentifier: "TEAM000001",
+                    applicationIdentifier: "TEAM000001.com.mjorb.seal",
+                    profileUUID: "CONFIRMED-PROFILE",
+                    profileExpirationDate: expiry,
+                    signerSerialNumber: "SERIAL",
+                    signerCertificateSHA256: "CERTSHA",
+                    status: .complete
+                )
+            ],
+            readErrors: []
+        )
+        let registrar = SelfAppRegistrar(
+            metadata: SelfAppMetadata(
+                bundleURL: fixture.currentBundle,
+                bundleIdentifier: "com.mjorb.seal",
+                originalBundleIdentifier: "com.mjorb.seal",
+                name: "Seal",
+                version: "1.0",
+                buildNumber: "1",
+                iconData: nil,
+                expirationDate: expiry,
+                signingTeamIdentifier: "TEAM000001",
+                signingApplicationIdentifier: nil,
+                provisioningProfileUUID: "CONFIRMED-PROFILE",
+                provisioningProfileName: "Seal",
+                installedIdentity: runningIdentity
+            ),
+            appStore: fixture.appStore,
+            accountRepository: EmptyAccountRepository(),
+            fileStore: fixture.fileStore,
+            selfReplacement: FakeSelfReplacing(
+                reconcileAction: .settle,
+                settled: SettledSelfReplacement(
+                    transactionID: UUID(),
+                    installedIdentity: runningIdentity,
+                    mainBundleIdentifier: "com.mjorb.seal",
+                    mainProfileUUID: "CONFIRMED-PROFILE",
+                    transactionStartedAt: Date(timeIntervalSince1970: 100),
+                    installedIdentityReadAt: Date()
+                )
+            )
+        )
+
+        try await registrar.ensureRegistered()
+
+        let records = try await fixture.appStore.fetchAll()
+        let installed = try #require(records.first)
+        #expect(records.count == 1)
+        #expect(installed.id == updateID)
+        #expect(installed.state == .installed)
+        #expect(installed.replacesInstalledAppID == nil)
+        #expect(installed.provisioningProfileUUID == "CONFIRMED-PROFILE")
+    }
+
+    @Test
     func doesNotOverwriteAnImportedSealUpdateSourceDuringStartupSync() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "SealSelfRegistrar-\(UUID().uuidString)", directoryHint: .isDirectory)

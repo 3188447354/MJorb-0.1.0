@@ -143,18 +143,18 @@ actor ApplePortalInventoryService {
         // 本机私钥判定必须覆盖「当前绑定 + 历史 map」里的每一份 P12：
         // 只看 current 字段会把历史证书误标为「无私钥」，而签名链路其实能经
         // secret.p12(for:) 无感复用它（keychain 按 serial 存着每张自动创建过的证书）。
-        let localP12SerialNumbers: Set<String> = {
+        let localP12Data = [secret.certificateP12].compactMap { $0 }
+            + Array(secret.certificateP12BySerial.values)
+        let localP12SerialNumbers = await Task.detached(priority: .utility) {
             var serials = Set<String>()
-            let candidates = [secret.certificateP12].compactMap { $0 }
-                + secret.certificateP12BySerial.values
-            for p12 in candidates {
+            for p12 in localP12Data {
                 guard let parsed = try? ALTCertificate(p12Data: p12, password: nil) else { continue }
                 serials.insert(
                     SigningCertificateSelectionPolicy.normalizedSerialNumber(parsed.serialNumber)
                 )
             }
             return serials
-        }()
+        }.value
 
         let certificateSnapshots = certificates.map { certificate in
             let expirationDate = certificate.data

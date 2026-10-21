@@ -20,13 +20,14 @@ struct UpdateIPADownloader {
 
     /// 下载 IPA 到本地，返回落盘文件 URL。
     /// - Parameter onProgress: 回调（已接收字节数, 总字节数可空）。总大小未知（无 Content-Length）时
-    ///   `total` 为 nil，由 UI 改为展示「已下载 X」字节数，不再返回假百分比。
+    ///   使用 GitHub Release 元数据中的精确资产大小；响应提供 Content-Length 时以响应为准。
     /// - 超时策略：中国大陆网络下 GitHub 资产域可能长时间无响应，仅靠系统默认空闲超时会让
     ///   下载卡在 0% 不报错；此处收紧请求空闲超时到 15s、总时长硬上限 90s。
     /// - 取消：使用 `URLSession.download(for:delegate:)` 原生异步 API，Task 取消会自动传导到传输任务，
     ///   无需手动 `withTaskCancellationHandler`（避免旧式 `task.value` 在本 SDK 下的类型歧义）。
     func download(
         from url: URL,
+        expectedSize: Int64? = nil,
         onProgress: @escaping @Sendable (Int64, Int64?) async -> Void
     ) async throws -> URL {
         try Task.checkCancellation()
@@ -39,7 +40,12 @@ struct UpdateIPADownloader {
         let destination = downloadsDirectory
             .appending(path: "seal-update-\(UUID().uuidString).ipa")
 
-        let delegate = ProgressDownloadDelegate(onProgress: onProgress)
+        let knownSize = expectedSize.flatMap { $0 > 0 ? $0 : nil }
+        let delegate = ProgressDownloadDelegate(
+            expectedSize: knownSize,
+            onProgress: onProgress
+        )
+        await onProgress(0, knownSize)
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         let configuration = URLSessionConfiguration.default
@@ -134,9 +140,14 @@ enum UpdateDownloadError: LocalizedError {
 }
 
 private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    private let expectedSize: Int64?
     private let onProgress: @Sendable (Int64, Int64?) async -> Void
 
-    init(onProgress: @escaping @Sendable (Int64, Int64?) async -> Void) {
+    init(
+        expectedSize: Int64?,
+        onProgress: @escaping @Sendable (Int64, Int64?) async -> Void
+    ) {
+        self.expectedSize = expectedSize
         self.onProgress = onProgress
     }
 
@@ -153,7 +164,7 @@ private final class ProgressDownloadDelegate: NSObject, URLSessionDownloadDelega
         // 不再发假百分比（否则「0% 突然跳到续签」）。
         var expected = downloadTask.countOfBytesExpectedToReceive
         if expected <= 0 { expected = totalBytesExpectedToWrite }
-        let total: Int64? = expected > 0 ? expected : nil
+        let total: Int64? = expected > 0 ? expected : expectedSize
         Task { await onProgress(totalBytesWritten, total) }
     }
 

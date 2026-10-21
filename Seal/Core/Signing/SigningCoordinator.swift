@@ -20,103 +20,6 @@ struct CertificateSacrificeCandidate: Identifiable, Sendable {
     var id: String { certificate.serialNumber }
 }
 
-/// `profile-only`（只换描述文件）准入的设备端身份核验结果 —— **三态，绝不能折成 `Bool`**。
-///
-/// 与 `DeviceProfileCleaner` / `InstalledAppDeviceVerifier` 同族：凡是「问设备 → 按答案
-/// 做决定」的路径，都必须保留「**无法核验**」这一态。把它折进「不存在」，通道抖动一次
-/// 就会被误读成「设备上没有」，进而做出错误决策。
-///
-/// ⚠️ 真机实证（2026-09-25 构建 39）：旧实现写 `containsProfile(...) == true` 后**直接抛
-/// `SEAL-PROFILE-362`**，把「无法核验」（`nil`）与「身份不符」（`false`）折成同一结果并
-/// 终结本轮 ⇒ 用户点单个应用续签**连试三次全部失败**（10:56:34 / 10:57:00 / 10:58:04，
-/// 三次都落在「已安装页设备探测刚超时」的十几秒内），而**同一时段**「续签全部」三次全过
-///（10:57:14 / 10:57:24 / 10:57:45）—— 两条路径调的是同一个 `signAndInstall`、同一份记录、
-/// 同一张证书，只差设备通道时序。
-enum ProfileOnlyIdentity: Equatable, Sendable {
-    /// 设备端确认存在 (Bundle ID, 描述文件 UUID, 证书序列号) 三元组。
-    case confirmed
-    /// 本地记录缺少核验所需字段（描述文件 UUID 或证书序列号）。
-    case missingRecordedIdentity
-    /// 设备端枚举成功，但目标身份不在其中 ⇒ 记录已与设备不符。
-    case mismatched
-    /// 通道或解析不可用 ⇒ **无法核验**（不是「设备上没有」）。
-    case unavailable
-
-    /// 回落完整重签时写进日志的原因。
-    ///
-    /// 三种情形的**下一步动作相同**（都是完整重签），但排障时必须能区分
-    /// 「记录过期」与「通道没连上」—— 否则日志只会说「核验失败」，
-    /// 拿着它说不出该去修什么。
-    var fallbackReason: String {
-        switch self {
-        case .confirmed:
-            return "设备端已确认"
-        case .missingRecordedIdentity:
-            return "本地记录缺少描述文件 UUID 或证书序列号"
-        case .mismatched:
-            return "设备端未找到记录中的描述文件身份"
-        case .unavailable:
-            return "设备端描述文件枚举不可用（通道未就绪或解析失败）"
-        }
-    }
-}
-
-/// 把「三态核验」抽成纯函数：`SigningCoordinator` 是 actor、依赖一长串服务，
-/// 测试构造不出来（本仓库对同类决策一律抽纯函数 + 单测）。
-enum ProfileOnlyIdentityVerifier {
-    /// 核验「设备上是否真的存在记录中的那份描述文件身份」。
-    ///
-    /// - Parameter inspect: 注入的设备查询实现。默认走 `DeviceProfileInspector`；
-    ///   单测注入假实现即可覆盖 `nil` / `false` / `true` 三条出口。
-    ///   返回值语义与 `DeviceProfileInspector.containsProfile` 一致：
-    ///   `nil` = 无法核验，`false` = 枚举成功但不存在，`true` = 确认存在。
-    static func verify(
-        app: AppRecord,
-        targetBundleIdentifier: String,
-        // ⚠️ 显式 `@Sendable`：本仓在 Swift 6 严格并发下，闭包参数的 Sendable 必须写出来
-        //（同族踩坑：「闭包默认 non-escaping ⇒ 透传 `@escaping` 要显式写」，云构建才暴露）。
-        inspect: @Sendable (String, String, String) async -> Bool? = { bundleIdentifier, profileUUID, certificateSerialNumber in
-            // ⚠️ `containsProfile` 内部走 `Provision.dumpProfiles` —— **同步 FFI**，本仓的
-            // 同步 FFI 没有取消机制（见 `BlockingCall.swift` 的说明）⇒ 必须自己加有界超时，
-            // 否则通道不通时这里会把整条续签链路拖成「假死」。
-            // 真机构建 39 实测：三次单点续签从「续签路径已确认」到 `SEAL-PROFILE-362`
-            // 分别隔了 16 / 15 / 16 秒 —— 这段区间含**等通道 + `isReady()` + 本次 dump**，
-            // 日志粒度不足以再细分，所以只断言「整段没有上限」，不把耗时全记在 dump 头上。
-            // 超时 ⇒ 返回 `nil`（**无法核验**），而不是把它当成「设备上没有这份描述文件」。
-            // ⚠️ 自 2026-09-26 起核验**不再决定续签路径**（只留痕，见调用点）⇒ 上限从 30 秒
-            // 收到 5 秒：它不再值 30 秒的等待，而 `dumpProfiles` 是同步 FFI、超时后底层仍在跑，
-            // 会让后续的注入与 `Task.sleep` 一起被推迟（同族分析见 AGENTS.md 安装章节）。
-            do {
-                return try await HardTimeout.run(
-                    seconds: 5,
-                    cancelsWorkOnTimeout: false
-                ) {
-                    await DeviceProfileInspector.containsProfile(
-                        bundleIdentifier: bundleIdentifier,
-                        profileUUID: profileUUID,
-                        certificateSerialNumber: certificateSerialNumber
-                    )
-                }
-            } catch {
-                return nil
-            }
-        }
-    ) async -> ProfileOnlyIdentity {
-        guard let profileUUID = app.provisioningProfileUUID,
-              let certificateSerialNumber = app.certificateSerialNumber else {
-            return .missingRecordedIdentity
-        }
-        switch await inspect(targetBundleIdentifier, profileUUID, certificateSerialNumber) {
-        case .some(true):
-            return .confirmed
-        case .some(false):
-            return .mismatched
-        case .none:
-            return .unavailable
-        }
-    }
-}
-
 private actor CertificateRotationTransactionState {
     private var revokedSerials: [String] = []
 
@@ -139,6 +42,7 @@ actor SigningCoordinator {
     private let logStore: SealLogStore?
     private let selfReplacement: (any SelfReplacing)?
     private let certificateRecoveryJournal: CertificateRecoveryJournalStore?
+    private let operationCoordinator: OperationCoordinator?
 
     init(
         appStore: any AppStore,
@@ -149,7 +53,8 @@ actor SigningCoordinator {
         portal: ApplePortalSigningService = ApplePortalSigningService(),
         logStore: SealLogStore? = nil,
         selfReplacement: (any SelfReplacing)? = nil,
-        certificateRecoveryJournal: CertificateRecoveryJournalStore? = nil
+        certificateRecoveryJournal: CertificateRecoveryJournalStore? = nil,
+        operationCoordinator: OperationCoordinator? = nil
     ) {
         self.appStore = appStore
         self.accountRepository = accountRepository
@@ -160,6 +65,7 @@ actor SigningCoordinator {
         self.logStore = logStore
         self.selfReplacement = selfReplacement
         self.certificateRecoveryJournal = certificateRecoveryJournal
+        self.operationCoordinator = operationCoordinator
     }
 
     /// 设备通道**瞬时失败**后、下一次尝试之前，把通道恢复成「可以重新建会话」的状态。
@@ -357,12 +263,10 @@ actor SigningCoordinator {
             )
         }
         if app.isSeal {
-            guard let currentSeal = await MainActor.run(body: {
-                SelfAppMetadata.current(includeIcon: false)
-            }),
-            let currentSealTeam = currentSeal.signingTeamIdentifier,
-            currentSealTeam.isEmpty == false,
-            currentSeal.bundleIdentifier.isEmpty == false else {
+            guard let currentSeal = await SelfAppMetadata.installedIdentitySnapshot(),
+            let currentSealMainTarget = currentSeal.mainTarget,
+            currentSealMainTarget.teamIdentifier.isEmpty == false,
+            currentSealMainTarget.bundleIdentifier.isEmpty == false else {
                 throw ImportFailure(
                     title: "无法确认当前 Seal 身份",
                     reason: "Seal 无法读取当前安装包的 Team ID 或 Bundle ID。为保护 Apple ID、证书和本机数据，本次更新已停止。",
@@ -375,16 +279,17 @@ actor SigningCoordinator {
                     origin: .signing
                 )
             }
+            let currentSealTeam = currentSealMainTarget.teamIdentifier
             let targetBundleIdentifier = try BundleIDPolicy.targetBundleIdentifier(
                 for: app,
                 requestedBundleIdentifier: requestedBundleIdentifier
             )
             guard targetBundleIdentifier.caseInsensitiveCompare(
-                currentSeal.bundleIdentifier
+                currentSealMainTarget.bundleIdentifier
             ) == .orderedSame else {
                 throw ImportFailure(
                     title: "Seal 更新包身份不一致",
-                    reason: "当前 Seal 的 Bundle ID 是 \(currentSeal.bundleIdentifier)，更新包是 \(targetBundleIdentifier)。不同 Bundle ID 会被系统视为另一款 App，原有 Apple ID 和本机数据无法迁移。",
+                    reason: "当前 Seal 的 Bundle ID 是 \(currentSealMainTarget.bundleIdentifier)，更新包是 \(targetBundleIdentifier)。不同 Bundle ID 会被系统视为另一款 App，原有 Apple ID 和本机数据无法迁移。",
                     recovery: "重新导入与当前 Seal Bundle ID 相同的更新包",
                     code: "SEAL-SELF-117",
                     condition: .signedArtifactInvalid,
@@ -598,7 +503,7 @@ actor SigningCoordinator {
             // 需要完整重签并安装」，而且**没有** `SEAL-PROFILE-363` ⇒ 是在准入处就返回了 false。
             //
             // 上游 SideStore 的 `refresh` 准入是**已安装产物的签名证书**，不看记录；
-            // 本仓对自身的等价物就是 `SelfAppMetadata.current()`（读运行包的 CMS 身份）。
+            // 本仓对自身的等价物就是后台读取运行包的 CMS 身份快照。
             let liveProfileOnlyIdentity = await liveProfileOnlyIdentity(for: app)
             var useProfileOnlyRenewal = await shouldUseProfileOnlyRenewal(
                 app: app,
@@ -631,18 +536,9 @@ actor SigningCoordinator {
                     )
                 }
             }
-            // 🔴 设备端身份核验必须**先于**路径通知，且**没明确通过就回落完整重签**。
-            //
-            // profile-only 只是**加速路径**，不是安全边界：「不以本地旧记录直接覆盖设备」
-            // 这条约束由完整重签天然满足（它重新向 Apple 申请描述文件并注入，完全不读旧记录）。
-            // 旧实现把核验写成 `containsProfile(...) == true` 后**直接抛 `SEAL-PROFILE-362`**：
-            // 三态被折成二态 ⇒ 「无法核验」（通道抖动 / 枚举失败）与「身份不符」走同一条死路，
-            // 应用就此**永久**续签不了（真机 2026-09-25 构建 39：点单个应用连试三次全报 362，
-            // 而同一时段「续签全部」三次全过 —— 记录与证书完全相同，只差通道时序）。
-            //
-            // ⚠️ 核验要等通道就绪（冷启动最长 75s），所以路径通知会晚于 `.waitingForChannel`
-            // 阶段。这是刻意的：宁可晚说，也不先说错（旧行为是先说「仅更新描述文件」、
-            // 再抛错，用户看到的是「说好只换描述文件，结果失败」）。
+            // profile-only 路径只确认设备通道就绪，不预先枚举旧描述文件。
+            // SideStore 直接获取并注入新描述文件；本仓在注入后精确读回本轮身份。
+            // 旧前置 dump 只供诊断，超时后底层 FFI 仍运行，会与注入争用设备会话。
             var profileOnlyRequiresNewCertificate = false
             if useProfileOnlyRenewal {
                 if let channelStart {
@@ -654,43 +550,6 @@ actor SigningCoordinator {
                         recovery: "确认 LocalDevVPN 已连接、设备已配对后重试",
                         code: "SEAL-PROFILE-360"
                     )
-                }
-                // ⚠️ 设备端核验**只留痕、不再决定路径**（2026-09-26，对照上游 SideStore 后改）。
-                //
-                // 旧行为：没明确通过就回落完整重签（几百 MB 重装）。真机（构建 46）里
-                // Guoguo 每次续签都被它拦下 —— 01:26:41 与 01:27:12 两条 363，
-                // 随后 01:28:08 才以完整重签成功。这正是用户报的「续签全都要重装」。
-                //
-                // 上游 `refresh` 管线**完全不枚举设备描述文件**（`dumpProfiles` 在 SideStore
-                // 全仓只有设置页一处业务调用）：它从门户取一份**新**描述文件直接注入
-                //（`RefreshAppOperation` → `installProvisioningProfiles`），准入只核验
-                //「已安装产物的签名证书是否仍在门户活动列表」
-                //（`VerifyCertificateOperation(willResign: false)`）—— 与「设备上有没有
-                // 这份 profile」无关。而本仓的核验输入是**本地 DB 记录**（可能与设备现实错位），
-                // 走同步 FFI 枚举、还有上限 ⇒ 既慢又会误拦。
-                //
-                // ⇒ 真正的安全网挪到**注入之后**：`ProfileOnlyProvisioningProfileInstaller
-                //   .installAndVerify` 会逐份读回设备确认（上游连这一步都没有）。
-                //   注入没落地就抛 `SEAL-PROFILE-354`，绝不会谎报成功。
-                let identity = await ProfileOnlyIdentityVerifier.verify(
-                    app: app,
-                    targetBundleIdentifier: targetBundleIdentifier
-                )
-                if identity != .confirmed {
-                    try? await logStore?.append(
-                        category: .renewal,
-                        level: .warning,
-                        message: "profile-only 续签的设备端核验未确认（\(identity.fallbackReason)），"
-                            + "按上游做法继续只更新描述文件（注入后会逐份读回确认）：\(app.name)",
-                        code: "SEAL-PROFILE-363"
-                    )
-                    // 🔴 `.unavailable` = 通道坏了（枚举超时/解析失败），不是"设备上没有"。
-                    // 提前标记污染 ⇒ `renewProfilesOnly` 在第一次注入前就重置通道，
-                    // 不拿坏通道去撞 30 秒超时 + 8/16 秒退避（2026-10-03 真机一轮烧 59 秒）。
-                    // `.mismatched` 不标记：那是记录与设备不符，重置通道帮不上忙。
-                    if identity == .unavailable {
-                        await ProfileOnlyProvisioningProfileInstaller.shared.markTainted()
-                    }
                 }
             }
             if isInstalledRenewal {
@@ -732,7 +591,7 @@ actor SigningCoordinator {
             }
 
             if useProfileOnlyRenewal {
-                // 走到这里说明设备端身份核验已完成（上方已 join + 留痕 + 可能 markTainted）。
+                // 设备端不做旧 profile 前置枚举；新 profile 注入后由 installer 逐份读回确认。
                 guard let profileOnlyCertificateSerialNumber =
                     ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
                         app: app,
@@ -1105,7 +964,7 @@ actor SigningCoordinator {
 
     /// 取「运行产物的实时签名身份」，作为记录之外的第二条续签准入通道。
     ///
-    /// 委托给规矩盒子：只有自管理应用才读 `Bundle.main`（`SelfAppMetadata.current()`），
+    /// 委托给规矩盒子：只有自管理应用才读取 `Bundle.main` 的签名身份快照，
     /// 对第三方调用会得到 **Seal 自己**的身份，造成假阳性。
     private func liveProfileOnlyIdentity(for app: AppRecord) async -> LiveProfileOnlyIdentity? {
         await policy(for: app).liveIdentity(for: app)
@@ -1262,6 +1121,7 @@ actor SigningCoordinator {
             result.materials,
             certificateSerialNumber: result.certificateSerialNumber,
             channel: installChannel,
+            operationCoordinator: operationCoordinator,
             // actor 在串行排队后若发现污染（363 提前标记 / 上一项注入失败留下），
             // 会自己消费 + 重置；这里只负责留痕（`SEAL-PROFILE-355`）。
             onTaintHealed: { [logStore] in
@@ -1439,7 +1299,7 @@ actor SigningCoordinator {
             localUsableSerials: localUsableSerials
         )
         let apps = (try? await appStore.fetchAll()) ?? []
-        let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
+        let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
         guard let runningIdentity,
               runningIdentity.canSafelyIdentifySigners,
               let mainTarget = runningIdentity.mainTarget,
@@ -1583,7 +1443,9 @@ actor SigningCoordinator {
     ) async throws -> OrphanCleanupOutcome {
         // 设备引用检查：`referencedCertificateSerials()` 返回 nil（枚举失败）时，
         // 保守起见视作「无法确认设备端引用」，跳过清理（fail closed）。
-        let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials()
+        let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials(
+            using: operationCoordinator
+        )
         // 决策必须用**最新**的远端清单：缓存的 inventory 可能已过期，
         // 用过期清单做撤销决策会误删刚建好的证书。
         let inventoryService = ApplePortalInventoryService()
@@ -1616,7 +1478,7 @@ actor SigningCoordinator {
         // 只相信真实 CMS 签名者（installedIdentity），不信描述文件授权列表、不信 DB 记录：
         // 授权列表可能包含并未实际签名的证书，DB 记录可能是旧值（2026-09-15 真机确认）。
         // 身份读不出来时无法证明任何一张证书不是 Seal 的命，自动清理整体关闭。
-        let runningIdentity = await MainActor.run { SelfAppMetadata.current()?.installedIdentity }
+        let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()
         guard runningIdentity?.canSafelyIdentifySigners == true,
               let sealActualSigner = runningIdentity?.mainTarget?.signerSerialNumber else {
             let summary = runningIdentity?.readFailureSummary ?? "installedIdentity 读取失败"
@@ -2732,7 +2594,8 @@ actor SigningCoordinator {
         let summary = await DeviceProfileCleaner.removeStaleProfiles(
             keepingByBundleID: keepingByBundleID,
             protectedBundleIDs: ProfileReclaimPolicy.protectedBundleIDs(records: records),
-            reclaimSealOrphans: true
+            reclaimSealOrphans: true,
+            operationCoordinator: operationCoordinator
         )
         try? await logStore?.append(
             category: .installation,

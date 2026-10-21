@@ -31,6 +31,37 @@
     {
       "actions": [
         {
+          "title": "核对设备系统时间后重试"
+        },
+        {
+          "title": "仍失败时检查 Anisette 设备环境"
+        },
+        {
+          "title": "持续发生时导出日志"
+        }
+      ],
+      "code": "SEAL-AUTH-102e",
+      "confidence": "confirmed",
+      "evidence": [
+        "ApplePortalSigningService 对 ALTAppleAPIError.authenticationHandshakeFailed 单独映射为 SEAL-AUTH-102e，并使用 authenticationHandshakeRejected 语义。"
+      ],
+      "kind": "failure",
+      "notEvidenceOf": [
+        "不能仅凭此码认定 Apple ID 或密码错误，也不能将账号标记为凭据失效。"
+      ],
+      "source": [
+        "Seal/Infrastructure/Signing/ApplePortalSigningService.swift:ensureCurrentSession"
+      ],
+      "summary": "Apple 登录认证握手未通过；这表示认证环境/协议握手没有完成，不等同于 Apple ID 密码错误。",
+      "supportData": [
+        "错误码与完整握手原因",
+        "系统时间",
+        "Anisette 环境状态"
+      ]
+    },
+    {
+      "actions": [
+        {
           "title": "若发生在 App ID 注册阶段，先等待几分钟后重试"
         },
         {
@@ -208,6 +239,34 @@
       "supportData": [
         "错误码后的底层文件写入详情",
         "可用本地存储空间"
+      ]
+    },
+    {
+      "actions": [
+        {
+          "title": "查看前一项续签的最终结果"
+        },
+        {
+          "title": "等待设备通道恢复后，单独重试未开始的 App"
+        },
+        {
+          "title": "如持续出现，导出诊断日志检查设备连接"
+        }
+      ],
+      "code": "SEAL-PROFILE-357",
+      "confidence": "conditional",
+      "kind": "failure",
+      "notEvidenceOf": [
+        "不表示本项描述文件已注入或续签成功。",
+        "不表示 Apple ID 或签名证书失效。"
+      ],
+      "source": [
+        "Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift:installAndVerify"
+      ],
+      "summary": "上一项设备描述文件原生调用超时后仍未返回；本项续签没有开始，以免并发争用同一设备会话。",
+      "supportData": [
+        "同一轮的 SEAL-PROFILE-352 / SEAL-PROFILE-353",
+        "设备通道诊断"
       ]
     },
     {

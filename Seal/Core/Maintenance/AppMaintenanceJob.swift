@@ -36,20 +36,30 @@ final class AppMaintenanceJob {
         case failed(ImportFailure)
     }
 
+    enum RecordRecoveryAttempt {
+        case skipped
+        case completed(changed: Bool)
+        case unavailable
+        case aborted
+        case failed(changed: Bool)
+    }
+
     private let gate: any MaintenanceLeasing
     private let appStore: any AppStore
     private let fileStore: AppFileStore
     private let recovery: AppRecordRecovery?
-    private let selfAppRegistrar: SelfAppRegistrar?
+    private let selfAppRegistrarTask: Task<SelfAppRegistrar?, Never>?
     private let logStore: SealLogStore?
     private let profileSweeper: (any StaleProfileSweeping)?
+    private(set) var hasActiveWork = false
+    var onWorkEnded: (() -> Void)?
 
     init(
         gate: any MaintenanceLeasing,
         appStore: any AppStore,
         fileStore: AppFileStore,
         recovery: AppRecordRecovery?,
-        selfAppRegistrar: SelfAppRegistrar?,
+        selfAppRegistrarTask: Task<SelfAppRegistrar?, Never>?,
         logStore: SealLogStore?,
         profileSweeper: (any StaleProfileSweeping)? = nil
     ) {
@@ -57,7 +67,7 @@ final class AppMaintenanceJob {
         self.appStore = appStore
         self.fileStore = fileStore
         self.recovery = recovery
-        self.selfAppRegistrar = selfAppRegistrar
+        self.selfAppRegistrarTask = selfAppRegistrarTask
         self.logStore = logStore
         self.profileSweeper = profileSweeper
     }
@@ -69,7 +79,7 @@ final class AppMaintenanceJob {
     /// `runMaintenanceIfIdle()` 的空闲检查挡掉，导致标签不消失，必须手动
     /// 切页才刷掉。现在摘出来单独跑，幂等且快（无变化时直接返回）。
     func syncSelfRecord() async {
-        guard let selfAppRegistrar else { return }
+        guard let selfAppRegistrar = await selfAppRegistrarTask?.value else { return }
         // 注意：此方法在启动时无条件调用，不经过 MaintenanceGate。
         // 守卫脚本要求文件内有 4 处 "gate.shouldAbort(token)"（每阶段一个 abort 检查点），
         // 此处为独立入口点，不适用 gate 机制，故以注释形式保留计数。
@@ -89,7 +99,8 @@ final class AppMaintenanceJob {
 
     func run() async -> Outcome {
         guard let token = gate.tryAcquire() else { return .skipped }
-        defer { gate.end(token) }
+        hasActiveWork = true
+        defer { finish(token) }
 
         // ── 1. 记录恢复 ────────────────────────────────────────────────
         let recoveryResult = await performRecordRecovery(token: token)
@@ -114,15 +125,28 @@ final class AppMaintenanceJob {
     ///
     /// 新安装时这是已安装列表有数据的唯一来源，必须在首屏前完成；
     /// 孤儿清理与描述文件清理不阻塞首屏，走 `sweepIfIdle()` 延迟到后台。
-    /// 返回 true 表示补回了记录或图标，调用方应当重新 load。
-    func restoreRecordsIfIdle() async -> Bool {
-        guard let token = gate.tryAcquire() else { return false }
-        defer { gate.end(token) }
+    /// 区分完成、暂不可用与因占用跳过；只有实际补回记录或图标时才要求调用方重新 load。
+    func restoreRecordsIfIdle() async -> RecordRecoveryAttempt {
+        guard let token = gate.tryAcquire() else { return .skipped }
+        hasActiveWork = true
+        defer { finish(token) }
         let result = await performRecordRecovery(token: token)
-        if case .completed(let summary) = result {
-            return summary.recovered > 0 || summary.iconsUpdated > 0
+        switch result {
+        case .completed(let summary):
+            let changed = summary.recovered > 0 || summary.iconsUpdated > 0
+            if summary.stage != "skipped-no-candidates",
+               summary.stage.hasPrefix("skipped-") {
+                return .unavailable
+            }
+            if summary.stage.hasPrefix("failed-") {
+                return .failed(changed: changed)
+            }
+            return .completed(changed: changed)
+        case .aborted:
+            return .aborted
+        case .failed:
+            return .failed(changed: false)
         }
-        return false
     }
 
     /// 非关键路径：孤儿文件清理 + 设备端旧描述文件清理。
@@ -131,7 +155,8 @@ final class AppMaintenanceJob {
     /// 调用方无需重新 load（什么都没删）。
     func sweepIfIdle() async -> MaintenanceReport? {
         guard let token = gate.tryAcquire() else { return nil }
-        defer { gate.end(token) }
+        hasActiveWork = true
+        defer { finish(token) }
         let outcome = await performSweep(
             token: token,
             recoverySummary: InstalledRecordRecoverySummary()
@@ -140,6 +165,12 @@ final class AppMaintenanceJob {
             return report
         }
         return nil
+    }
+
+    private func finish(_ token: UUID) {
+        gate.end(token)
+        hasActiveWork = false
+        onWorkEnded?()
     }
 
     /// 步骤 1 的内部实现：`run()` 与 `restoreRecordsIfIdle()` 共用。

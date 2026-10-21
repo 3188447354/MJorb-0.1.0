@@ -39,4 +39,121 @@ struct ApplicationOperationCoordinatorTests {
         #expect(second.kind == .maintainingStorage)
         coordinator.end(second)
     }
+
+    @Test
+    func independentResourcesCanRunAtTheSameTime() throws {
+        let coordinator = OperationCoordinator()
+        let certificate = try #require(coordinator.begin(.managingCertificate))
+        let importing = try #require(coordinator.begin(.importing))
+
+        #expect(coordinator.activeLeases.count == 2)
+        #expect(coordinator.hasConflict(for: .importing))
+        #expect(coordinator.hasConflict(for: .signing))
+
+        coordinator.end(certificate)
+        #expect(coordinator.hasConflict(for: .signing) == false)
+        #expect(coordinator.activeLease == importing)
+    }
+
+    @Test
+    func deviceOperationsRemainSerialized() throws {
+        let coordinator = OperationCoordinator()
+        let install = try #require(coordinator.begin(.installing, appID: UUID()))
+
+        #expect(coordinator.begin(.renewing) == nil)
+        #expect(coordinator.begin(.resettingPairing) == nil)
+        #expect(coordinator.hasDeviceSessionConflict)
+
+        coordinator.end(install)
+        #expect(coordinator.begin(.renewing) != nil)
+    }
+
+    @Test
+    func deviceInventoryReadSerializesWithDeviceWritesButNotLocalOrAccountWork() throws {
+        let coordinator = OperationCoordinator()
+        let scan = try #require(coordinator.begin(.scanningDeviceInventory))
+
+        #expect(coordinator.hasDeviceSessionConflict == false)
+        #expect(coordinator.begin(.signing) == nil)
+        #expect(coordinator.begin(.installing) == nil)
+        #expect(coordinator.begin(.resettingPairing) == nil)
+        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
+        let importing = try #require(coordinator.begin(.importing))
+        let account = try #require(coordinator.begin(.managingAccount, accountID: UUID()))
+        let certificate = try #require(coordinator.begin(.managingCertificate, accountID: UUID()))
+
+        coordinator.end(scan)
+        coordinator.end(importing)
+        coordinator.end(account)
+        coordinator.end(certificate)
+        #expect(coordinator.begin(.renewing) != nil)
+    }
+
+    @Test
+    func deviceInventoryCanRunAlongsideIndependentOperations() throws {
+        let coordinator = OperationCoordinator()
+        let importing = try #require(coordinator.begin(.importing))
+        let account = try #require(coordinator.begin(.managingAccount, accountID: UUID()))
+        let certificate = try #require(coordinator.begin(.managingCertificate, accountID: UUID()))
+
+        let scan = try #require(coordinator.begin(.scanningDeviceInventory))
+        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
+        #expect(coordinator.begin(.signing) == nil)
+
+        coordinator.end(scan)
+        coordinator.end(importing)
+        coordinator.end(account)
+        coordinator.end(certificate)
+    }
+
+    @Test
+    func profileMaintenanceSerializesDeviceAccessWithoutBlockingAccountOrImportWork() throws {
+        let coordinator = OperationCoordinator()
+        let maintenance = try #require(coordinator.begin(.managingDeviceProfiles))
+
+        #expect(coordinator.hasDeviceSessionConflict)
+        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
+        #expect(coordinator.begin(.signing) == nil)
+        #expect(coordinator.begin(.resettingPairing) == nil)
+        #expect(coordinator.begin(.importing) != nil)
+        #expect(coordinator.begin(.managingAccount, accountID: UUID()) != nil)
+
+        coordinator.end(maintenance)
+    }
+
+    @Test
+    func appMetadataEditsOnlyConflictWithTheSameAppOperation() throws {
+        let coordinator = OperationCoordinator()
+        let firstAppID = UUID()
+        let secondAppID = UUID()
+        let first = try #require(coordinator.begin(.updatingApp, appID: firstAppID))
+
+        #expect(coordinator.begin(.updatingApp, appID: secondAppID) != nil)
+        #expect(coordinator.begin(.signing, appID: firstAppID) == nil)
+
+        coordinator.end(first)
+    }
+
+    @Test
+    func accountScopedCertificateWorkDoesNotFreezeOtherAccountsOrDeviceRefresh() throws {
+        let coordinator = OperationCoordinator()
+        let firstAccountID = UUID()
+        let secondAccountID = UUID()
+        let certificate = try #require(
+            coordinator.begin(.managingCertificate, accountID: firstAccountID)
+        )
+
+        #expect(coordinator.hasDeviceSessionConflict == false)
+        let secondCertificate = try #require(
+            coordinator.begin(.managingCertificate, accountID: secondAccountID)
+        )
+        coordinator.end(secondCertificate)
+        let secondAccountSigning = try #require(
+            coordinator.begin(.signing, accountID: secondAccountID)
+        )
+        #expect(coordinator.begin(.signing, accountID: firstAccountID) == nil)
+
+        coordinator.end(certificate)
+        coordinator.end(secondAccountSigning)
+    }
 }

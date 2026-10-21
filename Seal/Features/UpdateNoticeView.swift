@@ -264,7 +264,10 @@ struct UpdateNoticeView: View {
     }
 
     private func downloadDetail(received: Int64, total: Int64?) -> String {
-        guard received > 0 else { return "正在连接更新服务" }
+        guard received > 0 else {
+            guard let total, total > 0 else { return "正在连接更新服务" }
+            return "已下载 0 B / \(total.formatted(.byteCount(style: .file))) · 0%"
+        }
         let receivedText = received.formatted(.byteCount(style: .file))
         guard let total, total > 0,
               let progress = UpdateDownloadProgress.fraction(received: received, total: total) else {
@@ -283,12 +286,13 @@ struct UpdateNoticeView: View {
 
         let generation = UUID()
         downloadGeneration = generation
-        phase = .downloading(0, nil)
+        phase = .downloading(0, notice.ipaDownloadSize)
         downloadTask = Task {
             let localURL: URL
             do {
                 localURL = try await UpdateIPADownloader.shared.download(
                         from: ipaURL,
+                        expectedSize: notice.ipaDownloadSize,
                         onProgress: { @MainActor received, total in
                             guard downloadGeneration == generation else { return }
                             phase = .downloading(received, total)

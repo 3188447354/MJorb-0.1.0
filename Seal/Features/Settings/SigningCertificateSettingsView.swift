@@ -8,6 +8,8 @@ struct SigningCertificateSettingsView: View {
     @State private var selectedAccountID: UUID?
     @State private var certificatePendingRevocation: ApplePortalCertificateSnapshot?
     @State private var installedBundleIdentifiers: Set<String>?
+    @State private var isRefreshingInstalledBundleIdentifiers = false
+    @State private var installedBundleIdentifierRetryRequested = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -16,21 +18,6 @@ struct SigningCertificateSettingsView: View {
 
                 if viewModel.isSelfManagementLoading || viewModel.selfManagement.isVisible {
                     selfManagementCard
-                        // 自更新覆盖安装由「重新打开的新进程」对账确认：旧进程结算发生在
-                        // 重新启动 Seal 之后。这里在等待确认态下自动轮询本地状态，一旦对账
-                        // 完成（事务被结算/关闭）本页自动切到已完成，无需人手点「检查安装结果」。
-                        .task(id: viewModel.selfManagement.state) {
-                            guard viewModel.selfManagement.state == .awaitingReplacementConfirmation else {
-                                return
-                            }
-                            while !Task.isCancelled {
-                                await viewModel.refreshSelfManagementState()
-                                if viewModel.selfManagement.state != .awaitingReplacementConfirmation {
-                                    break
-                                }
-                                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                            }
-                        }
                 }
 
                 Text("签名证书")
@@ -95,6 +82,13 @@ struct SigningCertificateSettingsView: View {
             await viewModel.refreshCertificateHealthLocally(for: account)
             await viewModel.refreshCertificateInventory(for: account, force: true)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .sealSelfRecordUpdated)) { _ in
+            Task { await viewModel.refreshSelfManagementState() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .sealDeviceSessionWriterReleased)) { _ in
+            guard installedBundleIdentifiers == nil else { return }
+            Task { await refreshInstalledBundleIdentifiers() }
+        }
         .sealScreenBackground()
     }
 
@@ -106,6 +100,20 @@ struct SigningCertificateSettingsView: View {
     }
 
     private func refreshInstalledBundleIdentifiers() async {
+        guard isRefreshingInstalledBundleIdentifiers == false else {
+            installedBundleIdentifierRetryRequested = true
+            return
+        }
+        isRefreshingInstalledBundleIdentifiers = true
+        defer { isRefreshingInstalledBundleIdentifiers = false }
+
+        repeat {
+            installedBundleIdentifierRetryRequested = false
+            await scanInstalledBundleIdentifiersOnce()
+        } while installedBundleIdentifierRetryRequested && installedBundleIdentifiers == nil
+    }
+
+    private func scanInstalledBundleIdentifiersOnce() async {
         if let controlBundleIdentifier = Bundle.main.bundleIdentifier,
            let snapshot = await InstalledAppScanner().scanAllSnapshot(),
            InstalledAppRefreshProbePolicy.canUseLocalSnapshot(

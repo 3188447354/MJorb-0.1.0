@@ -56,10 +56,37 @@ final class InstalledAppScanner: Sendable {
         guard let workspace = workspaceClass.perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject else {
             return nil
         }
-        guard let appList = installedApplicationProxies(
-            from: workspace,
-            containing: Bundle.main.bundleIdentifier
-        ) else {
+        guard let appLists = installedApplicationProxyLists(from: workspace) else {
+            return nil
+        }
+
+        var appList: [NSObject] = []
+        var seenBundleIdentifiers = Set<String>()
+        // The two LaunchServices selectors can return different snapshots. Merge both
+        // before treating the result as the device inventory so an app present in only
+        // the compatibility selector is not silently omitted.
+        for applications in appLists {
+            for application in applications {
+                guard let bundleIdentifier = application.value(forKey: "bundleIdentifier") as? String else {
+                    continue
+                }
+                let normalized = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard normalized.isEmpty == false,
+                      seenBundleIdentifiers.insert(normalized).inserted else {
+                    continue
+                }
+                appList.append(application)
+            }
+        }
+        if appLists.count == 1,
+           InstalledAppRefreshProbePolicy.hasPositiveControl(
+                controlBundleIdentifier: Bundle.main.bundleIdentifier,
+                installedBundleIdentifiers: appList.compactMap {
+                    $0.value(forKey: "bundleIdentifier") as? String
+                }
+           ) == false {
+            // One selector alone may be a partial compatibility view. Without Seal as a
+            // positive control, do not let it remove records that only the missing view has.
             return nil
         }
 
@@ -93,53 +120,40 @@ final class InstalledAppScanner: Sendable {
         #endif
         guard let workspaceClass = NSClassFromString("LSApplicationWorkspace") as? NSObject.Type,
               let workspace = workspaceClass
-                .perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject,
-              let appList = installedApplicationProxies(
-                from: workspace,
-                containing: Bundle.main.bundleIdentifier
-              ) else {
+                .perform(NSSelectorFromString("defaultWorkspace"))?.takeUnretainedValue() as? NSObject else {
             return [:]
         }
 
         var result: [String: Data] = [:]
-        for app in appList {
-            guard let bundleID = app.value(forKey: "bundleIdentifier") as? String else { continue }
-            let normalizedBundleID = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard bundleIdentifiers.contains(normalizedBundleID),
-                  result[normalizedBundleID] == nil,
-                  let iconData = iconPNGData(from: app) else {
-                continue
+        // The two LaunchServices selectors are not guaranteed to return the same snapshot.
+        // For a targeted icon lookup, inspect both so a partial first list cannot hide an
+        // installed app that only appears in the compatibility selector.
+        for appList in installedApplicationProxyLists(from: workspace) ?? [] {
+            for app in appList {
+                guard let bundleID = app.value(forKey: "bundleIdentifier") as? String else { continue }
+                let normalizedBundleID = bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                guard bundleIdentifiers.contains(normalizedBundleID),
+                      result[normalizedBundleID] == nil,
+                      let iconData = iconPNGData(from: app) else {
+                    continue
+                }
+                result[normalizedBundleID] = iconData
             }
-            result[normalizedBundleID] = iconData
         }
         return result
     }
 
-    private static func installedApplicationProxies(
-        from workspace: NSObject,
-        containing bundleIdentifier: String?
-    ) -> [NSObject]? {
-        var firstAvailable: [NSObject]?
-        var firstEmpty: [NSObject]?
+    private static func installedApplicationProxyLists(from workspace: NSObject) -> [[NSObject]]? {
+        var lists: [[NSObject]] = []
         for name in ["allInstalledApplications", "allApplications"] {
             let selector = NSSelectorFromString(name)
             guard workspace.responds(to: selector),
                   let applications = workspace.perform(selector)?.takeUnretainedValue() as? [NSObject] else {
                 continue
             }
-            if let bundleIdentifier,
-               applications.contains(where: {
-                   ($0.value(forKey: "bundleIdentifier") as? String) == bundleIdentifier
-               }) {
-                return applications
-            }
-            if applications.isEmpty == false {
-                if firstAvailable == nil { firstAvailable = applications }
-            } else if firstEmpty == nil {
-                firstEmpty = applications
-            }
+            lists.append(applications)
         }
-        return firstAvailable ?? firstEmpty
+        return lists.isEmpty ? nil : lists
     }
 
     private static func iconPNGData(from application: NSObject) -> Data? {

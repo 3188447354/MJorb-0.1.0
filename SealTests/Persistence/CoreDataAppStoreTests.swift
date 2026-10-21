@@ -168,6 +168,37 @@ struct CoreDataAppStoreTests {
         #expect(records == [replacement])
     }
 
+    @Test
+    func replacementCommitRecoversWhenDeviceReconciliationAlreadyRemovedOldRecord() async throws {
+        let store = try CoreDataAppStore(inMemory: true)
+        let replacementID = UUID()
+        let missingPreviousID = UUID()
+        var replacement = makeRecord(id: replacementID, name: "Confirmed Update")
+        replacement.state = .installed
+
+        try await store.commitInstalledReplacement(
+            replacement,
+            replacing: missingPreviousID
+        )
+
+        #expect(try await store.fetchAll() == [replacement])
+    }
+
+    @Test
+    func replacementCommitIsIdempotentWhenRecordAlreadyUsesReplacementID() async throws {
+        let store = try CoreDataAppStore(inMemory: true)
+        var existing = makeRecord(name: "Before")
+        existing.state = .installed
+        try await store.save(existing)
+        var promoted = existing
+        promoted.name = "After"
+        promoted.state = .installed
+
+        try await store.commitInstalledReplacement(promoted, replacing: existing.id)
+
+        #expect(try await store.fetchAll() == [promoted])
+    }
+
     private func makeRecord(
         id: UUID = UUID(),
         name: String,

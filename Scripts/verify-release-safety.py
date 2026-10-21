@@ -2280,25 +2280,34 @@ def violations(load=read):
           "R39: 阶段进入必须落日志 —— 否则「每阶段耗时」拿不到，τ 只能永远靠估，"
           "三条线都在等的数据也就永远拿不到")
 
-    # R40: **`SEAL-AUTH-102c` 不得把账号标成「失效」**（2026-09-18 真机，构建 133）。
-    #
-    # 它自己的文案写着「两种常见成因：登录真的失效，**或者被 Apple 限流**」、
-    # recovery 写着「**先等几分钟重试**」；而策略表把所有 `102*` 一律判成
-    # `.credentialsRejected` ⇒ **立刻标失效，与那段文案直接矛盾** ✗
-    #
-    # 真机证据：`318***5***@qq.com` 签抖音时，紧接 **3 次限流退避重试**之后报 102c，
-    # 账号随即显示「失效 + 已签名 0/10」⇒ 用户去重新验证 → 又撞限流 → **死循环**。
-    # 语义上：`107`（明确会话过期）已经不标 ✓，而 `102c` 是**二义**的，更不该标 ✓。
+    # R40: **只有明确的凭据拒绝才能把账号标成需要验证**。
+    # `102c` 是二义认证错误，`102e` 是设备环境握手失败；两者都不能被宽泛的 `102*`
+    # 前缀规则误判为密码错误。`102d` 来自 Apple 明确的 incorrectCredentials。
     policy_source = strip_comments(load("Seal/Core/Accounts/AppleServiceFailurePolicy.swift"))
-    check('if code == "SEAL-AUTH-102c" { return nil }' in policy_source,
-          "R40: `SEAL-AUTH-102c` 不得标记账号失效 —— 它是**二义**错误（会话过期 or 限流），"
-          "文案自己写着「先等几分钟重试」；标失效会让用户陷入「重新验证 → 又限流」的死循环")
-    check(0 <= policy_source.find('SEAL-AUTH-102c')
-          < policy_source.find('hasPrefix("SEAL-AUTH-102")'),
-          "R40: `102c` 的排除必须排在 `hasPrefix(\"SEAL-AUTH-102\")` **之前** —— "
-          "排在后面等于没排除")
-    check('if code.hasPrefix("SEAL-AUTH-102") { return .credentialsRejected }' in policy_source,
-          "R40: 其余 `102*`（尤其 `102d`：Apple **明确**拒绝凭据）**必须保持**标记失效")
+    credential_policy = policy_source.split("let explicitCredentialRejectionCodes: Set<String> = [", 1)
+    if len(credential_policy) == 2:
+        credential_policy = credential_policy[1].split("]", 1)[0]
+    else:
+        credential_policy = ""
+    check(all(f'"{code}"' in credential_policy for code in (
+              "SEAL-AUTH-102", "SEAL-AUTH-102a", "SEAL-AUTH-102b", "SEAL-AUTH-102d"))
+          and '"SEAL-AUTH-102c"' not in credential_policy
+          and '"SEAL-AUTH-102e"' not in credential_policy,
+          "R40: 只有明确拒绝凭据的 102/102a/102b/102d 可以标记；102c/102e 必须保持账号可用")
+    check('if explicitCredentialRejectionCodes.contains(code) { return .credentialsRejected }'
+          in policy_source,
+          "R40: 账号失效判定必须使用明确凭据拒绝码集合，不能按 102 前缀猜测")
+    portal_signing_source = strip_comments(load(
+        "Seal/Infrastructure/Signing/ApplePortalSigningService.swift"))
+    handshake_start = portal_signing_source.find(
+        "catch ALTAppleAPIError.authenticationHandshakeFailed")
+    handshake_end = portal_signing_source.find(
+        "catch let failure as ImportFailure", handshake_start)
+    handshake_failure = (portal_signing_source[handshake_start:handshake_end]
+                         if handshake_start >= 0 and handshake_end >= 0 else "")
+    check('code: "SEAL-AUTH-102e"' in handshake_failure
+          and "condition: .authenticationHandshakeRejected" in handshake_failure,
+          "R40: 102e 必须保留设备环境握手语义，不能归类为凭据拒绝")
     # ⚠️ 闸门**必须是 `stage != currentStage`，不能是 `tick == .restart`**
     #（2026-09-19 真机踩到 ✗）：`InstallStageTimeline.tick` 只对 **`.installing`** 返回
     # `.restart`，其余阶段一律 `.clear` —— 它是「安装计时起点」的簿记，
@@ -3824,6 +3833,12 @@ def violations(load=read):
           "Cleanup: device profile inspection must be read-only")
     check("return parsed > 0 ? serials : nil" in inspector,
           "Cleanup: unparseable dump must mean unverified, not empty")
+    reference_scan = section(inspector, "static func referencedCertificateSerials()",
+                             "private static func readReferencedCertificateSerials")
+    check("BlockingCall.bounded(" in reference_scan
+          and "seconds: BlockingCall.queryTimeoutSeconds" in reference_scan
+          and "cancelsWorkOnTimeout: false" in reference_scan,
+          "Cleanup: device profile reference scan must be bounded and keep its worker-owned temp directory")
     settings_vm = load("Seal/Features/Settings/SettingsViewModel.swift")
     cleanup_exec = section(settings_vm, "func executeCertificateCleanup(",
                            "private func persistCreatedCertificate(")
@@ -3834,6 +3849,10 @@ def violations(load=read):
     inv = load("Seal/Infrastructure/Signing/ApplePortalInventoryService.swift")
     check("hasLocalPrivateKey: localP12SerialNumbers.contains(" in inv,
           "Cleanup: hasLocalPrivateKey must consider every stored P12, not only the current one")
+    local_p12_inventory = section(inv, "let localP12Data =", "let certificateSnapshots =")
+    check("Task.detached(priority: .utility)" in local_p12_inventory
+          and "ALTCertificate(p12Data: p12, password: nil)" in local_p12_inventory,
+          "Cleanup: P12 inventory parsing must not block the shared Apple Portal actor")
 
     # 签名/续签中的孤儿证书自动清理：撤销不可逆，约束必须硬守护。
     coord = load("Seal/Core/Signing/SigningCoordinator.swift")
@@ -3847,36 +3866,30 @@ def violations(load=read):
     check("let deviceReferenced = await DeviceProfileInspector.referencedCertificateSerials()" in coord,
           "Auto-cleanup: must consult device profile inspector")
 
-    # profile-only（只换描述文件）的设备端身份核验必须保持**三态**。
-    #
-    # 真机实证（2026-09-25 构建 39）：点**单个**应用续签连试三次全部报
-    # `SEAL-PROFILE-362`，而同一时段「续签全部」三次全过 —— 两条路径只差通道时序，
-    # 应用记录与证书完全相同。根因是旧实现把核验写成
-    # `containsProfile(...) == true` 后**直接抛错**：三态被折成二态，
-    # 「**无法核验**」（`nil`：通道抖动 / 枚举失败 / provider 被并发 reset）
-    # 与「**身份不符**」（`false`：记录确实过期）走同一条死路 ⇒ 应用**永久**续签不了。
-    #
-    # 正确语义（2026-09-26 再修订，见 R84④）：profile-only 只是**加速路径**，不是安全边界。
-    # 「不以本地旧记录直接覆盖设备」这条约束**不靠核验** —— 注入的描述文件是**当场从 Apple
-    # 门户取的新文件**，不是本地旧记录；真正的安全网是注入后**逐份读回确认**
-    #（`ProfileOnlyProvisioningProfileInstaller` → `SEAL-PROFILE-354`）。
-    # ⇒ 核验结果只作诊断留痕，**不再回落完整重签**（旧行为让每次续签都重装了一遍）。
-    check("case unavailable" in coord and "case mismatched" in coord
-          and "case missingRecordedIdentity" in coord,
-          "Profile-only: device identity verification must stay three-state")
-    check("case .none:" in coord and "return .unavailable" in coord,
-          "Profile-only: containsProfile nil must map to unavailable, never to mismatch")
-    check("await DeviceProfileInspector.containsProfile(" in coord,
-          "Profile-only: verification must query the device profile store")
-    # ⚠️ 语义在 2026-09-26 变了（R84④）：核验结果**不再决定续签路径**，只作为诊断信号留痕。
-    # 这个分支仍然必须存在（否则连日志都没有），但**不得**再出现 `useProfileOnlyRenewal = false`
-    #（那是「每次续签都回落完整重装」的直接来源，见 R84④）。
-    check("if identity != .confirmed {" in coord,
-          "Profile-only: unconfirmed identity must still be surfaced as a diagnostic")
-    # 留痕必须带上是哪一种「没问通」（记录缺字段 / 设备端没有该身份 / 设备端枚举不可用）——
-    # 三者的下一步动作相同，但拿着日志要能说出该去修什么（第②类日志必须带底层原因）。
-    check("SEAL-PROFILE-363" in coord and "identity.fallbackReason" in coord,
-          "Profile-only: 核验未确认必须留痕（SEAL-PROFILE-363）并带上是哪一种没问通")
+    # profile-only 路径不能在新 profile 注入前额外 dump 旧清单：它只写诊断日志，
+    # 超时后同步 FFI 仍在跑，会与同轮注入争用设备会话。真正安全边界是注入后读回本轮身份。
+    profile_only_installer = load(
+        "Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift"
+    )
+    profile_only_readback = section(
+        profile_only_installer,
+        "func installAndVerify(",
+        "private func ensureProfileService("
+    )
+    check("ProfileOnlyIdentityVerifier.verify(" not in coord
+          and "DeviceProfileInspector.containsProfile(" not in coord
+          and "await DeviceProfileInspector.containsProfiles(" in profile_only_readback
+          and "onLateCompletion:" in profile_only_readback
+          and "nativeProfileOperationDidComplete()" in profile_only_readback,
+          "R129: profile-only must skip the redundant preflight dump and retain exact post-injection readback")
+    profile_only_injection = section(
+        profile_only_installer,
+        "private func inject(",
+        "private func nativeProfileOperationDidComplete()"
+    )
+    check("onWorkNeverStarted:" in profile_only_readback
+          and "onWorkNeverStarted:" in profile_only_injection,
+          "R130: cancelled profile FFI that never starts must release its native-operation lease")
     # 续签是覆盖安装**已存在**的应用，不新增免费账号设备槽位 ⇒ 两条续签路径
     #（profile-only / 回落后的完整重签）都不该被 3-app 预检误拦。
     # 漏掉「回落」这一支会让回落路径撞 SEAL-APPID-DEVICELIMIT，把修复变成另一种失败。
@@ -4005,12 +4018,12 @@ def violations(load=read):
     # 描述文件授权列表可能包含并未实际签名的证书，DB 记录可能是旧值；
     # 两处协调器路径（前置清理 / 用户选择撤销）与设置页两处路径（分析 / 执行）
     # 都必须从 installedIdentity 读真实签名者；签名者无法安全确认时整体停止。
-    check("SelfAppMetadata.current()?.installedIdentity" in coord
+    check("SelfAppMetadata.installedIdentitySnapshot()" in coord
           and ("runningIdentity?.isComplete == true" in coord
                or "runningIdentity.canSafelyIdentifySigners" in coord
                or "runningIdentity?.canSafelyIdentifySigners == true" in coord),
           "Seal self-protection: coordinator paths must read the actual CMS signer identity")
-    check("SelfAppMetadata.current()?.installedIdentity" in settings_vm
+    check("SelfAppMetadata.installedIdentitySnapshot()" in settings_vm
           and ("runningIdentity?.isComplete == true" in settings_vm
                or "runningIdentity.canSafelyIdentifySigners" in settings_vm
                or "runningIdentity?.canSafelyIdentifySigners == true" in settings_vm),
@@ -4018,9 +4031,16 @@ def violations(load=read):
     # 证书候选读取必须核验运行中 Seal 的真实 CMS 身份。
     revoke_keyless = section(coord, "func certificateSacrificeCandidates(",
                              "func revokeKeylessCertificateAfterConfirmation(")
-    check("SelfAppMetadata.current()?.installedIdentity" in revoke_keyless
+    check("SelfAppMetadata.installedIdentitySnapshot()" in revoke_keyless
           and "SEAL-CERT-230" in revoke_keyless,
           "Seal self-protection: certificate picker must stop when the actual signer is unreadable")
+    check("let currentSeal = await SelfAppMetadata.installedIdentitySnapshot()" in apps_vm
+          and "SelfAppMetadata.current(includeIcon: false)" not in apps_vm,
+          "R116①: Seal update identity must be read off the UI actor")
+    app_container = strip_comments(load("Seal/Application/AppContainer.swift"))
+    check("await SelfAppMetadata.loadCurrentAsync()" in app_container
+          and "SelfAppMetadata.current()" not in app_container,
+          "R128: app startup must not synchronously parse Seal CMS/profile metadata on MainActor")
     # 危险推断已被根除：描述文件授权列表首项 / 运行包授权集合不得再用于保护决策。
     for path in ("Seal/Core/Signing/SigningCoordinator.swift",
                  "Seal/Features/Settings/SettingsViewModel.swift",
@@ -4800,6 +4820,23 @@ def violations(load=read):
           and "func orphanedSecretWithoutMatchingPrivateKeyDoesNotSkipBootstrap()" in self_management_tests,
           "R125: Seal 重装后须按当前签名者序列号检索旧 UUID 钥匙串私钥，并让续签与证书页共用判据")
 
+    certificate_settings_view = strip_comments(
+        load("Seal/Features/Settings/SigningCertificateSettingsView.swift")
+    )
+    check(".task(id: viewModel.selfManagement.state)" not in certificate_settings_view
+          and "Task.sleep(nanoseconds: 2_000_000_000)" not in certificate_settings_view
+          and "publisher(for: .sealSelfRecordUpdated)" in certificate_settings_view
+          and 'Text("检查安装结果")' in certificate_settings_view,
+          "R131: install-result confirmation must be event-driven with a manual fallback, never a polling loop")
+    self_management_refresh = section(
+        strip_comments(load("Seal/Features/Settings/SettingsViewModel.swift")),
+        "func refreshSelfManagementState() async {",
+        "func refreshCertificateInventory("
+    )
+    check("selfManagementRefreshGeneration.issue()" in self_management_refresh
+          and self_management_refresh.count("selfManagementRefreshGeneration.accepts(generation)") >= 4,
+          "R132: stale overlapping install-result reads must not overwrite the newest certificate-page state")
+
     update_notice_view = strip_comments(load("Seal/Features/UpdateNoticeView.swift"))
     update_notice_policy = strip_comments(load("Seal/Infrastructure/UpdateChecker.swift"))
     update_notice_tests = load("SealTests/Update/UpdateCheckerAssetTests.swift")
@@ -5068,12 +5105,13 @@ def violations(load=read):
     # `rotationRank` 全是 2 ⇒ 日志「当前 Seal 在用证书排在最后」变成**假话**，
     # 命根子证书被当成普通「无本机私钥」证书盲撤。
     r72_portal = load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift")
-    check("isSeal ? SelfAppMetadata.current()?.installedIdentity : nil" not in r72_portal,
+    check("let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()" in r72_portal
+          and "let runningIdentity = await isSeal ?" not in r72_portal,
           "R72①: 运行中 Seal 的签名者必须**无条件**读取。写成 `isSeal ? … : nil` 会让签名"
           "第三方 App 时 `sealActualSignerSerials` 恒为空、`isRunningSealCertificate` 恒为"
           "false，Seal 正在用的证书被当普通证书盲撤（构建 38 就是这么变砖的）。")
-    check("SelfAppMetadata.current()?.installedIdentity" in r72_portal,
-          "R72②: 轮换前必须读出运行中 Seal 的真实 CMS 签名者（描述文件授权列表不是签名者）。")
+    check("SelfAppMetadata.installedIdentitySnapshot()" in r72_portal,
+          "R72②: 轮换前必须在后台读出运行中 Seal 的真实 CMS 签名者（描述文件授权列表不是签名者）。")
     check("本轮将撤销" in r72_portal and "Seal 正在使用的证书" in r72_portal,
           "R72③: 本轮要撤销 Seal 正在用的证书时必须留下**后果说明** —— 撤销后 Seal 只能靠"
           "本事务末尾的自替换安装恢复，那一步失败 Seal 立刻打不开。")
@@ -5501,13 +5539,9 @@ def violations(load=read):
     # 不剥注释就会把注释当代码，让这条断言**恒假**（R84 自己的第一版正是这么写错的，
     # 靠 `check-mutation-power.py` 的基线失败才发现）。
     r84_363_code = strip_comments(r84_363_block)
-    check("SEAL-PROFILE-363" in r84_363_code
-          and "identity.fallbackReason" in r84_363_code
+    check("DeviceProfileInspector.containsProfile(" not in r84_363_code
           and "useProfileOnlyRenewal = false" not in r84_363_code,
-          "R84④: `SEAL-PROFILE-363` 只能**留痕**，不得再回落完整重签 ✗ —— "
-          "构建 46 真机：Guoguo 每次续签都被它拦下（01:26:41 / 01:27:12 两条 363），"
-          "01:28:08 才以完整重签成功 ⇒ 用户看到的就是「续签全都要重装」。"
-          "上游 `refresh` 管线**完全不枚举设备描述文件**，真正的安全网在注入后的逐份读回")
+          "R84④: a preflight profile dump must neither race injection nor force a full resign")
     r84_device_binding = section_or_empty(
         r84_policy,
         "static func isBoundToCurrentDevice(",
@@ -5907,10 +5941,10 @@ def violations(load=read):
     # 规矩盒子化后：liveIdentity 委托给 policy；SelfManagedRenewalPolicy 读 Bundle.main，
     # DefaultRenewalPolicy 返回 nil（第三方读 Bundle.main 会得到 Seal 自己的身份，造成假阳性）。
     r89_policy_file = load("Seal/Core/Renewal/SealRenewalPolicy.swift")
-    check("runningVersion: metadata?.version," in r89_policy_file
+    check("runningVersion: installedIdentity?.version," in r89_policy_file
           and "await policy(for: app).liveIdentity(for: app)" in r89_live_identity_fn,
-          "R89④: 调用点必须传**正在运行的版本**（`metadata?.version`），"
-          "且仍只在自管理应用时读 ✗ —— `SelfAppMetadata.current()` 读的是 `Bundle.main`，"
+          "R89④: 调用点必须传**正在运行的版本**（`installedIdentity?.version`），"
+          "且仍只在自管理应用时读 ✗ —— 只读签名身份快照，"
           "对第三方 App 用它会得到 Seal 自己的版本（假阳性）；"
           "而传成 `app.version`（记录版本）会让这条判据恒假 —— 那正是本次要修的 bug")
     check("func liveIdentity(for app: AppRecord) async -> LiveProfileOnlyIdentity? {\n        nil\n    }" in r89_policy_file,
@@ -6410,22 +6444,9 @@ def violations(load=read):
           "frame 加在 label 上会把玻璃撑到 44pt（用户反馈太大）；"
           "玻璃按内容自适应系统规范尺寸，44x44 只加在 Button 上保证触控目标")
 
-    # ── R115：2026-10-03 363 通道不可用时提前标记污染 ──
-    #
-    # 来源：真机日志 —— 后台冷启动时设备枚举不可用（363 `.unavailable`），
-    # 但代码仍拿坏通道去注入 ⇒ 30 秒超时 ⇒ 8/16 秒退避 ⇒ 重试，一轮烧 59 秒。
-    # `.unavailable` 已经证明通道坏了，提前标记污染 ⇒ `renewProfilesOnly`
-    # 在第一次注入前就重置通道，省掉在坏通道上的无效尝试。
-    # 它的错法**不崩**：只是悄悄变慢，用户只会觉得"续签慢"，查不出原因。
+    # ── R115：profile-only 设备调用超时与污染自愈 ──
+    # 旧的 363 前置枚举已移除：它只写诊断，超时后底层 FFI 仍运行，会和注入读回竞争。
     r115_installer_code = strip_comments(load("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift"))
-    r115_coordinator_code = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
-
-    check("func markTainted() {\n        taint.markTainted()\n    }" in r115_installer_code,
-          "R115①: 污染标记必须有公开的 `markTainted()` ✗ —— "
-          "没有它，`SigningCoordinator` 在 363 时无法提前标记，"
-          "只能等 30 秒超时后才走污染闸门；"
-          "⚠️ 断言必须含函数体（`taint.markTainted()`），否则会误匹配 "
-          "`ProfileOnlyTaintGate` 结构体的同名 `mutating` 方法")
 
     # ── R116：2026-10-04 预热失败不标记污染 ──
     #
@@ -6492,12 +6513,41 @@ def violations(load=read):
           "误判 profile-only 会让自替换杀掉并行中的进程；"
           "任何不确定都必须返回 false 走串行殿后")
 
-    check("if identity == .unavailable" in r115_coordinator_code
-          and "await ProfileOnlyProvisioningProfileInstaller.shared.markTainted()" in r115_coordinator_code,
-          "R115②: 363 为 `.unavailable` 时必须标记污染 ✗ —— "
-          "否则坏通道上的第一次注入必超时，白烧 30 秒 + 退避；"
-          "注意只在 `.unavailable` 时标记，`.mismatched`（设备上没有 profile）"
-          "不是通道问题，重置帮不上忙")
+
+    # 超时后的原生 FFI 仍可能在后台运行。等待者必须在保留设备安全边界的同时失败返回，
+    # 不能无限占着前台续签事务租约，把整批按钮一起锁住。
+    profile_wait = section(
+        r115_installer_code,
+        "func installAndVerify(",
+        "private func ensureProfileService("
+    )
+    check("while isBusy {" in profile_wait
+          and "operationLease.holdBusyUntilCompletion == false" in profile_wait
+          and 'code: "SEAL-PROFILE-357"' in profile_wait,
+          "R127: queued profile renewals must fail promptly after a native timeout, not hold the batch lease forever")
+    profile_log_index = load("docs/qa/log-code-index.md")
+    check("SEAL-PROFILE-357" in profile_log_index
+          and '"code": "SEAL-PROFILE-357"' in load("docs/error-catalog/profile.json"),
+          "R127: the queued-renewal failure must be documented in both developer and offline help catalogs")
+
+    device_verifier = strip_comments(load("Seal/Features/Apps/InstalledAppDeviceVerifier.swift"))
+    probe_body = section(
+        device_verifier,
+        "static func isInstalled(bundleIdentifier: String) async throws -> Bool {",
+        "private static func unavailableError"
+    )
+    check("BlockingCall.bounded(" in probe_body
+          and "cancelsWorkOnTimeout: false" in probe_body
+          and "onLateCompletion:" in probe_body
+          and "onWorkNeverStarted:" in probe_body
+          and "onWorkNeverStarted: {\n                await probeGate.finish(probeID: probeID, timedOut: false)" in probe_body
+          and "withTaskCancellationHandler" not in probe_body
+          and "guard activeProbeID == probeID else { return }" in device_verifier,
+          "R126: a cancelled device probe must retain its gate until native completion and ignore stale completions")
+    device_probe_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbeGateTests.swift")
+    check("lateProbeCompletionKeepsGateBusyUntilNativeCallEnds" in device_probe_tests
+          and "staleCompletionCannotReleaseANewerProbe" in device_probe_tests,
+          "R126: device probe cancellation and stale completion behavior need regression coverage")
 
     # ── R92：后台触发的**设备通道时序** ＋ 通道瞬时错误重试 ＋ 未预期错误可观测 ──────
     # 来源：2026-09-26 构建 53 真机（用户导出 `Seal-log`）。
@@ -8752,12 +8802,16 @@ def main():
          "try? MachOParser(url: executableURL)",
          "try? RorkSigner.checkMachOCodeSignatures(at: executableURL)",
          "R55: 签名身份读取必须走上游 `MachOParser`（mmap ✓）"),
-        # ── R40：102c 不得标失效（2026-09-18 真机）──
-        # 删掉排除：账号又会在「紧接 3 次限流退避之后」被标成失效 ⇒ 死循环。
+        # ── R40：只允许明确的凭据拒绝码标失效（2026-10-21）──
+        # 恢复宽泛 102 前缀：102c 限流/模糊状态、102e 设备握手都会被误判为密码错误。
         ("Seal/Core/Accounts/AppleServiceFailurePolicy.swift",
-         "        if code == \"SEAL-AUTH-102c\" { return nil }\n",
-         "",
-         "R40: `SEAL-AUTH-102c` 不得标记账号失效"),
+         "        if explicitCredentialRejectionCodes.contains(code) { return .credentialsRejected }\n",
+         "        if code.hasPrefix(\"SEAL-AUTH-102\") { return .credentialsRejected }\n",
+         "R40: 账号失效判定必须使用明确凭据拒绝码集合"),
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         "                condition: .authenticationHandshakeRejected,\n",
+         "                condition: .credentialsRejected,\n",
+         "R40: 102e 必须保留设备环境握手语义"),
         # ── R41：拆出各段耗时（2026-09-19）──
         # 把日志里「改写」那一段删掉：四段又只剩三段，定位能力退化。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
@@ -9267,9 +9321,14 @@ def main():
         # ⚠️ `expected` 必须是**被破坏那条 check 的消息前缀**（匹配用 `startswith`），
         # 不是描述性文字 —— 写错会得到「Guard failed mutation check」，白跑一整轮。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         "        let runningIdentity = await MainActor.run {\n            SelfAppMetadata.current()?.installedIdentity\n        }",
-         "        let runningIdentity = await MainActor.run {\n            isSeal ? SelfAppMetadata.current()?.installedIdentity : nil\n        }",
+         "        let runningIdentity = await SelfAppMetadata.installedIdentitySnapshot()",
+         "        let runningIdentity = await isSeal ? SelfAppMetadata.installedIdentitySnapshot() : nil",
          "R72①:"),
+        # ── R116：Seal 自更新不能在 MainActor 同步读取 CMS/Mach-O 身份 ──
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "            guard let currentSeal = await SelfAppMetadata.installedIdentitySnapshot(),",
+         "            guard let currentSeal = SelfAppMetadata.current(includeIcon: false)?.installedIdentity,",
+         "R116①:"),
         # ── R73：删掉「候选未落盘」分支的回补调用 ⇒ R73① 报红 ──
         # 缩进 20 空格是**故意的**：`ensureRegistered` 里那两处同类调用是 12 空格，
         # 用 20 空格才能确保 `replace(…, 1)` 命中的是 `.closeAsNotInstalled` 这一处。
@@ -9738,14 +9797,19 @@ def main():
          "        let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: liveIdentity)\n",
          "        let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: nil)\n",
          "R84③: 准入必须**真的用上**双通道"),
-        # ④ 把「核验未通过就回落」加回去 ⇒ R84④ 报红。**这正是本轮修的真问题。**
+        # ④ 把已删除的设备端旧 profile 前置枚举加回来 ⇒ R84④ 报红。
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "                if identity != .confirmed {\n"
-         "                    try? await logStore?.append(\n",
-         "                if identity != .confirmed {\n"
-         "                    useProfileOnlyRenewal = false\n"
-         "                    try? await logStore?.append(\n",
-         "R84④: `SEAL-PROFILE-363` 只能**留痕**"),
+         "                if let channelStart {\n",
+         "                _ = DeviceProfileInspector.containsProfile(\n"
+         "                if let channelStart {\n",
+         "R84④:"),
+        # ④b 把前置 profile 查询结果重新作为完整重签条件 ⇒ R84④ 报红。
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "            if useProfileOnlyRenewal {\n                if let channelStart {",
+         "            if useProfileOnlyRenewal {\n"
+         "                let useProfileOnlyRenewal = false\n"
+         "                if let channelStart {",
+         "R84④:"),
         # ⑤ 把当前设备 ID 核验放松成「总是通过」⇒ R84⑤ 报红。
         ("Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift",
          "        return nonBlank(deviceIdentifier) != nil\n    }\n",
@@ -10001,11 +10065,9 @@ def main():
          "R89③: 运行版本必须随实时身份一起取出"),
         # ④ 传**记录**版本而不是**运行**版本 ⇒ R89④ 报红。
         #    这是最隐蔽的一种退化：代码看起来仍然「比了版本」，但两边是同一个值 ⇒ 判据恒假。
-        #    ⚠️ 2026-10-08：锚点文件纠正为 `SealRenewalPolicy.swift` ——
-        #    那条 `runningVersion: metadata?.version,` 在规矩盒子里（policy 文件），
-        #    原来指向 `SigningCoordinator.swift` 是错的（那里没有这行 ⇒ 变异空转）。
+        #    运行版本从同一份后台 CMS/Mach-O 身份快照读取。
         ("Seal/Core/Renewal/SealRenewalPolicy.swift",
-         "            runningVersion: metadata?.version,\n",
+         "            runningVersion: installedIdentity?.version,\n",
          "            runningVersion: app.version,\n",
          "R89④: 调用点必须传**正在运行的版本**"),
         # ⑤ 把所有拒绝都算到这一条头上（归因不再精确）⇒ R89⑤ 报红。
@@ -10324,22 +10386,6 @@ def main():
          "private struct ImportGlassButtonStyle: ButtonStyle {\n"
          "    @Environment(\\.accessibilityReduceTransparency) private var reduceTransparency",
          "R113②:"),
-
-        # ── R115：363 通道不可用时提前标记污染 ──
-        # ① 公开 markTainted 被删（363 处调不到）⇒ R115① 报红。
-        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "    func markTainted() {\n        taint.markTainted()\n    }",
-         "    // markTainted removed",
-         "R115①:"),
-        # ② 363 不再标记（坏通道上硬撞超时）⇒ R115② 报红。
-        ("Seal/Core/Signing/SigningCoordinator.swift",
-         "                    if identity == .unavailable {\n"
-         "                        await ProfileOnlyProvisioningProfileInstaller.shared.markTainted()\n"
-         "                    }",
-         "                    if identity == .unavailable {\n"
-         "                        // no taint marking\n"
-         "                    }",
-         "R115②:"),
 
         # ── R116：预热失败不标记污染 ──
         # 预热又开始标记（竞态回来，350 误报）⇒ R116 报红。
@@ -11002,6 +11048,59 @@ def main():
          "return identifier + teamSuffix",
          "return identifier",
          "R124:"),
+        # ── R126：设备查询取消后不释放仍在运行的同步 FFI 闸门 ──
+        ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
+         "            onLateCompletion: { _ in\n"
+         "                await probeGate.finish(probeID: probeID, timedOut: true)\n"
+         "            },\n",
+         "            onLateCompletion: nil,\n",
+         "R126:"),
+        ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
+         "        guard activeProbeID == probeID else { return }",
+         "        guard activeProbeID != nil else { return }",
+         "R126:"),
+        ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
+         "onWorkNeverStarted: {\n                await probeGate.finish(probeID: probeID, timedOut: false)",
+         "onWorkNeverStarted: {\n                await probeGate.finish(probeID: probeID, timedOut: true)",
+         "R126:"),
+        # ── R127：超时原生调用后续队列不能无限持有续签批次租约 ──
+        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
+         "            guard operationLease.holdBusyUntilCompletion == false else {\n"
+         "                throw failure(\n"
+         "                    reason: \"上一项设备描述文件操作超时，底层调用仍未返回；本项未开始。\",\n"
+         "                    code: \"SEAL-PROFILE-357\",\n"
+         "                    recovery: \"等待设备通道恢复后重试；本次未开始的 App 可单独续签。\"\n"
+         "                )\n"
+         "            }\n",
+         "",
+         "R127:"),
+        # ── R128：启动自注册不得在 MainActor 同步解析 CMS / profile ──
+        ("Seal/Application/AppContainer.swift",
+         "await SelfAppMetadata.loadCurrentAsync()",
+         "SelfAppMetadata.current()",
+         "R128:"),
+        # ── R129：profile-only 预检清单不得与注入/读回争用设备会话 ──
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "        if useProfileOnlyRenewal {\n",
+         "        if useProfileOnlyRenewal {\n            _ = ProfileOnlyIdentityVerifier.verify(\n",
+         "R129:"),
+        # ── R130：父任务取消先于原生任务启动时，不得留下永久设备租约 ──
+        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
+         "                onWorkNeverStarted: { [weak self] in\n"
+         "                    await self?.nativeProfileOperationDidComplete()\n"
+         "                }\n",
+         "                onWorkNeverStarted: nil\n",
+         "R130:"),
+        # ── R131：安装结果确认必须由状态事件触发，不能每两秒重读 ──
+        ("Seal/Features/Settings/SigningCertificateSettingsView.swift",
+         'Text("检查安装结果")',
+         'Text("检查安装结果")\n                    .task(id: viewModel.selfManagement.state) {',
+         "R131:"),
+        # ── R132：较早的身份读取不得覆盖更新的检查结果 ──
+        ("Seal/Features/Settings/SettingsViewModel.swift",
+         "        guard selfManagementRefreshGeneration.accepts(generation) else { return }\n",
+         "",
+         "R132:"),
     ]
     # 变异检查每一遍都会把所有源文件**重新读一遍**：200+ 文件 × 90 多遍 ≈ 2 万次磁盘读。
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在
