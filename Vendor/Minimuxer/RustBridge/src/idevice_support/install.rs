@@ -12,7 +12,7 @@ use idevice::{
 use plist::{Dictionary, Value};
 use tokio::io::AsyncWriteExt;
 
-use crate::idevice_support::rsd::connect_to_rsd_services;
+use crate::idevice_support::rsd::{connect_to_rsd_services, with_rsd_service_timeout};
 
 /// AFC 暂存根目录（相对 AFC jail 根）。
 const STAGING_DIR: &str = "PublicStaging";
@@ -425,17 +425,22 @@ async fn issue_install_command(
 }
 
 pub async fn remove_app_rppairing(bundle_id: String) -> Result<(), IdeviceError> {
-    let mut inst_client = connect_to_rsd_services::<InstallationProxyClient>().await?;
-
-    inst_client.uninstall(bundle_id, None).await
+    with_rsd_service_timeout(async move {
+        let mut inst_client = connect_to_rsd_services::<InstallationProxyClient>().await?;
+        inst_client.uninstall(bundle_id, None).await
+    })
+    .await
 }
 
 pub async fn lookup_app_rppairing(bundle_id: String) -> Result<Option<String>, IdeviceError> {
-    let mut inst_client = connect_to_rsd_services::<InstallationProxyClient>().await?;
-    let apps = inst_client
-        .get_apps(None, Some(vec![bundle_id.clone()]))
-        .await?;
-    Ok(apps.contains_key(&bundle_id).then_some(bundle_id))
+    with_rsd_service_timeout(async move {
+        let mut inst_client = connect_to_rsd_services::<InstallationProxyClient>().await?;
+        let apps = inst_client
+            .get_apps(None, Some(vec![bundle_id.clone()]))
+            .await?;
+        Ok(apps.contains_key(&bundle_id).then_some(bundle_id))
+    })
+    .await
 }
 
 pub struct UserInstalledApplication {
@@ -449,31 +454,34 @@ pub struct UserInstalledApplication {
 /// Enumerates user-installed apps through InstallationProxy. Seal joins this list
 /// with device provisioning profiles before presenting an app as sideloaded.
 pub async fn list_user_apps_rppairing() -> Result<Vec<UserInstalledApplication>, IdeviceError> {
-    let mut client = connect_to_rsd_services::<InstallationProxyClient>().await?;
-    let apps = client.get_apps(Some("User"), None).await?;
-    Ok(apps
-        .into_iter()
-        .map(|(bundle_identifier, value)| {
-            let dictionary = value.as_dictionary();
-            let string = |key: &str| {
-                dictionary
-                    .and_then(|values| values.get(key))
-                    .and_then(plist::Value::as_string)
-                    .map(ToOwned::to_owned)
-            };
-            UserInstalledApplication {
-                bundle_identifier: bundle_identifier.clone(),
-                display_name: string("CFBundleDisplayName")
-                    .or_else(|| string("CFBundleName"))
-                    .unwrap_or_else(|| bundle_identifier.clone()),
-                short_version: string("CFBundleShortVersionString").unwrap_or_default(),
-                build_number: string("CFBundleVersion").unwrap_or_default(),
-                profile_validated: dictionary
-                    .and_then(|values| values.get("ProfileValidated"))
-                    .and_then(plist::Value::as_boolean),
-            }
-        })
-        .collect())
+    with_rsd_service_timeout(async {
+        let mut client = connect_to_rsd_services::<InstallationProxyClient>().await?;
+        let apps = client.get_apps(Some("User"), None).await?;
+        Ok(apps
+            .into_iter()
+            .map(|(bundle_identifier, value)| {
+                let dictionary = value.as_dictionary();
+                let string = |key: &str| {
+                    dictionary
+                        .and_then(|values| values.get(key))
+                        .and_then(plist::Value::as_string)
+                        .map(ToOwned::to_owned)
+                };
+                UserInstalledApplication {
+                    bundle_identifier: bundle_identifier.clone(),
+                    display_name: string("CFBundleDisplayName")
+                        .or_else(|| string("CFBundleName"))
+                        .unwrap_or_else(|| bundle_identifier.clone()),
+                    short_version: string("CFBundleShortVersionString").unwrap_or_default(),
+                    build_number: string("CFBundleVersion").unwrap_or_default(),
+                    profile_validated: dictionary
+                        .and_then(|values| values.get("ProfileValidated"))
+                        .and_then(plist::Value::as_boolean),
+                }
+            })
+            .collect())
+    })
+    .await
 }
 
 #[cfg(test)]

@@ -1,6 +1,9 @@
 import Foundation
 
 struct AppRecord: Codable, Equatable, Identifiable, Sendable {
+    static let deviceRecoveryWarning =
+        "此记录由设备端扫回重建，本机没有该应用的原始 IPA；需要重新签名时，请先导入该应用的 IPA。"
+
     let id: UUID
     let originalBundleIdentifier: String
     var mappedBundleIdentifier: String?
@@ -324,7 +327,22 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     /// 账号可能已被用户删除，因此签名归属证据不要求 accountID；设备扫描恢复的记录
     /// 没有实际证书序列号和签名设备标识，不能仅凭描述文件授权信息认作 Seal 签名。
     var isSealManagedRenewalCandidate: Bool {
-        isSeal || hasPersistedSealSigningEvidence
+        isSeal || hasPersistedSealSigningEvidence || hasRecoveredSealSigningEvidence
+    }
+
+    private var hasRecoveredSealSigningEvidence: Bool {
+        guard state == .installed,
+              needsIPAImport,
+              importWarnings.contains(Self.deviceRecoveryWarning),
+              let team = signingTeamID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              team.isEmpty == false,
+              let serial = certificateSerialNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
+              serial.isEmpty == false,
+              let bundleIdentifier = mappedBundleIdentifier?.lowercased() else {
+            return false
+        }
+        return installedAppMarkerVersion == SealInstalledAppMarker.version
+            || bundleIdentifier.hasSuffix(".\(team.lowercased())")
     }
 
     /// 已记录或用户明确选择的策略优先；默认共享，能力不兼容的扩展单独申请 profile。

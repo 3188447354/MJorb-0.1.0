@@ -4,30 +4,35 @@ use std::{fs, io, path::PathBuf};
 
 use idevice::{misagent::MisagentClient, IdeviceError};
 
-use crate::idevice_support::rsd::connect_to_rsd_services;
+use crate::idevice_support::rsd::{connect_to_rsd_services, with_rsd_service_timeout};
 
 /// Installs a provisioning profile on the device
 pub async fn install_provisioning_profile_rppairing(profile: &[u8]) -> Result<(), IdeviceError> {
     let profile = profile.to_vec();
-
-    let mut mis_client = connect_to_rsd_services::<MisagentClient>().await?;
-
-    mis_client.install(profile).await
+    with_rsd_service_timeout(async move {
+        let mut mis_client = connect_to_rsd_services::<MisagentClient>().await?;
+        mis_client.install(profile).await
+    })
+    .await
 }
 
 pub async fn remove_provisioning_profile_rppairing(id: String) -> Result<(), IdeviceError> {
-    let mut mis_client = connect_to_rsd_services::<MisagentClient>().await?;
-
-    mis_client.remove(&id).await
+    with_rsd_service_timeout(async move {
+        let mut mis_client = connect_to_rsd_services::<MisagentClient>().await?;
+        mis_client.remove(&id).await
+    })
+    .await
 }
 
 pub async fn dump_provisioning_profile_rppairing(docs_path: String) -> Result<(), IdeviceError> {
-    let mut mis_client = connect_to_rsd_services::<MisagentClient>().await?;
-
     let dump_dir = PathBuf::from(format!("{docs_path}/PROVISION"));
     fs::create_dir_all(&dump_dir).map_err(IdeviceError::Socket)?;
 
-    let profiles = mis_client.copy_all().await?;
+    let profiles = with_rsd_service_timeout(async {
+        let mut mis_client = connect_to_rsd_services::<MisagentClient>().await?;
+        mis_client.copy_all().await
+    })
+    .await?;
 
     for (i, profile) in profiles.iter().enumerate() {
         let file_name = match plist::from_bytes::<plist::Dictionary>(profile.as_slice()) {

@@ -1394,9 +1394,9 @@ def violations(load=read):
           and "Task.detached" not in verifier_source,
           "R25: 设备核验的同步 FFI 必须有界 —— 只 Task.detached 不够，阻塞本身仍然无界")
     check("onLateCompletion: { _ in" in verifier_source
-          and "await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)" in verifier_source
+          and "await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)" in verifier_source
           and "onWorkNeverStarted: {" in verifier_source,
-          "R25: 设备核验被取消后必须释放门闩并冷却，不能永久卡在查询中")
+          "R25: 设备核验的迟到原生调用必须释放安装代理自己的闸门")
     maintenance_probe = section(
         cleaner_source,
         "private static func probeInstalled(",
@@ -3271,27 +3271,49 @@ def violations(load=read):
     installed_refresh_policy = load("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift")
     installed_refresh_policy_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbePolicyTests.swift")
     check("static let timeoutSeconds: Double = 2" in installed_refresh_policy
-          and "static let timeoutCooldownSeconds: TimeInterval = 20" in installed_refresh_policy
           and "func refreshProbeFailsFastWithoutBorrowingInstallationBudget()" in installed_refresh_policy_tests,
-          "G: installed-page refresh must fail fast and cool down without shrinking install verification budgets")
+          "G: installed-page probes must have their own short timeout")
     installed_refresh_gate_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbeGateTests.swift")
     installed_refresh_gate = load("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift")
     native_device_call = load("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift")
     operation_coordinator = load("Seal/Application/OperationCoordinator.swift")
-    profile_installer = load("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift")
-    check("func cancelledProbeThatNeverStartedDoesNotEnterCooldown()" in installed_refresh_gate_tests
-          and "func foregroundDeviceOperationWaitsForProbeAndRecoveryCooldown()" in installed_refresh_gate_tests
-          and "waitingForegroundOperationCount" in installed_refresh_gate
-          and "guard waitingForegroundOperationCount == 0 else { return .coolingDown }" in installed_refresh_gate
-          and "func beginForeground(timeoutSeconds: TimeInterval = 30) async -> Availability" in installed_refresh_gate
-          and "waitForAvailability: Bool = false" in native_device_call
-          and "gate.beginForeground(timeoutSeconds: availabilityWaitTimeoutSeconds)" in native_device_call,
-          "G: foreground device transactions must wait through scan recovery cooldown and prevent new background scans from jumping ahead")
-    check("func acquireNativeDeviceSessionLease(waitTimeout: TimeInterval = 0) async -> Lease?" in operation_coordinator
-          and "lease = await beginWaiting(.scanningDeviceInventory, timeout: waitTimeout)" in operation_coordinator
-          and "waitTimeout: remainingWait" in native_device_call
-          and "prewarmProfileService(using: channel, waitForAvailability: false)" in profile_installer,
-          "G: foreground native device requests must wait for coordinator conflicts within the same bounded wait window")
+    operation_coordinator_tests = load("SealTests/ApplicationOperationCoordinatorTests.swift")
+    rust_rsd_timeout = section(
+        load("Vendor/Minimuxer/RustBridge/src/idevice_support/rsd.rs"),
+        "pub async fn with_rsd_service_timeout<",
+        "/// 保证缓存中存在一条与当前配对代次匹配的 RSD 连接。"
+    )
+    apps_view = load("Seal/Features/Apps/AppsViewModel.swift")
+    device_reconcile = section(
+        apps_view,
+        "private func reconcileInstalledAppsWithDevice(userInitiated:",
+        "private func markMissingOnDevice("
+    )
+    profile_summary_scan = section(
+        load("Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift"),
+        "private func profileSummaries()",
+        "private func userApplications()"
+    )
+    check("func inventoryReadsDoNotBlockMisagentProfileWrites()" in installed_refresh_gate_tests
+          and "func foregroundDeviceOperationWaitsForAnActiveNativeCall()" in installed_refresh_gate_tests
+          and "static let inventory = InstalledAppRefreshProbeGate()" in installed_refresh_gate
+          and "static let profiles = InstalledAppRefreshProbeGate()" in installed_refresh_gate
+          and "kind: .managingDeviceProfiles" in profile_summary_scan
+          and "if inventoryWork.contains(activeKind), inventoryWork.contains(requestedKind) {\n            return true\n        }" in operation_coordinator
+          and "if profileWork.contains(activeKind), profileWork.contains(requestedKind) {\n            return true\n        }" in operation_coordinator
+          and "timeout: TimeInterval? = nil" in operation_coordinator
+          and "func foregroundTransactionWaitsUntilConflictingOperationEnds()" in operation_coordinator_tests
+          and "tokio::time::timeout" in rust_rsd_timeout
+          and "invalidate_rsd_connection()" not in rust_rsd_timeout
+          and "func profileMaintenanceDoesNotBlockForegroundDeviceOrAccountWork()" in operation_coordinator_tests
+          and "func beginForeground() async -> Availability" in installed_refresh_gate
+          and "availability = await gate.beginForeground()" in native_device_call
+          and "availability = await gate.begin()" in native_device_call
+          and "guard operationCoordinator?.hasDeviceSessionConflict" not in device_reconcile
+          and device_reconcile.count("hasDeviceSessionConflict") == 1
+          and device_reconcile.index("hasDeviceSessionConflict") > device_reconcile.index("var missingOnDevice")
+          and device_reconcile.index("hasDeviceSessionConflict") < device_reconcile.index("removeDuplicateInstalledRecords"),
+          "G: device calls queue only where they share a service; foreground requests do not expire after an arbitrary wait")
     certificate_root_source = strip_comments(load("Seal/Features/Settings/CertificatesRootView.swift"))
     apple_inventory_refresh_tests = load("SealTests/Settings/ApplePortalInventoryRefreshTests.swift")
     check("await viewModel.refreshApplePortalInventories()" in certificate_root_source
@@ -3880,7 +3902,7 @@ def violations(load=read):
     )
     check("BlockingCall.bounded(" in profile_native_call
           and "cancelsWorkOnTimeout: false" in profile_native_call
-          and "await gate.finish(probeID: probeID, timedOut: true)" in profile_native_call
+          and "await gate.finish(probeID: probeID)" in profile_native_call
           and "releaseDeviceSessionLeaseAfterNativeCall" in profile_native_call,
           "Cleanup: shared device native-call gate must retain its lease until non-cancellable FFI returns")
     settings_vm = load("Seal/Features/Settings/SettingsViewModel.swift")
@@ -3920,7 +3942,7 @@ def violations(load=read):
     profile_only_readback = section(
         profile_only_installer,
         "func installAndVerify(",
-        "private func ensureProfileService("
+        "private func inject("
     )
     check("ProfileOnlyIdentityVerifier.verify(" not in coord
           and "DeviceProfileInspector.containsProfile(" not in coord
@@ -3936,7 +3958,7 @@ def violations(load=read):
     check("onNativeCompletion:" in profile_only_readback
           and "onNativeCompletion:" in profile_only_injection
           and "onWorkNeverStarted: {\n"
-              "                await gate.finish(probeID: probeID, timedOut: false)\n"
+              "                await gate.finish(probeID: probeID)\n"
               "                await releaseOperationLease()\n"
               "                await onNativeCompletion()\n"
               "            }" in profile_native_call,
@@ -5635,13 +5657,24 @@ def violations(load=read):
         "private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {",
         "private func ",
     )
-    check("operationCoordinator?.hasDeviceSessionConflict != true" in r84_reconcile
-          and "operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true" in r84_reconcile
-          and "SEAL-INSTALL-708" in r84_vm,
-          "R84⑦: 已安装页设备核验必须与前台操作**互斥** ✗ —— 它走同步 FFI、"
-          "和签名 / 安装 / 续签共用同一条设备会话；构建 46 三次 `SEAL-INSTALL-707`"
-          "（01:25:01 / 01:26:40 / 01:29:11）全落在续签与自替换进行中，"
-          "既抢不到会话又把失败弹窗推给用户")
+    operation_coordinator_source = load("Seal/Application/OperationCoordinator.swift")
+    operation_coordinator_tests = load("SealTests/ApplicationOperationCoordinatorTests.swift")
+    device_reconcile_conflict_at = r84_reconcile.find(
+        "if operationCoordinator?.hasDeviceSessionConflict == true"
+    )
+    device_reconcile_mutation_at = r84_reconcile.find("removeDuplicateInstalledRecords")
+    conflict_property = section(
+        operation_coordinator_source,
+        "var hasDeviceSessionConflict: Bool {",
+        "func beginWaiting("
+    )
+    check(device_reconcile_conflict_at > r84_reconcile.find("var missingOnDevice")
+          and device_reconcile_conflict_at < device_reconcile_mutation_at
+          and "hasConflict(for: .scanningDeviceInventory)" not in r84_reconcile
+          and "case .signing, .installing, .renewing:" in conflict_property
+          and "case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles," in conflict_property
+          and "func pairingAndProfileMaintenanceDoNotHideLocalInstalledApps()" in operation_coordinator_tests,
+          "R84⑦: list reconciliation may read during other work; only app-changing device writes defer record mutations")
     check("func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()" in r84_policy_tests
           and "teamIdentifier: \"\"" in section_or_empty(
               r84_policy_tests,
@@ -6515,24 +6548,6 @@ def violations(load=read):
     # 旧的 363 前置枚举已移除：它只写诊断，超时后底层 FFI 仍运行，会和注入读回竞争。
     r115_installer_code = strip_comments(load("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift"))
 
-    # ── R116：2026-10-04 预热失败不标记污染 ──
-    #
-    # 来源：真机日志 —— 363 标记污染后、`renewProfilesOnly` 消费并重置通道，
-    # 但并行的预热任务在坏通道上失败又重新标记 ⇒ `installAndVerify` 误报
-    # `SEAL-PROFILE-350`（调用方明明已重置）。预热只是后台优化，
-    # 真正的注入失败仍由 `installAndVerify` 自己标记污染。
-    check("markTaintOnFailure: Bool = true" in r115_installer_code
-          and "markTaintOnFailure: false," in section(
-              r115_installer_code,
-              "func prewarmProfileService(",
-              "func installAndVerify(",
-          )
-          and "if markTaintOnFailure," in r115_installer_code,
-          "R116: 预热失败不得标记污染 ✗ —— "
-          "否则与污染消费竞态，`installAndVerify` 误报 `SEAL-PROFILE-350`；"
-          "注意 `ensureProfileService` 的默认参数必须保持 `true`，"
-          "真正的注入路径仍要标记")
-
     # ── R117：2026-10-04 并行续签 ──
     #
     # 用户要求快捷指令与 App 内一样快。串行时 2 个 App 要 16-20 秒，
@@ -6585,21 +6600,21 @@ def violations(load=read):
           "任何不确定都必须返回 false 走串行殿后")
 
 
-    # 超时后的原生 FFI 仍可能在后台运行。等待者必须在保留设备安全边界的同时失败返回，
-    # 不能无限占着前台续签事务租约，把整批按钮一起锁住。
+    # 同一个 misagent 原生调用仍在运行时，后继 profile 写入等它返回；
+    # 该队列只保护同一个服务，不得把安装清单、签名或无关业务串成全局锁。
     profile_wait = section(
         r115_installer_code,
         "func installAndVerify(",
-        "private func ensureProfileService("
+        "private func inject("
     )
     check("while isBusy {" in profile_wait
-          and "operationLease.holdBusyUntilCompletion == false" in profile_wait
-          and 'code: "SEAL-PROFILE-357"' in profile_wait,
-          "R127: queued profile renewals must fail promptly after a native timeout, not hold the batch lease forever")
+          and "try Task.checkCancellation()" in profile_wait
+          and 'code: "SEAL-PROFILE-357"' not in profile_wait,
+          "R127: only an active call to the same misagent service may queue a profile write")
     profile_log_index = load("docs/qa/log-code-index.md")
     check("SEAL-PROFILE-357" in profile_log_index
           and '"code": "SEAL-PROFILE-357"' in load("docs/error-catalog/profile.json"),
-          "R127: the queued-renewal failure must be documented in both developer and offline help catalogs")
+          "R127: preserve help text for legacy logs even though current profile writes no longer emit this code")
 
     device_verifier = strip_comments(load("Seal/Features/Apps/InstalledAppDeviceVerifier.swift"))
     probe_body = section(
@@ -6612,18 +6627,18 @@ def violations(load=read):
           and "cancelsWorkOnTimeout: false" in probe_body
           and re.search(
               r"onLateCompletion:\s*\{\s*_\s*in\s+"
-              r"await InstalledAppRefreshProbeGate\.shared\.finish\(probeID: probeID, timedOut: true\)\s+"
+              r"await InstalledAppRefreshProbeGate\.inventory\.finish\(probeID: probeID\)\s+"
               r"await InstalledAppInventoryOperationLease\.end\(operationLease, using: operationCoordinator\)",
               probe_body
           ) is not None
           and "onWorkNeverStarted:" in probe_body
-          and "onWorkNeverStarted: {\n                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)" in probe_body
+          and "onWorkNeverStarted: {\n                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)" in probe_body
           and "InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)" in probe_body
           and "withTaskCancellationHandler" not in probe_body
           and "guard activeProbeID == probeID else { return }" in probe_gate,
           "R126: a cancelled device probe must retain its gate until native completion and ignore stale completions")
     device_probe_tests = load("SealTests/InstalledApps/InstalledAppRefreshProbeGateTests.swift")
-    check("lateProbeCompletionKeepsGateBusyUntilNativeCallEnds" in device_probe_tests
+    check("timedOutWaiterKeepsGateUntilNativeCallActuallyReturns" in device_probe_tests
           and "staleCompletionCannotReleaseANewerProbe" in device_probe_tests,
           "R126: device probe cancellation and stale completion behavior need regression coverage")
 
@@ -6837,11 +6852,6 @@ def violations(load=read):
         "struct ProfileOnlyTaintGate {",
         "actor ProfileOnlyProvisioningProfileInstaller {"
     )
-    r93_actor_body = section_or_empty(
-        r93_installer,
-        "func installAndVerify(",
-        "func prewarmProfileService("
-    )
     r93_policy_set = section_or_empty(
         r92_policy,
         "static let profileOperationTimeoutCodes: Set<String> = [",
@@ -6870,7 +6880,7 @@ def violations(load=read):
     )
     check(r93_heal_block in r93_installer
           and r93_installer.index(r93_heal_block)
-              < r93_installer.index("try await ensureProfileService(using: channel)")
+              < r93_installer.index("for material in materials {")
           and "Minimuxer.reset()" not in r93_installer,
           "R93②: 「消费 + 重置 + 注入」必须在 actor 串行临界区里原子完成 ✗ —— "
           "消费漏了 ⇒ 一次超时毒掉后续全部续签；"
@@ -9924,12 +9934,22 @@ def main():
          "            )\n"
          "            // 付费团队或 Apple 侧规则变化时，以明确 3022 为触发点执行同一轮换链路。\n",
          "R84⑥: 证书轮换**必须**能撤到"),
-        # ⑦ 去掉「与前台操作互斥」的闸门 ⇒ R84⑦ 报红（707 噪音与抢会话回来）。
+        # ⑦ 把仅推迟“缺失记录写回”的边界删掉，或让 profile 维护重新阻止本机清单同步 ⇒ R84⑦ 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "        guard operationCoordinator?.hasDeviceSessionConflict != true,\n"
-         "              operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true else {\n",
-         "        guard true else {\n",
-         "R84⑦: 已安装页设备核验必须与前台操作**互斥**"),
+         "            if operationCoordinator?.hasDeviceSessionConflict == true {\n"
+         "                installedAppRefreshPendingAfterOperation = true\n"
+         "                return false\n"
+         "            }\n",
+         "            // 允许在前台设备写入期间直接删除设备缺失记录。\n",
+         "R84⑦: only app-changing device writes defer record mutations"),
+        ("Seal/Application/OperationCoordinator.swift",
+         "case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
+         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:",
+         "case .managingDeviceProfiles:\n"
+         "                return true\n"
+         "            case .resettingPairing, .scanningDeviceInventory,\n"
+         "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:",
+         "R84⑦: only app-changing device writes defer record mutations"),
         # ⑧ 把「实时身份放行」那条单测改名 ⇒ R84⑧ 报红（不变量没人守）。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",
@@ -10476,12 +10496,6 @@ def main():
          "    @Environment(\\.accessibilityReduceTransparency) private var reduceTransparency",
          "R113②:"),
 
-        # ── R116：预热失败不标记污染 ──
-        # 预热又开始标记（竞态回来，350 误报）⇒ R116 报红。
-        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "            markTaintOnFailure: false,",
-         "            markTaintOnFailure: true,",
-         "R116:"),
         # R113③：label 又被加回 44x44 frame（玻璃撑大）⇒ R113③ 报红。
         ("Seal/Features/Apps/AppsRootView.swift",
          '                Image(systemName: "plus")\n'
@@ -11088,21 +11102,30 @@ def main():
          "try container.encode(deviceName, forKey: .deviceName)",
          "try container.encode(deviceName, forKey: .deviceName)\n        try container.encode(Data(repeating: 0, count: 8_000), forKey: .sealIconPNG)",
          "R119④:"),
-        ("Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift",
-         "guard waitingForegroundOperationCount == 0 else { return .coolingDown }",
-         "return beginImmediately()",
-         "G:"),
-        ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
-         "availability = await gate.beginForeground(timeoutSeconds: availabilityWaitTimeoutSeconds)",
-         "availability = await gate.begin()",
+        ("Seal/Application/OperationCoordinator.swift",
+         "if inventoryWork.contains(activeKind), inventoryWork.contains(requestedKind) {\n            return true\n        }",
+         "if inventoryWork.contains(activeKind) || inventoryWork.contains(requestedKind) {\n            return true\n        }",
          "G:"),
         ("Seal/Application/OperationCoordinator.swift",
-         "lease = await beginWaiting(.scanningDeviceInventory, timeout: waitTimeout)",
-         "lease = nil",
+         "timeout: TimeInterval? = nil",
+         "timeout: TimeInterval? = 30",
          "G:"),
-        ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "prewarmProfileService(using: channel, waitForAvailability: false)",
-         "prewarmProfileService(using: channel, waitForAvailability: true)",
+        ("Vendor/Minimuxer/RustBridge/src/idevice_support/rsd.rs",
+         "        Err(_) => {\n            Err(IdeviceError::Socket(io::Error::new(",
+         "        Err(_) => {\n            invalidate_rsd_connection();\n            Err(IdeviceError::Socket(io::Error::new(",
+         "G:"),
+        ("Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift",
+         "kind: .managingDeviceProfiles",
+         "kind: .scanningDeviceInventory",
+         "G:"),
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "        let installedRecords = installedApps\n",
+         "        guard operationCoordinator?.hasDeviceSessionConflict != true else { return false }\n"
+         "        let installedRecords = installedApps\n",
+         "G:"),
+        ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
+         "availability = await gate.beginForeground()",
+         "availability = await gate.begin()",
          "G:"),
         ("project.yml",
          "- path: SealLiveActivity/Resources/SealBrandIcon.png",
@@ -11160,7 +11183,7 @@ def main():
         # ── R126：设备查询取消后不释放仍在运行的同步 FFI 闸门 ──
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
          "            onLateCompletion: { _ in\n"
-         "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)\n"
+         "                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)\n"
          "                await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)\n"
          "            },\n",
          "            onLateCompletion: { _ in\n"
@@ -11173,20 +11196,14 @@ def main():
          "R126:"),
         ("Seal/Features/Apps/InstalledAppDeviceVerifier.swift",
          "onWorkNeverStarted: {\n"
-         "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)",
+         "                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)",
          "onWorkNeverStarted: {\n"
-         "                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)",
+          "                return",
          "R126:"),
-        # ── R127：超时原生调用后续队列不能无限持有续签批次租约 ──
+        # ── R127：只串行同一 misagent 服务的描述文件调用 ──
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "            guard operationLease.holdBusyUntilCompletion == false else {\n"
-         "                throw failure(\n"
-         "                    reason: \"上一项设备描述文件操作超时，底层调用仍未返回；本项未开始。\",\n"
-         "                    code: \"SEAL-PROFILE-357\",\n"
-         "                    recovery: \"等待设备通道恢复后重试；本次未开始的 App 可单独续签。\"\n"
-         "                )\n"
-         "            }\n",
-         "",
+         "        while isBusy {",
+         "        if isBusy {",
          "R127:"),
         # ── R128：启动自注册不得在 MainActor 同步解析 CMS / profile ──
         ("Seal/Application/AppContainer.swift",
@@ -11201,12 +11218,12 @@ def main():
         # ── R130：父任务取消先于原生任务启动时，不得留下永久设备租约 ──
         ("Seal/Infrastructure/Installation/DeviceProfileCleaner.swift",
          "            onWorkNeverStarted: {\n"
-         "                await gate.finish(probeID: probeID, timedOut: false)\n"
+         "                await gate.finish(probeID: probeID)\n"
          "                await releaseOperationLease()\n"
          "                await onNativeCompletion()\n"
          "            },\n",
          "            onWorkNeverStarted: {\n"
-         "                await gate.finish(probeID: probeID, timedOut: false)\n"
+         "                await gate.finish(probeID: probeID)\n"
          "                await releaseOperationLease()\n"
          "            },\n",
          "R130:"),

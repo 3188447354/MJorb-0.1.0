@@ -103,6 +103,167 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
+    func installedAppInventoryDoesNotDependOnProfileDump() throws {
+        let bundleIdentifier = "com.example.demo.TEAM123456"
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(bundleIdentifier)],
+            profiles: nil,
+            context: makeContext(teams: ["TEAM123456"])
+        )
+
+        let draft = try #require(drafts.first)
+        #expect(draft.bundleIdentifier == bundleIdentifier)
+        #expect(draft.originalBundleIdentifier == "com.example.demo")
+        #expect(draft.teamIdentifier == "TEAM123456")
+        #expect(draft.profileUUID == nil)
+        #expect(draft.profileExpirationDate == nil)
+    }
+
+    @Test
+    func recoversKnownTeamMappedAppFromLocalInventoryWithoutProfileFlag() throws {
+        let bundleIdentifier = "com.example.demo.TEAM123456"
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(bundleIdentifier, validated: false)],
+            profiles: nil,
+            context: makeContext(teams: ["TEAM123456"])
+        )
+
+        let draft = try #require(drafts.first)
+        #expect(draft.originalBundleIdentifier == "com.example.demo")
+        #expect(draft.teamIdentifier == "TEAM123456")
+    }
+
+    @Test
+    func SealMarkerRecoversAnUnmappedBundleIdentifierFromLocalInventory() throws {
+        let app = DeviceInstalledApplicationSummary(
+            bundleIdentifier: "org.example.folia",
+            displayName: "Folia",
+            shortVersion: "2.0",
+            buildNumber: "20",
+            profileValidated: nil,
+            teamIdentifier: "TEAM123456",
+            sealManagedMarkerVersion: SealInstalledAppMarker.version
+        )
+        let draft = try #require(InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [app],
+            profiles: nil,
+            context: makeContext(teams: ["TEAM123456"])
+        ).first)
+
+        #expect(draft.bundleIdentifier == "org.example.folia")
+        #expect(draft.originalBundleIdentifier == "org.example.folia")
+        #expect(draft.teamIdentifier == "TEAM123456")
+        let record = InstalledRecordRecoveryPolicy.makeRecord(
+            from: draft,
+            accountID: nil,
+            certificateSerialNumber: "ABC123"
+        )
+        #expect(record.installedAppMarkerVersion == SealInstalledAppMarker.version)
+        #expect(record.isSealManagedRenewalCandidate)
+    }
+
+    @Test
+    func localSigningTeamRecoversArbitraryBundleIdentifierWithoutProfileDump() throws {
+        let bundleIdentifier = "org.example.folia"
+        let application = DeviceInstalledApplicationSummary(
+            bundleIdentifier: bundleIdentifier,
+            displayName: "Folia",
+            shortVersion: "2.0",
+            buildNumber: "20",
+            profileValidated: nil,
+            teamIdentifier: "TEAM123456"
+        )
+        let draft = try #require(InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [application],
+            profiles: nil,
+            context: makeContext(teams: ["TEAM123456"])
+        ).first)
+
+        #expect(draft.bundleIdentifier == bundleIdentifier)
+        #expect(draft.teamIdentifier == "TEAM123456")
+    }
+
+    @Test
+    func localAndPairedInventoriesMergeWithoutLosingIdentityOrProfileState() throws {
+        let local = DeviceInstalledApplicationSummary(
+            bundleIdentifier: "org.example.folia",
+            displayName: "Folia",
+            shortVersion: "2.0",
+            buildNumber: "20",
+            profileValidated: nil,
+            teamIdentifier: "TEAM123456"
+        )
+        let paired = DeviceInstalledApplicationSummary(
+            bundleIdentifier: "org.example.folia",
+            displayName: "Folia Player",
+            shortVersion: "2.1",
+            buildNumber: "21",
+            profileValidated: true
+        )
+        let pairedOnly = DeviceInstalledApplicationSummary(
+            bundleIdentifier: "com.example.second",
+            displayName: "Second App",
+            shortVersion: "1.0",
+            buildNumber: "10",
+            profileValidated: true
+        )
+
+        let merged = try #require(InstalledRecordRecoveryPolicy.mergeInstalledApplications(
+            local: [local],
+            paired: [paired, pairedOnly]
+        ))
+
+        #expect(merged.count == 2)
+        #expect(merged[0].displayName == "Folia Player")
+        #expect(merged[0].teamIdentifier == "TEAM123456")
+        #expect(merged[0].profileValidated == true)
+        #expect(merged[0].shortVersion == "2.1")
+    }
+
+    @Test
+    func recoveredRecordCarriesProfileEntitlementsForRenewalWithoutIPA() throws {
+        let bundleIdentifier = "org.example.folia.TEAM123456"
+        let binding = ProvisioningProfileBinding(
+            bundleIdentifier: bundleIdentifier,
+            profileUUID: "PROFILE-1",
+            profileName: "Folia Profile",
+            teamIdentifier: "TEAM123456",
+            creationDate: Date(timeIntervalSince1970: 1_700_000_000),
+            expirationDate: Date(timeIntervalSince1970: 1_700_600_000),
+            certificateSerialNumbers: ["ABC123"],
+            deviceIdentifiers: ["DEVICE12345"],
+            entitlements: [
+                "application-identifier": .string("TEAM123456.org.example.folia.TEAM123456"),
+                "get-task-allow": .bool(true)
+            ]
+        )
+        let profile = DeviceProvisioningProfileSummary(
+            bundleIdentifier: bundleIdentifier,
+            teamIdentifier: "TEAM123456",
+            uuid: binding.profileUUID,
+            name: binding.profileName,
+            creationDate: binding.creationDate,
+            expirationDate: binding.expirationDate,
+            binding: binding
+        )
+        let draft = try #require(InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(bundleIdentifier)],
+            profiles: [profile],
+            context: makeContext(teams: ["TEAM123456"])
+        ).first)
+        let record = InstalledRecordRecoveryPolicy.makeRecord(
+            from: draft,
+            accountID: UUID(),
+            certificateSerialNumber: binding.certificateSerialNumbers.first
+        )
+
+        #expect(record.signingTargets.count == 1)
+        #expect(record.signingTargets.first?.entitlements == binding.entitlements)
+        #expect(ProfileOnlyRenewalPolicy.evaluate(app: record)
+                == .eligible(targetBundleIdentifiers: [bundleIdentifier]))
+    }
+
+    @Test
     func restoresOriginalBundleIdentifierFromSealMappedIDUsingKnownAccountTeam() throws {
         let mappedBundleIdentifier = "app.folia.major.seal.TEAM123456"
         let drafts = InstalledRecordRecoveryPolicy.drafts(
@@ -156,6 +317,32 @@ struct InstalledRecordRecoveryPolicyTests {
             profiles: [],
             context: context
         ).isEmpty)
+    }
+
+    @Test
+    func trustedMatchingProfileRecoversAppWithoutProfileValidatedFlag() throws {
+        let bundleIdentifier = "com.example.demo.TEAM123456"
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(bundleIdentifier, validated: false)],
+            profiles: [makeProfile(bundleID: bundleIdentifier, team: "TEAM123456")],
+            context: makeContext(teams: ["TEAM123456"])
+        )
+
+        let draft = try #require(drafts.first)
+        #expect(draft.bundleIdentifier == bundleIdentifier)
+        #expect(draft.teamIdentifier == "TEAM123456")
+    }
+
+    @Test
+    func unvalidatedAppWithForeignProfileIsNotRecovered() {
+        let bundleIdentifier = "com.example.demo.OTHER12345"
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: [makeInstalledApp(bundleIdentifier, validated: false)],
+            profiles: [makeProfile(bundleID: bundleIdentifier, team: "OTHER12345")],
+            context: makeContext(teams: ["TEAM123456"])
+        )
+
+        #expect(drafts.isEmpty)
     }
 
     @Test

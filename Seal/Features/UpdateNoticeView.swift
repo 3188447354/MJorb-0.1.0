@@ -197,10 +197,22 @@ struct UpdateNoticeView: View {
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.top, 8)
-            ProgressView(value: progress)
-                .progressViewStyle(.linear)
-                .tint(Color.sealAccent)
+            if received > 0, let progress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(Color.sealAccent)
+                    .padding(.top, 14)
+            } else {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color.sealAccent)
+                    Text("正在连接更新源")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.sealTextSecondary)
+                }
                 .padding(.top, 14)
+            }
         }
         .padding(.top, 12)
     }
@@ -265,8 +277,10 @@ struct UpdateNoticeView: View {
 
     private func downloadDetail(received: Int64, total: Int64?) -> String {
         guard received > 0 else {
-            guard let total, total > 0 else { return "正在连接更新服务" }
-            return "已下载 0 B / \(total.formatted(.byteCount(style: .file))) · 0%"
+            guard let total, total > 0 else {
+                return "正在连接更新源，收到数据后显示下载进度"
+            }
+            return "正在连接更新源 · 安装包 \(total.formatted(.byteCount(style: .file)))"
         }
         let receivedText = received.formatted(.byteCount(style: .file))
         guard let total, total > 0,
@@ -295,7 +309,13 @@ struct UpdateNoticeView: View {
                         expectedSize: notice.ipaDownloadSize,
                         onProgress: { @MainActor received, total in
                             guard downloadGeneration == generation else { return }
-                            phase = .downloading(received, total)
+                            let previousBytes: Int64
+                            if case .downloading(let previous, _) = phase {
+                                previousBytes = previous
+                            } else {
+                                previousBytes = 0
+                            }
+                            phase = .downloading(max(received, previousBytes), total)
                         }
                     )
             } catch is CancellationError {

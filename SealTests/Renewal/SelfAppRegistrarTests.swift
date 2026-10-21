@@ -532,6 +532,52 @@ struct SelfAppRegistrarTests {
     }
 
     @Test
+    func runningUpdatedSealClearsStaleReplacementLinkAtLaunch() async throws {
+        let fixture = try makeSealFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let predecessorID = UUID()
+        var pendingUpdate = makeSealRecord(
+            fixture,
+            expiry: Date(timeIntervalSince1970: 1_750_000_000),
+            profileUUID: "UPDATED-PROFILE",
+            profileName: "Seal"
+        )
+        pendingUpdate.mappedBundleIdentifier = "com.mjorb.seal"
+        pendingUpdate.state = .signed
+        pendingUpdate.hasPendingSelfUpdateSource = true
+        pendingUpdate.pendingUpdateSourceFingerprint = "installed-update"
+        pendingUpdate.replacesInstalledAppID = predecessorID
+        try await fixture.appStore.save(pendingUpdate)
+
+        let registrar = makeRegistrar(
+            fixture,
+            metadata: SelfAppMetadata(
+                bundleURL: fixture.currentBundle,
+                bundleIdentifier: "com.mjorb.seal",
+                originalBundleIdentifier: "com.mjorb.seal",
+                name: "Seal",
+                version: "1.0",
+                buildNumber: "1",
+                iconData: nil,
+                expirationDate: Date(timeIntervalSince1970: 1_750_000_000),
+                signingTeamIdentifier: nil,
+                signingApplicationIdentifier: nil
+            )
+        )
+
+        try await registrar.ensureRegistered()
+
+        let records = try await fixture.appStore.fetchAll()
+        let installed = try #require(records.first)
+        #expect(records.count == 1)
+        #expect(installed.belongsInInstalledList)
+        #expect(installed.belongsInUnsignedList == false)
+        #expect(installed.replacesInstalledAppID == nil)
+        #expect(installed.pendingUpdateSourceFingerprint == nil)
+        #expect(installed.installedFingerprint == "installed-update")
+    }
+
+    @Test
     func sameVersionLaunchDoesNotReplaceRenewedExtensionProfileWithEmbeddedOldProfile() async throws {
         let fixture = try makeSealFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

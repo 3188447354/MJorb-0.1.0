@@ -8,8 +8,11 @@ use idevice::{
 use log::{error, info, warn};
 
 use std::{
+    future::Future,
+    io,
     net::{Ipv4Addr, SocketAddrV4},
     sync::{Mutex, MutexGuard, OnceLock},
+    time::Duration,
 };
 
 type RsdAdapter = idevice::tcp::handle::AdapterHandle;
@@ -61,8 +64,27 @@ fn connection_state() -> &'static Mutex<Option<CachedRsdConnection>> {
 /// 后者覆盖前者，被丢弃的那条既不关闭也不可达：泄漏的连接 + 设备端 RSD 状态混乱。
 static RSD_CREATION_GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 
+const RSD_SERVICE_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
 fn creation_gate() -> &'static tokio::sync::Mutex<()> {
     RSD_CREATION_GATE.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Bound cancellable RemotePairing service requests before they cross the synchronous Swift FFI.
+/// A timed-out request owns its service socket; keep the shared RSD transport cached so this
+/// service timeout does not reset unrelated work that already opened another service socket.
+pub async fn with_rsd_service_timeout<T>(
+    operation: impl Future<Output = Result<T, IdeviceError>>,
+) -> Result<T, IdeviceError> {
+    match tokio::time::timeout(RSD_SERVICE_REQUEST_TIMEOUT, operation).await {
+        Ok(result) => result,
+        Err(_) => {
+            Err(IdeviceError::Socket(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "RemotePairing service request timed out",
+            )))
+        }
+    }
 }
 
 /// 保证缓存中存在一条与当前配对代次匹配的 RSD 连接。

@@ -11,52 +11,6 @@ import Foundation
 @preconcurrency import Minimuxer
 
 struct DeviceProfileInspector: Sendable {
-    enum ProfileServiceProbeOutcome: Sendable {
-        case ready
-        case failed
-        case busy
-        /// `BlockingCall` 超时并不表示 Rust FFI 已停止；调用方必须走污染闸门，
-        /// 不能在同一传输上立即发起第二次 misagent 调用。
-        case timedOut
-    }
-
-    /// 只验证 misagent 的 profile 服务可以完成 `copy_all`，不解析、判断或改动任何 profile。
-    ///
-    /// RemotePairing 下的 `dumpProfiles` 与 `installProvisioningProfile` 都通过 Rust 的
-    /// `connect_to_rsd_services::<MisagentClient>()`。因此这里是实际写入服务的无副作用预热，
-    /// 而不是仅凭 UDID/TCP 推断通道可用。
-    static func probeProfileService(
-        using operationCoordinator: OperationCoordinator? = nil,
-        waitForAvailability: Bool = true,
-        onLateCompletion: @escaping @Sendable () async -> Void = {}
-    ) async -> ProfileServiceProbeOutcome {
-        let workingDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("seal-profile-probe-\(UUID().uuidString)", isDirectory: true)
-        let outcome = await DeviceProfileNativeCall.perform(
-            operationCoordinator: operationCoordinator,
-            seconds: 8,
-            waitForAvailability: waitForAvailability,
-            onNativeCompletion: onLateCompletion
-        ) {
-            defer { try? FileManager.default.removeItem(at: workingDir) }
-            _ = try Provision.dumpProfiles(docsPath: workingDir.path)
-        }
-        switch outcome {
-        case .completed(let result):
-            do {
-                try result.get()
-                return .ready
-            } catch {
-                return .failed
-            }
-        case .unavailable:
-            return .busy
-        case .nativeCallMayStillBeRunning:
-            // 临时目录由仍在运行的 worker 拥有，结束时在 defer 中清理。
-            return .timedOut
-        }
-    }
-
     /// 批量核验：一次 dump + 全量 CMS 解析，核验全部 bindings。
     /// 按输入顺序返回每个 binding 的核验结果（`nil` = dump 不可用，`false` = 枚举成功但未找到）。
     /// 供 `installAndVerify` 一次注入全部后统一核验，避免每份 profile 各做一次秒级 dump。

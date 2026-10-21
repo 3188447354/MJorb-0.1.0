@@ -332,7 +332,6 @@ final class SettingsViewModel: ObservableObject {
     }
 
     func scanInstalledAppBundleIdentifiers(for candidates: [AppRecord]) async -> Set<String>? {
-        guard operationCoordinator?.hasDeviceSessionConflict != true else { return nil }
         let potentialInstalledApps = candidates.filter { $0.belongsInInstalledList && $0.isSeal == false }
         if potentialInstalledApps.allSatisfy({
             $0.installedAppMarkerVersion == SealInstalledAppMarker.version
@@ -348,8 +347,7 @@ final class SettingsViewModel: ObservableObject {
 
         if let installedAppScanner,
            let controlBundleIdentifier = Bundle.main.bundleIdentifier,
-           let applications = await installedAppScanner.scanUserApplications(),
-           operationCoordinator?.hasDeviceSessionConflict != true {
+           let applications = await installedAppScanner.scanUserApplications() {
             let bundleIdentifiers = Set(applications.compactMap {
                 InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
             })

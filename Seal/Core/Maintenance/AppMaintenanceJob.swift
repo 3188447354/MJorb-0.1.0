@@ -149,6 +149,41 @@ final class AppMaintenanceJob {
         }
     }
 
+    /// Local LaunchServices recovery has no device or Apple-network dependency. Run it beside
+    /// unrelated foreground work so a missing database record never hides an installed app.
+    func restoreLocalRecords() async -> RecordRecoveryAttempt {
+        await restoreInstalledApps(localInventoryOnly: true)
+    }
+
+    /// Device inventory recovery is independent of local imports and account work. The scanner
+    /// itself defers only when an active operation owns the same device service.
+    func restoreInstalledApps() async -> RecordRecoveryAttempt {
+        await restoreInstalledApps(localInventoryOnly: false)
+    }
+
+    private func restoreInstalledApps(localInventoryOnly: Bool) async -> RecordRecoveryAttempt {
+        guard hasActiveWork == false else { return .skipped }
+        hasActiveWork = true
+        defer {
+            hasActiveWork = false
+            onWorkEnded?()
+        }
+        guard let recovery else { return .completed(changed: false) }
+        let summary = await recovery.restoreInstalledApps(localInventoryOnly: localInventoryOnly)
+        if summary.shouldLog {
+            try? await logStore?.append(
+                category: .system,
+                level: summary.stage.hasPrefix("failed") ? .warning : .info,
+                message: summary.logMessage,
+                code: "SEAL-RECOVER-001"
+            )
+        }
+        if summary.stage.hasPrefix("skipped-") {
+            return .unavailable
+        }
+        return .completed(changed: summary.recovered > 0 || summary.iconsUpdated > 0)
+    }
+
     /// 非关键路径：孤儿文件清理 + 设备端旧描述文件清理。
     ///
     /// 不阻塞首屏，可在后台延迟执行。返回 nil 表示本轮被跳过或中途中止，

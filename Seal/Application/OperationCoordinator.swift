@@ -126,32 +126,31 @@ final class OperationCoordinator {
         }
     }
 
-    /// Installation-proxy, profile-dump, and pairing mutations share device state.
-    /// Local reads and unrelated account/file work must not suppress list refreshes.
+    /// Only operations that can replace or remove an installed app defer presence reconciliation.
+    /// Pairing and profile maintenance do not change the app list; local inventory stays usable.
     var hasDeviceSessionConflict: Bool {
         activeLeases.contains { lease in
             switch lease.kind {
-            case .signing, .installing, .renewing, .resettingPairing, .managingDeviceProfiles:
+            case .signing, .installing, .renewing:
                 return true
-            case .scanningDeviceInventory:
-                // 只读扫描由 hasConflict 与设备写事务互斥，不触发“写操作完成后刷新”逻辑。
-                return false
-            case .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:
+            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,
+                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:
                 return false
             }
         }
     }
 
-    /// 异步等待获取锁，当前操作完成后自动获取。不弹冲突弹窗，用户无感知。
+    /// 异步等冲突操作结束；前台请求默认不设截止时间，可由所属任务取消。
     func beginWaiting(
         _ kind: Kind,
         appID: UUID? = nil,
         accountID: UUID? = nil,
-        timeout: TimeInterval = 30
+        timeout: TimeInterval? = nil
     ) async -> Lease? {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        let deadline = timeout.flatMap { $0.isFinite ? Date().addingTimeInterval($0) : nil }
+        while true {
             guard Task.isCancelled == false else { return nil }
+            if let deadline, Date() >= deadline { return nil }
             if let lease = begin(kind, appID: appID, accountID: accountID) {
                 return lease
             }
@@ -200,17 +199,31 @@ final class OperationCoordinator {
     ) -> Bool {
         let activeKind = active.kind
         let deviceWork: Set<Kind> = [.signing, .installing, .renewing]
-        let deviceSessionWork = deviceWork.union([.scanningDeviceInventory, .managingDeviceProfiles])
+        let profileWork: Set<Kind> = [.managingDeviceProfiles]
+        let inventoryWork: Set<Kind> = [.scanningDeviceInventory]
+
+        // The read-only inventory lease covers one native call, not a user transaction.
+        // Shared profile calls have their own native-call gate, so background inventory must
+        // never reject a signing, install, or renewal action at its entry point.
+        if inventoryWork.contains(activeKind), inventoryWork.contains(requestedKind) {
+            return true
+        }
         let accountWork: Set<Kind> = [.managingAccount, .managingCertificate]
 
-        if deviceSessionWork.contains(activeKind), deviceSessionWork.contains(requestedKind) {
+        if deviceWork.contains(activeKind), deviceWork.contains(requestedKind) {
+            return true
+        }
+        if profileWork.contains(activeKind), profileWork.contains(requestedKind) {
             return true
         }
 
         if activeKind == .resettingPairing || requestedKind == .resettingPairing {
             if activeKind == .resettingPairing, requestedKind == .resettingPairing { return true }
             let otherKind = activeKind == .resettingPairing ? requestedKind : activeKind
-            return deviceSessionWork.contains(otherKind) || accountWork.contains(otherKind)
+            return deviceWork.contains(otherKind)
+                || profileWork.contains(otherKind)
+                || inventoryWork.contains(otherKind)
+                || accountWork.contains(otherKind)
         }
 
         if accountWork.contains(activeKind), accountWork.contains(requestedKind) {

@@ -7,9 +7,9 @@ actor AppRecordRecovery {
     /// 已添加账号的读取口。只用来把扫回的记录挂回**同 Team 的账号**；
     /// 不传（测试 / 预览）时记录照建，只是 `accountID` 留空。
     private let accountsProvider: (@Sendable () async -> [AppleAccountRecord])?
-    /// 设备端扫回的注入点。**默认 nil = 完全不扫** —— 见 `InstalledAppScanning`：
+    /// 本机/设备安装清单的注入点。**默认 nil = 完全不扫** —— 见 `InstalledAppScanning`：
     /// `AppRecordRecoveryTests` 会直接调 `restoreMissingRecords()`，写死就会在 CI 的
-    /// 模拟器上真的去调 `Provision.dumpProfiles`。
+    /// 模拟器上真的去调私有设备 API。
     private let deviceScanner: (any InstalledAppScanning)?
 
     init(
@@ -27,7 +27,7 @@ actor AppRecordRecovery {
     }
 
     @discardableResult
-    func restoreMissingRecords() async throws -> InstalledRecordRecoverySummary {
+    func restoreMissingRecords(localInventoryOnly: Bool = false) async throws -> InstalledRecordRecoverySummary {
         try await recoverPendingFileTransactions()
         try await reconcileKnownRecords()
 
@@ -85,20 +85,24 @@ actor AppRecordRecovery {
             try await appStore.save(record)
         }
 
-        // ── 设备端扫回（2026-09-25 新增）───────────────────────────────
+        // ── 从本机安装清单恢复（2026-09-25 新增）───────────────────────
         // 上面三步都只看得见**本地文件**；「只卸载了 Seal、其他 App 没卸载」的场景里
-        // 本地文件全没了，唯一的痕迹在设备端的描述文件里。放在最后是因为它要读
-        // 前两步刚修好的记录（「已覆盖的 Bundle ID」必须是最新的）。
-        return await recoverRecordsFromDeviceProfiles()
+        // 本地文件全没了，系统 LaunchServices 仍能提供应用名、版本和图标。放在最后是
+        // 为了先读完本地恢复结果，避免重建已有记录。
+        return await recoverRecordsFromLocalInventory(localInventoryOnly: localInventoryOnly)
     }
 
-    /// 设备端扫回：把「设备上装着、记录里没有」的 Seal 签名应用补回已安装列表。
-    ///
-    /// 代价可控：**候选为空就直接返回**，常见情况（记录齐全）只花一次 profile dump，
-    /// 不会给启动加一轮设备查询。有候选时先做**阳性对照**（拿 Seal 自己问），
-    /// 对照不过或任何一条查询抛错都**整轮中止、一条记录都不建** —— 与
-    /// `reconcileInstalledAppsWithDevice` 的「先问完再动手」是同一条纪律。
-    private func recoverRecordsFromDeviceProfiles() async -> InstalledRecordRecoverySummary {
+    /// Recover installed apps without touching import or signed-file transactions.
+    /// Device reads acquire their own service lease; local inventory stays independent.
+    func restoreInstalledApps(localInventoryOnly: Bool = false) async -> InstalledRecordRecoverySummary {
+        await recoverRecordsFromLocalInventory(localInventoryOnly: localInventoryOnly)
+    }
+
+    /// 从本机安装清单恢复设备上仍存在、但本地记录丢失的 Seal 映射应用。
+    /// 只新增系统当前列出的 App；卸载清理由另一条完整清单路径负责。
+    private func recoverRecordsFromLocalInventory(
+        localInventoryOnly: Bool
+    ) async -> InstalledRecordRecoverySummary {
         var summary = InstalledRecordRecoverySummary()
         let storedRecords = (try? await appStore.fetchAll()) ?? []
         // 没接线就**完全不碰设备**（测试 / 预览走这里）。`skipped-not-wired` 必须与
@@ -108,18 +112,118 @@ actor AppRecordRecovery {
             summary.stage = "skipped-not-wired"
             return summary
         }
-        // Known records recover icons through LaunchServices alone. Run that local lookup
-        // before any profile or installation-proxy request, so an unavailable tunnel cannot
-        // suppress icon repair for records already known to Seal.
+        // Known records recover icons through LaunchServices alone; no device channel is needed.
         let iconRecovery = await recoverMissingIcons(for: storedRecords, scanner: deviceScanner)
         summary.iconsUpdated = iconRecovery.updatedCount
-        // 先 dump（新记录候选需要它）；拿不到时仍可为已存在的记录补图标，
-        // 但绝不能把「读不到」当成「设备上没有」并创建新记录。
-        let profiles = await deviceScanner.scanProfileSummaries()
-        let records = (try? await appStore.fetchAll()) ?? iconRecovery.records
+        // LaunchServices 是本机系统清单，不依赖 Wi-Fi / LocalDevVPN。恢复只会新增已确认
+        // 安装的记录，不会据此清理，因此可安全接收部分系统枚举源的结果。
+        let installedApplications: [DeviceInstalledApplicationSummary]?
+        let profileSummaries: [DeviceProvisioningProfileSummary]?
+        if localInventoryOnly {
+            installedApplications = InstalledRecordRecoveryPolicy.mergeInstalledApplications(
+                local: await deviceScanner.scanLocalApplications(),
+                paired: nil
+            )
+            profileSummaries = nil
+        } else {
+            async let localScan = deviceScanner.scanLocalApplications()
+            async let pairedScan = deviceScanner.scanUserApplications()
+            async let profileScan = deviceScanner.scanProfileSummaries()
+            let (localApplications, pairedApplications, profiles) = await (
+                localScan,
+                pairedScan,
+                profileScan
+            )
+            installedApplications = InstalledRecordRecoveryPolicy.mergeInstalledApplications(
+                local: localApplications,
+                paired: pairedApplications
+            )
+            profileSummaries = profiles
+        }
+        if localInventoryOnly, installedApplications == nil {
+            summary.stage = "skipped-local-inventory-unavailable"
+            return summary
+        }
+        guard let installedApplications else {
+            summary.stage = "skipped-app-list-unavailable"
+            return summary
+        }
+        var records = (try? await appStore.fetchAll()) ?? iconRecovery.records
         var accounts: [AppleAccountRecord] = []
         if let accountsProvider {
             accounts = await accountsProvider()
+        }
+        let applicationsByBundleIdentifier = Dictionary(
+            installedApplications.map {
+                (InstalledRecordRecoveryPolicy.normalizedBundleIdentifier($0.bundleIdentifier), $0)
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for index in records.indices {
+            let record = records[index]
+            guard record.isSeal == false,
+                  record.state == .installed,
+                  record.importWarnings.contains(AppRecord.deviceRecoveryWarning) else { continue }
+            let bundleIdentifier = record.mappedBundleIdentifier
+                ?? record.preferredBundleIdentifier
+                ?? record.originalBundleIdentifier
+            let normalizedBundleIdentifier = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(
+                bundleIdentifier
+            )
+            guard let application = applicationsByBundleIdentifier[normalizedBundleIdentifier] else { continue }
+
+            var enriched = record
+            let displayName = application.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let recordNameIsBundleIdentifier = [bundleIdentifier, record.originalBundleIdentifier]
+                .contains(where: { record.name.caseInsensitiveCompare($0) == .orderedSame })
+            if displayName.isEmpty == false,
+               (record.name.isEmpty || recordNameIsBundleIdentifier) {
+                enriched.name = displayName
+            }
+            if application.shortVersion.isEmpty == false {
+                enriched.version = application.shortVersion
+            }
+            if application.buildNumber.isEmpty == false {
+                enriched.buildNumber = application.buildNumber
+            }
+            if let teamIdentifier = application.teamIdentifier {
+                enriched.signingTeamID = teamIdentifier
+            }
+            if let markerVersion = application.sealManagedMarkerVersion {
+                enriched.installedAppMarkerVersion = markerVersion
+            }
+            if let teamIdentifier = enriched.signingTeamID,
+               let account = accounts.first(where: {
+                   $0.teamID.caseInsensitiveCompare(teamIdentifier) == .orderedSame
+               }) {
+                enriched.accountID = account.id
+            }
+
+            if enriched.signingTargets.isEmpty,
+               let profileSummaries,
+               let binding = InstalledRecordRecoveryPolicy.profileBinding(
+                   from: profileSummaries,
+                   bundleIdentifier: bundleIdentifier,
+                   teamIdentifier: enriched.signingTeamID
+               ) {
+                enriched.signingTargets = [
+                    SigningTargetRecord(binding: binding, signedBundleIdentifier: bundleIdentifier)
+                ]
+                enriched.provisioningProfileUUID = binding.profileUUID
+                enriched.provisioningProfileName = binding.profileName
+                enriched.provisioningProfileCreationDate = binding.creationDate
+                enriched.provisioningProfileExpirationDate = binding.expirationDate
+                enriched.expiryDate = binding.expirationDate
+                let serials = Set(binding.certificateSerialNumbers.map {
+                    SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
+                })
+                if serials.count == 1 {
+                    enriched.certificateSerialNumber = binding.certificateSerialNumbers.first
+                }
+            }
+            guard enriched != record else { continue }
+            try? await appStore.save(enriched)
+            records[index] = enriched
         }
         let context = InstalledRecordRecoveryPolicy.context(
             records: records,
@@ -127,17 +231,11 @@ actor AppRecordRecovery {
             dismissedBundleIdentifiers: DismissedInstalledRecordTombstones.all(),
             sealCanonicalBundleIdentifier: BundleIDPolicy.canonicalSealBundleIdentifier()
         )
-        guard let installedApplications = await deviceScanner.scanValidatedUserApplications() else {
-            summary.stage = "skipped-app-list-unavailable"
-            return summary
-        }
-        let drafts = profiles.map {
-            InstalledRecordRecoveryPolicy.drafts(
-                installedApplications: installedApplications,
-                profiles: $0,
-                context: context
-            )
-        } ?? []
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: installedApplications,
+            profiles: profileSummaries,
+            context: context
+        )
         summary.candidates = drafts.count
         summary.samples = drafts.prefix(3).map(\.bundleIdentifier)
         let installedBundleIdentifiers = Set(installedApplications.map {
@@ -174,9 +272,9 @@ actor AppRecordRecovery {
                     ?? record.originalBundleIdentifier
             )
         })
-        // 没有新记录，也没有缺失图标的已安装记录时，不再请求 LaunchServices。
+        // 没有新记录，也没有缺失图标的已安装记录时，不再重复读取图标。
         guard candidateBundleIdentifiers.isEmpty == false else {
-            summary.stage = profiles == nil ? "skipped-dump-unavailable" : "skipped-no-candidates"
+            summary.stage = "skipped-no-candidates"
             return summary
         }
         let iconDataByBundleIdentifier = await deviceScanner.scanIconData(
@@ -201,18 +299,21 @@ actor AppRecordRecovery {
                 continue
             }
         }
-        guard profiles != nil else {
-            summary.stage = "skipped-dump-unavailable"
-            return summary
-        }
         for draft in drafts {
             let accountID = draft.teamIdentifier.flatMap { teamID in
                 accounts.first { $0.teamID.caseInsensitiveCompare(teamID) == .orderedSame }?.id
             }
+            let uniqueProfileSerials = Set(draft.profileBinding?.certificateSerialNumbers.map {
+                SigningCertificateSelectionPolicy.normalizedSerialNumber($0)
+            } ?? [])
+            let certificateSerialNumber = uniqueProfileSerials.count == 1
+                ? draft.profileBinding?.certificateSerialNumbers.first
+                : nil
             let recordID = UUID()
             var record = InstalledRecordRecoveryPolicy.makeRecord(
                 from: draft,
                 accountID: accountID,
+                certificateSerialNumber: certificateSerialNumber,
                 id: recordID
             )
             let normalizedBundleID = InstalledRecordRecoveryPolicy.normalizedBundleIdentifier(

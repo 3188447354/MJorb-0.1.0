@@ -28,6 +28,24 @@ struct ApplicationOperationCoordinatorTests {
     }
 
     @Test
+    func foregroundTransactionWaitsUntilConflictingOperationEnds() async throws {
+        let coordinator = OperationCoordinator()
+        let first = try #require(coordinator.begin(.installing))
+        let waiter = Task { @MainActor in
+            await coordinator.beginWaiting(.renewing)
+        }
+
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(coordinator.hasConflict(for: .renewing))
+        coordinator.end(first)
+
+        let acquiredLease = await waiter.value
+        let second = try #require(acquiredLease)
+        #expect(second.kind == .renewing)
+        coordinator.end(second)
+    }
+
+    @Test
     func conflictingWriteOperationsAreRejectedUntilLeaseEnds() throws {
         let coordinator = OperationCoordinator()
         let first = try #require(coordinator.begin(.signing, appID: UUID()))
@@ -69,24 +87,25 @@ struct ApplicationOperationCoordinatorTests {
     }
 
     @Test
-    func deviceInventoryReadSerializesWithDeviceWritesButNotLocalOrAccountWork() throws {
+    func deviceInventoryDoesNotBlockForegroundDeviceTransactions() throws {
         let coordinator = OperationCoordinator()
         let scan = try #require(coordinator.begin(.scanningDeviceInventory))
 
         #expect(coordinator.hasDeviceSessionConflict == false)
-        #expect(coordinator.begin(.signing) == nil)
-        #expect(coordinator.begin(.installing) == nil)
-        #expect(coordinator.begin(.resettingPairing) == nil)
-        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
+        let signing = try #require(coordinator.begin(.signing, accountID: UUID()))
         let importing = try #require(coordinator.begin(.importing))
         let account = try #require(coordinator.begin(.managingAccount, accountID: UUID()))
         let certificate = try #require(coordinator.begin(.managingCertificate, accountID: UUID()))
+        #expect(coordinator.begin(.resettingPairing) == nil)
+        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
 
         coordinator.end(scan)
+        coordinator.end(signing)
         coordinator.end(importing)
         coordinator.end(account)
         coordinator.end(certificate)
-        #expect(coordinator.begin(.renewing) != nil)
+        let renewal = try #require(coordinator.begin(.renewing))
+        coordinator.end(renewal)
     }
 
     @Test
@@ -98,9 +117,10 @@ struct ApplicationOperationCoordinatorTests {
 
         let scan = try #require(coordinator.begin(.scanningDeviceInventory))
         #expect(coordinator.begin(.scanningDeviceInventory) == nil)
-        #expect(coordinator.begin(.signing) == nil)
+        let signing = try #require(coordinator.begin(.signing))
 
         coordinator.end(scan)
+        coordinator.end(signing)
         coordinator.end(importing)
         coordinator.end(account)
         coordinator.end(certificate)
@@ -125,18 +145,38 @@ struct ApplicationOperationCoordinatorTests {
     }
 
     @Test
-    func profileMaintenanceSerializesDeviceAccessWithoutBlockingAccountOrImportWork() throws {
+    func profileMaintenanceDoesNotBlockForegroundDeviceOrAccountWork() throws {
         let coordinator = OperationCoordinator()
         let maintenance = try #require(coordinator.begin(.managingDeviceProfiles))
 
-        #expect(coordinator.hasDeviceSessionConflict)
-        #expect(coordinator.begin(.scanningDeviceInventory) == nil)
-        #expect(coordinator.begin(.signing) == nil)
+        #expect(coordinator.hasDeviceSessionConflict == false)
+        let scan = try #require(coordinator.begin(.scanningDeviceInventory))
+        let signing = try #require(coordinator.begin(.signing))
+        let certificate = try #require(coordinator.begin(.managingCertificate, accountID: UUID()))
         #expect(coordinator.begin(.resettingPairing) == nil)
         #expect(coordinator.begin(.importing) != nil)
         #expect(coordinator.begin(.managingAccount, accountID: UUID()) != nil)
 
+        coordinator.end(scan)
+        coordinator.end(signing)
+        coordinator.end(certificate)
         coordinator.end(maintenance)
+    }
+
+    @Test
+    func pairingAndProfileMaintenanceDoNotHideLocalInstalledApps() throws {
+        let coordinator = OperationCoordinator()
+        let pairing = try #require(coordinator.begin(.resettingPairing))
+        #expect(coordinator.hasDeviceSessionConflict == false)
+        coordinator.end(pairing)
+
+        let profileWork = try #require(coordinator.begin(.managingDeviceProfiles))
+        #expect(coordinator.hasDeviceSessionConflict == false)
+        coordinator.end(profileWork)
+
+        let install = try #require(coordinator.begin(.installing))
+        #expect(coordinator.hasDeviceSessionConflict)
+        coordinator.end(install)
     }
 
     @Test

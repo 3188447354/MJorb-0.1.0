@@ -88,6 +88,35 @@ struct RefreshPlannerTests {
     }
 
     @Test
+    func locallyRecoveredSealMappedAppCanRenewWithoutItsOriginalIPA() {
+        let accountID = UUID()
+        let bundleIdentifier = "com.example.recovered.TEAM000001"
+        var recovered = app(name: "Recovered", expiry: nil, accountID: accountID)
+        recovered.mappedBundleIdentifier = bundleIdentifier
+        recovered.needsIPAImport = true
+        recovered.signedDeviceIdentifier = nil
+        recovered.provisioningProfileExpirationDate = nil
+        recovered.signingTargets = []
+        recovered.importWarnings = [AppRecord.deviceRecoveryWarning]
+        let account = AppleAccountRecord(
+            id: accountID,
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "TEAM000001",
+            teamName: "Team",
+            lastVerifiedAt: Date()
+        )
+
+        let queue = RefreshPlanner().makeQueue(apps: [recovered], accounts: [account])
+
+        #expect(recovered.isSealManagedRenewalCandidate)
+        #expect(ProfileOnlyRenewalPolicy.evaluate(app: recovered)
+                == .eligible(targetBundleIdentifiers: [bundleIdentifier]))
+        #expect(queue.map(\.appID) == [recovered.id])
+        #expect(queue.first?.state != .requiresAction)
+    }
+
+    @Test
     func signedTargetCertificateEvidenceKeepsAppInRenewalQueue() {
         let account = AppleAccountRecord(
             maskedEmail: "a***",

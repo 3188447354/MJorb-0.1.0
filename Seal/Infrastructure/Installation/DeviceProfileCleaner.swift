@@ -16,8 +16,8 @@
 import Foundation
 @preconcurrency import Minimuxer
 
-/// Serializes profile, installed-app, and cleanup calls that share the device session.
-/// A timed-out native call keeps the shared gate until the FFI really returns.
+/// Serializes misagent profile and cleanup calls that share the device service.
+/// A timed-out native call keeps the misagent gate until the FFI really returns.
 enum DeviceProfileNativeCall {
     enum Outcome<Value: Sendable> {
         case completed(Result<Value, Error>)
@@ -26,35 +26,30 @@ enum DeviceProfileNativeCall {
     }
 
     static func perform<T: Sendable>(
-        gate: InstalledAppRefreshProbeGate = .shared,
+        gate: InstalledAppRefreshProbeGate = .profiles,
         operationCoordinator: OperationCoordinator? = nil,
         seconds: Double = BlockingCall.queryTimeoutSeconds,
         waitForAvailability: Bool = false,
-        availabilityWaitTimeoutSeconds: TimeInterval = 30,
         onNativeCompletion: @escaping @Sendable () async -> Void = {},
         _ work: @Sendable @escaping () throws -> T
     ) async -> Outcome<T> {
-        let availabilityDeadline = Date().addingTimeInterval(availabilityWaitTimeoutSeconds)
         let probeID: UUID
         let availability: InstalledAppRefreshProbeGate.Availability
         if waitForAvailability {
-            availability = await gate.beginForeground(timeoutSeconds: availabilityWaitTimeoutSeconds)
+            availability = await gate.beginForeground()
         } else {
             availability = await gate.begin()
         }
         switch availability {
         case .ready(let id): probeID = id
-        case .inFlight, .coolingDown: return .unavailable
+        case .inFlight, .cancelled: return .unavailable
         }
         let operationLease: OperationCoordinator.Lease?
         if let operationCoordinator {
-            let remainingWait = waitForAvailability
-                ? max(0, availabilityDeadline.timeIntervalSinceNow)
-                : 0
             guard let lease = await operationCoordinator.acquireNativeDeviceSessionLease(
-                waitTimeout: remainingWait
+                waitTimeout: waitForAvailability ? .infinity : 0
             ) else {
-                await gate.finish(probeID: probeID, timedOut: false)
+                await gate.finish(probeID: probeID)
                 return .unavailable
             }
             operationLease = lease
@@ -71,19 +66,19 @@ enum DeviceProfileNativeCall {
             seconds: seconds,
             cancelsWorkOnTimeout: false,
             onLateCompletion: { _ in
-                await gate.finish(probeID: probeID, timedOut: true)
+                await gate.finish(probeID: probeID)
                 await releaseOperationLease()
                 await onNativeCompletion()
             },
             onWorkNeverStarted: {
-                await gate.finish(probeID: probeID, timedOut: false)
+                await gate.finish(probeID: probeID)
                 await releaseOperationLease()
                 await onNativeCompletion()
             },
             work
         )
         guard let outcome else { return .nativeCallMayStillBeRunning }
-        await gate.finish(probeID: probeID, timedOut: false)
+        await gate.finish(probeID: probeID)
         await releaseOperationLease()
         return .completed(outcome)
     }

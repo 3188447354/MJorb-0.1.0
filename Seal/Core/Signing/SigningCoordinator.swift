@@ -1078,14 +1078,6 @@ actor SigningCoordinator {
         // ── 分阶段打点（2026-10-04 签名优化）──
         // 先测量再优化：各阶段耗时进日志，真机验证时才能定位瓶颈。
         let renewStart = ContinuousClock.now
-        // Apple Portal 的 profile 准备与设备 misagent 预热互不依赖，必须并行。
-        // 实际注入会加入这同一条预热任务，确保设备侧始终只有一项 profile 操作。
-        let profileServicePrewarm = Task { [installChannel] in
-            try? await ProfileOnlyProvisioningProfileInstaller.shared.prewarmProfileService(
-                using: installChannel
-            )
-        }
-        defer { profileServicePrewarm.cancel() }
         let portalStart = ContinuousClock.now
         let result = try await portal.prepareProfileOnlyRenewal(
             app: app,

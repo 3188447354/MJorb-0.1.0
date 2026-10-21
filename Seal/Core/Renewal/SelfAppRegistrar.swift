@@ -103,6 +103,22 @@ actor SelfAppRegistrar {
                 metadata: metadata,
                 accounts: accounts
             )
+            // The new process itself is proof that this update reached the device. A
+            // previously deleted predecessor can leave `replacesInstalledAppID` behind;
+            // that stale link keeps Seal in the pending-install list forever.
+            if Version.compare(existing.version, metadata.version) == .orderedSame,
+               existing.buildNumber == metadata.buildNumber,
+               let replacedID = existing.replacesInstalledAppID {
+                var installed = try await appStore.fetchAll().first { $0.id == existing.id } ?? existing
+                installed.state = .installed
+                installed.signedArtifactStatus = .installed
+                installed.replacesInstalledAppID = nil
+                if let pending = installed.pendingUpdateSourceFingerprint {
+                    installed.installedFingerprint = pending
+                }
+                installed.pendingUpdateSourceFingerprint = nil
+                try await appStore.commitInstalledReplacement(installed, replacing: replacedID)
+            }
             try await cleanupDuplicateSealRecords(records: records, keepID: existing.id)
             return
         }

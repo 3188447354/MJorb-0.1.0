@@ -7,6 +7,26 @@ struct DeviceInstalledApplicationSummary: Equatable, Sendable {
     let shortVersion: String
     let buildNumber: String
     let profileValidated: Bool?
+    let teamIdentifier: String?
+    let sealManagedMarkerVersion: Int?
+
+    init(
+        bundleIdentifier: String,
+        displayName: String,
+        shortVersion: String,
+        buildNumber: String,
+        profileValidated: Bool?,
+        teamIdentifier: String? = nil,
+        sealManagedMarkerVersion: Int? = nil
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.displayName = displayName
+        self.shortVersion = shortVersion
+        self.buildNumber = buildNumber
+        self.profileValidated = profileValidated
+        self.teamIdentifier = teamIdentifier
+        self.sealManagedMarkerVersion = sealManagedMarkerVersion
+    }
 }
 
 /// 设备端扫回的**注入点**。
@@ -27,12 +47,11 @@ protocol InstalledAppScanning: Sendable {
     /// `nil` = **无法核验**（未连接设备 / 隧道不可用 / dump 或解析失败）。
     func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]?
 
-    /// 设备端实际安装且系统标记为已验证描述文件的用户应用。
-    /// `nil` 表示设备清单无法读取；空数组表示已成功读取但没有匹配应用。
-    func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]?
-
-    /// 设备端 installation proxy 的全部用户应用清单；不按描述文件是否已验证过滤。
+    /// 设备端 installation proxy 的全部用户应用清单；侧载状态由安装代理标记和已知描述文件共同判定。
     func scanUserApplications() async -> [DeviceInstalledApplicationSummary]?
+
+    /// 本机 LaunchServices 清单。记录恢复只新增，不用部分清单判断卸载，因此无需 LocalDevVPN。
+    func scanLocalApplications() async -> [DeviceInstalledApplicationSummary]?
 
     /// 按归一化 Bundle ID 读取本机 LaunchServices 图标；失败或不可用时返回空字典。
     /// Reads icon bytes from local LaunchServices metadata; this call does not use the paired device channel.
@@ -47,19 +66,22 @@ protocol InstalledAppScanning: Sendable {
 }
 
 extension InstalledAppScanning {
-    func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
     func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+    func scanLocalApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] { [:] }
 }
 
 /// Scoped lease for synchronous device-inventory FFI. A timeout cannot cancel native work,
 /// so the lease remains active until the late-completion callback releases it.
 enum InstalledAppInventoryOperationLease {
-    static func begin(using coordinator: OperationCoordinator?) async -> OperationCoordinator.Lease? {
+    static func begin(
+        using coordinator: OperationCoordinator?,
+        kind: OperationCoordinator.Kind = .scanningDeviceInventory
+    ) async -> OperationCoordinator.Lease? {
         if let coordinator {
-            return await coordinator.begin(.scanningDeviceInventory)
+            return await coordinator.begin(kind)
         }
-        return .uncoordinated(.scanningDeviceInventory, appID: nil, accountID: nil)
+        return .uncoordinated(kind, appID: nil, accountID: nil)
     }
 
     static func end(
@@ -89,12 +111,25 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
         await profileSummaries()
     }
 
-    func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
-        await validatedUserApplications()
-    }
-
     func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? {
         await userApplications()
+    }
+
+    func scanLocalApplications() async -> [DeviceInstalledApplicationSummary]? {
+        guard let applications = await InstalledAppScanner().scanAllSnapshot(
+            allowPartialForRecovery: true
+        ) else { return nil }
+        return applications.map { application in
+            DeviceInstalledApplicationSummary(
+                bundleIdentifier: application.bundleIdentifier,
+                displayName: application.name,
+                shortVersion: application.version,
+                buildNumber: application.buildNumber,
+                profileValidated: nil,
+                teamIdentifier: application.teamID,
+                sealManagedMarkerVersion: application.sealManagedMarkerVersion
+            )
+        }
     }
 
     func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
@@ -118,13 +153,14 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
     ///   调用方必须按「不知道」处理（本轮不建任何记录）；返回空数组仅当设备端确实一份都没有。
     private func profileSummaries() async -> [DeviceProvisioningProfileSummary]? {
         guard let operationLease = await InstalledAppInventoryOperationLease.begin(
-            using: operationCoordinator
+            using: operationCoordinator,
+            kind: .managingDeviceProfiles
         ) else { return nil }
         let probeID: UUID
-        switch await InstalledAppRefreshProbeGate.shared.begin() {
+        switch await InstalledAppRefreshProbeGate.profiles.begin() {
         case .ready(let id):
             probeID = id
-        case .inFlight, .coolingDown:
+        case .inFlight, .cancelled:
             await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             return nil
         }
@@ -132,26 +168,21 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
             seconds: BlockingCall.queryTimeoutSeconds,
             cancelsWorkOnTimeout: false,
             onLateCompletion: { _ in
-                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)
+                await InstalledAppRefreshProbeGate.profiles.finish(probeID: probeID)
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             },
             onWorkNeverStarted: {
-                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+                await InstalledAppRefreshProbeGate.profiles.finish(probeID: probeID)
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             }
         ) {
             Self.readProfileSummaries()
         }
         guard let outcome else { return nil }
-        await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+        await InstalledAppRefreshProbeGate.profiles.finish(probeID: probeID)
         await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
         guard case .success(let summaries) = outcome else { return nil }
         return summaries
-    }
-
-    private func validatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
-        guard let applications = await userApplications() else { return nil }
-        return applications.filter { $0.profileValidated == true }
     }
 
     private func userApplications() async -> [DeviceInstalledApplicationSummary]? {
@@ -159,10 +190,10 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
             using: operationCoordinator
         ) else { return nil }
         let probeID: UUID
-        switch await InstalledAppRefreshProbeGate.shared.begin() {
+        switch await InstalledAppRefreshProbeGate.inventory.begin() {
         case .ready(let id):
             probeID = id
-        case .inFlight, .coolingDown:
+        case .inFlight, .cancelled:
             await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             return nil
         }
@@ -170,18 +201,18 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
             seconds: BlockingCall.queryTimeoutSeconds,
             cancelsWorkOnTimeout: false,
             onLateCompletion: { _ in
-                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)
+                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             },
             onWorkNeverStarted: {
-                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             }
         ) {
             try Minimuxer.installedApplications()
         }
         guard let outcome else { return nil }
-        await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+        await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)
         await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
         guard case .success(let applications) = outcome else { return nil }
         return applications.map { application in
@@ -190,7 +221,10 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
                 displayName: application.displayName,
                 shortVersion: application.shortVersion,
                 buildNumber: application.buildNumber,
-                profileValidated: application.profileValidated
+                profileValidated: application.profileValidated,
+                sealManagedMarkerVersion: SealInstalledAppMarker.isDeclared(
+                    for: application.bundleIdentifier
+                ) ? SealInstalledAppMarker.version : nil
             )
         }
     }
@@ -287,7 +321,8 @@ struct DeviceInstalledAppScanner: InstalledAppScanning, Sendable {
                 uuid: details.uuid,
                 name: details.name,
                 creationDate: details.creationDate,
-                expirationDate: details.expirationDate
+                expirationDate: details.expirationDate,
+                binding: try? reader.binding(from: data)
             ))
         }
         // 目录里有文件却一份都解析不出来 = 核验失败，**不是**「没有」。

@@ -27,7 +27,7 @@ struct DeviceProfileCleanerTests {
         #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
         #expect(await gate.begin() == .inFlight)
         try await Task.sleep(for: .milliseconds(200))
-        #expect(await gate.begin() == .coolingDown)
+        #expect(await gate.begin() == .inFlight)
     }
 
     @Test

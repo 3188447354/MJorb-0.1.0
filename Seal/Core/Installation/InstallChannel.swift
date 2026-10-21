@@ -18,16 +18,6 @@ protocol InstallChannel: Actor {
     /// `any InstallChannel` 会静态派发到默认实现，具体实现的覆写不会被调用
     ///（同类坑见下方 `install(onProgress:)` 的注释）。
     func clearFailureCooldown() async
-    /// 确认当前 RemotePairing 会话不仅能读取 UDID，也能连接描述文件使用的 misagent 服务。
-    /// 成功后实现可在短时健康租约内复用结果；此方法不读取结果内容来决定续签资格。
-    func prepareProfileService() async throws
-    /// Lets a serialized renewal caller release its device lease after a timed-out native probe returns.
-    func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws
-    /// Background keepalive probes must fail fast so they cannot hold up foreground device work.
-    func prepareProfileService(
-        waitForAvailability: Bool,
-        onLateCompletion: @escaping @Sendable () async -> Void
-    ) async throws
     /// 只废弃 Rust 的 RSD 会话缓存，保留当前配对文件与 provider 选择。
     /// 用于 profile 服务出现瞬时失败后的立即自愈，避免全量 reset 配对状态。
     func invalidateProfileServiceConnection() async
@@ -74,21 +64,6 @@ extension InstallChannel {
     /// 默认空实现：供测试桩与不实现熔断的类型直接遵循。
     /// 真实实现见 `MinimuxerInstallChannel.clearFailureCooldown()`。
     func clearFailureCooldown() async {}
-
-    func prepareProfileService() async throws {
-        _ = try await start()
-    }
-
-    func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws {
-        try await prepareProfileService()
-    }
-
-    func prepareProfileService(
-        waitForAvailability: Bool,
-        onLateCompletion: @escaping @Sendable () async -> Void
-    ) async throws {
-        try await prepareProfileService(onLateCompletion: onLateCompletion)
-    }
 
     func invalidateProfileServiceConnection() async {}
 

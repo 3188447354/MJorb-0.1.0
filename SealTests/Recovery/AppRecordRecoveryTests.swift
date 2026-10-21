@@ -122,6 +122,109 @@ struct AppRecordRecoveryTests {
     }
 
     @Test
+    func recoversInstalledSideloadedAppWhenProfileDetailsAreUnavailable() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let bundleIdentifier = "com.example.demo.ABCDE12345"
+        let iconData = try #require(
+            Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
+        )
+
+        let summary = await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            deviceScanner: FakeInstalledAppScanner(
+                bundleIdentifier: bundleIdentifier,
+                iconData: iconData,
+                profilesUnavailable: true
+            )
+        ).restoreMissingRecords()
+
+        let recovered = try #require(try await environment.appStore.fetchAll().first)
+        #expect(summary.recovered == 1)
+        #expect(recovered.state == .installed)
+        #expect(recovered.mappedBundleIdentifier == bundleIdentifier)
+        #expect(recovered.name == "Demo")
+        #expect(recovered.provisioningProfileExpirationDate == nil)
+        #expect(recovered.needsIPAImport)
+        let iconPath = try #require(recovered.iconRelativePath)
+        #expect(try await environment.fileStore.read(relativePath: iconPath) == iconData)
+    }
+
+    @Test
+    func restoresLocalTeamMappedAppAndRenewalProfileMetadata() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let bundleIdentifier = "com.example.demo.ABCDE12345"
+        let iconData = try #require(
+            Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
+        )
+        let account = AppleAccountRecord(
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "ABCDE12345",
+            teamName: "Team",
+            certificateSerialNumber: "ABC123",
+            selectedCertificateSerialNumber: "ABC123",
+            lastVerifiedAt: Date()
+        )
+        let summary = await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            accountsProvider: { [account] },
+            deviceScanner: LocalProfileInstalledAppScanner(
+                bundleIdentifier: bundleIdentifier,
+                iconData: iconData
+            )
+        ).restoreMissingRecords()
+
+        let recovered = try #require(try await environment.appStore.fetchAll().first)
+        #expect(summary.recovered == 1)
+        #expect(recovered.name == "Demo")
+        #expect(recovered.version == "2.5")
+        #expect(recovered.iconRelativePath != nil)
+        #expect(recovered.signingTeamID == account.teamID)
+        #expect(recovered.certificateSerialNumber == "ABC123")
+        #expect(recovered.signingTargets.count == 1)
+        #expect(recovered.signingTargets.first?.entitlements.isEmpty == false)
+        #expect(recovered.isSealManagedRenewalCandidate)
+        #expect(ProfileOnlyRenewalPolicy.evaluate(app: recovered)
+                == .eligible(targetBundleIdentifiers: [bundleIdentifier]))
+    }
+
+    @Test
+    func localInventoryRecoveryCompletesWithoutProfileServiceOrDeviceTunnel() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let bundleIdentifier = "com.example.demo.ABCDE12345"
+        let account = AppleAccountRecord(
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "ABCDE12345",
+            teamName: "Team",
+            certificateSerialNumber: "ABC123",
+            selectedCertificateSerialNumber: "ABC123",
+            lastVerifiedAt: Date()
+        )
+
+        let summary = try await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            accountsProvider: { [account] },
+            deviceScanner: LocalOnlyInstalledAppScanner(
+                bundleIdentifier: bundleIdentifier,
+                iconData: Data([0x01])
+            )
+        ).restoreMissingRecords(localInventoryOnly: true)
+
+        let record = try #require(try await environment.appStore.fetchAll().first)
+        #expect(summary.recovered == 1)
+        #expect(record.state == .installed)
+        #expect(record.signingTeamID == "ABCDE12345")
+        #expect(record.needsIPAImport)
+    }
+
+    @Test
     func fillsMissingIconForExistingDeviceScannedRecordWithoutIPA() async throws {
         let environment = try makeEnvironment()
         defer { try? FileManager.default.removeItem(at: environment.root) }
@@ -160,6 +263,62 @@ struct AppRecordRecoveryTests {
         let records = try await environment.appStore.fetchAll()
         #expect(records.count == 1)
         let iconPath = try #require(records.first?.iconRelativePath)
+        #expect(try await environment.fileStore.read(relativePath: iconPath) == iconData)
+    }
+
+    @Test
+    func refreshesRecoveredAppNameVersionIdentityAndIconFromDeviceSources() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let bundleIdentifier = "org.example.folia"
+        let appID = UUID()
+        let account = AppleAccountRecord(
+            maskedEmail: "a***",
+            accountIdentifier: "account",
+            teamID: "ABCDE12345",
+            teamName: "Team",
+            certificateSerialNumber: "ABC123",
+            selectedCertificateSerialNumber: "ABC123",
+            lastVerifiedAt: Date()
+        )
+        try await environment.appStore.save(
+            AppRecord(
+                id: appID,
+                originalBundleIdentifier: bundleIdentifier,
+                mappedBundleIdentifier: bundleIdentifier,
+                name: bundleIdentifier,
+                version: "",
+                buildNumber: "",
+                size: 0,
+                state: .installed,
+                ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
+                needsIPAImport: true,
+                importedAt: Date(),
+                importWarnings: [AppRecord.deviceRecoveryWarning]
+            )
+        )
+        let iconData = try #require(
+            Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=")
+        )
+
+        _ = await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            accountsProvider: { [account] },
+            deviceScanner: LocalProfileInstalledAppScanner(
+                bundleIdentifier: bundleIdentifier,
+                iconData: iconData
+            )
+        ).restoreInstalledApps()
+
+        let recovered = try #require(try await environment.appStore.fetchAll().first)
+        #expect(recovered.name == "Demo")
+        #expect(recovered.version == "2.5")
+        #expect(recovered.buildNumber == "25")
+        #expect(recovered.signingTeamID == "ABCDE12345")
+        #expect(recovered.accountID == account.id)
+        #expect(recovered.signingTargets.count == 1)
+        let iconPath = try #require(recovered.iconRelativePath)
         #expect(try await environment.fileStore.read(relativePath: iconPath) == iconData)
     }
 
@@ -231,9 +390,11 @@ private extension AppRecordRecoveryTests {
     struct FakeInstalledAppScanner: InstalledAppScanning {
         let bundleIdentifier: String
         let iconData: Data
+        var profilesUnavailable = false
 
         func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? {
-            [DeviceProvisioningProfileSummary(
+            guard profilesUnavailable == false else { return nil }
+            return [DeviceProvisioningProfileSummary(
                 bundleIdentifier: bundleIdentifier,
                 teamIdentifier: "ABCDE12345",
                 uuid: "PROFILE-ICON-1",
@@ -243,7 +404,7 @@ private extension AppRecordRecoveryTests {
             )]
         }
 
-        func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+        func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? {
             [DeviceInstalledApplicationSummary(
                 bundleIdentifier: bundleIdentifier,
                 displayName: "Demo",
@@ -272,7 +433,98 @@ private extension AppRecordRecoveryTests {
 
         func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? { nil }
 
-        func scanValidatedUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+        func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+
+        func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
+            normalizedBundleIdentifiers.contains(bundleIdentifier.lowercased())
+                ? [bundleIdentifier.lowercased(): iconData]
+                : [:]
+        }
+
+        func scanConfirmedInstalledBundleIdentifiers(
+            candidates: [String],
+            positiveControl: String?
+        ) async -> Set<String>? { nil }
+    }
+
+    struct LocalOnlyInstalledAppScanner: InstalledAppScanning {
+        let bundleIdentifier: String
+        let iconData: Data
+
+        func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? {
+            Issue.record("Local recovery must not probe the profile service")
+            return nil
+        }
+
+        func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? {
+            Issue.record("Local recovery must not require an installation-proxy scan")
+            return nil
+        }
+
+        func scanLocalApplications() async -> [DeviceInstalledApplicationSummary]? {
+            [DeviceInstalledApplicationSummary(
+                bundleIdentifier: bundleIdentifier,
+                displayName: "Demo",
+                shortVersion: "2.5",
+                buildNumber: "25",
+                profileValidated: nil
+            )]
+        }
+
+        func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
+            normalizedBundleIdentifiers.contains(bundleIdentifier.lowercased())
+                ? [bundleIdentifier.lowercased(): iconData]
+                : [:]
+        }
+
+        func scanConfirmedInstalledBundleIdentifiers(
+            candidates: [String],
+            positiveControl: String?
+        ) async -> Set<String>? { nil }
+    }
+
+    struct LocalProfileInstalledAppScanner: InstalledAppScanning {
+        let bundleIdentifier: String
+        let iconData: Data
+
+        func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? {
+            let binding = ProvisioningProfileBinding(
+                bundleIdentifier: bundleIdentifier,
+                profileUUID: "PROFILE-LOCAL-1",
+                profileName: "Demo",
+                teamIdentifier: "ABCDE12345",
+                creationDate: Date(timeIntervalSince1970: 1_700_000_000),
+                expirationDate: Date(timeIntervalSince1970: 2_100_000_000),
+                certificateSerialNumbers: ["ABC123"],
+                deviceIdentifiers: ["DEVICE12345"],
+                entitlements: [
+                    "application-identifier": .string("ABCDE12345.\(bundleIdentifier)"),
+                    "get-task-allow": .bool(true)
+                ]
+            )
+            return [DeviceProvisioningProfileSummary(
+                bundleIdentifier: bundleIdentifier,
+                teamIdentifier: "ABCDE12345",
+                uuid: binding.profileUUID,
+                name: binding.profileName,
+                creationDate: binding.creationDate,
+                expirationDate: binding.expirationDate,
+                binding: binding
+            )]
+        }
+
+        func scanUserApplications() async -> [DeviceInstalledApplicationSummary]? { nil }
+
+        func scanLocalApplications() async -> [DeviceInstalledApplicationSummary]? {
+            [DeviceInstalledApplicationSummary(
+                bundleIdentifier: bundleIdentifier,
+                displayName: "Demo",
+                shortVersion: "2.5",
+                buildNumber: "25",
+                profileValidated: nil,
+                teamIdentifier: "ABCDE12345"
+            )]
+        }
 
         func scanIconData(for normalizedBundleIdentifiers: Set<String>) async -> [String: Data] {
             normalizedBundleIdentifiers.contains(bundleIdentifier.lowercased())

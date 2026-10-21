@@ -21,8 +21,8 @@ struct UpdateIPADownloader {
     /// 下载 IPA 到本地，返回落盘文件 URL。
     /// - Parameter onProgress: 回调（已接收字节数, 总字节数可空）。总大小未知（无 Content-Length）时
     ///   使用 GitHub Release 元数据中的精确资产大小；响应提供 Content-Length 时以响应为准。
-    /// - 超时策略：中国大陆网络下 GitHub 资产域可能长时间无响应，仅靠系统默认空闲超时会让
-    ///   下载卡在 0% 不报错；此处收紧请求空闲超时到 15s、总时长硬上限 90s。
+    /// - GitHub 资产会先重定向到对象存储，弱网下连接和首字节可能很慢；等待连接，
+    ///   并把无数据空闲时间放宽到 120 秒。下载不设总时长上限。
     /// - 取消：使用 `URLSession.download(for:delegate:)` 原生异步 API，Task 取消会自动传导到传输任务，
     ///   无需手动 `withTaskCancellationHandler`（避免旧式 `task.value` 在本 SDK 下的类型歧义）。
     func download(
@@ -47,10 +47,9 @@ struct UpdateIPADownloader {
         )
         await onProgress(0, knownSize)
         var request = URLRequest(url: url)
-        request.timeoutInterval = 15
+        request.timeoutInterval = 120
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForResource = 90
-        configuration.waitsForConnectivity = false
+        configuration.waitsForConnectivity = true
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 

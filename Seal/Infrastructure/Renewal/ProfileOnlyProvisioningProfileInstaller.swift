@@ -63,68 +63,6 @@ actor ProfileOnlyProvisioningProfileInstaller {
     private var isBusy = false
     private var taint = ProfileOnlyTaintGate()
     private var operationLease = ProfileOnlyOperationLease()
-    /// 门户请求期间预热的 profile 服务任务。写入会加入同一任务，避免 `dumpProfiles`
-    /// 与真实注入并发使用 misagent。
-    private var inFlightPreparation: Task<Void, Error>?
-    /// misagent 保活心跳任务（2026-10-04 通道优化）。
-    ///
-    /// `misagent` 空闲一段时间后会变冷，下次注入要重新建服务连接（~数秒）。
-    /// App 在前台存活时定期轻量 `prepareProfileService`，保持热状态。
-    /// 失败不标记污染（`prewarmProfileService` 已保证），不干扰注入（`isBusy` 保护）。
-    private var keepaliveTask: Task<Void, Never>?
-    /// 保活间隔：5 分钟。misagent 空闲超时是分钟级，这个频率足够保持热状态，
-    /// 又不会频繁唤醒设备。
-    private static let keepaliveIntervalNanoseconds: UInt64 = 300_000_000_000
-
-    /// 启动 misagent 保活心跳。App 回到前台时调用。
-    ///
-    /// 幂等：已在跑则直接返回。
-    func startKeepalive(using channel: any InstallChannel) {
-        guard keepaliveTask == nil else { return }
-        keepaliveTask = Task { [weak self] in
-            while true {
-                do {
-                    try await Task.sleep(nanoseconds: Self.keepaliveIntervalNanoseconds)
-                } catch {
-                    return
-                }
-                guard let self else { return }
-                guard Task.isCancelled == false else { return }
-                // 保活只是轻量预热：失败不抛、不标记污染、不干扰注入。
-                try? await self.prewarmProfileService(using: channel, waitForAvailability: false)
-            }
-        }
-    }
-
-    /// 停止 misagent 保活心跳。App 进后台时调用。
-    func stopKeepalive() {
-        keepaliveTask?.cancel()
-        keepaliveTask = nil
-    }
-
-    /// 与 Apple Portal 请求并行预热实际执行 profile 注入的设备服务。
-    /// 正在写入时不另起探测，避免和 `misagent` 的进程级传输竞争。
-    ///
-    /// ⚠️ 预热失败**不标记污染**（2026-10-04）：预热只是后台优化，跑在坏通道上
-    /// 失败是预期的；若它标记污染，会与 `renewProfilesOnly` 的污染消费竞态 ——
-    /// 消费后、注入前预热才标记 ⇒ `installAndVerify` 误报 `SEAL-PROFILE-350`
-    /// （调用方明明已重置通道）。真正的注入失败仍由 `installAndVerify` 自己标记。
-    func prewarmProfileService(
-        using channel: any InstallChannel,
-        waitForAvailability: Bool = true
-    ) async throws {
-        guard isBusy == false else { return }
-        isBusy = true
-        defer {
-            if operationLease.holdBusyUntilCompletion == false { isBusy = false }
-        }
-        try await ensureProfileService(
-            using: channel,
-            markTaintOnFailure: false,
-            waitForAvailability: waitForAvailability
-        )
-    }
-
     func installAndVerify(
         _ materials: [ProfileOnlyProfileMaterial],
         certificateSerialNumber: String,
@@ -137,15 +75,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
         // 前驱一入场，后继的门闩也会完成。这里持有 isBusy 直到所有设备操作与读回结束。
         while isBusy {
             try Task.checkCancellation()
-            // 原生同步 FFI 超时后不会停止。保持租约直到它真正返回是设备安全边界；
-            // 但后继不能无限等待并继续占用前台事务租约，否则一项卡住会拖住整批续签。
-            guard operationLease.holdBusyUntilCompletion == false else {
-                throw failure(
-                    reason: "上一项设备描述文件操作超时，底层调用仍未返回；本项未开始。",
-                    code: "SEAL-PROFILE-357",
-                    recovery: "等待设备通道恢复后重试；本次未开始的 App 可单独续签。"
-                )
-            }
+            // 原生调用结束前让同设备写入排队；等候期间释放 actor 执行权，其他 App 操作仍可运行。
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         try Task.checkCancellation()
@@ -163,10 +93,6 @@ actor ProfileOnlyProvisioningProfileInstaller {
             _ = try await channel.start()
             await onTaintHealed()
         }
-
-        // 这道门验证的是真正执行注入的 misagent 服务，不是 profile-only 的资格。
-        // 其短时租约让签名入口预热的结果可复用；过期或失效则在写入前重建一次。
-        try await ensureProfileService(using: channel)
 
         for material in materials {
             try Task.checkCancellation()
@@ -225,48 +151,6 @@ actor ProfileOnlyProvisioningProfileInstaller {
         }
     }
 
-    private func ensureProfileService(
-        using channel: any InstallChannel,
-        markTaintOnFailure: Bool = true,
-        waitForAvailability: Bool = true
-    ) async throws {
-        do {
-            if let inFlightPreparation {
-                try await inFlightPreparation.value
-                return
-            }
-
-            operationLease.beginNativeOperation()
-            let task = Task<Void, Error> { [weak self] in
-                do {
-                    try await channel.prepareProfileService(
-                        waitForAvailability: waitForAvailability,
-                        onLateCompletion: { [weak self] in
-                            await self?.nativeProfileOperationDidComplete()
-                        }
-                    )
-                    await self?.nativeProfileOperationDidComplete()
-                } catch {
-                    await self?.nativeProfileOperationDidFail(error)
-                    throw error
-                }
-            }
-            inFlightPreparation = task
-            defer { inFlightPreparation = nil }
-            try await task.value
-        } catch {
-            // `dumpProfiles` 的有界等待超时后，Rust FFI 仍可能占着 misagent。
-            // 复用既有污染闸门：下一轮先 reset + start，不能在旧传输上立即重试。
-            // ⚠️ 预热调用传 `markTaintOnFailure: false`（见 `prewarmProfileService`）。
-            if markTaintOnFailure,
-               let failure = error as? ImportFailure,
-               DeviceChannelTransientPolicy.profileOperationTimeoutCodes.contains(failure.code) {
-                taint.markTainted()
-            }
-            throw error
-        }
-    }
-
     /// 注入所用的 misagent 服务可能在健康探测与真正写入之间瞬时掉线。
     /// 同一 UUID 的 profile 注入是幂等的，因此只对明确的通道瞬时失败立即重建一次，
     /// 避免把可恢复的冷 RSD 会话交给外层 8 秒退避；超时仍按污染路径处理。
@@ -320,22 +204,13 @@ actor ProfileOnlyProvisioningProfileInstaller {
                 }
                 recoveredConnection = true
                 await channel.invalidateProfileServiceConnection()
-                try await ensureProfileService(using: channel)
+                _ = try await channel.start()
             }
         }
     }
 
     private func nativeProfileOperationDidComplete() {
         if operationLease.nativeOperationCompleted() {
-            isBusy = false
-        }
-    }
-
-    private func nativeProfileOperationDidFail(_ error: Error) {
-        if let failure = error as? ImportFailure,
-           DeviceChannelTransientPolicy.profileOperationTimeoutCodes.contains(failure.code) {
-            _ = operationLease.timedOut()
-        } else if operationLease.nativeOperationCompleted() {
             isBusy = false
         }
     }

@@ -6,7 +6,6 @@ struct InstalledAppRefreshProbePolicyTests {
     @Test
     func refreshProbeFailsFastWithoutBorrowingInstallationBudget() {
         #expect(InstalledAppRefreshProbePolicy.timeoutSeconds == 2)
-        #expect(InstalledAppRefreshProbePolicy.timeoutCooldownSeconds > BlockingCall.queryTimeoutSeconds)
     }
 
     @Test

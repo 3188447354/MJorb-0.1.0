@@ -507,24 +507,6 @@ final class AppsViewModel: ObservableObject {
         channelTask = task
     }
 
-    /// 启动 misagent 保活心跳（2026-10-04 通道优化）。
-    ///
-    /// App 回到前台时调用：定期轻量预热 profile 服务，保持 misagent 热状态，
-    /// 下次续签注入不用重新建服务连接。进后台时 `stopProfileServiceKeepalive()` 停掉。
-    func startProfileServiceKeepalive() {
-        guard let installChannel else { return }
-        Task {
-            await ProfileOnlyProvisioningProfileInstaller.shared.startKeepalive(using: installChannel)
-        }
-    }
-
-    /// 停止 misagent 保活心跳。App 进后台时调用。
-    func stopProfileServiceKeepalive() {
-        Task {
-            await ProfileOnlyProvisioningProfileInstaller.shared.stopKeepalive()
-        }
-    }
-
     /// 加载应用列表。**只读**：不写 DB、不动文件。
     ///
     /// 记录恢复 / Seal 自注册 / 孤儿文件清理曾经挂在这里，会让「看列表」这种纯读取动作
@@ -701,14 +683,11 @@ final class AppsViewModel: ObservableObject {
         await maintenanceJob?.syncSelfRecord()
     }
 
-    /// 启动关键路径：只跑记录恢复（设备扫描发现 App）。
-    ///
-    /// 新安装时这是已安装列表有数据的唯一来源，必须在首屏前完成；
-    /// 孤儿清理与描述文件清理不阻塞首屏，走 `runDeferredMaintenanceIfIdle()`。
-    /// 返回 true 表示补回了记录或图标，调用方应当重新 `load()`。
+    /// 启动关键路径只读取本机 LaunchServices 清单，不等待配对设备或 Apple 服务。
+    /// 远端描述文件补充在列表显示后单独运行。
     func runEssentialMaintenanceIfIdle() async -> Bool {
         guard let maintenanceJob else { return false }
-        switch await maintenanceJob.restoreRecordsIfIdle() {
+        switch await maintenanceJob.restoreLocalRecords() {
         case .completed(let changed):
             installedRecordRecoveryPendingAfterOperation = false
             installedRecordRecoveryRetryArmed = false
@@ -963,26 +942,10 @@ final class AppsViewModel: ObservableObject {
         if retryDeviceRecordRecovery {
             installedRecordRecoveryPendingAfterOperation = true
         }
-        guard operationCoordinator?.hasDeviceSessionConflict != true else {
-            installedAppRefreshPendingAfterOperation = true
-            return
-        }
         await load(force: true)
-        guard operationCoordinator?.hasDeviceSessionConflict != true else {
-            installedAppRefreshPendingAfterOperation = true
-            return
-        }
         let duplicateChanged = await removeDuplicateInstalledRecords(installedApps)
         if duplicateChanged { await load(force: true) }
-        guard operationCoordinator?.hasDeviceSessionConflict != true else {
-            installedAppRefreshPendingAfterOperation = true
-            return
-        }
         let localReconciliation = await reconcileInstalledAppsFromLocalSnapshot()
-        guard operationCoordinator?.hasDeviceSessionConflict != true else {
-            installedAppRefreshPendingAfterOperation = true
-            return
-        }
         let changed: Bool
         if localReconciliation.isComplete {
             changed = duplicateChanged || localReconciliation.changed
@@ -993,32 +956,30 @@ final class AppsViewModel: ObservableObject {
         if changed {
             await load(force: true)
         }
-        // 启动扫回可能早于 LocalDevVPN 就绪。回到前台或用户主动刷新时重试完整恢复，
-        // 也覆盖“部分记录还在、部分记录缺失”的情况；启动后的自动刷新只在列表仍为空时补试。
-        let hasThirdPartyInstalledRecords = installedApps.contains {
-            $0.isSeal == false && $0.belongsInInstalledList
-        }
-        if retryDeviceRecordRecovery
-            || installedRecordRecoveryPendingAfterOperation
-            || hasThirdPartyInstalledRecords == false {
-            installedRecordRecoveryPendingAfterOperation = true
-            installedRecordRecoveryRetryArmed = true
-            _ = scheduleInstalledRecordRecovery()
-        }
+        // 每次刷新都做本机轻量恢复，补齐“只丢了部分记录”的情况；它不走设备隧道。
+        // profile 元数据仅在没有前台事务时补充，不能让后台检查挡住用户操作。
+        installedRecordRecoveryPendingAfterOperation = true
+        installedRecordRecoveryRetryArmed = true
+        _ = scheduleInstalledRecordRecovery()
     }
 
     @discardableResult
     private func scheduleInstalledRecordRecovery() -> Bool {
         guard let maintenanceJob,
               installedRecordRecoveryTask == nil,
-              maintenanceJob.hasActiveWork == false,
-              operationCoordinator?.hasActiveLease != true,
-              operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true else {
+              maintenanceJob.hasActiveWork == false else {
             return false
         }
         installedRecordRecoveryTask = Task { [weak self, maintenanceJob] in
-            let attempt = await maintenanceJob.restoreRecordsIfIdle()
+            let localAttempt = await maintenanceJob.restoreLocalRecords()
+            if case .unavailable = localAttempt {
+                guard let self else { return }
+                self.installedRecordRecoveryTask = nil
+                return
+            }
             guard let self else { return }
+            let attempt: AppMaintenanceJob.RecordRecoveryAttempt
+            attempt = await maintenanceJob.restoreInstalledApps()
             self.installedRecordRecoveryTask = nil
             switch attempt {
             case .completed(let changed):
@@ -1038,9 +999,10 @@ final class AppsViewModel: ObservableObject {
             case .skipped, .aborted:
                 self.installedRecordRecoveryPendingAfterOperation = true
                 self.installedRecordRecoveryRetryArmed = true
-                if maintenanceJob.hasActiveWork == false,
-                   self.operationCoordinator?.hasActiveLease != true {
-                    self.resumePendingInstalledAppWork()
+                if maintenanceJob.hasActiveWork == false {
+                    if self.operationCoordinator?.hasActiveLease != true {
+                        self.resumePendingInstalledAppWork()
+                    }
                 }
             }
         }
@@ -1048,8 +1010,7 @@ final class AppsViewModel: ObservableObject {
     }
 
     func resumePendingInstalledAppWork() {
-        guard installedAppRefreshInProgressCount == 0,
-              operationCoordinator?.hasActiveLease != true else {
+        guard installedAppRefreshInProgressCount == 0 else {
             return
         }
         if installedAppRefreshPendingAfterOperation {
@@ -1088,7 +1049,6 @@ final class AppsViewModel: ObservableObject {
             return await reconcileInstalledAppsFromMarkers()
         }
 
-        guard operationCoordinator?.hasDeviceSessionConflict != true else { return (false, false) }
         let installedBundleIdentifiers = Set(
             snapshotBundleIdentifiers.compactMap {
                 InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0)
@@ -1121,7 +1081,6 @@ final class AppsViewModel: ObservableObject {
     /// even when LaunchServices enumeration and the paired-device tunnel are unavailable.
     /// Legacy records still require a complete inventory because older Seal builds used one shared UTI.
     private func reconcileInstalledAppsFromMarkers() async -> (isComplete: Bool, changed: Bool) {
-        guard operationCoordinator?.hasDeviceSessionConflict != true else { return (false, false) }
         let candidates = installedApps.filter { $0.isSeal == false }
         guard candidates.allSatisfy({ $0.installedAppMarkerVersion == SealInstalledAppMarker.version }) else {
             return (false, false)
@@ -1145,29 +1104,9 @@ final class AppsViewModel: ObservableObject {
         let installedRecords = installedApps
         guard installedRecords.isEmpty == false else { return false }
 
-        // 🔴 **与前台操作互斥**（2026-09-26，构建 46 真机）。
-        //
-        // 设备核验走的是同步 FFI（`Minimuxer.isAppInstalled`），和签名 / 安装 / 续签
-        // 共用同一条 RSD 会话。构建 46 日志里 3 次 `SEAL-INSTALL-707`
-        //（01:25:01 / 01:26:40 / 01:29:11）全部落在续签与自替换进行中 ——
-        // 它既抢不到会话（预算必然超时），又把失败弹窗推给用户。
-        // 上游 `refresh` 管线在批次开始处只做**一次** `ensureMinimuxerReady()`，
-        // 期间不做任何并发的设备查询 ⇒ 这里对齐：有前台操作时**直接跳过**，
-        // 不探测、不报错、不弹窗（列表保留本地快照，下次空闲再核验）。
-        //
-        // ⚠️ 这与 `MaintenanceGate` 是**两条不同的闸门**：维护作业是「低优先级、
-        //    可抢占」，它自己会让路；而这里是**用户主动打开已安装页**触发的核验，
-        //    必须由它自己让路，否则就会去抢续签的设备会话。
-        guard operationCoordinator?.hasDeviceSessionConflict != true,
-              operationCoordinator?.hasConflict(for: .scanningDeviceInventory) != true else {
-            installedAppRefreshPendingAfterOperation = true
-            try? await logStore?.append(
-                category: .system,
-                message: "已安装页设备核验跳过：设备会话正被其他操作或清单扫描占用",
-                code: "SEAL-INSTALL-708"
-            )
-            return false
-        }
+        // InstallationProxy reads run independently from misagent profile operations. The full
+        // snapshot is collected first; record changes are deferred below during an install so
+        // an app partway through installation cannot look absent.
 
         var mutations: [Bool] = []
         do {
@@ -1238,11 +1177,6 @@ final class AppsViewModel: ObservableObject {
                     message: "已安装页设备核验中止：阳性对照未通过（\(controlBundleID) 被答成未安装）⇒ 通道此刻不可信，本轮一条记录都不删。",
                     code: "SEAL-INSTALL-739"
                 )
-                return false
-            }
-
-            if operationCoordinator?.hasDeviceSessionConflict == true {
-                installedAppRefreshPendingAfterOperation = true
                 return false
             }
 

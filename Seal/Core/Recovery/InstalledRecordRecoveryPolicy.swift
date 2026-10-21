@@ -1,9 +1,9 @@
 import Foundation
 
-/// 设备端一份描述文件的**只读摘要** —— 扫回的唯一输入。
+/// 设备端一份描述文件的**只读摘要** —— 可选的身份补充输入。
 ///
 /// 由 `DeviceInstalledAppScanner` 从 `Provision.dumpProfiles` 的产物解析出来，
-/// **不落盘**、只在本轮内存里活着。刻意只留「重建一条记录必须的那几项」：
+/// **不落盘**、只在本轮内存里活着。离线列表恢复不依赖它：
 /// 多解析一个字段就多一份在真机上崩的机会，而扫回是个「有就用、没有就算了」的功能。
 ///
 /// ⚠️ `bundleIdentifier` 是**非可选**的：扫描器只会把解析出非空 Bundle ID 的
@@ -16,6 +16,25 @@ struct DeviceProvisioningProfileSummary: Equatable, Sendable {
     let name: String?
     let creationDate: Date?
     let expirationDate: Date?
+    let binding: ProvisioningProfileBinding?
+
+    init(
+        bundleIdentifier: String,
+        teamIdentifier: String?,
+        uuid: String?,
+        name: String?,
+        creationDate: Date?,
+        expirationDate: Date?,
+        binding: ProvisioningProfileBinding? = nil
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.teamIdentifier = teamIdentifier
+        self.uuid = uuid
+        self.name = name
+        self.creationDate = creationDate
+        self.expirationDate = expirationDate
+        self.binding = binding
+    }
 }
 
 /// 设备端扫回的结果摘要。
@@ -152,6 +171,8 @@ enum InstalledRecordRecoveryPolicy {
         let profileName: String?
         let profileCreationDate: Date?
         let profileExpirationDate: Date?
+        let profileBinding: ProvisioningProfileBinding?
+        let sealManagedMarkerVersion: Int?
         let displayName: String
         let version: String
         let buildNumber: String
@@ -167,6 +188,41 @@ enum InstalledRecordRecoveryPolicy {
         let profileCreationDate: Date?
         let profileExpirationDate: Date?
         let displayName: String
+    }
+
+    /// Merge the local LaunchServices view with the paired InstallationProxy view.
+    /// Keep local identity metadata and enrich it with the device service's profile flag.
+    static func mergeInstalledApplications(
+        local: [DeviceInstalledApplicationSummary]?,
+        paired: [DeviceInstalledApplicationSummary]?
+    ) -> [DeviceInstalledApplicationSummary]? {
+        guard local != nil || paired != nil else { return nil }
+        var merged: [String: DeviceInstalledApplicationSummary] = [:]
+        for application in local ?? [] {
+            merged[normalizedBundleIdentifier(application.bundleIdentifier)] = application
+        }
+        for application in paired ?? [] {
+            let key = normalizedBundleIdentifier(application.bundleIdentifier)
+            guard let existing = merged[key] else {
+                merged[key] = application
+                continue
+            }
+            let pairedName = application.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            merged[key] = DeviceInstalledApplicationSummary(
+                bundleIdentifier: existing.bundleIdentifier,
+                displayName: pairedName.isEmpty || pairedName == application.bundleIdentifier
+                    ? existing.displayName
+                    : application.displayName,
+                shortVersion: application.shortVersion.isEmpty ? existing.shortVersion : application.shortVersion,
+                buildNumber: application.buildNumber.isEmpty ? existing.buildNumber : application.buildNumber,
+                profileValidated: application.profileValidated ?? existing.profileValidated,
+                teamIdentifier: existing.teamIdentifier ?? application.teamIdentifier,
+                sealManagedMarkerVersion: existing.sealManagedMarkerVersion ?? application.sealManagedMarkerVersion
+            )
+        }
+        return merged.values.sorted {
+            $0.bundleIdentifier.localizedCaseInsensitiveCompare($1.bundleIdentifier) == .orderedAscending
+        }
     }
 
     /// 本轮扫回的判据参数。
@@ -215,8 +271,7 @@ enum InstalledRecordRecoveryPolicy {
 
     /// 扫回记录的统一标识，写进 `importWarnings` —— 签名页会把 `importWarnings`
     /// 列出来，所以这是用户能看见的那一句；守卫也按它断言。
-    static let recoveryWarning =
-        "此记录由设备端扫回重建，本机没有该应用的原始 IPA；需要重新签名时，请先导入该应用的 IPA。"
+    static let recoveryWarning = AppRecord.deviceRecoveryWarning
 
     static func normalizedBundleIdentifier(_ value: String) -> String {
         // 「Bundle ID 怎么归一化」只有一处实现（`ProfileReclaimPolicy`），不在这里再抄一遍。
@@ -342,28 +397,46 @@ enum InstalledRecordRecoveryPolicy {
         }
     }
 
-    /// Rebuilds records from the actual user-app inventory. InstallationProxy's
-    /// ProfileValidated flag is the sideload signal. Exact App ID profiles take
-    /// precedence over wildcard coverage; ambiguous profile fields require consensus.
+    /// Rebuilds records from installed-app metadata. InstallationProxy's ProfileValidated
+    /// flag, a matching profile, a known LaunchServices signing Team, Seal's per-app marker,
+    /// or an exact mapped Team suffix can identify a sideload. The local scan needs no tunnel.
+    /// Exact App ID profiles take precedence over wildcard coverage; ambiguous fields require consensus.
     static func drafts(
         installedApplications: [DeviceInstalledApplicationSummary],
-        profiles: [DeviceProvisioningProfileSummary],
+        profiles: [DeviceProvisioningProfileSummary]?,
         context: Context
     ) -> [InstalledAppDraft] {
+        let profiles = profiles ?? []
         var seen = Set<String>()
         return installedApplications.compactMap { application in
             let bundleID = application.bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
             let normalized = normalizedBundleIdentifier(bundleID)
-            guard application.profileValidated == true,
-                  normalized.isEmpty == false,
+            guard normalized.isEmpty == false,
                   seen.insert(normalized).inserted,
                   context.knownBundleIdentifiers.contains(normalized) == false,
                   context.dismissedBundleIdentifiers.contains(normalized) == false else {
                 return nil
             }
 
+            let applicationTeam = normalizedTeamIdentifier(application.teamIdentifier)
             let matchingProfiles = profiles.filter {
                 profile($0, covers: bundleID)
+            }
+            let trustedMatchingProfiles = matchingProfiles.filter { candidate in
+                guard let team = normalizedTeamIdentifier(candidate.teamIdentifier) else { return false }
+                return context.knownTeamIdentifiers.contains(team) || team == applicationTeam
+            }
+            let mappedTeam = teamIdentifierForMappedBundle(
+                bundleID,
+                knownTeams: context.knownTeamIdentifiers
+            )
+            let applicationTeamIsKnown = applicationTeam.map(context.knownTeamIdentifiers.contains) ?? false
+            guard application.profileValidated == true
+                    || trustedMatchingProfiles.isEmpty == false
+                    || mappedTeam != nil
+                    || applicationTeamIsKnown
+                    || application.sealManagedMarkerVersion == SealInstalledAppMarker.version else {
+                return nil
             }
             let exactProfiles = matchingProfiles.filter {
                 normalizedBundleIdentifier($0.bundleIdentifier) == normalized
@@ -371,7 +444,18 @@ enum InstalledRecordRecoveryPolicy {
             // An exact App ID profile is stronger evidence than a wildcard profile that
             // happens to cover the same installed Bundle ID.
             let profileCandidates = exactProfiles.isEmpty ? matchingProfiles : exactProfiles
-            let matchedProfile = profileCandidates.count == 1 ? profileCandidates.first : nil
+            let trustedProfileCandidates = trustedMatchingProfiles.filter {
+                normalizedBundleIdentifier($0.bundleIdentifier) == normalized
+            }
+            let identityMatchedProfiles = applicationTeam.map { team in
+                profileCandidates.filter {
+                    normalizedTeamIdentifier($0.teamIdentifier) == team
+                }
+            }
+            let resolvedProfileCandidates = application.profileValidated == true
+                ? (identityMatchedProfiles ?? profileCandidates)
+                : (trustedProfileCandidates.isEmpty ? trustedMatchingProfiles : trustedProfileCandidates)
+            let matchedProfile = resolvedProfileCandidates.count == 1 ? resolvedProfileCandidates.first : nil
             let isSeal = isSealBundleIdentifier(
                 bundleID,
                 canonicalBundleIdentifier: context.sealCanonicalBundleIdentifier,
@@ -388,9 +472,8 @@ enum InstalledRecordRecoveryPolicy {
             // 设备清单只提供签名后的 ID。优先使用精确 App ID profile；没有精确项时，
             // 多份 wildcard profile 只有 Team 全部一致才能共享身份。资料字段按候选值共识恢复。
             let profileTeam = matchedProfile.flatMap { normalizedTeamIdentifier($0.teamIdentifier) }
-                ?? consensus(profileCandidates.map { normalizedTeamIdentifier($0.teamIdentifier) })
-            let teamIdentifier = profileTeam
-                ?? teamIdentifierForMappedBundle(bundleID, knownTeams: context.knownTeamIdentifiers)
+                ?? consensus(resolvedProfileCandidates.map { normalizedTeamIdentifier($0.teamIdentifier) })
+            let teamIdentifier = profileTeam ?? mappedTeam ?? applicationTeam
             let originalBundleIdentifier = Self.originalBundleIdentifier(
                 fromMapped: bundleID,
                 teamIdentifier: teamIdentifier
@@ -398,11 +481,11 @@ enum InstalledRecordRecoveryPolicy {
             var profileMetadataCandidates = matchedProfile.map { [$0] } ?? []
             if profileMetadataCandidates.isEmpty,
                let profileTeam,
-               profileCandidates.isEmpty == false,
-               profileCandidates.allSatisfy({
+               resolvedProfileCandidates.isEmpty == false,
+               resolvedProfileCandidates.allSatisfy({
                    normalizedTeamIdentifier($0.teamIdentifier) == profileTeam
                }) {
-                profileMetadataCandidates = profileCandidates
+                profileMetadataCandidates = resolvedProfileCandidates
             }
             let profileUUID = consensus(profileMetadataCandidates.map(\.uuid))
             let profileName = consensus(profileMetadataCandidates.map(\.name))
@@ -416,6 +499,8 @@ enum InstalledRecordRecoveryPolicy {
                 profileName: profileName,
                 profileCreationDate: profileCreationDate,
                 profileExpirationDate: profileExpirationDate,
+                profileBinding: matchedProfile?.binding,
+                sealManagedMarkerVersion: application.sealManagedMarkerVersion,
                 displayName: application.displayName.isEmpty ? bundleID : application.displayName,
                 version: application.shortVersion,
                 buildNumber: application.buildNumber
@@ -439,6 +524,26 @@ enum InstalledRecordRecoveryPolicy {
         return target.hasPrefix(prefix) && target.count > prefix.count
     }
 
+    static func profileBinding(
+        from profiles: [DeviceProvisioningProfileSummary],
+        bundleIdentifier: String,
+        teamIdentifier: String?
+    ) -> ProvisioningProfileBinding? {
+        guard let normalizedTeam = normalizedTeamIdentifier(teamIdentifier) else { return nil }
+        let matching = profiles.filter {
+            profile($0, covers: bundleIdentifier)
+                && normalizedTeamIdentifier($0.teamIdentifier) == normalizedTeam
+                && $0.binding != nil
+        }
+        let exact = matching.filter {
+            normalizedBundleIdentifier($0.bundleIdentifier)
+                == normalizedBundleIdentifier(bundleIdentifier)
+        }
+        let candidates = exact.isEmpty ? matching : exact
+        guard candidates.count == 1 else { return nil }
+        return candidates[0].binding
+    }
+
     private static func teamIdentifierForMappedBundle(
         _ bundleIdentifier: String,
         knownTeams: Set<String>
@@ -454,10 +559,14 @@ enum InstalledRecordRecoveryPolicy {
     static func makeRecord(
         from draft: InstalledAppDraft,
         accountID: UUID?,
+        certificateSerialNumber: String? = nil,
         id: UUID = UUID(),
         now: Date = Date()
     ) -> AppRecord {
-        AppRecord(
+        let signingTargets = draft.profileBinding.map {
+            [SigningTargetRecord(binding: $0, signedBundleIdentifier: draft.bundleIdentifier)]
+        } ?? []
+        return AppRecord(
             id: id,
             originalBundleIdentifier: draft.originalBundleIdentifier,
             mappedBundleIdentifier: draft.bundleIdentifier,
@@ -470,18 +579,19 @@ enum InstalledRecordRecoveryPolicy {
             expiryDate: draft.profileExpirationDate,
             accountID: accountID,
             signingTeamID: draft.teamIdentifier,
-            certificateSerialNumber: nil,
+            certificateSerialNumber: certificateSerialNumber,
             signedDeviceIdentifier: nil,
             provisioningProfileUUID: draft.profileUUID,
             provisioningProfileName: draft.profileName,
             provisioningProfileCreationDate: draft.profileCreationDate,
             provisioningProfileExpirationDate: draft.profileExpirationDate,
             lastInstalledAt: nil,
-            signingTargets: [],
+            signingTargets: signingTargets,
             ipaRelativePath: "Apps/\(id.uuidString)/Original.ipa",
             signedIPARelativePath: nil,
             signedIPASHA256: nil,
             signedArtifactStatus: nil,
+            installedAppMarkerVersion: draft.sealManagedMarkerVersion,
             preferredBundleIdentifier: draft.bundleIdentifier,
             preferredDisplayName: nil,
             needsIPAImport: true,

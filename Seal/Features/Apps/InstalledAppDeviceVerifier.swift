@@ -26,26 +26,26 @@ struct InstalledAppDeviceVerifier {
         // 只放到 `Task.detached` 是不够的 —— 那只是把它挪出主线程，**阻塞本身仍然无界**。
         // 超时按「不知道」处理（抛错），调用方本来就 fail closed（保守跳过，不删数据）。
         let probeID: UUID
-        switch await InstalledAppRefreshProbeGate.shared.begin() {
+        switch await InstalledAppRefreshProbeGate.inventory.begin() {
         case .ready(let id):
             probeID = id
         case .inFlight:
             await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             throw unavailableError(code: 3, description: "Device probe is already in progress")
-        case .coolingDown:
+        case .cancelled:
             await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
-            throw unavailableError(code: 4, description: "Device probe is cooling down after a timeout")
+            throw CancellationError()
         }
 
         let outcome = await BlockingCall.bounded(
             seconds: InstalledAppRefreshProbePolicy.timeoutSeconds,
             cancelsWorkOnTimeout: false,
             onLateCompletion: { _ in
-                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: true)
+                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             },
             onWorkNeverStarted: {
-                await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+                await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)
                 await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
             }
         ) {
@@ -58,7 +58,7 @@ struct InstalledAppDeviceVerifier {
             throw unavailableError(code: 2, description: "Device probe timed out")
         }
         // 正常完成时释放；超时/取消时不走到这里，避免重叠查询。
-        await InstalledAppRefreshProbeGate.shared.finish(probeID: probeID, timedOut: false)
+        await InstalledAppRefreshProbeGate.inventory.finish(probeID: probeID)
         await InstalledAppInventoryOperationLease.end(operationLease, using: operationCoordinator)
         if Task.isCancelled {
             throw CancellationError()

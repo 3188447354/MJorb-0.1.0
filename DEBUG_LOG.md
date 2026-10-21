@@ -1,3 +1,12 @@
+# 2026-10-22 — 续签被跨服务闸门拦截，设备记录恢复与更新等待态不清楚
+
+- **现象**：0.1.47/0.1.48 的设备日志反复出现 `SEAL-OP-001`，提示描述文件服务被安装清单扫描占用；更新抽屉显示 `0 B / 26 MB` 和一条空进度线，看不出仍在连接更新源；Seal 重装后已安装侧载记录缺少本机展示资料。
+- **根因**：安装代理与 misagent 描述文件服务共用了同一查询闸门，互不冲突的读取会挡住续签。应用列表的设备扫描入口还在读取前检查全局设备忙状态，导致本可独立执行的清单读取被跳过。更新抽屉在收到首个字节前使用无确定进度的线性样式。
+- **修复**：按 InstallationProxy 与 misagent 拆分各自的原生调用闸门；两个服务可以并行，同一服务的不可取消原生调用仍等其真实结束。设备清单读取不再被全局忙状态提前拒绝；完成清单读取后，只有需要变更已安装记录时才等待应用安装写入结束，避免把安装中的 App 误判为已卸载。本机 LaunchServices 与设备安装清单并行合并，补回应用名称、版本、团队、可确认的 profile 信息和图标；配对维护或描述文件维护不会再挡住本机已安装列表。前台事务冲突时改为可取消地等前一笔写入结束，不因固定 30 秒到期而直接丢弃请求。单个服务请求超时不再顺带作废共享 RSD 缓存；确认连接失败时仍由原有恢复路径重建。更新首字节到达前显示动态连接提示，之后只显示 URLSession 回报的真实进度。
+- **上游对照**：SideStore 的刷新流程不使用 Seal 的本机安装恢复链路；对齐其按实际应用身份更新状态的做法。Seal 保留本机和设备两种清单来源，并按具体设备服务分别调度；不引入整个应用共用的忙碌锁。
+- **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/UpdateNoticeView.swift`、`Seal/Infrastructure/Installation/DeviceInstalledAppScanner.swift`、`Seal/Infrastructure/Installation/DeviceProfileCleaner.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、`Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift`、`Seal/Infrastructure/UpdateIPADownloader.swift`、RustBridge 安装/描述文件服务、对应回归测试和源码守卫。
+- **验证状态**：未在 Windows 运行 Swift 编译、回归测试或源码守卫；源码守卫 Python 语法解析通过。完整 Swift 回归、守卫、签名器测试和 IPA 构建等待 CI；设备列表恢复与续签并行仍需真机确认。
+
 # 2026-10-22 — CI 守卫的设备调用锚点未跟随有界等待参数
 
 - **现象**：CI `39658250271` 的 Swift 回归与签名器测试通过，但 `build-package` 在发布守卫失败；守卫报告 R116 源码断言失败及 4 个变异锚点缺失。

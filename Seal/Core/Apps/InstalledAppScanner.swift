@@ -14,6 +14,7 @@ final class InstalledAppScanner: Sendable {
         let version: String
         let buildNumber: String
         let teamID: String?
+        let sealManagedMarkerVersion: Int?
     }
 
     /// 扫描所有已安装的应用，返回 Bundle ID -> ScannedApp
@@ -25,9 +26,14 @@ final class InstalledAppScanner: Sendable {
     /// `nil` 表示系统清单不可读取；空数组表示成功读到空清单。
     /// 同步设备列表时必须区分两者，不能把读取失败当成“全部卸载”。
     func scanAllSnapshot() async -> [ScannedApp]? {
+        await scanAllSnapshot(allowPartialForRecovery: false)
+    }
+
+    /// 恢复记录只会新增本机明确存在的 App，不会据此删除记录；因此只要任一系统枚举源有结果就可用。
+    func scanAllSnapshot(allowPartialForRecovery: Bool) async -> [ScannedApp]? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let apps = Self.scanSync()
+                let apps = Self.scanSync(allowPartialForRecovery: allowPartialForRecovery)
                 continuation.resume(returning: apps)
             }
         }
@@ -45,7 +51,7 @@ final class InstalledAppScanner: Sendable {
         }
     }
 
-    private static func scanSync() -> [ScannedApp]? {
+    private static func scanSync(allowPartialForRecovery: Bool) -> [ScannedApp]? {
         // 模拟器上跳过：私有 API 在模拟器上行为不可靠，且模拟器里不会有 Seal 装过的 App
         #if targetEnvironment(simulator)
         return nil
@@ -78,7 +84,8 @@ final class InstalledAppScanner: Sendable {
                 appList.append(application)
             }
         }
-        if appLists.count == 1,
+        if allowPartialForRecovery == false,
+           appLists.count == 1,
            InstalledAppRefreshProbePolicy.hasPositiveControl(
                 controlBundleIdentifier: Bundle.main.bundleIdentifier,
                 installedBundleIdentifiers: appList.compactMap {
@@ -102,13 +109,16 @@ final class InstalledAppScanner: Sendable {
                 ?? bundleID
             let version = (app.value(forKey: "bundleVersion") as? String) ?? ""
             let build = (app.value(forKey: "bundleShortVersionString") as? String) ?? ""
-            // Team ID 需要从签名信息拿，这里先留空，调用方按需过滤
+            let teamID = stringValue("teamID", on: app)
             result.append(ScannedApp(
                 bundleIdentifier: bundleID,
                 name: name,
                 version: build.isEmpty ? version : build,
                 buildNumber: version,
-                teamID: nil
+                teamID: teamID,
+                sealManagedMarkerVersion: SealInstalledAppMarker.isDeclared(for: bundleID)
+                    ? SealInstalledAppMarker.version
+                    : nil
             ))
         }
         return result
@@ -154,6 +164,12 @@ final class InstalledAppScanner: Sendable {
             lists.append(applications)
         }
         return lists.isEmpty ? nil : lists
+    }
+
+    private static func stringValue(_ property: String, on object: NSObject) -> String? {
+        let selector = NSSelectorFromString(property)
+        guard object.responds(to: selector) else { return nil }
+        return object.perform(selector)?.takeUnretainedValue() as? String
     }
 
     private static func iconPNGData(from application: NSObject) -> Data? {

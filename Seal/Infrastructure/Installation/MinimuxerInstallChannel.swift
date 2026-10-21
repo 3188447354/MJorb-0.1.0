@@ -103,11 +103,6 @@ actor MinimuxerInstallChannel: InstallChannel {
     private var selfReplacementGate = SelfReplacementInstallGate()
     private var cachedDeviceIdentifier: String?
     private var lastSuccessfulStart: Date?
-    /// 最近一次已确认可访问 misagent profile 服务的时间。
-    /// UDID/RSD 就绪与 profile 服务就绪不是同一件事；该时间只作短时复用优化。
-    private var lastHealthyProfileServiceAt: Date?
-    /// profile 服务预热单飞，避免快捷指令与前台操作并发触发两次 `dumpProfiles`。
-    private var inFlightProfileServicePreparation: Task<Void, Error>?
     /// 正在进行的整段隧道诊断。签名链路与 ViewModel 现在会**并发**请求启动通道
     /// （ViewModel 在签名开始就并行发起、SigningCoordinator 安装前再 ensure 一次），
     /// 没有它就会各自跑一遍完整诊断（reset + 18s RSD 握手 + 36×500ms 轮询），
@@ -403,87 +398,11 @@ actor MinimuxerInstallChannel: InstallChannel {
         lastFailure = nil
     }
 
-    func prepareProfileService() async throws {
-        try await prepareProfileService(onLateCompletion: {})
-    }
-
-    func prepareProfileService(onLateCompletion: @escaping @Sendable () async -> Void) async throws {
-        try await prepareProfileService(waitForAvailability: true, onLateCompletion: onLateCompletion)
-    }
-
-    func prepareProfileService(
-        waitForAvailability: Bool,
-        onLateCompletion: @escaping @Sendable () async -> Void
-    ) async throws {
-        if let lastHealthyProfileServiceAt,
-           ProfileServiceLeasePolicy.requiresProbe(
-               lastHealthyAt: lastHealthyProfileServiceAt,
-               now: Date()
-           ) == false {
-            return
-        }
-        if let inFlightProfileServicePreparation {
-            return try await inFlightProfileServicePreparation.value
-        }
-
-        let task = Task<Void, Error> {
-            try await self.prepareProfileServiceOnce(
-                waitForAvailability: waitForAvailability,
-                onLateCompletion: onLateCompletion
-            )
-        }
-        inFlightProfileServicePreparation = task
-        defer { inFlightProfileServicePreparation = nil }
-        try await task.value
-    }
-
-    /// 使用实际承载 profile 注入的 misagent 服务进行无副作用探测。
-    ///
-    /// 第一次失败时只废弃 Rust RSD 缓存并立即重建，不清配对/provider 状态，也不把
-    /// 8 秒外层退避浪费在已经确认失效的旧会话上。第二次失败才交给既有重试策略。
-    private func prepareProfileServiceOnce(
-        waitForAvailability: Bool,
-        onLateCompletion: @escaping @Sendable () async -> Void
-    ) async throws {
-        _ = try await start()
-        var hasRebuilt = false
-
-        while true {
-            switch await DeviceProfileInspector.probeProfileService(
-                using: operationCoordinator,
-                waitForAvailability: waitForAvailability,
-                onLateCompletion: onLateCompletion
-            ) {
-            case .ready:
-                lastHealthyProfileServiceAt = Date()
-                return
-            case .timedOut:
-                // 不能窄重建：超时的 dumpProfiles FFI 可能仍在 misagent 上运行。
-                // ProfileOnlyProvisioningProfileInstaller 会把这个码标为污染，下一轮
-                // 通过既有的 reset + start 流程切换到新传输。
-                throw Self.profileServiceTimeoutFailure
-            case .busy:
-                throw Self.profileServiceBusyFailure
-            case .failed:
-                break
-            }
-
-            guard ProfileServiceLeasePolicy.shouldRebuildAfterProbeFailure(hasRebuilt: hasRebuilt) else {
-                throw Self.profileServiceUnavailableFailure
-            }
-            hasRebuilt = true
-            await invalidateProfileServiceConnection()
-            _ = try await start()
-        }
-    }
-
     func invalidateProfileServiceConnection() async {
         #if !targetEnvironment(simulator)
         Minimuxer.invalidateRemotePairingConnection()
         #endif
-        // 仅拆 Rust RSD 会话后，UDID 缓存不能再代表 profile 服务健康；下一次预热
-        // 必须实际调用 misagent。保留配对/provider 状态，避免完整 reset 的冷启动代价。
-        lastHealthyProfileServiceAt = nil
+        // 仅拆 Rust RSD 会话，保留配对/provider 状态；下一次写入直接重建服务连接。
         invalidateCachedSession()
         await log(
             "描述文件服务连接已作废，下一次操作将重建 RSD/misagent 会话",
@@ -829,7 +748,6 @@ actor MinimuxerInstallChannel: InstallChannel {
         // 一并清熔断：`reset()` 的调用方（导入配对文件 / 恢复连接）期待的是**真实重跑诊断**，
         // 留着 60 秒熔断会把刚修好的通道直接搪塞成一个旧错误。
         invalidateCachedSession()
-        lastHealthyProfileServiceAt = nil
         lastFailureAt = nil
         lastFailure = nil
     }
@@ -2020,29 +1938,6 @@ actor MinimuxerInstallChannel: InstallChannel {
         route: .localDevVPN,
         retryDisposition: .manual,
         operation: .install,
-        origin: .deviceChannel
-    )
-
-    private static let profileServiceUnavailableFailure = ImportFailure(
-        title: "描述文件服务未就绪",
-        reason: "已建立设备连接，但描述文件服务暂时未响应；Seal 已自动重建一次设备会话。",
-        recovery: "保持 Wi-Fi 与 LocalDevVPN 连接后重试",
-        code: "SEAL-PROFILE-356"
-    )
-
-    private static let profileServiceTimeoutFailure = ImportFailure(
-        title: "描述文件服务响应超时",
-        reason: "描述文件服务在 8 秒内未返回。Seal 将在下一次续签前重建设备通道，避免与仍在结束的旧操作并发。",
-        recovery: "保持 Wi-Fi 与 LocalDevVPN 连接后重试",
-        code: "SEAL-PROFILE-355t"
-    )
-
-    private static let profileServiceBusyFailure = ImportFailure(
-        title: "设备正在处理其他操作",
-        reason: "设备清单或描述文件服务在等待窗口内没有释放；本次没有重置连接，也没有并发发起设备请求。",
-        recovery: "保持设备连接，稍后重试；Seal 会在可安全使用设备服务后继续操作。",
-        code: "SEAL-OP-001",
-        operation: .renew,
         origin: .deviceChannel
     )
 
