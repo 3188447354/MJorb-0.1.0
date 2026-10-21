@@ -238,7 +238,7 @@ final class OperationCoordinator {
     }
 
     private static func scopesConflict(_ lhs: UUID?, _ rhs: UUID?) -> Bool {
-        guard let lhs, let rhs else { return false }
+        guard let lhs, let rhs else { return lhs == nil && rhs == nil }
         return lhs == rhs
     }
 
