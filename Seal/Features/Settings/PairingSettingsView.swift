@@ -140,7 +140,7 @@ struct PairingSettingsView: View {
             if connectionDiagnosticFailed {
                 Button("打开 LocalDevVPN") {
                     openURL(LocalDevVPNLink.enableAndReturn) { result in
-                        if case .discarded = result {
+                        if result == false {
                             openURL(LocalDevVPNLink.appStore)
                         }
                     }

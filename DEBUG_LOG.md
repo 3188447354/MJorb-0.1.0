@@ -7,6 +7,7 @@
 - **上游对照**：本批只改变列表同步、证书状态展示、日志分类和 UI，不改变签名/续签判定、Apple 请求、签名材料或安装事务；`docs/upstream-alignment.md` 已核对，SideStore/AltStore 没有等价的本机 LaunchServices 清单 UI 判据，未引入第二套签名/续签流程。
 - **回归覆盖**：增加本机清单阳性对照、Bundle ID 归一化、证书关联必须匹配实时安装快照、设备清单未知不得显示“无影响”、更新操作类型测试；原有日志最近 20 条测试继续覆盖展示上限。
 - **涉及文件**：`Seal/Core/Apps/InstalledAppScanner.swift`、`Seal/Core/Apps/InstalledAppRefreshProbePolicy.swift`、`Seal/Core/Signing/CertificateRevocationImpact.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Features/Settings/LogViewerView.swift`、`Seal/Features/Settings/PairingSettingsView.swift`、`Seal/Core/Renewal/RenewalRoundSummary.swift`、`Seal/Core/Diagnostics/LogViewerPolicy.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealTests/InstalledApps/InstalledAppRefreshProbePolicyTests.swift`、`SealTests/Settings/CertificateRevocationImpactTests.swift`、`SealTests/Diagnostics/LogRoundTests.swift`、`docs/upstream-alignment.md`、`project.yml`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+- **CI 首次回归发现的编译问题**：SwiftUI `openURL` 的 completion 参数是 `Bool`，不能按 `OpenURLAction.Result` 匹配；改为 `false` 时跳转 App Store。`MFMailComposeViewControllerDelegate` 回调在当前 SDK 为主线程隔离，Coordinator 标记 `@MainActor`。
 - **验证状态**：本机 Windows 无 Swift/Xcode；未本地运行测试或源码守卫。修改后按项目流程由 iOS CI 编译与回归；需要真机确认 LaunchServices 返回实装应用、邮件草稿附件、LocalDevVPN 深链回跳及灵动岛渲染。
 
 # 2026-10-21 — CI 错误码清单未随源代码更新

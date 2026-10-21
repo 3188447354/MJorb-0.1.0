@@ -432,6 +432,7 @@ private struct LogMailComposer: UIViewControllerRepresentable {
         context.coordinator.onFinish = onFinish
     }
 
+    @MainActor
     final class Coordinator: NSObject, MFMailComposeViewControllerDelegate {
         var onFinish: () -> Void
 
