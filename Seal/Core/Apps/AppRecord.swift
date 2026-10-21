@@ -7,9 +7,9 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let originalBundleIdentifier: String
     var mappedBundleIdentifier: String?
-    let name: String
-    let version: String
-    let buildNumber: String
+    var name: String
+    var version: String
+    var buildNumber: String
     let size: Int64
     var iconRelativePath: String?
     var state: AppState
