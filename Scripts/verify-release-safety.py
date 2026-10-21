@@ -7451,7 +7451,7 @@ def main():
          "                    guard self.loadGeneration == generation else { return false }",
          "let iconsAccepted = await MainActor.run {\n"
          "                    guard true else { return false }",
-         "C: every background write-back must be guarded"),
+         "C: background state writes must check the load generation atomically"),
         ("Seal/Features/Apps/AppsRootView.swift",
          "await viewModel.runEssentialMaintenanceIfIdle()",
          "",
@@ -10051,7 +10051,7 @@ def main():
         ("Seal/Features/Apps/AppsViewModel.swift",
          "bundleIdentifier: controlBundleID,",
          "bundleIdentifier: controlBundleID.lowercased(),",
-         "R88②: 阳性对照必须真的发一次设备查询"),
+         "R88②: 阳性对照必须来自真实设备清单或设备查询"),
         # ③ 把「收集缺失」与删除挪到对照**之前** ⇒ R88③ 报红
         #    （代码看起来仍然有对照，但删除已经发生了 —— 顺序就是安全本身）。
         ("Seal/Features/Apps/AppsViewModel.swift",
