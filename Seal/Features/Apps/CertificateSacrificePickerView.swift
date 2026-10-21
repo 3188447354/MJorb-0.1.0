@@ -10,6 +10,7 @@ struct CertificateSacrificePickerView: View {
     @State private var isLoading = true
     @State private var failureMessage: String?
     @State private var isConfirmationPresented = false
+    @State private var showsAllCandidates = false
 
     private var selectedCandidate: CertificateSacrificeCandidate? {
         candidates.first { $0.id == selectedSerialNumber }
@@ -17,6 +18,18 @@ struct CertificateSacrificePickerView: View {
 
     private var visibleCandidates: [CertificateSacrificeCandidate] {
         session.app.isSeal ? candidates.filter { $0.isCurrentSealSigner } : candidates
+    }
+
+    private var orderedCandidates: [CertificateSacrificeCandidate] {
+        guard let recommendedSerialNumber,
+              let recommended = visibleCandidates.first(where: { $0.id == recommendedSerialNumber }) else {
+            return visibleCandidates
+        }
+        return [recommended] + visibleCandidates.filter { $0.id != recommendedSerialNumber }
+    }
+
+    private var displayedCandidates: [CertificateSacrificeCandidate] {
+        showsAllCandidates ? orderedCandidates : Array(orderedCandidates.prefix(3))
     }
 
     private var recommendedSerialNumber: String? {
@@ -39,25 +52,20 @@ struct CertificateSacrificePickerView: View {
 
     var body: some View {
         SealDrawer(title: "选择要撤销的证书", showsFooter: true) {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 10) {
                 if session.app.isSeal {
-                Text("将优先选中当前 Seal 实际使用的证书。撤销后 Seal 可能暂时无法启动，完成本次签名并覆盖安装即可恢复。")
-                        .font(.system(size: 13, weight: .medium))
+                    Text("当前证书正供 Seal 使用；撤销后需完成本次签名并覆盖安装才能恢复。")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Color.sealWarning)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(12)
+                        .padding(9)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.sealWarning.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                Text("请选择一张本机没有对应私钥的开发证书")
-                    .font(.system(size: 14))
+                Text("选择一张本机没有私钥的开发证书")
+                    .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
-
-                Text("可撤销证书")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.sealTextSecondary)
-                    .padding(.top, 2)
 
                 if isLoading {
                     HStack(spacing: 10) {
@@ -67,7 +75,7 @@ struct CertificateSacrificePickerView: View {
                             .foregroundStyle(Color.sealTextSecondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
+                    .padding(12)
                     .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 } else if let failureMessage {
                     VStack(alignment: .leading, spacing: 10) {
@@ -80,7 +88,7 @@ struct CertificateSacrificePickerView: View {
                             .foregroundStyle(Color.sealAccent)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
+                    .padding(12)
                     .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 } else if visibleCandidates.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
@@ -96,22 +104,25 @@ struct CertificateSacrificePickerView: View {
                             .foregroundStyle(Color.sealAccent)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
+                    .padding(12)
                     .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 } else {
-                    ForEach(visibleCandidates) { candidate in
+                    ForEach(displayedCandidates) { candidate in
                         candidateRow(candidate)
                     }
 
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Color.sealWarning)
-                        Text("这里只统计本机记录可确认的影响；其他设备或缺少签名身份记录的应用无法核验。")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.sealTextSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if orderedCandidates.count > 3 {
+                        Button(showsAllCandidates ? "收起证书列表" : "显示全部 \(orderedCandidates.count) 张证书") {
+                            showsAllCandidates.toggle()
+                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.sealAccent)
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
+
+                    Text("影响数量按本机记录统计，其他设备上的应用无法核验。")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.sealTextSecondary)
                 }
             }
             .padding(.bottom, 8)
@@ -132,6 +143,7 @@ struct CertificateSacrificePickerView: View {
             }
         }
         .task { await loadCandidates() }
+        .presentationDetents([.fraction(0.56)])
         .confirmationDialog(
             "确认撤销证书？",
             isPresented: $isConfirmationPresented,
@@ -158,50 +170,38 @@ struct CertificateSacrificePickerView: View {
         return Button {
             selectedSerialNumber = candidate.id
         } label: {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 22, weight: .regular))
+                    .font(.system(size: 20, weight: .regular))
                     .foregroundStyle(isSelected ? Color.sealAccent : Color.sealTextSecondary)
-                    .frame(width: 24, height: 28)
-                    .padding(.top, 2)
+                    .frame(width: 22)
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text("Apple Development")
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                        if candidate.isCurrentSealSigner {
-                            Text("当前 Seal 证书")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Color.sealWarning)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.sealWarning.opacity(0.11), in: Capsule())
-                        }
-                        if isRecommended {
-                            Text(candidate.isCurrentSealSigner ? "优先撤销" : "推荐")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Color.sealAccent)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.sealAccent.opacity(0.11), in: Capsule())
+                        if candidate.isCurrentSealSigner || isRecommended {
+                            Text(candidate.isCurrentSealSigner ? "当前 Seal · 优先" : "推荐")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(candidate.isCurrentSealSigner ? Color.sealWarning : Color.sealAccent)
+                                .lineLimit(1)
                         }
                     }
-                    Text(expiryText(candidate.certificate.expirationDate))
-                    Text("Team ID  \(session.account.teamID)")
-                        .font(.system(size: 12, design: .monospaced))
-                    Text("序列号末尾  \(String(candidate.certificate.serialNumber.suffix(8)))")
-                        .font(.system(size: 11, design: .monospaced))
-                    Text("本机记录可确认影响 \(candidate.affectedAppCount) 个应用")
-                        .font(.system(size: 12))
+                    Text("\(expiryText(candidate.certificate.expirationDate)) · 尾号 \(candidate.certificate.serialNumber.suffix(8))")
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    Text("本机影响 \(candidate.affectedAppCount) 个应用")
+                        .font(.system(size: 11))
                         .foregroundStyle(Color.sealTextSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundStyle(Color.sealTextSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 isSelected ? Color.sealAccent.opacity(0.07) : Color.sealSurface,

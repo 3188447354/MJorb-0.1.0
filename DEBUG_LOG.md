@@ -1,3 +1,11 @@
+# 2026-10-21 — 证书撤销选择抽屉过长、CI 变异守卫锚点过期
+
+- **现象**：签名恢复时的“选择要撤销的证书”抽屉每张证书占用多行，证书较多时需要长距离滚动；CI `39555150272` 的源码守卫在 Swift 回归和签名器测试通过后失败，未进入 IPA 构建。
+- **根因**：证书行重复展示当前账号已有的 Team ID，并将证书用途、日期、序列号和影响数分散为多行；R71③ 变异锚点仍按旧缩进匹配，R88④ 的守卫范围又包含后续的另一个 `return false`，把错误改动漏检。
+- **修复**：抽屉 detent 设为屏幕高度的 56%，由内容区独立滚动；证书行压成紧凑的名称/状态、有效期与序列号尾号、本机影响数三行；推荐证书置顶，默认最多展示三张，其余按需展开。R71③ 更新为当前源码缩进；R88④ 限定检查阳性对照失败分支本身。
+- **涉及文件**：`Seal/Features/Apps/CertificateSacrificePickerView.swift`、`Scripts/verify-release-safety.py`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+- **验证状态**：未在 Windows 本机运行源码守卫或 Swift 测试；需重新推送完整 CI，确认变异自检通过并编译 IPA。真机检查抽屉初始高度、展开全部证书后的选择与确认流程。
+
 # 2026-10-21 — 配对灵动岛提前结束并静默回退通知
 
 - **现象**：手机配对没有持续显示在灵动岛，后来只看到系统通知；诊断日志没有对应的 ActivityKit 创建/更新失败原因。
@@ -5,7 +13,7 @@
 - **证据**：`Seal-log(39).txt` 的签名记录显示 Seal 的 `SealLiveActivity.appex` 被送入签名，并且本机描述文件续签覆盖主 App 与 `.LiveActivity` 两个目标；这排除了该次 Seal 内部签名链路漏签扩展。`Seal-log(37/38).txt` 记录了手机配对入口，但没有 ActivityKit 回退原因，与静默分支一致。专用小图文件本身为清晰的 72×72 蓝底白色 Seal 标志。
 - **修复**：准备态延长至配对服务 180 秒等待窗口之外；包内缺扩展、系统禁用、ActivityKit 创建失败、配对码无效、活动丢失/状态错配或更新期间被替换时分别记录原因。IPA 验证改为强制要求 `SealLiveActivity.appex`，并核验 `com.apple.widgetkit-extension` 扩展类型。
 - **同批修复**：启动列表首次读取移到关键维护之后；本机完整快照与远程设备核验统一先做 Seal 阳性对照、收集完全部缺失项后才修改记录，避免不可信清单删记录；设备操作互斥的等待后检查改为非重复守卫形式，保持变异检查能锁定入口闸门。
-- **限制**：用户在 iOS 设置关闭 Seal 实时活动时，系统仍会拒绝创建；应用不能绕过系统开关，只能明确记录原因并使用通知回退。
+- **限制**：用户在 iOS 设置关闭 Seal 实时活动时，系统仍会拒绝创建；应用不能绕过系统开关，只能明确记录原因并使用通知回退。部分电脑签名器在显式描述文件模式会删除 `PlugIns`，移除 Live Activity 扩展；Seal 的 IPA 守卫只能确认发布产物签名前带有扩展，不能控制外部签名器处理后的安装包。需使用能签扩展的签名器和对应描述文件。
 - **涉及文件**：`Seal/Infrastructure/Pairing/PhonePairingHost.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealTests/Pairing/PhonePairingPresentationPolicyTests.swift`、`Scripts/verify-ipa.sh`、`Scripts/verify-release-safety.py`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`。
 - **验证状态**：待新一轮 CI；必须在真机确认手机配对等待超过 60 秒后仍保留灵动岛，并分别确认系统禁用/缺扩展时日志说明正确。Windows 本机不运行 Swift 测试或源码守卫。
 

@@ -5825,7 +5825,7 @@ def violations(load=read):
           "排到后面时代码看起来仍然有对照，但列表已经被错误改写（顺序就是安全本身）")
 
     check("return false" in squash(section_or_empty(
-              r88_code, "guard controlInstalled else", "var missingOnDevice")),
+              r88_code, "guard controlInstalled else {", "if operationCoordinator?.activeLease != nil {")),
           "R88④: 对照未通过必须**整轮中止**（`return false`）✗ —— "
           "「继续问剩下的」只会让更多记录被一条不可信的通道判定")
 
@@ -9256,12 +9256,12 @@ def main():
          "R71②: `refreshInstalledApps` 的"),
         # ③ 退回「边问边删」⇒ R71③ 报红。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "                if existsOnDevice == false {\n"
-         "                    missingOnDevice.append(app)\n"
-         "                }",
-         "                if existsOnDevice == false {\n"
-         "                    mutations.append(await delete(app, refreshAfterDeletion: false))\n"
-         "                }",
+         "                    if existsOnDevice == false {\n"
+         "                        missingOnDevice.append(app)\n"
+         "                    }",
+         "                    if existsOnDevice == false {\n"
+         "                        mutations.append(await delete(app, refreshAfterDeletion: false))\n"
+         "                    }",
          "R71③: `reconcileInstalledAppsWithDevice` 必须"),
         # ── R72：把「无条件读运行中 Seal 签名者」改回 `isSeal ? … : nil` ⇒ R72① 报红 ──
         # ⚠️ `expected` 必须是**被破坏那条 check 的消息前缀**（匹配用 `startswith`），
