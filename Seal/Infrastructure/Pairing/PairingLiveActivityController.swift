@@ -19,7 +19,7 @@ final class PairingLiveActivityController {
 
     static let preparationLifetime: TimeInterval = PhonePairingHost.timeoutSeconds + 30
     private static let codeLifetime: TimeInterval = 180
-    private static let completionLifetime: TimeInterval = 15
+    private static let completionLifetime: TimeInterval = 30
     private static let failureLifetime: TimeInterval = 12
 
     init(logStore: SealLogStore? = nil) {
@@ -138,7 +138,8 @@ final class PairingLiveActivityController {
         endWithResult(
             stage: .paired,
             state: .init(stage: .paired, code: "", title: "Seal", detail: "点击返回 Seal"),
-            lifetime: Self.completionLifetime
+            lifetime: Self.completionLifetime,
+            logMessage: "已向灵动岛提交「配对完成」状态"
         )
     }
 
@@ -147,8 +148,15 @@ final class PairingLiveActivityController {
         endWithResult(
             stage: .failed,
             state: .init(stage: .failed, code: "", title: "Seal", detail: "返回 Seal 查看原因"),
-            lifetime: Self.failureLifetime
+            lifetime: Self.failureLifetime,
+            logMessage: "已向灵动岛提交「配对失败」状态"
         )
+    }
+
+    /// 等待已排队的 ActivityKit 操作（配对码更新 / 终态提交）真正完成。
+    /// 调用方用它确认终态已经交给系统，再结束为此申请的后台执行时间。
+    func awaitPendingOperation() async {
+        await activityOperation?.value
     }
 
     /// 新一轮配对开始或活动到期时立即关闭旧活动。
@@ -189,7 +197,8 @@ final class PairingLiveActivityController {
     private func endWithResult(
         stage: PairingActivityAttributes.Stage,
         state: PairingActivityAttributes.ContentState,
-        lifetime: TimeInterval
+        lifetime: TimeInterval,
+        logMessage: String
     ) {
         guard let activity else { return }
         self.stage = stage
@@ -197,15 +206,20 @@ final class PairingLiveActivityController {
         expiresAt = nil
         let previousOperation = activityOperation
         let activityID = activity.id
+        let logStore = self.logStore
         nonisolated(unsafe) let activityForEnd = activity
         activityOperation = Task { [weak self] in
             await previousOperation?.value
             let dismissalDate = Date().addingTimeInterval(lifetime)
             let content = ActivityContent(state: state, staleDate: dismissalDate)
-            // Submit the terminal state and its system-managed dismissal together. Starting
-            // a local timer before the queued ActivityKit update completed could dismiss the
-            // activity before the user ever saw “配对完成”.
+            // Deliver the terminal state as a regular update first, then end with the
+            // system-managed dismissal. The update is what makes the system present the
+            // island while the user is still in Settings; ending alone only schedules
+            // the final content. Starting a local timer before the queued ActivityKit
+            // update completed could dismiss the activity before the user ever saw “配对完成”.
+            await activityForEnd.update(content)
             await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))
+            try? await logStore?.append(category: .pairing, level: .info, message: logMessage)
             guard let self,
                   self.activity?.id == activityID,
                   self.stage == stage else { return }

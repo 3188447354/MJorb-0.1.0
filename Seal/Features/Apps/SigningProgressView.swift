@@ -823,6 +823,9 @@ struct SigningProgressView: View {
     }
 
     private func openSettings(_ route: SettingsRoute) {
+        // 双重认证中断（101a）时先把签名上下文存下：用户在账号页重新验证成功后，
+        // 那次签名自动续跑，不用手动重发。其他失败存不进去（方法内有判据）。
+        viewModel.stashInterruptedSigningForReauthentication()
         viewModel.dismissSigningResult()
         viewModel.openSettings(route: route)
         dismiss()

@@ -246,8 +246,11 @@ final class SettingsViewModel: ObservableObject {
         self.logStore = logStore
         pairingLiveActivity = PairingLiveActivityController(logStore: logStore)
         self.signingHistoryStore = signingHistoryStore
-        self.applePortalInventoryService = ApplePortalInventoryService()
-        self.applePortalCertificateService = ApplePortalCertificateService(logStore: logStore)
+        // 与签名链路共用同一份 Team 缓存（2026-10-22 门户提速）：设置页的证书 /
+        // 库存操作不再为同一份团队列表重复发 `listTeams`。
+        let sharedTeamCache = portalSessionService?.teamCache ?? PortalTeamCache()
+        self.applePortalInventoryService = ApplePortalInventoryService(teamCache: sharedTeamCache)
+        self.applePortalCertificateService = ApplePortalCertificateService(logStore: logStore, teamCache: sharedTeamCache)
         self.notificationScheduler = notificationScheduler
         self.notificationPreferences = notificationPreferences
         self.anisetteEnvironment = anisetteEnvironment
@@ -2386,6 +2389,14 @@ final class SettingsViewModel: ObservableObject {
                 ? "Apple ID 已添加（Team: \(TeamNameDisplayFormatter.string(from: team.name))）"
                 : "Apple ID 已重新绑定到现有账号记录（Team: \(TeamNameDisplayFormatter.string(from: team.name))）"
         )
+        // 账号（重新）验证成功的统一出口：签名被双重认证中断时（SEAL-AUTH-101a），
+        // AppsViewModel 正等着这条通知自动续跑那次签名；没有待续签名时无人消费，
+        // 不产生任何副作用。
+        NotificationCenter.default.post(
+            name: .sealAccountReverified,
+            object: nil,
+            userInfo: ["accountID": record.id]
+        )
         return true
     }
 
@@ -2649,7 +2660,19 @@ final class SettingsViewModel: ObservableObject {
         case let .completed(fileURL):
             phonePairingHost = nil
             // 系统确认不等于 Seal 已拿到可用凭证；导入成功后才展示「配对完成」。
-            Task { await finishPhonePairing(at: fileURL) }
+            // 用户此刻多半还在系统设置里、Seal 在后台：先申请一段后台执行时间，
+            // 让凭证导入与灵动岛完成态提交在后台做完（岛在用户还在设置页时就展开），
+            // 否则两者都要等用户切回 Seal 才执行，完成态提交时 App 已回前台，
+            // 系统不再展开灵动岛，用户看不到「配对完成」。
+            let backgroundTask = UIApplication.shared.beginBackgroundTask(
+                withName: "Seal Pairing Completion"
+            )
+            Task {
+                await finishPhonePairing(at: fileURL)
+                if backgroundTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(backgroundTask)
+                }
+            }
         case .cancelled:
             phonePairingHost = nil
             isCancellingPhonePairing = false
@@ -2659,7 +2682,17 @@ final class SettingsViewModel: ObservableObject {
         case let .failed(message):
             phonePairingHost = nil
             isCancellingPhonePairing = false
+            // 与完成路径同一理由：失败态提交也要在后台执行时间里送达系统。
+            let backgroundTask = UIApplication.shared.beginBackgroundTask(
+                withName: "Seal Pairing Completion"
+            )
             markPairingFailed()
+            Task {
+                await pairingLiveActivity.awaitPendingOperation()
+                if backgroundTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(backgroundTask)
+                }
+            }
             let failure = Self.phonePairingHostFailure(message: message)
             phonePairingState = .failed(failure)
             alertFailure = failure
@@ -2748,6 +2781,9 @@ final class SettingsViewModel: ObservableObject {
             pairingRecord = try await pairingStore.importFile(at: fileURL)
             // 凭证持久化成功才把岛上的状态改为完成，避免导入失败却显示成功。
             markPairingPaired()
+            // 等完成态真正提交给系统再继续：调用方（.completed 事件）会在本函数
+            // 返回后结束后台执行时间，提交若还排在队列里会被挂起打断。
+            await pairingLiveActivity.awaitPendingOperation()
             await installChannel?.reset()
             installDiagnostics = .empty
             phonePairingState = .validating
@@ -2776,6 +2812,7 @@ final class SettingsViewModel: ObservableObject {
             )
         } catch let failure as ImportFailure {
             markPairingFailed()
+            await pairingLiveActivity.awaitPendingOperation()
             phonePairingState = .failed(failure)
             alertFailure = failure
         } catch {
@@ -2786,6 +2823,7 @@ final class SettingsViewModel: ObservableObject {
                 code: "SEAL-PAIR-216"
             )
             markPairingFailed()
+            await pairingLiveActivity.awaitPendingOperation()
             phonePairingState = .failed(failure)
             alertFailure = failure
         }

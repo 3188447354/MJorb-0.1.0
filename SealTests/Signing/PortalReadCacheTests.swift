@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import AltSign
 @testable import Seal
 
 /// 批量门户读缓存（2026-10-03）：`fetchTeams` / `ensureDevice` / `fetchAppIDs`
@@ -61,6 +62,48 @@ struct PortalReadCacheTests {
                 now: fetchedAt.addingTimeInterval(5 * 60 + 1)
             )
         )
+    }
+
+    /// 跨服务共享缓存（2026-10-22）：存进去的团队列表在 TTL 内按账号取回，
+    /// 过期 / 别的账号都取不到 —— 签名、证书、库存三个服务靠这一份省 `listTeams`。
+    @Test
+    func sharedTeamCacheServesStoredTeamsUntilTTL() async {
+        let cache = PortalTeamCache()
+        let account = ALTAccount()
+        account.identifier = "account-1"
+        let team = ALTTeam(
+            name: "Team",
+            identifier: "TEAM123456",
+            type: .free,
+            account: account
+        )
+        let storedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        await cache.store([team], accountIdentifier: "account-1", fetchedAt: storedAt)
+
+        let fresh = await cache.cachedTeams(
+            accountIdentifier: "account-1",
+            now: storedAt.addingTimeInterval(60)
+        )
+        #expect(fresh?.first?.identifier == "TEAM123456")
+
+        let stale = await cache.cachedTeams(
+            accountIdentifier: "account-1",
+            now: storedAt.addingTimeInterval(ttl + 1)
+        )
+        #expect(stale == nil)
+
+        let otherAccount = await cache.cachedTeams(
+            accountIdentifier: "account-2",
+            now: storedAt.addingTimeInterval(60)
+        )
+        #expect(otherAccount == nil)
+
+        await cache.invalidate(accountIdentifier: "account-1")
+        let invalidated = await cache.cachedTeams(
+            accountIdentifier: "account-1",
+            now: storedAt.addingTimeInterval(60)
+        )
+        #expect(invalidated == nil)
     }
 
     @Test

@@ -98,6 +98,13 @@ struct RootTabView: View {
             appsViewModel.requestedSettingsRoute = nil
             appsViewModel.shouldOpenSettings = false
         }
+        .onChange(of: appsViewModel.shouldOpenApps) { shouldOpen in
+            guard shouldOpen else { return }
+            // 被双重认证中断的签名自动续跑：切回「应用」页，
+            // 签名抽屉由 `selectedOperationApp` 在那边呈现。
+            selection = .apps
+            appsViewModel.shouldOpenApps = false
+        }
         .onChange(of: scenePhase) { phase in
             updateCoordinator.sceneDidChange(isActive: phase == .active)
             guard phase == .active else { return }

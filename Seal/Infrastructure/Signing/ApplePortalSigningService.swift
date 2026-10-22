@@ -394,8 +394,12 @@ actor ApplePortalSigningService {
     // 远端到底有没有，不能拿缓存糊弄（见调用点的注释）。
     //
     // 状态全是 actor 私有、可变访问全被 actor 串行化 ⇒ 不需要 Sendable 标注。
+    //
+    // ⚠️ Team 列表缓存已于 2026-10-22 抽成跨服务共享的 `PortalTeamCache`：
+    // 证书 / 库存服务与本服务共用同一份，会话验证的实时结果回填后，
+    // 同一轮签名不再为同一份团队列表反复发 `listTeams`（详见该文件头注释）。
     private static let portalReadCacheTTL: TimeInterval = 5 * 60
-    private var cachedTeamsByAccountIdentifier: [String: (teams: [ALTTeam], fetchedAt: Date)] = [:]
+    nonisolated let teamCache: PortalTeamCache
     private var cachedAppIDsByTeamIdentifier: [String: (inventory: ALTAppIDInventory, fetchedAt: Date)] = [:]
     private var cachedDevicesByTeamAndDeviceIdentifier: [String: (device: ALTDevice, fetchedAt: Date)] = [:]
     // 性能：证书列表也加批量缓存（2026-10-04）。profile-only 准入和完整重签每 App
@@ -432,12 +436,14 @@ actor ApplePortalSigningService {
     init(
         anisetteProvider: any AnisetteProvider = AnisetteV3Client(),
         signingWorkspace: SigningWorkspace = SigningWorkspace(),
-        logStore: SealLogStore? = nil
+        logStore: SealLogStore? = nil,
+        teamCache: PortalTeamCache = PortalTeamCache()
     ) {
         self.anisetteProvider = anisetteProvider
         self.signingWorkspace = signingWorkspace
         self.accountClient = AppleAccountClient(anisetteProvider: anisetteProvider, logStore: logStore)
         self.logStore = logStore
+        self.teamCache = teamCache
     }
 
     private func diagnostic(_ message: String, level: SealLogEntry.Level = .info) async {
@@ -1513,9 +1519,9 @@ actor ApplePortalSigningService {
         bypassCache: Bool = false
     ) async throws -> [ALTTeam] {
         // 批量缓存：同一账号的团队列表一轮批量里不变（见文件头 MARK 注释）。
-        if let cached = cachedTeamsByAccountIdentifier[account.identifier],
-           Self.shouldUseCachedTeams(bypassCache: bypassCache, fetchedAt: cached.fetchedAt) {
-            return cached.teams
+        if bypassCache == false,
+           let cached = await teamCache.cachedTeams(accountIdentifier: account.identifier) {
+            return cached
         }
         let box: LegacyBox<[ALTTeam]> = try await withAppleTimeout {
             try await withCheckedThrowingContinuation {
@@ -1526,9 +1532,13 @@ actor ApplePortalSigningService {
                 }
             }
         }
-        if bypassCache == false {
-            cachedTeamsByAccountIdentifier[account.identifier] = (box.value, Date())
-        }
+        // ⚠️ 成功就回填，**包括 bypass 的实时结果**（2026-10-22 门户提速）：
+        // `ensureCurrentSession` 的会话验证是 bypass —— 它刚用实时请求确认了
+        // 会话有效，紧接着的签名主流程却因旧实现「bypass 不写缓存」再冷拉一次
+        // 同一份列表（慢网络 10–21 秒纯等待）。bypass 只管「读时不用旧缓存」，
+        // 不该连「把刚拿到的新结果存下来」也一起禁掉；恢复性重拉同理，
+        // 存的正是它刚确认过的最新列表。
+        await teamCache.store(box.value, accountIdentifier: account.identifier)
         return box.value
     }
 

@@ -86,9 +86,18 @@ actor ApplePortalInventoryService {
         }
     }
     private let anisetteProvider: any AnisetteProvider
+    /// 与签名服务共享的 Team 缓存（2026-10-22）：取 Team 时先查它，
+    /// 会话验证刚拉到的团队列表可直接复用，少发一次 `listTeams`。
+    /// ⚠️ 只省 Team 标识这一次往返；库存里的证书 / App ID 清单仍逐次真拉 ——
+    /// 撤销决策必须用最新远端清单，这条不在缓存范围里。
+    private let teamCache: PortalTeamCache
 
-    init(anisetteProvider: any AnisetteProvider = AnisetteV3Client()) {
+    init(
+        anisetteProvider: any AnisetteProvider = AnisetteV3Client(),
+        teamCache: PortalTeamCache = PortalTeamCache()
+    ) {
         self.anisetteProvider = anisetteProvider
+        self.teamCache = teamCache
     }
 
     func fetchInventory(
@@ -240,6 +249,9 @@ actor ApplePortalInventoryService {
         account: ALTAccount,
         session: ALTAppleAPISession
     ) async throws -> [ALTTeam] {
+        if let cached = await teamCache.cachedTeams(accountIdentifier: account.identifier) {
+            return cached
+        }
         let box: LegacyBox<[ALTTeam]> = try await withAppleTimeout {
             try await withCheckedThrowingContinuation {
                 continuation in
@@ -253,6 +265,7 @@ actor ApplePortalInventoryService {
                 }
             }
         }
+        await teamCache.store(box.value, accountIdentifier: account.identifier)
         return box.value
     }
 

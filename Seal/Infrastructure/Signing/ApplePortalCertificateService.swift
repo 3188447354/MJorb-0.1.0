@@ -12,10 +12,19 @@ struct CreatedCertificateMaterial: Sendable {
 actor ApplePortalCertificateService {
     private let anisetteProvider: any AnisetteProvider
     private let logStore: SealLogStore?
+    /// 与签名服务共享的 Team 缓存（2026-10-22）：`context()` 取 Team 时先查它，
+    /// 会话验证刚拉到的团队列表可直接复用，少发一次 `listTeams`。
+    /// 只省「为拿 Team 标识」的往返；证书清单仍逐次真拉，不受影响。
+    private let teamCache: PortalTeamCache
 
-    init(anisetteProvider: any AnisetteProvider = AnisetteV3Client(), logStore: SealLogStore? = nil) {
+    init(
+        anisetteProvider: any AnisetteProvider = AnisetteV3Client(),
+        logStore: SealLogStore? = nil,
+        teamCache: PortalTeamCache = PortalTeamCache()
+    ) {
         self.anisetteProvider = anisetteProvider
         self.logStore = logStore
+        self.teamCache = teamCache
     }
 
     func createLocalCertificate(
@@ -252,6 +261,9 @@ actor ApplePortalCertificateService {
         account: ALTAccount,
         session: ALTAppleAPISession
     ) async throws -> [ALTTeam] {
+        if let cached = await teamCache.cachedTeams(accountIdentifier: account.identifier) {
+            return cached
+        }
         let box: LegacyBox<[ALTTeam]> = try await withAppleTimeout {
             try await withCheckedThrowingContinuation {
                 continuation in
@@ -261,6 +273,7 @@ actor ApplePortalCertificateService {
                 }
             }
         }
+        await teamCache.store(box.value, accountIdentifier: account.identifier)
         return box.value
     }
 

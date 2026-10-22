@@ -74,6 +74,19 @@ struct AppleAuthenticationDiagnosisTests {
         #expect(failure.code == "SEAL-AUTH-101a")
     }
 
+    /// 签名中途触发的那次推送码必须说清「已作废」：那次恢复登录在 handler
+    /// 拿到 nil 的瞬间就中止了，码是给它发的。用户拿着作废码到处找入口、
+    /// 或输进重新登录的新流程，只会再撞一次拒绝（2026-10-22 MJ 真机反馈）。
+    @Test
+    func twoFactorFailureExplainsPushedCodeIsVoidAndNewCodeIsNeeded() {
+        let failure = AppleAuthenticationDiagnosis.twoFactorFailure(for: twoFactorError())
+
+        #expect(failure.reason.contains("作废"))
+        #expect(failure.recovery.contains("新的六位验证码"))
+        // 从签名失败页过来的用户，验证成功后签名自动续跑 —— recovery 要说到。
+        #expect(failure.recovery.contains("自动继续"))
+    }
+
     @Test
     func twoFactorFailureCarriesTheAccountRecoveryContract() {
         let failure = AppleAuthenticationDiagnosis.twoFactorFailure(for: twoFactorError())

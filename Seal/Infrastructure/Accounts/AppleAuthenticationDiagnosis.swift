@@ -85,9 +85,11 @@ enum AppleAuthenticationDiagnosis {
         ImportFailure(
             title: "Apple ID 需要双重认证",
             reason: "Apple 要求这个 Apple ID 用双重认证登录，但本次认证没有走完第二步。\n"
+                + "签名过程中手机上弹出的那个验证码，是给这次已经中止的登录用的 —— 登录一停，码就作废，不用再找它，输了也不会通过。\n"
                 + "常见原因：验证码输入被取消或超时；或这台设备还不是该 Apple ID 的受信任设备，收不到验证码。\n"
                 + detail(for: error),
-            recovery: "在账号验证页输入 Apple 发来的六位验证码；Seal 会保留已有账号和签名证书。"
+            recovery: "点「重新验证 Apple ID」，在账号验证页重新登录：Apple 会发一个新的六位验证码，输入新码即可；Seal 会保留已有账号和签名证书。"
+                + "如果这次是从签名失败页过来的，验证成功后刚才被中断的签名会自动继续，不用重新发起。"
                 + "若始终收不到验证码，先到系统「设置 → 你的名字」用这个 Apple ID 登录一次，再回来重试",
             code: "SEAL-AUTH-101a",
             condition: .twoFactorAuthenticationRequired,

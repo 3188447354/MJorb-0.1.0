@@ -6464,12 +6464,13 @@ def violations(load=read):
           "Linux 分支保持 swift-crypto（CI `signer-tests` 在 Linux 跑，一字不差）；"
           "输出一致性单测必须存在 —— 哈希错一位 ⇒ 签名无效 ⇒ 真机秒退，本地不报错")
 
-    check("cachedTeamsByAccountIdentifier[account.identifier]" in r91_portal_code
+    check("teamCache.cachedTeams(accountIdentifier: account.identifier)" in r91_portal_code
           and "cachedAppIDsByTeamIdentifier[team.identifier]" in r91_portal_code
           and "cachedDevicesByTeamAndDeviceIdentifier[cacheKey]" in r91_portal_code,
           "R112③a: 批量门户读缓存必须存在 ✗ —— "
           "`fetchTeams` / `fetchAppIDs` / `ensureDevice` 逐 App 重拉是纯浪费 "
-          "（3 个 App = 9 次冗余 Apple RTT），一轮批量里它们对同一账号/Team 返回完全相同")
+          "（3 个 App = 9 次冗余 Apple RTT），一轮批量里它们对同一账号/Team 返回完全相同。"
+          "Team 缓存自 2026-10-22 起是跨服务共享的 `PortalTeamCache`（见 R112③d）")
 
     # `invalidateAppIDsCache` 也会在删除旧 App ID 后调用。这里必须只验证
     # `addAppID` 成功路径，否则另一处调用会把「新建后未失效」的变异误判为安全。
@@ -6500,6 +6501,29 @@ def violations(load=read):
           "（它就是要「再看一眼」远端，不能拿缓存糊弄）；"
           "新鲜度判据必须是可单测的纯函数（`isPortalReadCacheFresh`）")
 
+    # ── R112③d：2026-10-22 门户再提速 —— Team 缓存跨服务共享 + 验证结果回填 ──
+    #
+    # 错法同样不崩、只在真机上慢：回填被去掉 ⇒ 会话验证刚用实时请求确认完会话，
+    # 签名主流程再冷拉一次同一份团队列表（慢网络 10–21 秒纯等待）；
+    # 共享被去掉 ⇒ 证书 / 库存服务各自再拉一次 `listTeams`。
+    # ⚠️ 边界：能省的只有「为拿 Team 标识」的往返；会话验证的 bypass 实时请求
+    # 本身（R112③b 的恢复性重拉同理）与撤销决策的最新证书清单**都不许省**。
+    r112_cert_service_code = strip_comments(load("Seal/Infrastructure/Signing/ApplePortalCertificateService.swift"))
+    r112_inventory_service_code = strip_comments(load("Seal/Infrastructure/Signing/ApplePortalInventoryService.swift"))
+    r112_signing_coordinator_code = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
+
+    check("await teamCache.store(box.value, accountIdentifier: account.identifier)" in r91_portal_code
+          and "teamCache.cachedTeams(accountIdentifier: account.identifier)" in r112_cert_service_code
+          and "await teamCache.store(box.value, accountIdentifier: account.identifier)" in r112_cert_service_code
+          and "teamCache.cachedTeams(accountIdentifier: account.identifier)" in r112_inventory_service_code
+          and "await teamCache.store(box.value, accountIdentifier: account.identifier)" in r112_inventory_service_code
+          and r112_signing_coordinator_code.count("teamCache: portal.teamCache") >= 4,
+          "R112③d: Team 缓存必须**跨服务共享且验证结果回填** ✗ —— "
+          "`fetchTeams` 成功（含 bypass 的会话验证）必须回填共享 `PortalTeamCache`，"
+          "证书 / 库存服务必须先查同一份缓存、`SigningCoordinator` 必须把签名服务的"
+          "缓存传给它们；任一处退回私有缓存或不回填，同一轮签名就会为同一份团队"
+          "列表多发 1–3 次 `listTeams`（慢网络每次 10–21 秒）")
+
     check("predictiveWindow: TimeInterval? = nil" in r112_planner_code
           and "PredictiveRenewalPolicy.needsBackgroundRenewal" in r112_planner_code,
           "R112④a: 预测式过滤必须只在后台路径生效 ✗ —— "
@@ -6525,6 +6549,89 @@ def violations(load=read):
           "R112⑤: 三件套的单测必须存在 ✗ —— "
           "未知过期时间 fail open、低频触发窗口放宽、planner 接线、缓存 TTL，"
           "这些判据错了**都不崩**，只在真机上表现为「该续的没续 / 不该续的续了」")
+
+    # ── R133：2026-10-22 签名被双重认证中断（101a）后自动续跑 ──
+    #
+    # 背景：签名中途会话失效走已保存密码恢复登录时，Apple 要求 2FA，而签名
+    # 路径按纪律不能输码（恢复闭包写死 `{ nil }`）⇒ 登录当场中止、推送的码
+    # 随即作废，用户被留在失败页。A 方案（MJ 2026-10-22 拍板）：输码入口仍只
+    # 在账号验证页；失败页跳走前把签名上下文存下，账号重新验证成功后自动续跑。
+    # 错法不崩、只在真机上表现为「验证完了签名没动静，用户还得手动重发」，
+    # 或更糟 —— 任意失败都被账号验证事件顺带重跑。
+    r133_progress_code = strip_comments(load("Seal/Features/Apps/SigningProgressView.swift"))
+    r133_settings_vm_code = strip_comments(load("Seal/Features/Settings/SettingsViewModel.swift"))
+    r133_session_code = strip_comments(load("Seal/Core/Signing/SigningSession.swift"))
+    r133_root_code = strip_comments(load("Seal/App/RootTabView.swift"))
+    r133_tests = load("SealTests/Signing/SigningReauthenticationResumeTests.swift")
+
+    check("viewModel.stashInterruptedSigningForReauthentication()" in r133_progress_code
+          and "func stashInterruptedSigningForReauthentication()" in r112_vm_code
+          and "failure.isTwoFactorInterruption" in r112_vm_code
+          and "var isTwoFactorInterruption: Bool" in r133_session_code,
+          "R133①: 跳去账号验证前必须先存下被双重认证中断的签名上下文 ✗ —— "
+          "不存 ⇒ 验证成功后无从续跑，用户只能手动重发整个签名；"
+          "判据必须是 `ImportFailure.isTwoFactorInterruption` 这一份"
+          "（错误码或结构化动作），其他失败存了会被无关的验证事件误触发重跑")
+
+    check("name: .sealAccountReverified" in r133_settings_vm_code
+          and ".sealAccountReverified" in r112_vm_code
+          and "resumeInterruptedSigningAfterReauthentication(accountID:" in r112_vm_code
+          and "pending.account.id == accountID" in r112_vm_code
+          and "shouldOpenApps = true" in r112_vm_code
+          and "appsViewModel.shouldOpenApps" in r133_root_code,
+          "R133②: 自动续跑的接线缺一不可 ✗ —— "
+          "账号落库后必须发 `.sealAccountReverified`（带 accountID）；"
+          "AppsViewModel 必须只在「验证的是当初签名用的那个账号」时续跑；"
+          "续跑必须置 `shouldOpenApps` 并由 RootTabView 切回应用页呈现签名抽屉")
+
+    check("func twoFactorCodeIsAnInterruption()" in r133_tests
+          and "func ordinaryFailuresAreNotInterruptions()" in r133_tests
+          and "func sharedTeamCacheServesStoredTeamsUntilTTL()" in r112_portal_tests,
+          "R133③: 101a 续跑判据与共享 Team 缓存的单测必须存在 ✗ —— "
+          "判据错了不崩，只在真机上表现为「该续的没续 / 不该续的被重跑」")
+
+    # ── R134：2026-10-22 灵动岛「配对完成」看不到（时机错位）──
+    #
+    # 今早 5694084 修过一轮（end 时一并提交内容 + .after 收起、保留 15 秒），
+    # build 138 真机仍复现。剩余根因不在渲染、而在时机：用户在系统设置里完成
+    # 配对时 Seal 在后台被挂起，`.completed` 之后的「导入凭证 → 提交完成态」
+    # 要等用户切回 Seal 才跑；那时 App 已回前台，系统不展开灵动岛，完成态只剩
+    # 紧凑区一个小绿勾，十几秒后收起 ⇒ 用户感知为「没有配对成功的显示」。
+    # 修法三件：① 完成/失败事件入口先申请后台执行时间，导入与提交在后台做完；
+    # ② 终态先 `update()` 正式送达再 `end()` 收起；③ 完成态保留 30 秒、
+    # 提交后写日志（旧代码成功路径无日志，无法定案提交没提交、何时提交）。
+    r134_controller_code = strip_comments(
+        load("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift"))
+    r134_event_section = section(
+        r133_settings_vm_code,
+        "private func handlePhonePairingEvent",
+        "func cancelPhonePairing")
+    r134_finish_section = section(
+        r133_settings_vm_code,
+        "private func finishPhonePairing",
+        "private func releasePhonePairingLease")
+
+    check("private static let completionLifetime: TimeInterval = 30" in r134_controller_code
+          and "await activityForEnd.update(content)" in r134_controller_code
+          and "await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))"
+              in r134_controller_code
+          and r134_controller_code.find("await activityForEnd.update(content)")
+              < r134_controller_code.find(
+                  "await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))")
+          and "func awaitPendingOperation()" in r134_controller_code
+          and "已向灵动岛提交「配对完成」状态" in r134_controller_code,
+          "R134①: 配对终态必须先 update 送达、再 end + .after 收起，完成保留 30 秒 ✗ —— "
+          "只 end 不 update 时终态只是「结束时的附带内容」，系统不保证展开呈现；"
+          "保留过短，用户在设置页多停一会儿就错过；提交必须写日志，否则下次仍无法定案")
+
+    check(squash(r134_event_section).count(
+              'beginBackgroundTask( withName: "Seal Pairing Completion" )') == 2
+          and "markPairingPaired()" in r134_finish_section
+          and r134_finish_section.count(
+              "await pairingLiveActivity.awaitPendingOperation()") >= 3,
+          "R134②: 配对完成/失败事件必须先申请后台执行时间、终态提交必须被等待 ✗ —— "
+          "没有后台执行时间，导入与提交只能等用户切回 Seal 才跑，完成态提交时 App "
+          "已在前台、灵动岛不展开；不等待提交就结束后台任务，提交会被挂起打断")
 
     # ── R113：2026-10-03 导入按钮真液态玻璃 ──
     #
@@ -10460,6 +10567,16 @@ def main():
          "                        let refreshed = try await fetchAppIDs(team: team, session: session, bypassCache: true)",
          "                        let refreshed = try await fetchAppIDs(team: team, session: session)",
          "R112③b:"),
+        # ③d-1 会话验证的实时结果不再回填共享缓存（主流程又冷拉一次）⇒ R112③d 报红。
+        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
+         "        await teamCache.store(box.value, accountIdentifier: account.identifier)",
+         "        // backfill removed",
+         "R112③d:"),
+        # ③d-2 协调器不再把共享缓存传给库存服务（它自己再拉一次）⇒ R112③d 报红。
+        ("Seal/Core/Signing/SigningCoordinator.swift",
+         "        let inventoryService = ApplePortalInventoryService(teamCache: portal.teamCache)",
+         "        let inventoryService = ApplePortalInventoryService()",
+         "R112③d:"),
         # ④a planner 默认改成过滤（手动全量续签被静默缩水）⇒ R112④a 报红。
         ("Seal/Core/Renewal/RefreshPlanner.swift",
          "        predictiveWindow: TimeInterval? = nil",
@@ -10498,6 +10615,41 @@ def main():
          "func windowWidensForWeeklyTrigger()",
          "func windowLegacy()",
          "R112⑤:"),
+
+        # ── R133：签名被双重认证中断后自动续跑 ──
+        # ① 进度页跳走前不再存上下文（验证完无从续跑）⇒ R133① 报红。
+        ("Seal/Features/Apps/SigningProgressView.swift",
+         "        viewModel.stashInterruptedSigningForReauthentication()",
+         "        // stash removed",
+         "R133①:"),
+        # ② 账号落库后不再发验证成功通知（AppsViewModel 等不到）⇒ R133② 报红。
+        ("Seal/Features/Settings/SettingsViewModel.swift",
+         "            name: .sealAccountReverified,",
+         "            name: .sealRenewalCompleted,",
+         "R133②:"),
+
+        # ── R134：灵动岛配对终态呈现 ──
+        # ① 完成态保留退回 15 秒 ⇒ R134① 报红。
+        ("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift",
+         "    private static let completionLifetime: TimeInterval = 30",
+         "    private static let completionLifetime: TimeInterval = 15",
+         "R134①:"),
+        # ② 终态不再先 update 送达（只剩 end 附带内容）⇒ R134① 报红。
+        ("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift",
+         "            await activityForEnd.update(content)\n",
+         "",
+         "R134①:"),
+        # ③ 完成路径不再申请后台执行时间（改名即脱钩）⇒ R134② 报红。
+        ("Seal/Features/Settings/SettingsViewModel.swift",
+         '                withName: "Seal Pairing Completion"',
+         '                withName: "Seal Pairing Legacy"',
+         "R134②:"),
+        # ④ 导入成功后不再等待完成态提交 ⇒ R134② 报红。
+        ("Seal/Features/Settings/SettingsViewModel.swift",
+         "            await pairingLiveActivity.awaitPendingOperation()\n"
+         "            await installChannel?.reset()",
+         "            await installChannel?.reset()",
+         "R134②:"),
 
         # ── R113：导入按钮真液态玻璃 ──
         # ① 退回手贴 glassEffect（假玻璃又回来了）⇒ R113① 报红。

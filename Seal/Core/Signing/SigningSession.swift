@@ -116,3 +116,16 @@ struct SigningSession: Identifiable, Equatable, Sendable {
         self.status = status
     }
 }
+
+extension ImportFailure {
+    /// 这次失败是不是「签名中途被 Apple 要求双重认证、而签名路径按纪律不能输码」。
+    ///
+    /// 只有这一种失败保留签名上下文、等账号重新验证成功后自动续跑：其他失败
+    /// （证书 / 网络 / 安装）各有自己的恢复路径，被一次无关的账号验证事件顺带
+    /// 重跑只会莫名其妙。判据与产出源头同源：`AppleAuthenticationDiagnosis`
+    /// 的 `twoFactorFailure` —— 错误码 `SEAL-AUTH-101a` 或结构化动作
+    /// `.enterNewVerificationCode`，任一命中即算（防其中一处日后改名漂移）。
+    var isTwoFactorInterruption: Bool {
+        code == "SEAL-AUTH-101a" || action == .enterNewVerificationCode
+    }
+}

@@ -56,9 +56,14 @@ final class AppsViewModel: ObservableObject {
     /// nonisolated(unsafe)：NotificationCenter 的 add/removeObserver 线程安全；
     /// deinit 是非隔离上下文，不能直接访问 @MainActor 隔离属性。
     nonisolated(unsafe) private var memoryWarningObserver: NSObjectProtocol?
+    /// 账号重新验证成功观察者 token，同上，deinit 时移除。
+    nonisolated(unsafe) private var accountReverifiedObserver: NSObjectProtocol?
 
     deinit {
         if let observer = memoryWarningObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = accountReverifiedObserver {
             NotificationCenter.default.removeObserver(observer)
         }
     }
@@ -128,6 +133,8 @@ final class AppsViewModel: ObservableObject {
     @Published private(set) var importCompletionCount = 0
     @Published private(set) var lastImportCompletedInstalledApp = false
     @Published var shouldOpenSettings = false
+    /// 被双重认证中断的签名自动续跑时置位，`RootTabView` 据此切回「应用」页。
+    @Published var shouldOpenApps = false
     @Published var requestedSettingsRoute: SettingsRoute?
     @Published private(set) var signingChannelStatus: SigningChannelStatus = .idle
     @Published private(set) var installingCachedPackageAppID: UUID?
@@ -186,6 +193,9 @@ final class AppsViewModel: ObservableObject {
     /// 每次 `startSigning` / `restartSigning` 开新会话时清空。
     private var rotationSubflowStage: (appID: UUID, stage: SigningStage)?
     private var pendingVPNAction: PendingVPNAction?
+    /// 因双重认证中断、等账号重新验证成功后自动续跑的签名会话（101a 恢复链）。
+    /// 只留内存：进程被杀即消失，用户手动重发即可，不做持久化。
+    private var pendingReauthenticationSigning: SigningSession?
     private var hasLoaded = false
     private var loadGeneration = 0
     // 自更新下载导入完成后，自动打开签名抽屉（仅 Seal 自身更新触发）
@@ -253,6 +263,16 @@ final class AppsViewModel: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             self?.clearDecodedIconCache()
+        }
+        // 账号重新验证成功（设置页发 `.sealAccountReverified`）⇒ 若有被双重认证
+        // 中断的签名在等，自动续跑（见 `resumeInterruptedSigningAfterReauthentication`）。
+        accountReverifiedObserver = NotificationCenter.default.addObserver(
+            forName: .sealAccountReverified,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let accountID = notification.userInfo?["accountID"] as? UUID else { return }
+            self?.resumeInterruptedSigningAfterReauthentication(accountID: accountID)
         }
     }
 
@@ -2043,6 +2063,76 @@ final class AppsViewModel: ObservableObject {
         )
     }
 
+    /// 签名被双重认证中断时（SEAL-AUTH-101a），进度页跳去账号验证**前**调用：
+    /// 把失败会话存下，等重新验证成功后自动续跑（见下面的 resume）。
+    /// 其他失败不存 —— 它们的恢复路径不经过账号验证，存了会被无关的验证
+    /// 事件误触发；批量续签不走单签会话，也不在此列。
+    func stashInterruptedSigningForReauthentication() {
+        guard let session = signingSession,
+              case .failed(let failure) = session.status,
+              failure.isTwoFactorInterruption else { return }
+        pendingReauthenticationSigning = session
+        Task { try? await logStore?.append(category: .signing, level: .info, message: "[SEAL-OP] 签名被双重认证中断，已保留上下文，等待重新验证后自动续跑: \(session.app.displayName)") }
+    }
+
+    /// 账号重新验证成功后，把被双重认证中断的那次签名接着跑完。
+    ///
+    /// 守门（任一不过都不动，且**不消费**待续签名）：
+    /// ① 验证成功的必须是当初签名用的那个账号 —— 验证了别的账号，
+    ///    原签名照样过不了 Apple 那关，续跑只是再失败一次；
+    /// ② 当前没有别的签名在跑、没有签名会话开着 —— 不抢占用户正在做的事。
+    /// 真正开跑前再复核一遍 ②（等验证页退场的那 400ms 里用户可能已手动开签）。
+    private func resumeInterruptedSigningAfterReauthentication(accountID: UUID) {
+        guard let pending = pendingReauthenticationSigning else { return }
+        guard pending.account.id == accountID else { return }
+        guard signingTask == nil, signingSession == nil else { return }
+        pendingReauthenticationSigning = nil
+        Task { [weak self] in
+            guard let self else { return }
+            // 等设置页的全屏验证页退场后再呈现签名抽屉，避免两层呈现抢占
+            // （`selectAccount` 用的同一招：延迟 350ms 等退场动画走完）。
+            try? await Task.sleep(for: .milliseconds(400))
+            guard signingTask == nil, signingSession == nil else {
+                pendingReauthenticationSigning = pending
+                return
+            }
+            await load(force: true)
+            guard let account = accounts.first(where: { $0.id == accountID }),
+                  AccountAvailabilityPolicy.isSelectable(account) else {
+                try? await logStore?.append(
+                    category: .signing,
+                    level: .warning,
+                    message: "自动续跑签名取消：重新验证的账号当前不可用（\(pending.app.displayName)）"
+                )
+                return
+            }
+            let app = apps.first(where: { $0.id == pending.app.id }) ?? pending.app
+            let resumed = SigningSession(
+                app: app,
+                account: account,
+                requestedBundleIdentifier: pending.requestedBundleIdentifier,
+                selectedCertificateSerialNumber: pending.selectedCertificateSerialNumber,
+                completionMode: pending.completionMode,
+                status: .running(.waitingForChannel)
+            )
+            try? await logStore?.append(
+                category: .signing,
+                level: .info,
+                message: "[SEAL-OP] 账号已重新验证，自动续跑被双重认证中断的签名: \(app.displayName)"
+            )
+            // 落会话与开跑之间不许再有 await：上面那次日志写入是最后一次让行，
+            // 让行期间用户可能已手动开签 —— 再复核一遍，忙就把待续签名放回去。
+            guard signingTask == nil, signingSession == nil else {
+                pendingReauthenticationSigning = pending
+                return
+            }
+            signingSession = resumed
+            selectedOperationApp = app
+            shouldOpenApps = true
+            restartSigning(resumed)
+        }
+    }
+
     func loadCertificateSacrificeCandidates() async throws -> [CertificateSacrificeCandidate] {
         guard let session = signingSession,
               case .failed(let failure) = session.status,
@@ -3397,6 +3487,9 @@ final class AppsViewModel: ObservableObject {
             alertFailure = Self.operationInProgressFailure(blockedBy: activeOperationDescription)
             return
         }
+        // 用户手动发起了新签名 ⇒ 之前存下的「待自动续跑」作废，
+        // 否则日后任意一次账号验证成功都会把那次旧签名莫名其妙跑起来。
+        pendingReauthenticationSigning = nil
         let selectedCertificateSerialNumber: String?
         if app.belongsInInstalledList {
             selectedCertificateSerialNumber = nil

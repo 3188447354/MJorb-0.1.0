@@ -1267,7 +1267,7 @@ actor SigningCoordinator {
             secret: storedSecret,
             operation: .validateAccount
         )
-        let inventoryService = ApplePortalInventoryService()
+        let inventoryService = ApplePortalInventoryService(teamCache: portal.teamCache)
         let inventory = try await inventoryService.fetchInventory(
             account: account,
             secret: secret,
@@ -1364,7 +1364,7 @@ actor SigningCoordinator {
             secret: storedSecret,
             operation: .validateAccount
         )
-        let certificateService = ApplePortalCertificateService(logStore: logStore)
+        let certificateService = ApplePortalCertificateService(logStore: logStore, teamCache: portal.teamCache)
         do {
             try await certificateService.revokeCertificate(
                 serialNumber: candidate.certificate.serialNumber,
@@ -1441,7 +1441,7 @@ actor SigningCoordinator {
         )
         // 决策必须用**最新**的远端清单：缓存的 inventory 可能已过期，
         // 用过期清单做撤销决策会误删刚建好的证书。
-        let inventoryService = ApplePortalInventoryService()
+        let inventoryService = ApplePortalInventoryService(teamCache: portal.teamCache)
         guard let inventory = try? await inventoryService.fetchInventory(
             account: account,
             secret: secret,
@@ -1508,7 +1508,7 @@ actor SigningCoordinator {
             return .noCandidates
         }
 
-        let certificateService = ApplePortalCertificateService(logStore: logStore)
+        let certificateService = ApplePortalCertificateService(logStore: logStore, teamCache: portal.teamCache)
         var revokedSerials: [String] = []
         for certificate in plan.revocable {
             try Task.checkCancellation()

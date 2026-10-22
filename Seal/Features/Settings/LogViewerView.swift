@@ -7,6 +7,9 @@ import UniformTypeIdentifiers
 extension Notification.Name {
     static let sealRenewalCompleted = Notification.Name("sealRenewalCompleted")
     static let sealSelfRecordUpdated = Notification.Name("sealSelfRecordUpdated")
+    /// 账号（重新）验证成功：SettingsViewModel 在账号落库后发出（userInfo 带
+    /// `accountID`），AppsViewModel 据此自动续跑被双重认证中断的签名。
+    static let sealAccountReverified = Notification.Name("sealAccountReverified")
 }
 
 private struct LogFailureDetail: Identifiable {
