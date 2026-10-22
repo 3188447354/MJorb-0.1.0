@@ -1,3 +1,11 @@
+# 2026-10-23 — 0.1.52 首轮 CI 两红：静态 handler 并发声明＋三处守卫变异失效（CI 修复轮）
+
+- **现象**：提交 ce5575a 的完整 CI（run 39808799088）：signer-tests ✓；swift-regression ✗（编译错误 1 处）；build-package ✗（守卫变异自检失败 3 条）。
+- **根因**：① `UpdateDownloadSessionController.backgroundCompletionHandler` 是可变静态变量，Swift 6 完整并发档下裸 `static var` 直接判不安全——实现本体有静态锁保护、类注释也写了依据，但声明没按仓内既有形态标注。② 三条变异问题同属「锚点/判据没跟上本批代码形态」：证书页变异锚点仍写旧的 `account.certificateSerialNumber ?? ""` 取源（第 5 项已改走 `effectiveSerial`）；R134① 变异锚点仍是不带 alert 的旧 update 形态（第 3 项 R137 已给终态 update 加 `alertConfiguration`）；R125 判据对 KeychainVault 整文件 `in` 查 `kSecMatchLimitAll`，第 7 项新增的 `allKeyedSecrets()` 带来第二处同字面量，变异改掉 `loadAllSecrets` 那处后整文件仍命中 ⇒ 漏网（R71③ 同族重复字面量陷阱）。
+- **修复**：① 声明改 `nonisolated(unsafe) private static var` 并补理由注释（读写只在 backgroundHandlerLock 临界区内，锁即依据）。② 两处变异锚点迁移到现行代码原文，不变量不变，并给 R134① 锚点留迁移注记。③ R125 判据改按 `loadAllSecrets` 函数段（section 起止标记）钉 `kSecMatchLimitAll`，加注释记明同族陷阱。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、`Scripts/verify-release-safety.py`、本条。
+- **验证状态**：本地全量守卫复跑（工作目录写死为本批工作树）：892 项断言＋651 条变异全部 PASS；靶向复核另含 651 锚点全在位、受牵连 26 条变异全被抓。待 CI 第二轮复跑。
+
 # 2026-10-22 — 日志页工具栏邮件按钮图标与另两钮不对齐（0.1.52）
 
 - **现象**：日志页工具栏三个按钮（删除 trash、导出 square.and.arrow.up、邮件 envelope）同为 16 号字，但 envelope 天生宽扁（约 21×12），与另两个近方形符号（约 14×17）高度明显不对齐。

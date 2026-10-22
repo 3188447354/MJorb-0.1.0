@@ -481,7 +481,9 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
     private var session: URLSession!
 
     private static let backgroundHandlerLock = NSLock()
-    private static var backgroundCompletionHandler: (() -> Void)?
+    /// nonisolated(unsafe)：该静态 handler 的读写只发生在 backgroundHandlerLock 临界区内
+    /// （setBackgroundCompletionHandler / takeBackgroundCompletionHandler 两处），锁即并发安全依据。
+    nonisolated(unsafe) private static var backgroundCompletionHandler: (() -> Void)?
 
     static func setBackgroundCompletionHandler(_ handler: @escaping () -> Void) {
         backgroundHandlerLock.lock()

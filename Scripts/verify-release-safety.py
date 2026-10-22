@@ -4896,6 +4896,13 @@ def violations(load=read):
     # R125: 重装后 CoreData / Accounts.json 中的 UUID 索引会消失；接管判定仍须查找
     # 同一 Keychain service 下的旧账号条目，并按运行中的证书序列号验证私钥。
     keychain_vault = strip_comments(load("Seal/Infrastructure/Security/KeychainVault.swift"))
+    # ⚠️ kSecMatchLimitAll 在本文件现有两处（loadAllSecrets 与 allKeyedSecrets），整文件
+    # `in` 判会让变异改掉第一处后仍被第二处顶住而漏网（R71③ 同族）⇒ 按函数段钉。
+    keychain_load_all = section(
+        keychain_vault,
+        "func loadAllSecrets() throws -> [AccountSecret] {",
+        "func loadAllSecretsIncludingVault() async throws -> [AccountSecret] {",
+    )
     signing_coordinator = strip_comments(load("Seal/Core/Signing/SigningCoordinator.swift"))
     settings_vm_self_management = section(
         strip_comments(load("Seal/Features/Settings/SettingsViewModel.swift")),
@@ -4904,7 +4911,7 @@ def violations(load=read):
     )
     self_management_tests = load("SealTests/Settings/SelfManagementPresentationTests.swift")
     check("func loadAllSecrets() throws -> [AccountSecret]" in keychain_vault
-          and "request[kSecMatchLimit as String] = kSecMatchLimitAll" in keychain_vault
+          and "request[kSecMatchLimit as String] = kSecMatchLimitAll" in keychain_load_all
           and "if let unindexedSecrets = try? await keychain.loadAllSecrets() {" in signing_coordinator
           and "LocalSigningCertificateLookup.hasMatchingPrivateKey(" in signing_coordinator
           and "keychain.loadAllSecrets()" in settings_vm_self_management
@@ -8036,12 +8043,12 @@ def main():
          "Certificates: association lookup must include extension targets"),
         ("Seal/Features/Settings/SigningCertificateSettingsView.swift",
          "        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociated(\n"
-         "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
+         "            serialNumber: effectiveSerial,\n"
          "            apps: relatedApps,\n"
          "            installedBundleIdentifiers: locallyInstalledBundleIdentifiers\n"
          "        )",
          "        let localCertificateApps = CertificateRevocationImpact.installedAppsAssociatedUnused(\n"
-         "            serialNumber: account.certificateSerialNumber ?? \"\",\n"
+         "            serialNumber: effectiveSerial,\n"
          "            apps: relatedApps,\n"
          "            installedBundleIdentifiers: locallyInstalledBundleIdentifiers\n"
          "        )",
@@ -10992,8 +10999,9 @@ def main():
          "    private static let completionLifetime: TimeInterval = 15",
          "R134①:"),
         # ② 终态不再先 update 送达（只剩 end 附带内容）⇒ R134① 报红。
+        # （锚点 2026-10-22 随 R137 迁移：终态 update 已带 alertConfiguration。）
         ("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift",
-         "            await activityForEnd.update(content)\n",
+         "            await activityForEnd.update(content, alertConfiguration: alertConfiguration)\n",
          "",
          "R134①:"),
         # ③ 完成路径不再申请后台执行时间（改名即脱钩）⇒ R134② 报红。
