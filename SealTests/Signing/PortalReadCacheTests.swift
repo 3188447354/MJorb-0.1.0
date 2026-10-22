@@ -84,7 +84,7 @@ struct PortalReadCacheTests {
             accountIdentifier: "account-1",
             now: storedAt.addingTimeInterval(60)
         )
-        #expect(fresh?.first?.identifier == "TEAM123456")
+        #expect(fresh?.value.first?.identifier == "TEAM123456")
 
         let stale = await cache.cachedTeams(
             accountIdentifier: "account-1",

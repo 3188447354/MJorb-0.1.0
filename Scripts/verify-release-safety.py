@@ -6670,9 +6670,12 @@ def violations(load=read):
     # 与门户其余 AltSign 值跨界传递的既有套路一致，不给 ALTTeam 加全局 Sendable。
     r136_cache_code = strip_comments(
         load("Seal/Infrastructure/Signing/PortalTeamCache.swift"))
+    r136_cache_tests_code = strip_comments(
+        load("SealTests/Signing/PortalReadCacheTests.swift"))
 
     check("func cachedTeams(accountIdentifier: String, now: Date = Date()) -> LegacyBox<[ALTTeam]>?"
               in r136_cache_code
+          and "fresh?.value.first?.identifier" in r136_cache_tests_code
           and "return LegacyBox(entry.teams)" in r136_cache_code
           and "return cached.value" in section(
               r91_portal_code,
@@ -10733,6 +10736,11 @@ def main():
         ("Seal/Infrastructure/Signing/ApplePortalCertificateService.swift",
          "            return cached.value",
          "            return cached",
+         "R136①:"),
+        # ③ 缓存单测漏改 .value（合并推送首轮 CI 的实际漏网点）⇒ R136① 报红。
+        ("SealTests/Signing/PortalReadCacheTests.swift",
+         "        #expect(fresh?.value.first?.identifier == \"TEAM123456\")",
+         "        #expect(fresh?.first?.identifier == \"TEAM123456\")",
          "R136①:"),
 
         # ── R113：导入按钮真液态玻璃 ──

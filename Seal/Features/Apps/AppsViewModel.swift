@@ -1109,7 +1109,9 @@ final class AppsViewModel: ObservableObject {
     private func reconcileInstalledAppsFromMarkers() async -> (isComplete: Bool, changed: Bool) {
         let candidates = installedApps.filter { $0.isSeal == false }
 
-        var missingOnDevice: [AppRecord] = []
+        // ⚠️ 局部名不要叫 `missingOnDevice`：设备核验函数有一套同名局部量，
+        // R71③ 的断言是文件级字面匹配，重名会让它的变异检测失效（CI 实证）。
+        var markerMissingApps: [AppRecord] = []
         var undecidedCount = 0
         for app in candidates {
             guard app.installedAppMarkerVersion == SealInstalledAppMarker.version,
@@ -1118,7 +1120,7 @@ final class AppsViewModel: ObservableObject {
                 continue
             }
             if SealInstalledAppMarker.isDeclared(for: bundleIdentifier) == false {
-                missingOnDevice.append(app)
+                markerMissingApps.append(app)
             }
         }
 
@@ -1127,7 +1129,7 @@ final class AppsViewModel: ObservableObject {
             return (false, false)
         }
         var changed = false
-        for app in missingOnDevice {
+        for app in markerMissingApps {
             changed = await markMissingOnDevice(app) || changed
         }
         return (undecidedCount == 0, changed)

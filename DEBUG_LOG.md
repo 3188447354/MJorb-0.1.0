@@ -1,3 +1,11 @@
+# 2026-10-22 — 合并推送首轮 CI 两处红：缓存单测漏改 .value + 标记函数局部量与 R71③ 守卫重名
+
+- **现象**：合并提交 `800fa1b` 的完整 CI（run 39752263845）两 job 红：swift-regression 编译失败（`SealTests/Signing/PortalReadCacheTests.swift:87`：`LegacyBox<[ALTTeam]>` 没有 `first`）；build-package 的守卫变异检查报 R71③ 未被抓（「Guard failed mutation check: R71③」）。
+- **根因**：① LegacyBox 修复只改了三个服务调用点，漏了 0.1.51 同批新增的缓存单测调用点——守卫是纯文本断言、不编译测试 target，只有 swift-regression 能暴露（AGENTS.md §5 的老教训：守卫全绿 ≠ 能编译）。② 存活判定条目里 `reconcileInstalledAppsFromMarkers` 的局部量沿用了 `missingOnDevice` 命名；R71③ 的断言是文件级字面匹配（靠 `missingOnDevice.append(app)` 是否还在判定「先问完再动手」有没有被变异破坏），标记函数里的同名 append 把设备核验函数里被变异删掉的那处遮蔽了，变异检测静默失效。
+- **修复**：单测改取 `fresh?.value.first`；标记函数局部量改名 `markerMissingApps`，并在代码处写明禁与设备核验函数重名的注释；R136① 断言补入单测调用点字面与对应变异（③），以后这类漏改在守卫层就能报红。
+- **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`SealTests/Signing/PortalReadCacheTests.swift`、`Scripts/verify-release-safety.py`（R136① 扩展 + 变异③）、`DEBUG_LOG.md`。
+- **验证状态**：本地断言 870 项 0 失败；R71③、R135（2 条）、R136（3 条）变异逐条抽查均被抓（各恰 1 条失败）；Swift 编译待 CI 复跑（run 待填）。
+
 # 2026-10-22 — 已安装列表标记回退全有全无：快照不可用 + 混批记录时本机一条都判定不了
 
 - **现象**：`refreshInstalledApps` 的本机判定链为「LaunchServices 快照 →（快照不可用时）标记回退」。标记回退 `reconcileInstalledAppsFromMarkers` 原是全有全无：整批记录只要混进一条没有当前版标记（v2）的记录（旧版 Seal 装的、其他工具签后找回的），整批都不用标记判定、直接返回未完成。于是快照不可用 + 混批记录时，本机流程一条都判不了，只能等设备隧道核验；隧道不通（没开 WiFi/LocalDevVPN）时，已在外部卸载的 App 会一直留在已安装列表里。
