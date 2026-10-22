@@ -9955,7 +9955,7 @@ def main():
          "                installedAppRefreshPendingAfterOperation = true\n"
          "                return true\n"
          "            }\n\n",
-         "R84⑦: only app-changing device writes defer record mutations"),
+         "R84⑦: list reconciliation may read during other work"),
         ("Seal/Application/OperationCoordinator.swift",
          "            case .resettingPairing, .scanningDeviceInventory, .managingDeviceProfiles,\n"
          "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
@@ -9965,7 +9965,7 @@ def main():
          "            case .resettingPairing, .scanningDeviceInventory,\n"
          "                 .importing, .updatingApp, .managingAccount, .managingCertificate, .maintainingStorage:\n"
          "                return false",
-         "R84⑦: only app-changing device writes defer record mutations"),
+         "R84⑦: list reconciliation may read during other work"),
         # ⑧ 把「实时身份放行」那条单测改名 ⇒ R84⑧ 报红（不变量没人守）。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
          "func liveIdentityAdmitsAnAppWhoseRecordIsIncomplete()",

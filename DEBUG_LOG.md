@@ -7,6 +7,14 @@
 - **涉及文件**：`Seal/Application/OperationCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Apps/AppRecord.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Infrastructure/Persistence/CoreDataAppStore.swift`、`Seal/Infrastructure/Persistence/CoreDataModel.swift`、`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Core/Signing/CertificateRevocationImpact.swift` 及对应测试、源码守卫。
 - **验证状态**：CI `39683610145` 后，`39690032492` 的签名器测试通过；Swift 回归指出两个未标明账号范围的操作不能假定互不相关，已修正该分流。CI `39692756426` 的 Swift 回归与签名器测试通过，862 项源码断言通过；625 项变异自检有三个旧锚点未跟随证书页本机清单和设备写入边界，已对齐，并补强设备写入延期条件的断言。完整 CI 待再次验证；未在 Windows 本机运行 Swift 测试或源码守卫。
 
+# 2026-10-22 — 发布守卫变异检查使用了过时的 R84⑦ 错误前缀
+
+- **现象**：CI `39695039538` 的 Swift 回归、签名器测试和 862 项源码断言通过；两条 R84⑦ 变异检查却报告守卫失败，IPA 构建未启动。
+- **根因**：R84⑦ 源码断言的错误说明已扩展为“list reconciliation may read during other work”，两条变异样本还在用旧说明作为预期前缀。变异确实触发了正确断言，但前缀对不上，守卫把它误报为变异未拦截。
+- **修复**：两条变异检查统一匹配当前 R84⑦ 断言的稳定前缀；没有增加业务锁或新的操作限制。
+- **涉及文件**：`Scripts/verify-release-safety.py`、`DEBUG_LOG.md`。
+- **验证状态**：CI `39695039538` 中 Swift 回归与签名器测试通过，守卫因预期前缀过时失败；本修订尚待云 CI 验证。
+
 # 2026-10-22 — 更新包已有字节时仍显示“正在连接”
 
 - **现象**：更新抽屉的安装包大小未知时，字节数已增加但进度区域还显示“正在连接”；下载完成进入校验后，晚到的回调还可能把界面改回下载状态。
