@@ -36,6 +36,17 @@ enum FailureClassifier {
             )
         }
 
+        // anisette 候选全灭必须排在泛化网络判据之前：它同样是网络错误，
+        // 但根源是本机网络连不上 anisette 服务，与 Apple 开发者服务无关
+        // （2026-10-22 真机 log-46：17 台候选全部 URLError(-1004)）。
+        if AppleServiceFailurePolicy.transportAttribution(for: error) == .anisetteServersUnreachable {
+            return AppleServiceFailurePolicy.anisetteServersUnreachableFailure(
+                underlying: error,
+                operation: operation,
+                origin: origin
+            )
+        }
+
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return ImportFailure(
                 title: "暂时无法连接 Apple",

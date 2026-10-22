@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct AccountSecret: Codable, Equatable, Sendable {
@@ -85,6 +86,45 @@ struct AccountSecret: Codable, Equatable, Sendable {
         try container.encodeIfPresent(certificateMachineIdentifier, forKey: .certificateMachineIdentifier)
         try container.encode(certificateP12BySerial, forKey: .certificateP12BySerial)
         try container.encode(certificateMachineIdentifierBySerial, forKey: .certificateMachineIdentifierBySerial)
+    }
+
+    /// 本条 secret 的登录 ID 原文（保存时填的是用户登录用的邮箱 / 手机号）。
+    /// 保险库查找键由它经 `LoginIDNormalizer` 归一化得到；`email` 字段名是历史命名，不改名以免动 Codable。
+    var loginID: String { email }
+
+    /// 关键字段指纹（SHA-256 十六进制）：登录凭据 + 当前证书 + 全部按 serial 存的 P12 的摘要。
+    /// 用途只有两个，都不需要明文出场：① 保存后回读比对（写后验证，见 `KeychainVault.save`）；
+    /// ② 迁移 / 合并时判「同一条 secret 是否已存在」。可安全写入日志做关联，不含任何凭据原文。
+    var credentialFingerprint: String {
+        var hasher = SHA256()
+        func feed(_ value: String) {
+            hasher.update(data: Data(value.utf8))
+            hasher.update(data: Data([0]))
+        }
+        func feedData(_ value: Data?) {
+            guard let value else { feed("<nil>"); return }
+            hasher.update(data: Data(SHA256.hash(data: value)))
+            hasher.update(data: Data([0]))
+        }
+        feed(email)
+        feed(accountIdentifier)
+        feed(dsid)
+        feed(authToken)
+        feed(password ?? "")
+        feed(certificateSerialNumber ?? "")
+        feed(certificateMachineIdentifier ?? "")
+        feedData(certificateP12)
+        for serial in certificateP12BySerial.keys.sorted() {
+            feed(serial)
+            feedData(certificateP12BySerial[serial])
+            feed(certificateMachineIdentifierBySerial[serial] ?? "")
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 写后验证与自愈比对的唯一判据：关键字段指纹一致即视为同一条 secret。
+    func hasSameCriticalFields(as other: AccountSecret) -> Bool {
+        credentialFingerprint == other.credentialFingerprint
     }
 
     /// 重新认证只替换登录凭据，完整保留当前及历史签名材料。

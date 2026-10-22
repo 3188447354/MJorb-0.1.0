@@ -33,6 +33,63 @@ enum AppleServiceFailurePolicy {
         return networkFragments.contains(where: message.contains)
     }
 
+    /// 传输失败的归因结果：先分清失败发生在 anisette 候选链还是 Apple 门户链，
+    /// 再决定错误码与文案，避免把本机网络问题说成 Apple 开发者服务的问题。
+    enum TransportFailureAttribution: Equatable, Sendable {
+        /// anisette 候选服务器全部以网络错误终局（带来源标记）。
+        case anisetteServersUnreachable
+        /// 与 Apple 开发者服务之间的请求传输失败。
+        case appleDeveloperServiceUnreachable
+        /// 不是已知的传输失败。
+        case notTransportFailure
+    }
+
+    /// 纯函数归因：输入错误特征，输出归因枚举（可单测，不碰网络/UI）。
+    ///
+    /// 顺序即设计：来源标记（`AnisetteAllServersNetworkFailure`）比泛化的
+    /// `isNetworkError` 更具体，必须先判；裸网络错误仍按 Apple 门户传输失败处理，
+    /// 保持 `SEAL-NET-102` 的既有口径不变。
+    static func transportAttribution(for error: Error) -> TransportFailureAttribution {
+        if isAnisetteAllServersNetworkFailure(error) {
+            return .anisetteServersUnreachable
+        }
+        if isNetworkError(error) {
+            return .appleDeveloperServiceUnreachable
+        }
+        return .notTransportFailure
+    }
+
+    static func isAnisetteAllServersNetworkFailure(_ error: Error) -> Bool {
+        if error is AnisetteAllServersNetworkFailure {
+            return true
+        }
+        let nsError = error as NSError
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+            return isAnisetteAllServersNetworkFailure(underlying)
+        }
+        return false
+    }
+
+    /// anisette 候选全灭（本机网络不可达）的专属失败：文案只讲用户能核对的事实
+    /// （服务全部连不上、通常是当前网络暂时不可用），不提 Apple 开发者服务。
+    static func anisetteServersUnreachableFailure(
+        underlying _: Error? = nil,
+        operation: FailureOperation = .unknown,
+        origin: FailureOrigin = .authentication
+    ) -> ImportFailure {
+        ImportFailure(
+            title: "暂时连不上网络",
+            reason: "获取登录环境数据的服务全部无法连接，通常是当前网络暂时不可用。",
+            recovery: "检查网络连接后稍后重试",
+            code: "SEAL-ANI-116",
+            condition: .authenticationEnvironmentServiceUnavailable,
+            action: .retry,
+            retryDisposition: .manual,
+            operation: operation,
+            origin: origin
+        )
+    }
+
     static func networkFailure(
         underlying _: Error? = nil,
         title: String = "Apple 请求未完成",

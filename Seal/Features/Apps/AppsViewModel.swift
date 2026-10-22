@@ -130,6 +130,18 @@ final class AppsViewModel: ObservableObject {
     @Published var batchRefreshSession: BatchRefreshSession?
     /// 后台快捷指令也会建立批量会话以汇总结果，但它不能自动抢占前台抽屉。
     @Published private(set) var isBatchRefreshSheetPresented = false
+    /// 持久化批量结果「已登记待呈现」：后台进程与启动 `load()` 只登记到这里，
+    /// 绝不直接置 `isBatchRefreshSheetPresented`（判据见 `BatchResultRestorePolicy`）。
+    /// 呈现层看到它翻 true 后，在宿主就绪且 App active 时发起一次经授权的恢复；
+    /// 结果抽屉被用户关闭、载荷被清除后才回到 false —— 关闭后才算已消费。
+    @Published private(set) var hasPendingBatchResultAwaitingPresentation = false
+    /// 一次性呈现授权：只有 `presentSettledBackgroundBatchResultIfNeeded` 在调用
+    /// 恢复前置位、恢复返回时清位。`load()` / 队列恢复 / 复查轮询都拿不到授权，
+    /// 只能登记待呈现，或原地更新已经在本进程呈现过的会话内容。
+    private var batchResultPresentationAuthorized = false
+    /// 最近一次登记的待呈现载荷指纹 —— 识别「已登记的载荷在本进程内被结算改写」。
+    private var registeredPendingBatchResultFingerprint: String?
+    private var pendingBatchResultRegistrationRecheckTask: Task<Void, Never>?
     @Published private(set) var importCompletionCount = 0
     @Published private(set) var lastImportCompletedInstalledApp = false
     @Published var shouldOpenSettings = false
@@ -2857,11 +2869,13 @@ final class AppsViewModel: ObservableObject {
     /// 第二次安装或误删新 profile。此处只让用户知情，由用户决定下一步。
     func recoverInterruptedQueueIfNeeded() async {
         guard let renewalCoordinator else { return }
-        // ⚠️ **顺序：先恢复批量续签结果，再结算队列。**
+        // ⚠️ **顺序：先处置批量续签结果载荷，再结算队列。**
         //
         // Seal 自己替换自己时，进程必然在队列项还是 `running` 的时候被杀。当前实现先由
         // `SelfAppRegistrar` 读取新运行包身份，再把 `awaitingSealConfirmation` 结算成终态；
         // 这里仅消费已经由新进程确认的终态，绝不让旧进程伪造成功。
+        // 注意这一步在呈现解耦后只是**登记待呈现**（或原地更新已呈现会话），
+        // 不在这里弹抽屉；队列结算读的是载荷本身，不依赖会话是否已恢复。
         restorePendingBatchResultIfNeeded(replacingRestoredSession: true)
         let settled = settledQueueStates(from: loadPendingBatchResultPayload())
         do {
@@ -3386,7 +3400,11 @@ final class AppsViewModel: ObservableObject {
     private var restoredPendingBatchResultFingerprint: String?
     private var pendingBatchResultRecheckTask: Task<Void, Never>?
 
-    /// 启动时把上一轮持久化的批量续签结果装回会话。
+    /// 把上一轮持久化的批量续签结果装回会话 —— 但只有拿到呈现授权时才真装。
+    ///
+    /// 无授权调用（`load()` 轮询、队列恢复、复查）走 `BatchResultRestorePolicy`
+    /// 的登记路线：只置 `hasPendingBatchResultAwaitingPresentation`，等呈现层
+    /// 在前台就绪后经 `presentSettledBackgroundBatchResultIfNeeded` 授权恢复。
     ///
     /// 见 `AppsViewModel` 顶部关于「没有成功日志 ≠ 没成功」的说明：
     /// 这条路径是「Seal 自替换把自己杀掉」之后，用户还能看到结果**唯一**的途径。
@@ -3412,6 +3430,31 @@ final class AppsViewModel: ObservableObject {
             return
         }
         guard let payload = pendingPayload else { return }
+        // ── 呈现解耦（log-47 冷启动死锁修复）──
+        // 未经呈现层授权的调用（后台进程里的 load、启动队列恢复、复查轮询）
+        // 只登记待呈现：不动会话、不置呈现标志、不写 024。否则结果会在没有
+        // 呈现层的进程里被「恢复消费」，进前台后抽屉不弹、列表又被待呈现
+        // 优先逻辑吞掉点按。已呈现会话的载荷更新是唯一例外（原地更新内容）。
+        let restoreRoute = BatchResultRestorePolicy.route(
+            hasPayload: true,
+            presentationAuthorized: batchResultPresentationAuthorized,
+            hasPresentedSession: hasRestoredPendingBatchResult,
+            payloadFingerprintChanged: pendingFingerprint != restoredPendingBatchResultFingerprint,
+            hasActiveBatchTask: batchRefreshTask != nil,
+            hasLiveUnrestoredSession: batchRefreshSession != nil && hasRestoredPendingBatchResult == false
+        )
+        switch restoreRoute {
+        case .registerAwaitingPresentation:
+            registerPendingBatchResultAwaitingPresentation(
+                payload: payload,
+                fingerprint: pendingFingerprint
+            )
+            return
+        case .ignore:
+            return
+        case .restoreForPresentation, .updatePresentedSession:
+            break
+        }
         let result = PendingBatchResultPayload.restoredResult(from: payload)
         // 载荷结算后必须保留同一张抽屉的身份。换 UUID 会让 SwiftUI 认为旧 sheet
         // 已结束、需要再展示一张新 sheet，造成“先闪一下等待核验、再弹已更新”。
@@ -3433,6 +3476,7 @@ final class AppsViewModel: ObservableObject {
         }
         batchRefreshSession = restored
         isBatchRefreshSheetPresented = true
+        hasPendingBatchResultAwaitingPresentation = false
         hasRestoredPendingBatchResult = true
         restoredPendingBatchResultFingerprint = pendingFingerprint
         schedulePendingBatchResultRecheckIfNeeded(result)
@@ -3456,8 +3500,67 @@ final class AppsViewModel: ObservableObject {
     @discardableResult
     func presentSettledBackgroundBatchResultIfNeeded() -> Bool {
         guard hasSettledBackgroundBatchResultReadyForPresentation() else { return false }
+        // 呈现层（宿主已就绪且 App active）显式授权这一次恢复真正呈现。
+        // 返回值必须诚实：恢复被现场会话挡住时返回 false，呈现层保留待呈现
+        // 请求重试 —— 旧实现直接回读呈现标志，后台进程预置的 true 会被误报
+        // 成「已呈现」，正是冷启动列表点不动死锁的一环。
+        batchResultPresentationAuthorized = true
+        defer { batchResultPresentationAuthorized = false }
         restorePendingBatchResultIfNeeded()
         return isBatchRefreshSheetPresented
+            && hasRestoredPendingBatchResult
+            && batchRefreshSession != nil
+    }
+
+    /// 把持久化载荷登记为「待呈现」—— 恢复与呈现解耦后的唯一非呈现入口。
+    ///
+    /// 只记标记与指纹，绝不动 `batchRefreshSession` / `isBatchRefreshSheetPresented`、
+    /// 绝不写 SEAL-RENEW-024。载荷本身也不清：消费（清除）只发生在用户关闭
+    /// 结果抽屉时（`dismissBatchRefresh` → `clearPendingBatchResult`）。
+    ///
+    /// 已登记的载荷若在本进程内被结算改写（指纹变化）且变得可立即呈现，
+    /// 用呈现层已经在监听的 `.sealRenewalCompleted` 路由提醒它再 flush 一次；
+    /// 仍在等 Seal 核验的载荷则安排登记侧复查，盯着指纹变化。
+    private func registerPendingBatchResultAwaitingPresentation(
+        payload: [String: Any],
+        fingerprint: String?
+    ) {
+        let wasAwaitingPresentation = hasPendingBatchResultAwaitingPresentation
+        let fingerprintChanged = fingerprint != registeredPendingBatchResultFingerprint
+        registeredPendingBatchResultFingerprint = fingerprint
+        hasPendingBatchResultAwaitingPresentation = true
+        if wasAwaitingPresentation,
+           fingerprintChanged,
+           PendingBatchResultPayload.isReadyForImmediatePresentation(payload) {
+            NotificationCenter.default.post(name: .sealRenewalCompleted, object: nil)
+            return
+        }
+        if PendingBatchResultPayload.restoredResult(from: payload).awaitingConfirmation > 0 {
+            schedulePendingBatchResultRegistrationRecheckIfNeeded()
+        }
+    }
+
+    /// 登记侧复查：等 Seal 核验的载荷在本进程内被结算改写后，指纹变化会让
+    /// `registerPendingBatchResultAwaitingPresentation` 发出呈现提醒。
+    /// 没有会话可查，只能盯载荷本身；载荷消失或不再等待核验即停。
+    private func schedulePendingBatchResultRegistrationRecheckIfNeeded() {
+        guard pendingBatchResultRegistrationRecheckTask == nil else { return }
+        pendingBatchResultRegistrationRecheckTask = Task { [weak self] in
+            defer { self?.pendingBatchResultRegistrationRecheckTask = nil }
+            for _ in 0..<8 {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard Task.isCancelled == false,
+                      let self,
+                      self.hasPendingBatchResultAwaitingPresentation,
+                      let payload = self.loadPendingBatchResultPayload() else { return }
+                self.registerPendingBatchResultAwaitingPresentation(
+                    payload: payload,
+                    fingerprint: PendingBatchResultPayload.restorationFingerprint(from: payload)
+                )
+                guard PendingBatchResultPayload.restoredResult(from: payload).awaitingConfirmation > 0
+                else { return }
+            }
+        }
     }
 
     private func schedulePendingBatchResultRecheckIfNeeded(_ result: BatchRefreshResult) {
@@ -3477,6 +3580,10 @@ final class AppsViewModel: ObservableObject {
     private func clearPendingBatchResult() {
         pendingBatchResultRecheckTask?.cancel()
         pendingBatchResultRecheckTask = nil
+        pendingBatchResultRegistrationRecheckTask?.cancel()
+        pendingBatchResultRegistrationRecheckTask = nil
+        hasPendingBatchResultAwaitingPresentation = false
+        registeredPendingBatchResultFingerprint = nil
         hasRestoredPendingBatchResult = false
         restoredPendingBatchResultFingerprint = nil
         UserDefaults.standard.removeObject(forKey: Self.pendingBatchResultKey)

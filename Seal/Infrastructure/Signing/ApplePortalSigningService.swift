@@ -86,6 +86,16 @@ enum ApplePortalSigningFailure {
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
         }
+        // anisette 候选全灭必须排在泛化网络判据之前：它同为网络错误，但根源是
+        // 本机网络连不上 anisette 服务，与 Apple 开发者服务无关（SEAL-ANI-116，
+        // 与 FailureClassifier 同口径，见 parts-0152/part-6.md）。
+        if AppleServiceFailurePolicy.transportAttribution(for: error) == .anisetteServersUnreachable {
+            return AppleServiceFailurePolicy.anisetteServersUnreachableFailure(
+                underlying: error,
+                operation: .sign,
+                origin: .applePortal
+            )
+        }
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return AppleServiceFailurePolicy.networkFailure(
                 underlying: error,

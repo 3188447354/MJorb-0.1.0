@@ -32,6 +32,62 @@ private actor CertificateRotationTransactionState {
     }
 }
 
+/// 签名入口的「记录就绪门」预算（纯函数，可单测）。
+///
+/// ## 背景（2026-10-22 真机，Seal-log-46，build 143）
+///
+/// 更新抽屉点「签名并更新」连败 3 次、每次 0 秒、码 `SEAL-SIGN-404`：
+/// `signAndInstall` 入口只查**一次** `appStore.fetchAll()`，查不到就立即抛错。
+/// 待更新的 Seal 记录是导入事务在签名之前不久才新建的独立记录（新 UUID、
+/// `replacesInstalledAppID` 指向已安装记录），入口与写入/注册之间没有任何
+/// 就绪确认 ⇒ 一次瞬时查不到就是终态失败，而且外层两条重试都不认 404
+///（`AppsViewModel.signWithChannelRetry` 只重试通道瞬时失败、
+/// `RenewalCoordinator.isRetryable` 只认通道/网络类）⇒ 用户连点连败。
+///
+/// ## 预算纪律（AGENTS.md §3：有外层重试的地方，内层预算必须短）
+///
+/// - 记录第一次就查到（绝大多数情况，含 profile-only 快路径）：**零**新增等待，
+///   行为与旧实现逐字一致；
+/// - 只在查不到时才复查：最多 `maxAttempts` 次，间隔 250/500/1000 ms，
+///   最坏总等待 1.75 秒，且只落在「本来就会 0 秒失败」的那条路径上；
+/// - 复查只解决「记录正在落盘/注册、马上就到」的短窗口；记录若已被删除，
+///   等待不会把它变回来 —— 终态仍抛原来的 `SEAL-SIGN-404`（文案/恢复不变），
+///   但会留一条带现存 Seal 记录清单的诊断日志，便于下次定位是谁删了它。
+enum SignRecordReadinessPolicy {
+    /// 总尝试次数（含第一次）：与批量续签 `RenewalCoordinator.maxAttempts`（3 次）
+    /// 同量级再多一次 —— 入口复查的单价只是一次本地 DB 读，不发网络/设备请求。
+    static let maxAttempts = 4
+
+    /// 第 `attempt` 次查不到之后、下一次复查之前的等待（纳秒）。
+    /// 下标 = 已完成的尝试次数 - 1；超出表长按最后一档封顶。
+    static let recheckDelaysNanoseconds: [UInt64] = [
+        250_000_000,   // 250 ms
+        500_000_000,   // 500 ms
+        1_000_000_000  // 1 s
+    ]
+
+    /// 第 `attempt` 次尝试查不到后，还要不要再复查一次。
+    static func shouldRecheck(afterAttempt attempt: Int) -> Bool {
+        attempt >= 1 && attempt < maxAttempts
+    }
+
+    /// 第 `attempt` 次尝试查不到后的等待时长（纳秒）。
+    static func delayNanoseconds(afterAttempt attempt: Int) -> UInt64 {
+        guard recheckDelaysNanoseconds.isEmpty == false else { return 0 }
+        let index = min(max(1, attempt) - 1, recheckDelaysNanoseconds.count - 1)
+        return recheckDelaysNanoseconds[index]
+    }
+
+    /// 最坏情况下就绪门引入的总等待（纳秒）：只发生在记录始终查不到时。
+    static var worstCaseTotalDelayNanoseconds: UInt64 {
+        var total: UInt64 = 0
+        for attempt in 1..<maxAttempts {
+            total += delayNanoseconds(afterAttempt: attempt)
+        }
+        return total
+    }
+}
+
 actor SigningCoordinator {
     private let appStore: any AppStore
     private let accountRepository: any AccountRepository
@@ -193,6 +249,54 @@ actor SigningCoordinator {
         return true
     }
 
+    /// 签名入口取记录：带 `SignRecordReadinessPolicy` 就绪门的有界复查。
+    ///
+    /// 第一次查到立即返回（常态路径零新增等待）；查不到才按策略短等复查。
+    /// `fetchAll` 本身抛错时**不**复查、原样上抛 —— 那是存储故障，不是「记录未就绪」，
+    /// 混进复查只会把真实故障拖慢 1.75 秒再以错误形态出现。
+    /// 预算耗尽仍查不到时返回 nil（由调用点抛各自的终态错误，诊断日志的码由
+    /// `diagnosticCode` 传入 —— 签名入口是 `SEAL-SIGN-404`、已签名包安装入口
+    /// `installSignedArtifact` 是 `SEAL-INSTALL-719`，两处不串码），并留一条诊断：
+    /// 把当时现存的 Seal 记录（ID 前缀 / 状态 / 是否待替换）写进日志 —— 2026-10-22
+    /// 那次 404 连败的事后排查就卡在这里：轮次总结只剩错误码，是哪条记录、
+    /// 当时还存不存在别的 Seal 记录，全被日志环形缓冲挤掉了，无从归因。
+    private func fetchRecordForSigning(
+        appID: UUID,
+        diagnosticCode: String
+    ) async throws -> AppRecord? {
+        for attempt in 1...SignRecordReadinessPolicy.maxAttempts {
+            if let record = try await appStore.fetchAll().first(where: { $0.id == appID }) {
+                return record
+            }
+            guard SignRecordReadinessPolicy.shouldRecheck(afterAttempt: attempt) else {
+                let sealRecords = (try? await appStore.fetchAll())?
+                    .filter { $0.isSeal }
+                    .map { record in
+                        "\(record.id.uuidString.prefix(8))/\(record.state.rawValue)"
+                            + (record.replacesInstalledAppID == nil ? "" : "/待替换")
+                    } ?? []
+                try? await logStore?.append(
+                    category: .signing,
+                    level: .error,
+                    message: "应用记录缺失诊断：appID \(appID.uuidString.prefix(8)) 经 "
+                        + "\(SignRecordReadinessPolicy.maxAttempts) 次复查仍不在应用库中；"
+                        + "现存 Seal 记录：\(sealRecords.isEmpty ? "无" : sealRecords.joined(separator: "、"))",
+                    code: diagnosticCode
+                )
+                return nil
+            }
+            try? await logStore?.append(
+                category: .signing,
+                level: .warning,
+                message: "应用记录暂未就绪（第 \(attempt)/\(SignRecordReadinessPolicy.maxAttempts) 次查询未命中 appID \(appID.uuidString.prefix(8))），短暂等待后复查"
+            )
+            try await Task.sleep(
+                nanoseconds: SignRecordReadinessPolicy.delayNanoseconds(afterAttempt: attempt)
+            )
+        }
+        return nil
+    }
+
     func signAndInstall(
         appID: UUID,
         accountID: UUID,
@@ -231,7 +335,10 @@ actor SigningCoordinator {
             level: .info,
             message: "[SEAL-OP] 签名并安装: appID \(appID.uuidString.prefix(8)), 强制重签=\(forceResign)"
         )
-        guard var app = try await appStore.fetchAll().first(where: { $0.id == appID }) else {
+        guard var app = try await fetchRecordForSigning(
+            appID: appID,
+            diagnosticCode: "SEAL-SIGN-404"
+        ) else {
             throw Self.failure(
                 reason: "未找到要签名的应用记录。",
                 recovery: "重新导入 IPA",
@@ -1552,7 +1659,10 @@ actor SigningCoordinator {
             level: .info,
             message: "[SEAL-OP] 安装已签名包: appID \(appID.uuidString.prefix(8))"
         )
-        guard var app = try await appStore.fetchAll().first(where: { $0.id == appID }) else {
+        guard var app = try await fetchRecordForSigning(
+            appID: appID,
+            diagnosticCode: "SEAL-INSTALL-719"
+        ) else {
             throw Self.failure(
                 reason: "本机签名包记录不完整。",
                 recovery: "重新签名",

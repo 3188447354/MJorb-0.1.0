@@ -141,3 +141,48 @@ enum SelfAppRecordSelection {
         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 }
+
+/// 现行两记录模型（2026-10-09 重设计后）里「待更新 Seal 记录」的唯一判据，
+/// 供 `SelfAppRegistrar` 的待更新保护分支与重复记录清理豁免**同源**使用 ——
+/// 不许再各写一份，否则两处迟早打架（一处豁免、一处照删）。
+///
+/// 2026-10-09 后待更新源是一条独立新记录：`replacesInstalledAppID` 指向已安装
+/// 记录，通常还带 `pendingUpdateSourceFingerprint`。判据只认替换链接，不把指纹
+/// 设为必要条件：导入侧对「与已装包同指纹 / 同构建号」的包会刻意把指纹置 nil
+/// （见 `ImportWorkflow.commit`），但替换链接照样在、记录照样等着签名安装；
+/// 若要求指纹非空，这类记录会被重新当成重复记录删掉。反过来，指纹会在旧单
+/// 记录模型的结算途中短暂挂在已安装记录上，单独拿它作判据会误伤。
+/// 结算完成的形态也是确定的：所有交接路径（签名安装、迟到安装、自替换对账）
+/// 都在 `commitInstalledReplacement` 前把替换链接与待更新指纹一并清掉，
+/// 因此链接还在 = 更新尚未结算，必须保留；链接已清 = 可以按普通重复记录清理。
+enum SelfAppPendingUpdateProtection {
+    static func isPendingUpdateSource(_ record: AppRecord) -> Bool {
+        record.isSeal && record.replacesInstalledAppID != nil
+    }
+
+    static func pendingUpdateSource(in records: [AppRecord]) -> AppRecord? {
+        records
+            .filter { isPendingUpdateSource($0) }
+            .sorted { lhs, rhs in
+                if lhs.importedAt != rhs.importedAt {
+                    return lhs.importedAt > rhs.importedAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+            .first
+    }
+
+    /// 重复记录清理的删除候选：Seal 记录、不是保留的那条、且不是待更新源。
+    /// 待更新源连同它的文件一律不删 —— 删它等于删掉用户尚未签名的更新包，
+    /// 签名抽屉随后就会拿着已删记录的 ID 撞出 SEAL-SIGN-404。
+    static func duplicateCleanupCandidates(
+        in records: [AppRecord],
+        keepID: UUID
+    ) -> [AppRecord] {
+        records.filter { record in
+            record.isSeal
+                && record.id != keepID
+                && isPendingUpdateSource(record) == false
+        }
+    }
+}

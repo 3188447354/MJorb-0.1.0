@@ -83,7 +83,9 @@ struct AppleAccountDetailView: View {
             AppleAccountAppItem(
                 snapshot: snapshot,
                 accountID: currentAccount.id,
-                relatedApps: relatedApps
+                relatedApps: relatedApps,
+                accountTeamID: currentAccount.teamID,
+                knownAccountIDs: Set(viewModel.accounts.map(\.id))
             )
         }
         return items.sorted { first, second in
@@ -355,26 +357,38 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
     let bundleIdentifier: String
     let expiryDate: Date?
 
-    init(snapshot: ApplePortalAppIDSnapshot, accountID: UUID, relatedApps: [AppRecord]) {
+    init(
+        snapshot: ApplePortalAppIDSnapshot,
+        accountID: UUID,
+        relatedApps: [AppRecord],
+        accountTeamID: String? = nil,
+        knownAccountIDs: Set<UUID>? = nil
+    ) {
         id = snapshot.id
         appIdentifier = AppleAccountAppNamePolicy.applicationIdentifier(
             for: snapshot.bundleIdentifier,
             accountID: accountID,
             relatedApps: relatedApps,
-            fallbackAppleAppID: snapshot.identifier
+            fallbackAppleAppID: snapshot.identifier,
+            accountTeamID: accountTeamID,
+            knownAccountIDs: knownAccountIDs
         )
         name = AppleAccountAppNamePolicy.displayName(
             for: snapshot.bundleIdentifier,
             accountID: accountID,
             relatedApps: relatedApps,
-            fallbackAppleName: snapshot.name
+            fallbackAppleName: snapshot.name,
+            accountTeamID: accountTeamID,
+            knownAccountIDs: knownAccountIDs
         )
         bundleIdentifier = snapshot.bundleIdentifier
         expiryDate = AppleAccountAppNamePolicy.expirationDate(
             for: snapshot.bundleIdentifier,
             snapshot: snapshot,
             accountID: accountID,
-            relatedApps: relatedApps
+            relatedApps: relatedApps,
+            accountTeamID: accountTeamID,
+            knownAccountIDs: knownAccountIDs
         )
     }
 
@@ -397,21 +411,69 @@ enum AppleAccountAppNamePolicy {
         return expirationDate.timeIntervalSince(now) <= 86_400
     }
 
-    static func name(for bundleIdentifier: String, accountID: UUID, relatedApps: [AppRecord]) -> String {
-        displayName(for: bundleIdentifier, accountID: accountID, relatedApps: relatedApps)
+    /// 悬空 `accountID` 陷阱家族（仓库 AGENTS.md）：删 Apple ID 再重新添加会
+    /// 新建账号记录（新 UUID），而 `deleteAccount` 刻意保留应用绑定，旧 UUID
+    /// 不是 `nil`、裸相等恒为假。本页四处富化判据此前全是裸 `accountID`
+    /// 相等，悬空后名称 / App ID / 到期时间的本地富化全部落空。
+    ///
+    /// 与 `SigningCertificateSelectionPolicy.validateAccountAndTeam` 同口径分流：
+    /// - 绑定账号**仍在**账号库 ⇒ 真的用了别的账号，不放行（保护不丢）；
+    ///   未提供账号库快照（`knownAccountIDs == nil`）时按「仍在」处理，保持旧行为；
+    /// - 绑定账号**已悬空**、或记录**从未绑定** ⇒ 改按签名 Team 判据：
+    ///   `signingTeamID` 或任一 signingTarget 的 `teamIdentifier` 与账号
+    ///   Team 大小写不敏感相等（且 Team 非空）才放行，换 Team 不放行。
+    static func isAccountMatch(
+        _ app: AppRecord,
+        accountID: UUID,
+        accountTeamID: String?,
+        knownAccountIDs: Set<UUID>?
+    ) -> Bool {
+        if app.accountID == accountID { return true }
+        if let boundAccountID = app.accountID {
+            guard let knownAccountIDs,
+                  knownAccountIDs.contains(boundAccountID) == false else { return false }
+        }
+        guard let teamID = accountTeamID?.trimmingCharacters(in: .whitespacesAndNewlines),
+              teamID.isEmpty == false else { return false }
+        if let signingTeamID = app.signingTeamID?.trimmingCharacters(in: .whitespacesAndNewlines),
+           signingTeamID.caseInsensitiveCompare(teamID) == .orderedSame {
+            return true
+        }
+        return app.signingTargets.contains {
+            $0.teamIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+                .caseInsensitiveCompare(teamID) == .orderedSame
+        }
+    }
+
+    static func name(
+        for bundleIdentifier: String,
+        accountID: UUID,
+        relatedApps: [AppRecord],
+        accountTeamID: String? = nil,
+        knownAccountIDs: Set<UUID>? = nil
+    ) -> String {
+        displayName(
+            for: bundleIdentifier,
+            accountID: accountID,
+            relatedApps: relatedApps,
+            accountTeamID: accountTeamID,
+            knownAccountIDs: knownAccountIDs
+        )
     }
 
     static func displayName(
         for bundleIdentifier: String,
         accountID: UUID,
         relatedApps: [AppRecord],
-        fallbackAppleName: String? = nil
+        fallbackAppleName: String? = nil,
+        accountTeamID: String? = nil,
+        knownAccountIDs: Set<UUID>? = nil
     ) -> String {
         let target = normalize(bundleIdentifier)
         guard target.isEmpty == false else { return nonBlank(fallbackAppleName) ?? "App 名称未记录" }
 
         let matchingApp = relatedApps.first { app in
-            guard app.accountID == accountID else { return false }
+            guard isAccountMatch(app, accountID: accountID, accountTeamID: accountTeamID, knownAccountIDs: knownAccountIDs) else { return false }
             let identifiers: [String] = [
                 app.originalBundleIdentifier,
                 app.mappedBundleIdentifier ?? "",
@@ -435,11 +497,13 @@ enum AppleAccountAppNamePolicy {
         for bundleIdentifier: String,
         accountID: UUID,
         relatedApps: [AppRecord],
-        fallbackAppleAppID: String? = nil
+        fallbackAppleAppID: String? = nil,
+        accountTeamID: String? = nil,
+        knownAccountIDs: Set<UUID>? = nil
     ) -> String {
         let target = normalize(bundleIdentifier)
         guard let value = relatedApps
-            .filter({ $0.accountID == accountID })
+            .filter({ isAccountMatch($0, accountID: accountID, accountTeamID: accountTeamID, knownAccountIDs: knownAccountIDs) })
             .lazy
             .flatMap(\.signingTargets)
             .first(where: { normalize($0.bundleIdentifier) == target })?
@@ -455,18 +519,20 @@ enum AppleAccountAppNamePolicy {
         for bundleIdentifier: String,
         snapshot: ApplePortalAppIDSnapshot,
         accountID: UUID,
-        relatedApps: [AppRecord]
+        relatedApps: [AppRecord],
+        accountTeamID: String? = nil,
+        knownAccountIDs: Set<UUID>? = nil
     ) -> Date? {
         let target = normalize(bundleIdentifier)
         if let exactTarget = relatedApps
-            .filter({ $0.accountID == accountID })
+            .filter({ isAccountMatch($0, accountID: accountID, accountTeamID: accountTeamID, knownAccountIDs: knownAccountIDs) })
             .lazy
             .flatMap(\.signingTargets)
             .first(where: { normalize($0.bundleIdentifier) == target }) {
             return exactTarget.profileExpirationDate
         }
 
-        for app in relatedApps where app.accountID == accountID {
+        for app in relatedApps where isAccountMatch(app, accountID: accountID, accountTeamID: accountTeamID, knownAccountIDs: knownAccountIDs) {
             if normalize(app.mappedBundleIdentifier ?? "") == target
                 || normalize(app.originalBundleIdentifier) == target {
                 if let expiry = app.provisioningProfileExpirationDate ?? app.expiryDate {

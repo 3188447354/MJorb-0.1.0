@@ -38,6 +38,9 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
     let code: String?
     let operationResult: OperationResult?
     let operationSummary: RenewalRoundSummary?
+    /// 同一日志在去重窗口内重复出现的次数（含首次）。见 `LogDedupPolicy`。
+    /// 旧版日志 JSON 没有这个字段，解码时按 1 处理。
+    let repeatCount: Int
 
     init(
         id: UUID = UUID(),
@@ -47,7 +50,8 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         message: String,
         code: String? = nil,
         operationResult: OperationResult? = nil,
-        operationSummary: RenewalRoundSummary? = nil
+        operationSummary: RenewalRoundSummary? = nil,
+        repeatCount: Int = 1
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -57,6 +61,154 @@ struct SealLogEntry: Codable, Equatable, Identifiable, Sendable {
         self.code = code
         self.operationResult = operationResult
         self.operationSummary = operationSummary
+        self.repeatCount = max(1, repeatCount)
+    }
+
+    /// 复制一条日志并把重复计数加一（去重合并时用；时间戳保持首次出现时刻）。
+    func incrementedRepeatCount() -> SealLogEntry {
+        SealLogEntry(
+            id: id,
+            timestamp: timestamp,
+            category: category,
+            level: level,
+            message: message,
+            code: code,
+            operationResult: operationResult,
+            operationSummary: operationSummary,
+            repeatCount: repeatCount + 1
+        )
+    }
+}
+
+extension SealLogEntry {
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, category, level, message, code
+        case operationResult, operationSummary, repeatCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        category = try container.decode(Category.self, forKey: .category)
+        level = try container.decode(Level.self, forKey: .level)
+        message = try container.decode(String.self, forKey: .message)
+        code = try container.decodeIfPresent(String.self, forKey: .code)
+        operationResult = try container.decodeIfPresent(
+            OperationResult.self, forKey: .operationResult
+        )
+        operationSummary = try container.decodeIfPresent(
+            RenewalRoundSummary.self, forKey: .operationSummary
+        )
+        // 升级前遗留的日志 JSON 没有 repeatCount，缺省为 1（只出现过一次）。
+        repeatCount = max(1, try container.decodeIfPresent(Int.self, forKey: .repeatCount) ?? 1)
+    }
+}
+
+/// 日志去重判据（纯函数）：短窗口内与已有条目同键的重复日志只合并计数，不新增条目。
+///
+/// 合并键是 `(category, level, code, message)`，**比对前必须已脱敏** —— 调用方
+/// （`SealLogStore.append`）先过 `LogPrivacyRedactor` 再构造条目，所以走到这里的
+/// message/code 已经是脱敏后的文本；两个只差邮箱/序列号的原始事件脱敏后同键，
+/// 正是应该合并的那一类（见 log-46/47：AltSign 证书解析三件套、anisette 成功行）。
+///
+/// 窗口**锚定首次出现时刻**（条目时间戳不变、不续窗）：120 秒内的重复计入同一条，
+/// 超过窗口的重复另起一条。这样既不会把一整天的周期性日志链式并成一条，
+/// 也不会改动缓冲的时序。带 `operationResult` / `operationSummary` 的条目是
+/// 用户可见的操作结果（结算、轮次总结），语义上不可合并，一律排除。
+enum LogDedupPolicy {
+    /// 去重窗口（秒）。取值依据见 part-8 报告对 log-46/47 的模拟：60 秒已能合并
+    /// 绝大部分同轮重复，120 秒覆盖一轮库存同步内间隔较远的同键重复。
+    static let window: TimeInterval = 120
+
+    struct Key: Hashable, Sendable {
+        let category: SealLogEntry.Category
+        let level: SealLogEntry.Level
+        let code: String?
+        let message: String
+    }
+
+    static func key(for entry: SealLogEntry) -> Key {
+        Key(category: entry.category, level: entry.level, code: entry.code, message: entry.message)
+    }
+
+    static func isMergeable(_ entry: SealLogEntry) -> Bool {
+        entry.operationResult == nil && entry.operationSummary == nil
+    }
+
+    /// 若 `entry` 应并入 `buffer` 中最近的同键条目，返回合并后的新缓冲；否则返回 nil。
+    static func merging(
+        _ entry: SealLogEntry,
+        into buffer: [SealLogEntry],
+        window: TimeInterval = LogDedupPolicy.window
+    ) -> [SealLogEntry]? {
+        guard isMergeable(entry) else { return nil }
+        let entryKey = key(for: entry)
+        for index in buffer.indices.reversed() {
+            let existing = buffer[index]
+            guard key(for: existing) == entryKey else { continue }
+            guard isMergeable(existing) else { continue }
+            let elapsed = entry.timestamp.timeIntervalSince(existing.timestamp)
+            // 最近的同键条目已超出窗口时，更早的同键条目只会更旧，不再继续找。
+            guard elapsed >= 0, elapsed <= window else { return nil }
+            var merged = buffer
+            merged[index] = existing.incrementedRepeatCount()
+            return merged
+        }
+        return nil
+    }
+}
+
+/// 日志留存判据（纯函数）：环形容量内谁先被丢弃。
+///
+/// 两条规则：
+/// 1. 用户可见的操作结果（`LogViewerPolicy.isUserVisibleOperationResult`）优先保留，
+///    沿用既有行为 —— 这是导出头里「签名、续签和安装结果优先保留」的实现出处。
+/// 2. 其余诊断日志按类别设份额上限：单个 category 最多占诊断容量的
+///    `maximumCategoryShare`，防止账号类噪声（log-46/47 里占 90% 以上）把
+///    配对/安装等低频但关键的诊断挤光；第一轮没用满的容量第二轮按新旧回填，
+///    不浪费名额。
+enum LogRetentionPolicy {
+    /// 默认环形上限。1000 条在真机一天产生 8000+ 条时只剩约 6 小时；
+    /// 提高到 3000 条：按 log-46/47 实测导出文本约 171–206 B/条、JSON 约 260 B/条
+    /// 估算，落盘 JSON 约 0.8 MB、Documents 镜像约 0.6 MB，内存可忽略。
+    /// 与去重叠加后（log-46 模拟 1000 条原始日志合并为约 290 条），3000 条可覆盖
+    /// 一天以上的完整签名/续签现场。属拍板项，取值集中在此常量，改一处即可。
+    static let defaultMaximumEntries = 3000
+    static let maximumCategoryShare = 0.6
+
+    static func retainedEntries(_ entries: [SealLogEntry], capacity: Int) -> [SealLogEntry] {
+        guard capacity >= 0, entries.count > capacity else { return entries }
+        let retainedResults = Array(
+            entries.filter(LogViewerPolicy.isUserVisibleOperationResult).suffix(capacity)
+        )
+        let diagnosticCapacity = max(0, capacity - retainedResults.count)
+        let diagnostics = entries.filter {
+            LogViewerPolicy.isUserVisibleOperationResult($0) == false
+        }
+        var keptDiagnosticIDs = Set<UUID>()
+        if diagnostics.count <= diagnosticCapacity {
+            keptDiagnosticIDs = Set(diagnostics.map(\.id))
+        } else {
+            let perCategoryCap = max(
+                1, Int(ceil(Double(diagnosticCapacity) * maximumCategoryShare))
+            )
+            var perCategoryCount: [SealLogEntry.Category: Int] = [:]
+            for entry in diagnostics.reversed() {
+                guard keptDiagnosticIDs.count < diagnosticCapacity else { break }
+                guard perCategoryCount[entry.category, default: 0] < perCategoryCap else { continue }
+                perCategoryCount[entry.category, default: 0] += 1
+                keptDiagnosticIDs.insert(entry.id)
+            }
+            if keptDiagnosticIDs.count < diagnosticCapacity {
+                for entry in diagnostics.reversed() {
+                    guard keptDiagnosticIDs.count < diagnosticCapacity else { break }
+                    keptDiagnosticIDs.insert(entry.id)
+                }
+            }
+        }
+        let retainedIDs = Set(retainedResults.map(\.id)).union(keptDiagnosticIDs)
+        return entries.filter { retainedIDs.contains($0.id) }
     }
 }
 
@@ -138,7 +290,9 @@ enum SealLogTextFormatter {
         lines.append(contentsOf: entries.map { entry in
             let code = entry.code.map { "  [\($0)]" } ?? ""
             let time = SealSettingsDateFormatter.string(from: entry.timestamp)
-            return "\(time)  \(entry.level.displayName)  \(entry.category.displayName)\(code)  \(entry.message)"
+            // 去重合并过的条目在导出时呈现重复次数（时间戳为首次出现时刻）。
+            let repeats = entry.repeatCount > 1 ? "  ×\(entry.repeatCount)" : ""
+            return "\(time)  \(entry.level.displayName)  \(entry.category.displayName)\(code)  \(entry.message)\(repeats)"
         })
         return lines.joined(separator: "\n")
     }

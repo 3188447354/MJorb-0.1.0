@@ -168,7 +168,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             }
         }
         await trace("resync 所有服务器均失败，最后错误=\(lastError.map(Self.describe) ?? "无")", level: .error)
-        throw lastError ?? AnisetteV3Error.unavailable
+        throw Self.allServersFailure(lastError: lastError)
     }
 
     private func fetchRemote(identity: AnisetteV3Identity) async throws -> ALTAnisetteData {
@@ -197,7 +197,25 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             }
         }
         await trace("fetchRemote 全部失败，最后错误=\(lastError.map(Self.describe) ?? "无")", level: .error)
-        throw lastError ?? AnisetteV3Error.unavailable
+        throw Self.allServersFailure(lastError: lastError)
+    }
+
+    /// 候选服务器**全灭终局**的错误整形：只有最后一个错误是网络错误（`URLError` /
+    /// `NSURLErrorDomain`）时，才包上 `AnisetteAllServersNetworkFailure` 来源标记再抛。
+    ///
+    /// 单台失败仍只在循环内部换下一台、用户无感，绝不提前标记；非网络终局
+    /// （如 `AnisetteV3Error.provisioningFailed`）原样上抛，保持原有归因。
+    /// 没有任何错误时维持旧行为（`unavailable`）。
+    private static func allServersFailure(lastError: Error?) -> Error {
+        guard let lastError else { return AnisetteV3Error.unavailable }
+        if let urlError = lastError as? URLError {
+            return AnisetteAllServersNetworkFailure(lastURLErrorCode: urlError.code.rawValue)
+        }
+        let nsError = lastError as NSError
+        if nsError.domain == NSURLErrorDomain {
+            return AnisetteAllServersNetworkFailure(lastURLErrorCode: nsError.code)
+        }
+        return lastError
     }
 
     func availableServers() async -> [AnisetteServer] {
@@ -744,6 +762,19 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
 struct AnisetteV3ClientInfo: Equatable, Sendable {
     let clientInfo: String
     let userAgent: String
+}
+
+/// anisette 候选服务器全部以网络错误终局的**来源标记**（不是新的失败语义本身）。
+///
+/// 背景（2026-10-22 真机 log-46，20:06:48）：17 台候选服务器全部
+/// `URLError(-1004)` 不可达，根源是本机网络；但全灭时抛出的裸 `URLError`
+/// 没有任何 anisette 来源信息，上层只能按「Apple 开发者服务传输失败」
+/// 归成 `SEAL-NET-102`，文案指错方向。故全灭终局改为抛这个标记，
+/// 由 `AppleServiceFailurePolicy.transportAttribution(for:)` 分开归因
+/// （新码 `SEAL-ANI-116`）；真正的 Apple 门户传输失败仍走 `SEAL-NET-102`。
+struct AnisetteAllServersNetworkFailure: Error, Equatable, Sendable {
+    /// 最后一台候选失败的网络错误码（如 -1004 = cannotConnectToHost）。
+    let lastURLErrorCode: Int?
 }
 
 typealias AnisetteClient = AnisetteV3Client

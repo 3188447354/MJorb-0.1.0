@@ -319,6 +319,7 @@ struct UpdateNoticeView: View {
                 localURL = try await UpdateIPADownloader.shared.download(
                         from: ipaURL,
                         expectedSize: notice.ipaDownloadSize,
+                        checksumURL: notice.sha256DownloadURL,
                         onProgress: { @MainActor received, total in
                             guard downloadGeneration == generation,
                                   case .downloading(let previousBytes, _) = phase else { return }
@@ -332,7 +333,7 @@ struct UpdateNoticeView: View {
                 return
             } catch {
                 guard downloadGeneration == generation else { return }
-                phase = .failed(Self.isStorageFull(error) ? .storage : .download)
+                phase = .failed(Self.downloadFailureKind(for: error))
                 downloadTask = nil
                 return
             }
@@ -344,39 +345,12 @@ struct UpdateNoticeView: View {
 
             phase = .verifying
             do {
+                // SHA256 完整性已由下载器在落盘后、返回前校验（SEAL-UPDATE-DL-506）；
+                // 这里只剩版本交叉校验。校验资产缺失（sha256DownloadURL 为 nil）时
+                // 下载器无从校验，继续 fail closed 判校验失败，不放行安装。
                 let parsed = try IPAParserService().parse(url: localURL)
                 guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version),
-                      let checksumURL = notice.sha256DownloadURL else {
-                    try? FileManager.default.removeItem(at: localURL)
-                    guard downloadGeneration == generation else { return }
-                    phase = .failed(.verification)
-                    downloadTask = nil
-                    return
-                }
-                let actual = try AppFileStore.streamingSHA256(url: localURL)
-                let checksumData: Data
-                do {
-                    let (data, response) = try await URLSession.shared.data(from: checksumURL)
-                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                        try? FileManager.default.removeItem(at: localURL)
-                        guard downloadGeneration == generation else { return }
-                        phase = .failed(.download)
-                        downloadTask = nil
-                        return
-                    }
-                    checksumData = data
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    try? FileManager.default.removeItem(at: localURL)
-                    guard downloadGeneration == generation else { return }
-                    phase = .failed(.download)
-                    downloadTask = nil
-                    return
-                }
-                guard let checksumText = String(data: checksumData, encoding: .utf8),
-                      let expected = UpdateChecker.expectedSHA256(from: checksumText),
-                      UpdateChecker.hashMatches(expected: expected, actual: actual) else {
+                      notice.sha256DownloadURL != nil else {
                     try? FileManager.default.removeItem(at: localURL)
                     guard downloadGeneration == generation else { return }
                     phase = .failed(.verification)
@@ -422,6 +396,16 @@ struct UpdateNoticeView: View {
 
     private func displayVersion(_ value: String) -> String {
         value.hasPrefix("v") || value.hasPrefix("V") ? value : "v\(value)"
+    }
+
+    /// 下载阶段的失败归类：存储不足单独提示、SHA256 校验失败（SEAL-UPDATE-DL-506）
+    /// 归校验失败、其余归下载失败。
+    private static func downloadFailureKind(for error: Error) -> DownloadFailure {
+        if let failure = error as? ImportFailure,
+           failure.code == UpdateDownloadChecksumPolicy.failureCode {
+            return .verification
+        }
+        return isStorageFull(error) ? .storage : .download
     }
 
     private static func isStorageFull(_ error: Error) -> Bool {

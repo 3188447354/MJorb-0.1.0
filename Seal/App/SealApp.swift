@@ -1,8 +1,30 @@
 import SwiftUI
+import UIKit
+
+/// 只承接 SwiftUI 没有对应回调的系统事件：后台 URLSession 事件交付完毕的通知。
+/// 更新下载的后台会话（`UpdateIPADownloader`）在进程被杀后由系统重新拉起交付
+/// 事件，系统要求 App 在 `handleEventsForBackgroundURLSession` 里收下
+/// completionHandler、并在事件全部处理完后调用它，否则后续唤醒会被推迟。
+/// 下载器侧在 `urlSessionDidFinishEvents` 里取出并执行这个 handler（见
+/// `UpdateIPADownloader.setBackgroundSessionCompletionHandler`）。
+final class SealAppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        guard identifier == UpdateIPADownloader.backgroundSessionIdentifier else {
+            completionHandler()
+            return
+        }
+        UpdateIPADownloader.setBackgroundSessionCompletionHandler(completionHandler)
+    }
+}
 
 @main
 @MainActor
 struct SealApp: App {
+    @UIApplicationDelegateAdaptor(SealAppDelegate.self) private var appDelegate
     private let container: AppContainer
     private let notificationPresenter: SealNotificationPresenter
 

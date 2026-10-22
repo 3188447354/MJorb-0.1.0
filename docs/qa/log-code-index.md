@@ -21,6 +21,7 @@
 | 码 | 它在说什么 | 出处 |
 |---|---|---|
 | `SEAL-ANI-115` | Apple 拒绝了本次认证用的设备环境数据（Anisette） | `AppleAccountClient.swift` |
+| `SEAL-ANI-116` | **暂时连不上网络**：获取登录环境数据的服务（anisette 候选）全部无法连接，通常是当前网络暂时不可用 —— 不是 Apple 开发者服务失败，检查网络后重试 | `AppleServiceFailurePolicy.swift` |
 | `SEAL-AUTH-102a` | Apple 拒绝了该账号的登录凭据 | `AppleAccountClient.swift` |
 | `SEAL-AUTH-102c` | **账号需要重新验证**（Apple 返回「认证状态无效」）⇒ 去「我的」重新登录 | `ApplePortalSigningService.swift` |
 | `SEAL-AUTH-105a` | 本机 Keychain 里缺少该 Apple ID 的登录凭据（**重装 Seal 会清空 Keychain**） | `SigningCoordinator.swift` |
@@ -37,6 +38,7 @@
 | `SEAL-SIGN-501` | Apple 暂时拒绝了请求（App ID 阶段撞限流；**先等几分钟重试**） | `ApplePortalSigningService.swift` |
 | `SEAL-SIGN-503` | 单应用签名 / 续签撞上**设备通道瞬时失败**，已按批量同源策略退避重试（8 秒 × 第几次）—— **警告级**。看到它说明这一轮通道抖过；没有它时「本该重试却没有重试」在日志上完全看不出来 | `AppsViewModel.swift` |
 | `SEAL-SIGN-504` | 单应用续签时**设备通道不可用**，自动重试后仍未恢复（底层多为 `Minimuxer.MinimuxerError 1` 的 `NoConnection`）。失败弹窗的「恢复」按钮据此跳 LocalDevVPN 设置页 | `AppsViewModel.swift` |
+| `SEAL-SIGN-404` | 未找到要签名的应用记录（签名入口经就绪门有界复查后仍查不到；终态会另记一条「应用记录缺失诊断」带当时现存 Seal 记录清单） | `SigningCoordinator.swift` |
 | `SEAL-APPID-303` | Apple 未返回可识别的 App ID 注册失败原因；稍后重新签名，持续出现则导出日志 | `ApplePortalSigningService.swift` |
 | `SEAL-PROFILE-303` | Apple 未返回可识别的描述文件生成失败原因；稍后重新签名，持续出现则导出日志 | `ApplePortalSigningService.swift` |
 | `SEAL-SELF-130` | 自管理状态诊断：实际签名者、有无本机私钥、待确认事务（证书页排障用） | `SettingsViewModel.swift` |
@@ -50,6 +52,7 @@
 | `SEAL-INSTALL-702s` | 设备**空间不足**（解压复制阶段） | `MinimuxerInstallChannel.swift` |
 | `SEAL-INSTALL-707` | 已安装页设备核验**未完成**（设备查询失败/超时），已保留当前列表、本轮未删除任何记录 | `AppsViewModel.swift` |
 | `SEAL-INSTALL-708` | 已安装页设备核验**跳过**：有前台操作正在进行（避免抢占同一条设备会话） | `AppsViewModel.swift` |
+| `SEAL-INSTALL-719` | 本机签名包记录不完整（已签名包安装入口经就绪门复查后仍查不到记录） | `SigningCoordinator.swift` |
 | `SEAL-INSTALL-739` | 已安装页设备核验**中止**：阳性对照未通过（通道不可信），本轮一条记录都不删 | `AppsViewModel.swift` |
 | `SEAL-VPN-001` | 签名完成后仍无法连接设备完成安装 | `SigningCoordinator.swift` |
 | `SEAL-VPN-003` | 观测到**本地隧道掉线**（`broken pipe` / `connection reset` / `early eof` 这类传输层对端消失），已作废 Swift 侧通道会话缓存、下一次操作重建连接 —— **警告级**。看到它说明这一轮撞上了掉线；没有它时「重试三次都撞同一个死会话」在日志上完全看不出来 | `MinimuxerInstallChannel.swift` |
@@ -131,11 +134,8 @@
 
 | 码 | 它在说什么 | 出处 |
 |---|---|---|
-| `SEAL-INVENTORY-100` | App ID 清单同步时本机缺少该 Apple ID 的登录凭据 | `SettingsViewModel.swift` |
 | `SEAL-INVENTORY-900` | App ID 清单同步失败（带 domain/code） | `SettingsViewModel.swift` |
-| `SEAL-INVENTORY-100a` | 本机没有该 Apple ID 的登录凭据（同步前需要先验证） | `SettingsViewModel.swift` |
 | `SEAL-INVENTORY-900a` | 证书状态同步失败（带 domain/code） | `SettingsViewModel.swift` |
-| `SEAL-INVENTORY-100b` | Apple ID 总览完整同步时本机缺少该账号凭据 | `SettingsViewModel.swift` |
 | `SEAL-INVENTORY-900b` | Apple ID 总览的 App ID 与证书状态同步失败（带 domain/code） | `SettingsViewModel.swift` |
 | `SEAL-INVENTORY-110` | 证书同步跳过：5 分钟内已同步过，用缓存 | `SettingsViewModel.swift` |
 
@@ -159,6 +159,15 @@
 | `SEAL-KEYCHAIN-001` | 钥匙串可访问性**已迁移**为「首次解锁后可读」，锁屏下的后台续签可正常读取账号密钥与 anisette —— **信息级**，只在真的改过条目时记一次 | `KeychainAccessibility.swift` |
 | `SEAL-KEYCHAIN-002` | 迁移时**设备仍锁定**，本次未完成（`errSecInteractionNotAllowed`）—— **警告级**。不是失败：解锁后打开 Seal 会自动补迁；若用户始终不解锁，锁屏续签仍会失败 | `KeychainAccessibility.swift` |
 | `SEAL-KEYCHAIN-003` | 迁移**失败**（带各 service 的归类结果）—— **警告级**。下次启动重试；这条说明修复没能生效，锁屏续签会继续失败 | `KeychainAccessibility.swift` |
+| `SEAL-KEYCHAIN-004` | 凭据**写后验证失败**：保存后回读主存/保险库比对不一致，不会静默当作存上了 | `KeychainVault.swift` |
+| `SEAL-KEYCHAIN-005` | **Apple ID 凭据待恢复**：本机没有此 Apple ID 的登录凭据，库存同步已暂停 —— **信息级**，每账号每进程只记一条（页面另有同源提示）；重新登录该账号即恢复 | `CredentialRecoveryPolicy.swift` |
+| `SEAL-KEYCHAIN-006` | 凭据保险库**导出/导入失败**（含口令错误、保险库文件不可用） | `KeychainVault.swift` |
+
+## 应用更新下载
+
+| 码 | 它在说什么 | 出处 |
+|---|---|---|
+| `SEAL-UPDATE-DL-506` | **更新包校验失败**：下载的 IPA 与 Release 的 .sha256 不一致（或校验文件不可用），损坏包已删除、不会进入安装 | `UpdateIPADownloader.swift` |
 
 ## 已从源码移除（旧日志里还会看到，**别当成现在还在报**）
 
@@ -173,6 +182,9 @@
 | `SEAL-CERT-224` | 源码里已不存在（历史码） |
 | `SEAL-PROFILE-363` | profile-only 设备身份核验告警已移除；是否续签由本地运行身份、Apple 当前证书状态及注入后的描述文件读回决定 |
 | `SEAL-PROFILE-364` | 旧版曾因本机没有证书私钥而把描述文件续签改为完整重签；此门槛已移除，续签结果由 Apple 当前证书和描述文件状态决定 |
+| `SEAL-INVENTORY-100` | 0.1.52 凭据改造移除：凭据缺失不再以错误级抛出，统一改走「待恢复」出口（新码 SEAL-KEYCHAIN-005 见主表钥匙串一节） |
+| `SEAL-INVENTORY-100a` | 同上，随 100 一并移除 |
+| `SEAL-INVENTORY-100b` | 同上；旧版该码在总览同步时成对刷屏（log-46 一天 20 次），是本次改造的直接动因 |
 | `SEAL-RECONCILE-001`、`SEAL-RECONCILE-003`、`SEAL-RECONCILE-005` | 旧的已安装列表对账日志；该对账实现已移除，旧日志仍可能出现这些码 |
 | `SEAL-PROFILE-362` | 「无法在设备端确认描述文件身份」的**终态失败**，已删除 —— 改为**回落完整重签**（新码登记在主表「批量续签」一节）。旧行为把「无法核验」与「身份不符」折成同一条死路，通道抖动一次应用就永久续签不了（2026-09-25 构建 39 真机） |
 | `SEAL-PROFILE-350` | 描述文件注入的**安全网**（调用方未先解除污染就想注入）。**2026-10-04 并行续签后已移除**：actor 拿锁后自愈污染（消费 + 重置 + 注入原子完成），不再抛错 |

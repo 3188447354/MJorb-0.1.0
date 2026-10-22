@@ -46,7 +46,23 @@ struct CertificatesRootView: View {
             }
             Button("取消", role: .cancel) { accountPendingDeletion = nil }
         } message: { account in
-            let count = relatedApps.filter { $0.accountID == account.id }.count
+            // 悬空 accountID 陷阱家族（见仓库 AGENTS.md）：`deleteAccount` 刻意保留
+            // 应用绑定，删过再重新添加同一 Apple ID 会新建账号记录（新 UUID），
+            // 旧 UUID 不是 `nil`、裸相等恒为假 ⇒ 只按 UUID 数关联应用会算成 0，
+            // 删除确认文案会误报「没有关联应用」。绑定账号已不在账号库时改按
+            // 签名 Team 判据（与 `SigningCertificateSelectionPolicy` 的悬空放行
+            // 口径一致）：同 Team 才算关联，换 Team 不算；绑定账号仍在时不放行。
+            let knownAccountIDs = Set(viewModel.accounts.map(\.id))
+            let count = relatedApps.filter { app in
+                if app.accountID == account.id { return true }
+                guard let boundAccountID = app.accountID,
+                      knownAccountIDs.contains(boundAccountID) == false,
+                      account.teamID.isEmpty == false else { return false }
+                return app.signingTeamID?.caseInsensitiveCompare(account.teamID) == .orderedSame
+                    || app.signingTargets.contains {
+                        $0.teamIdentifier.caseInsensitiveCompare(account.teamID) == .orderedSame
+                    }
+            }.count
             // ⚠️ 必须说清「会一并清除本机签名凭据」：本机证书私钥就存在该账号的
             // Keychain 条目里（`AccountSecret.certificateP12BySerial`），删账号会把它们
             // 一起删掉。之后重新添加同一个 Apple ID 会拿到**新的账号标识**，读不回旧私钥

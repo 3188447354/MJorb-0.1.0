@@ -26,6 +26,16 @@ enum AppleAuthenticationFailure {
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
         }
+        // anisette 候选全灭必须排在泛化网络判据之前：它同为网络错误，但根源是
+        // 本机网络连不上 anisette 服务，与 Apple 开发者服务无关（SEAL-ANI-116，
+        // 与 FailureClassifier 同口径，见 parts-0152/part-6.md §4）。
+        if AppleServiceFailurePolicy.transportAttribution(for: error) == .anisetteServersUnreachable {
+            return AppleServiceFailurePolicy.anisetteServersUnreachableFailure(
+                underlying: error,
+                operation: .authenticateAccount,
+                origin: .authentication
+            )
+        }
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return AppleServiceFailurePolicy.networkFailure(
                 underlying: error,
@@ -542,6 +552,16 @@ final class AppleAccountClient {
             if AppleServiceFailurePolicy.isRateLimited(error) {
                 throw AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
             }
+            // anisette 候选全灭必须排在泛化网络判据之前：它同为网络错误，但根源是
+            // 本机网络连不上 anisette 服务，与 Apple 开发者服务无关（SEAL-ANI-116，
+            // 与 FailureClassifier 同口径，见 parts-0152/part-6.md §4）。
+            if AppleServiceFailurePolicy.transportAttribution(for: error) == .anisetteServersUnreachable {
+                throw AppleServiceFailurePolicy.anisetteServersUnreachableFailure(
+                    underlying: error,
+                    operation: .validateAccount,
+                    origin: .authentication
+                )
+            }
             if AppleServiceFailurePolicy.isNetworkError(error) {
                 throw AppleServiceFailurePolicy.networkFailure(
                     underlying: error,
@@ -837,6 +857,17 @@ final class AppleAccountClient {
         }
         if AppleServiceFailurePolicy.isRateLimited(error) {
             return AppleServiceFailurePolicy.rateLimitedFailure(underlying: error)
+        }
+        // anisette 候选全灭必须排在泛化网络判据之前：它同为网络错误，但根源是
+        // 本机网络连不上 anisette 服务，与 Apple 开发者服务无关（SEAL-ANI-116，
+        // 与 FailureClassifier 同口径，见 parts-0152/part-6.md §4）。本函数是
+        // 返回型工厂（与 make 同形），故用 return 而非 throw。
+        if AppleServiceFailurePolicy.transportAttribution(for: error) == .anisetteServersUnreachable {
+            return AppleServiceFailurePolicy.anisetteServersUnreachableFailure(
+                underlying: error,
+                operation: .authenticateAccount,
+                origin: .authentication
+            )
         }
         if AppleServiceFailurePolicy.isNetworkError(error) {
             return AppleServiceFailurePolicy.networkFailure(

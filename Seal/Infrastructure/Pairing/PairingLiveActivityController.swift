@@ -18,7 +18,7 @@ final class PairingLiveActivityController {
     private var dismissTask: Task<Void, Never>?
 
     static let preparationLifetime: TimeInterval = PhonePairingHost.timeoutSeconds + 30
-    private static let codeLifetime: TimeInterval = 180
+    // 配对码阶段没有本地寿命：活动活到配对出结果为止（见 showCode），不设 codeLifetime。
     private static let completionLifetime: TimeInterval = 30
     private static let failureLifetime: TimeInterval = 12
 
@@ -109,15 +109,26 @@ final class PairingLiveActivityController {
         }
         let activityID = activity.id
         stage = .code
-        let expiry = Date().addingTimeInterval(Self.codeLifetime)
-        scheduleDismiss(at: expiry)
+        // 输入窗口内不设 stale、不用本地计时器收活动：配对码阶段活到配对出结果
+        // （成功 markPaired / 失败 markFailed / 会话超时走失败路径）为止。
+        // preparing 阶段排的到期收尾在此摘掉，否则它会在输码途中把活动关掉；
+        // 配对会话本身有超时（PhonePairingHost.timeoutSeconds），不会无限残留。
+        dismissTask?.cancel()
+        dismissTask = nil
+        expiresAt = nil
         // ActivityKit's current SDK marks update as concurrent; this handle is only passed
         // to that API here and remains otherwise isolated to this controller.
         nonisolated(unsafe) let activityForUpdate = activity
         let previousOperation = activityOperation
         let updateOperation = Task {
             await previousOperation?.value
-            await activityForUpdate.update(.init(state: Self.codeState(code), staleDate: expiry))
+            // 带 AlertConfiguration 的 update：用户此刻在系统设置里，系统会把
+            // 展开态弹出来直接看到配对码，不用先手动点开灵动岛。静默 update
+            // 只换紧凑态内容，用户感知不到码已经到了。
+            await activityForUpdate.update(
+                .init(state: Self.codeState(code), staleDate: nil),
+                alertConfiguration: Self.codeAlertConfiguration(code)
+            )
         }
         activityOperation = updateOperation
         await updateOperation.value
@@ -139,7 +150,8 @@ final class PairingLiveActivityController {
             stage: .paired,
             state: .init(stage: .paired, code: "", title: "Seal", detail: "点击返回 Seal"),
             lifetime: Self.completionLifetime,
-            logMessage: "已向灵动岛提交「配对完成」状态"
+            logMessage: "已向灵动岛提交「配对完成」状态",
+            alertConfiguration: Self.pairedAlertConfiguration
         )
     }
 
@@ -198,7 +210,8 @@ final class PairingLiveActivityController {
         stage: PairingActivityAttributes.Stage,
         state: PairingActivityAttributes.ContentState,
         lifetime: TimeInterval,
-        logMessage: String
+        logMessage: String,
+        alertConfiguration: AlertConfiguration? = nil
     ) {
         guard let activity else { return }
         self.stage = stage
@@ -217,7 +230,9 @@ final class PairingLiveActivityController {
             // island while the user is still in Settings; ending alone only schedules
             // the final content. Starting a local timer before the queued ActivityKit
             // update completed could dismiss the activity before the user ever saw “配对完成”.
-            await activityForEnd.update(content)
+            // 成功态带 AlertConfiguration 送达：与配对码同一机制，让系统在用户
+            // 还在设置页时把展开态弹出来；失败态不传（nil），呈现行为保持原样。
+            await activityForEnd.update(content, alertConfiguration: alertConfiguration)
             await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))
             try? await logStore?.append(category: .pairing, level: .info, message: logMessage)
             guard let self,
@@ -248,6 +263,20 @@ final class PairingLiveActivityController {
     private static func codeState(_ code: String) -> PairingActivityAttributes.ContentState {
         .init(stage: .code, code: code, title: "Seal", detail: "在系统配对窗口输入此码")
     }
+
+    private static func codeAlertConfiguration(_ code: String) -> AlertConfiguration {
+        AlertConfiguration(
+            title: "Seal 配对码",
+            body: "配对码 \(code)，在系统配对窗口输入此码",
+            sound: .default
+        )
+    }
+
+    private static let pairedAlertConfiguration = AlertConfiguration(
+        title: "Seal",
+        body: "配对成功，点击返回 Seal",
+        sound: .default
+    )
 
     private func logUnavailable(_ message: String) async {
         try? await logStore?.append(category: .pairing, level: .warning, message: message)

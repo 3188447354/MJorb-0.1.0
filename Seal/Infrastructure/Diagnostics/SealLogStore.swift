@@ -22,7 +22,7 @@ actor SealLogStore {
 
     init(
         fileURL: URL,
-        maximumEntries: Int = 1000,
+        maximumEntries: Int = LogRetentionPolicy.defaultMaximumEntries,
         fileProtector: any FileProtecting = CompleteFileProtector(),
         documentsDirectory: URL? = nil
     ) {
@@ -46,31 +46,28 @@ actor SealLogStore {
         operationSummary: RenewalRoundSummary? = nil
     ) throws {
         loadBufferIfNeeded()
-        buffer.append(
-            SealLogEntry(
-                category: category,
-                level: level,
-                message: LogPrivacyRedactor.redact(message),
-                code: code.map(LogPrivacyRedactor.redact),
-                operationResult: operationResult,
-                operationSummary: operationSummary.map(Self.redacted)
-            )
+        // 脱敏必须在去重比对之前：合并键用的是脱敏后的 message/code，
+        // 只差邮箱/序列号的同类事件因此同键（见 `LogDedupPolicy`）。
+        let entry = SealLogEntry(
+            category: category,
+            level: level,
+            message: LogPrivacyRedactor.redact(message),
+            code: code.map(LogPrivacyRedactor.redact),
+            operationResult: operationResult,
+            operationSummary: operationSummary.map(Self.redacted)
         )
-        if buffer.count > maximumEntries {
-            let operationResults = buffer.filter(LogViewerPolicy.isUserVisibleOperationResult)
-            let retainedResults = Array(operationResults.suffix(maximumEntries))
-            let diagnosticCapacity = max(0, maximumEntries - retainedResults.count)
-            let retainedDiagnosticIDs = Set(
-                buffer
-                    .filter { LogViewerPolicy.isUserVisibleOperationResult($0) == false }
-                    .suffix(diagnosticCapacity)
-                    .map(\.id)
-            )
-            let retainedResultIDs = Set(retainedResults.map(\.id))
-            let retainedIDs = retainedResultIDs.union(retainedDiagnosticIDs)
-            let retained = buffer.filter { retainedIDs.contains($0.id) }
-            droppedSinceClear += buffer.count - retained.count
-            buffer = retained
+        if let merged = LogDedupPolicy.merging(entry, into: buffer) {
+            // 重复日志只合并计数：不新增条目、不计入环形丢弃数。
+            buffer = merged
+        } else {
+            buffer.append(entry)
+            if buffer.count > maximumEntries {
+                let retained = LogRetentionPolicy.retainedEntries(
+                    buffer, capacity: maximumEntries
+                )
+                droppedSinceClear += buffer.count - retained.count
+                buffer = retained
+            }
         }
         if operationSummary != nil || (category == .installation && operationResult != nil) {
             flush()
@@ -122,7 +119,8 @@ actor SealLogStore {
             message: LogPrivacyRedactor.redact(entry.message),
             code: entry.code.map(LogPrivacyRedactor.redact),
             operationResult: entry.operationResult,
-            operationSummary: LogViewerPolicy.operationSummary(for: entry).map(Self.redacted)
+            operationSummary: LogViewerPolicy.operationSummary(for: entry).map(Self.redacted),
+            repeatCount: entry.repeatCount
         )
     }
 

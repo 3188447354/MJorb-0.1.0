@@ -218,7 +218,9 @@ Windows 本机**无法编译**，一切以云 CI 编译 + 真机回归为准。
 
 ### 日志
 - 导出统一 `SealLogTextFormatter`：北京时间（Asia/Shanghai `yyyy-MM-dd HH:mm:ss`）+ 中文栏目。
-- 容量环形 1000 条，满后滚动丢最旧并计数；导出头部注明「保留最近 N 条」。
+- 容量环形 3000 条（2026-10-22 由 1000 提高：1000 条一天实丢 7066 条、签名全程留不住），
+  满后滚动丢最旧并计数；导出头部注明「保留最近 N 条」。同内容日志在 120 秒窗口内
+  按脱敏后原值合并计数（导出 ×N），逐项结果类永不合并（`LogDedupPolicy`，R145 钉住）。
 - `SealLogStore` 每次 `flush()` 都镜像 `Seal-log.txt` 到 Documents（只镜像 error 会导致顺利操作无日志可查）。
 - **写入与读取都要脱敏**：`append` 过 `LogPrivacyRedactor`，`entries()` 再过一层；
   `exportText()`（= 镜像到 Documents 的那份）也必须过，否则升级前遗留的未脱敏 JSON 会被原样导出。
@@ -275,8 +277,10 @@ Windows 本机**无法编译**，一切以云 CI 编译 + 真机回归为准。
   由守卫 **R111** 钉住。⚠️ **手动 `gh release create` 发版不会走这条** ⇒ 手发之后必须自己调一次：
   `curl -sS -X POST "https://ios.sealsign.eu.cc/api/update.php?action=sync"`
   （⚠️ 服务端拉 GitHub **未认证** API，限流 60 次/小时/IP）。
-- ⚠️ 更新链路目前**只校验 `tag_name` 与 IPA 版本串相等**，不校验 `Seal_*.ipa.sha256` ——
-  修它之前不要假设「下载到的包一定是自己发的」。
+- 更新链路校验（2026-10-22 更新，取代旧「只校验 tag 与版本串」口径）：除 `tag_name`
+  与 IPA 版本串交叉校验外，下载器在落盘后、返回前会拉 Release 的 `.sha256` 资产
+  流式比对，缺失/不符都 fail closed（`SEAL-UPDATE-DL-506`，由 R107②/R138④ 钉住）；
+  View 侧校验资产为 nil 时同样判失败、不放行。
 
 ## 7. CI / 工程约束
 

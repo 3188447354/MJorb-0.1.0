@@ -42,6 +42,15 @@ struct AppSigningSheet: View {
         .onChange(of: viewModel.verifiedAccounts) { _ in
             selectDefaultAccount()
         }
+        .onChange(of: viewModel.apps) { _ in
+            // 记录已不在列表里（例如待更新记录被清理）时，抽屉手里只剩打开时的
+            // 旧快照 `app`：继续停留只会让用户点下去撞 SEAL-SIGN-404。
+            // `apps` 由 load() 整表替换、不会瞬时清空，因此这里关抽屉不会误伤
+            // 正在签名中的记录（它的 id 始终在列表里，变的只是 state）。
+            if isWorkingRecordMissing {
+                dismiss()
+            }
+        }
         .sheet(isPresented: $isBundleIDEditorPresented) {
             if BundleIDPolicy.isEditable(workingApp) {
                 BundleIDEditorSheet(initialValue: targetBundleID) { value in
@@ -128,7 +137,7 @@ struct AppSigningSheet: View {
                     }
                 }
                 .sealPrimaryAction(cornerRadius: 14)
-                .disabled(bundleIDValidationError != nil || isInstallingSignedArtifact)
+                .disabled(bundleIDValidationError != nil || isInstallingSignedArtifact || isWorkingRecordMissing)
                 .opacity(bundleIDValidationError == nil ? 1 : 0.48)
 
                 if isRenewal == false {
@@ -154,6 +163,11 @@ struct AppSigningSheet: View {
     }
 
     private func startSigning(completionMode: SigningCompletionMode) {
+        // 点击瞬间再校验一次记录仍在：靠旧快照回落放行正是连点 404 的入口。
+        guard isWorkingRecordMissing == false else {
+            dismiss()
+            return
+        }
         if let selectedAccountID = resolvedSelectedAccountID {
             Task {
                 var appForSigning = workingApp
@@ -173,6 +187,10 @@ struct AppSigningSheet: View {
     }
 
     private func installSignedArtifact() {
+        guard isWorkingRecordMissing == false else {
+            dismiss()
+            return
+        }
         isInstallingSignedArtifact = true
         Task {
             let installed = await viewModel.installSignedArtifact(workingApp)
@@ -450,6 +468,13 @@ struct AppSigningSheet: View {
 
     private var workingApp: AppRecord {
         viewModel.apps.first(where: { $0.id == app.id }) ?? app
+    }
+
+    /// 抽屉对应的记录是否已不在现行列表里。`workingApp` 在记录消失时会回落到
+    /// 打开抽屉时的旧快照 `app` —— 显示可以靠快照撑到抽屉关闭，但任何点击
+    /// （签名 / 安装）都必须先过这一关，不许再拿已删记录的 ID 去撞 404。
+    private var isWorkingRecordMissing: Bool {
+        viewModel.apps.contains(where: { $0.id == app.id }) == false
     }
 
     private var selectedAccount: AppleAccountRecord? {

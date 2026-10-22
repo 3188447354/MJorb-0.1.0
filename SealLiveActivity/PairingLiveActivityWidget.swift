@@ -105,7 +105,7 @@ struct PairingLiveActivityWidget: Widget {
         switch stage {
         case .preparing: return "准备配对"
         case .code: return "等待配对"
-        case .paired: return "配对完成"
+        case .paired: return "配对成功"
         case .failed: return "配对失败"
         }
     }

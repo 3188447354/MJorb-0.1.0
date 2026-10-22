@@ -25,6 +25,13 @@ struct AppsRootView: View {
     /// 再在下一次主循环请求结果抽屉，避免状态已锁住列表而系统 sheet 没有呈现。
     @State private var isResultPresentationHostReady = false
     @State private var hasPendingBackgroundResultPresentation = false
+    /// 业务抽屉呈现仲裁：同一时刻只许一张在场，交接串行「关完再开」。
+    /// 所有抽屉的呈现/关闭都先过它（判据本体在 `SheetArbiter`，可单测），
+    /// 不再靠关后硬等延时或事后强清其他抽屉状态来防抢层。
+    @State private var sheetArbiter = SheetArbiter()
+    /// 已安装操作抽屉点「续签」后、等操作抽屉关闭完成才点火的续签目标。
+    /// 载荷先存这里，`installedActionSheetDismissed` 收到关闭完成事件后才消费。
+    @State private var deferredRenewalApp: AppRecord?
 
     var body: some View {
         NavigationStack {
@@ -85,7 +92,7 @@ struct AppsRootView: View {
                     Text("\(draft.parsedIPA.name) v\(draft.parsedIPA.version) 已安装，无需重复更新")
                 }
             }
-            .sheet(item: $viewModel.selectedOperationApp, onDismiss: operationSheetDismissed) { app in
+            .sheet(item: operationSheetItem, onDismiss: operationSheetDismissed) { app in
                 AppSigningSheet(
                     app: app,
                     viewModel: viewModel,
@@ -104,24 +111,19 @@ struct AppsRootView: View {
                 .presentationContentInteraction(.scrolls)
                 .presentationDragIndicator(.hidden)
             }
-            .sheet(item: installedActionSheet, onDismiss: {
-                installedActionApp = nil
-            }) { app in
+            .sheet(item: installedActionSheet, onDismiss: installedActionSheetDismissed) { app in
                 InstalledAppActionSheet(
                     app: app,
                     viewModel: viewModel,
                     onRenew: {
-                        // The action drawer must relinquish its route before the
-                        // renewal progress drawer starts. Otherwise SwiftUI can
-                        // re-present this stale item for one frame when progress
-                        // dismisses.
+                        // 交接走仲裁：登记「操作抽屉待呈现」后只关当前抽屉，
+                        // 等它的关闭完成事件（installedActionSheetDismissed）
+                        // 才点火续签。不再硬等 250ms 猜关闭动画是否结束 ——
+                        // 旧写法既可能等不够（旧 item 重呈现一帧），也白慢一截。
+                        deferredRenewalApp = app
+                        _ = sheetArbiter.request(.operation)
                         installedActionApp = nil
                         detailApp = nil
-                        operationAppID = app.id
-                        Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(250))
-                            await viewModel.beginRenewalDirectly(for: app, overrideAccountID: nil)
-                        }
                     }
                 )
                 .presentationDetents(installedOperationDetents)
@@ -137,11 +139,13 @@ struct AppsRootView: View {
                 )
                 .presentationDetents([.medium, .large])
             }
-            .sheet(item: batchRefreshSheet) { _ in
+            .sheet(item: batchRefreshSheet, onDismiss: batchSheetDismissed) { _ in
                 BatchRefreshView(viewModel: viewModel)
                     .presentationDetents([.height(620), .large])
             }
-            .sheet(item: $detailApp) { app in
+            .sheet(item: $detailApp, onDismiss: {
+                _ = sheetArbiter.sheetDidDismiss(.detail)
+            }) { app in
                 AppDetailView(appID: app.id, viewModel: viewModel)
                     .presentationDetents([.medium, .large])
             }
@@ -205,10 +209,35 @@ struct AppsRootView: View {
             }
             .onChange(of: viewModel.isBatchRefreshSheetPresented) { isPresented in
                 guard isPresented else { return }
-                installedActionApp = nil
-                detailApp = nil
-                // 批量抽屉弹出时，单个操作的 sheet 必须一起清掉，否则批量关掉后它会闪出来。
-                viewModel.dismissOperation()
+                // 批量抽屉（进行中或结果）请求呈现：先过仲裁。台上无人直接上台；
+                // 有别的抽屉在场时只关那一张、登记待呈现，等它的关闭完成事件
+                // 再上台 —— 不再无条件强清全部抽屉状态（旧补丁会把无关状态一起清掉，
+                // 且关与开同帧发生仍可能抢层）。
+                if sheetArbiter.request(.batchResult) == .dismissCurrentThenPresentPending {
+                    dismissCurrentArbitratedSheet()
+                }
+            }
+            .onChange(of: viewModel.hasPendingBatchResultAwaitingPresentation) { isAwaiting in
+                // 持久化结果已被登记待呈现（冷/暖启动的 load、Seal 结算改写载荷
+                // 都会走到这里）：若宿主已就绪且 App 在前台，立即经呈现层 flush，
+                // 不必等下一次 scenePhase / 通知事件。
+                guard isAwaiting else { return }
+                requestSettledBackgroundBatchResultPresentation()
+            }
+            .onChange(of: viewModel.selectedOperationApp) { app in
+                // 操作抽屉的呈现请求来自 ViewModel 多个入口（列表点按、续签点火、
+                // 自动续跑）：统一在这里向仲裁登记。台上是批量结果时它只登记为
+                // 待呈现 —— 绑定层门禁挡住它抢层，等结果抽屉关闭完成后再上台；
+                // 刻意不去关结果抽屉：关它等于把未被用户看过的结果按「已关闭」
+                // 结算（清载荷），新操作不配替用户消费结果。
+                guard app != nil else {
+                    sheetArbiter.cancelPending(.operation)
+                    return
+                }
+                if sheetArbiter.request(.operation) == .dismissCurrentThenPresentPending,
+                   sheetArbiter.current != .batchResult {
+                    dismissCurrentArbitratedSheet()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: BackgroundRenewalNotificationRoute.opened)) { _ in
                 // 快捷指令成功通知的点击是一个明确的用户意图；不要只赌 scenePhase
@@ -223,12 +252,6 @@ struct AppsRootView: View {
             .onChange(of: viewModel.isImportSheetPresented) { isPresented in
                 guard isPresented else { return }
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { mode = .unsigned }
-            }
-            .onChange(of: batchRefreshSheet.wrappedValue?.id) { sessionID in
-                guard sessionID != nil else { return }
-                // 后台续签结果优先于任何已点开的应用操作，避免两个 sheet 争夺呈现层。
-                installedActionApp = nil
-                detailApp = nil
             }
             .onChange(of: viewModel.importCompletionCount) { _ in
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
@@ -386,7 +409,11 @@ struct AppsRootView: View {
                     .buttonStyle(.plain)
                     .contextMenu {
                         if pageMode == .installed {
-                            Button("查看详情") { detailApp = app }
+                            Button("查看详情") {
+                                if sheetArbiter.request(.detail) == .present(.detail) {
+                                    detailApp = app
+                                }
+                            }
                         }
                         if pageMode == .unsigned {
                             Button("删除 IPA", role: .destructive) { pendingDeleteApp = app }
@@ -440,6 +467,10 @@ struct AppsRootView: View {
             ) else {
                 return
             }
+            // 先向仲裁登记，台上已有抽屉时不硬开第二张。
+            guard sheetArbiter.request(.installedAction) == .present(.installedAction) else {
+                return
+            }
             installedActionApp = app
         }
     }
@@ -473,14 +504,15 @@ struct AppsRootView: View {
     /// 批量结果（尤其是通知进入后的已结算结果）拥有抽屉优先级。
     /// 这里在绑定读取侧再做一次门禁，而不只依赖点击时的 guard：SwiftUI 在同一轮
     /// 状态更新里可能已经开始呈现旧的 `installedActionApp`，否则会出现“应用操作一闪，
-    /// 随后才显示续签结果”的错序。
+    /// 随后才显示续签结果”的错序。门禁条件 = 既有结果优先政策 + 仲裁在场资格。
     private var installedActionSheet: Binding<AppRecord?> {
         Binding(
             get: {
                 BatchResultPresentationPolicy.shouldPresentInstalledAppAction(
                     hasBatchResultSheet: viewModel.isBatchRefreshSheetPresented,
                     hasInstalledAppAction: installedActionApp != nil
-                ) ? installedActionApp : nil
+                ) && sheetArbiter.allowsPresentation(of: .installedAction)
+                    ? installedActionApp : nil
             },
             set: { newValue in
                 if newValue == nil || viewModel.isBatchRefreshSheetPresented == false {
@@ -488,6 +520,77 @@ struct AppsRootView: View {
                 }
             }
         )
+    }
+
+    /// 操作抽屉绑定：仲裁不在场时不呈现（例如批量结果抽屉在场时
+    /// ViewModel 侧刚置了 `selectedOperationApp`，它只登记为待呈现，
+    /// 等结果抽屉关闭完成、仲裁把它转正后才真正上台）。
+    private var operationSheetItem: Binding<AppRecord?> {
+        Binding(
+            get: {
+                sheetArbiter.allowsPresentation(of: .operation)
+                    ? viewModel.selectedOperationApp
+                    : nil
+            },
+            set: { newValue in
+                viewModel.selectedOperationApp = newValue
+            }
+        )
+    }
+
+    /// 已安装操作抽屉关闭完成：向仲裁报到，并消费等待中的交接。
+    /// - 待呈现是操作抽屉（点「续签」的交接）：此刻才点火续签，续签抽屉
+    ///   随后经 `selectedOperationApp` 的仲裁登记上台。
+    /// - 待呈现是批量结果：什么都不用做，仲裁已把它转正，
+    ///   `batchRefreshSheet` 绑定随状态变化自然呈现。
+    private func installedActionSheetDismissed() {
+        installedActionApp = nil
+        _ = sheetArbiter.sheetDidDismiss(.installedAction)
+        consumeDeferredRenewalIfArbitrationAllows()
+    }
+
+    /// 批量抽屉关闭完成：向仲裁报到。若有操作抽屉在待呈现，
+    /// 仲裁已把它转正，`operationSheetItem` 绑定随状态变化自然呈现。
+    private func batchSheetDismissed() {
+        _ = sheetArbiter.sheetDidDismiss(.batchResult)
+        consumeDeferredRenewalIfArbitrationAllows()
+    }
+
+    /// 消费「等交接的续签点火」：只有仲裁台上是操作抽屉（或空台可立即认领）
+    /// 时才点火；被批量结果抢先时保留到那张抽屉关闭后再消费，不静默丢掉。
+    private func consumeDeferredRenewalIfArbitrationAllows() {
+        guard let app = deferredRenewalApp else { return }
+        if sheetArbiter.current == nil {
+            _ = sheetArbiter.request(.operation)
+        }
+        guard sheetArbiter.allowsPresentation(of: .operation) else { return }
+        deferredRenewalApp = nil
+        operationAppID = app.id
+        Task { @MainActor in
+            await viewModel.beginRenewalDirectly(for: app, overrideAccountID: nil)
+            // 点火没能产生操作抽屉（例如账号解析失败提前返回）时释放台面，
+            // 否则仲裁会把一个从未出现的抽屉当成在场，后续请求全被排队堵死。
+            if viewModel.selectedOperationApp == nil,
+               sheetArbiter.current == .operation {
+                _ = sheetArbiter.sheetDidDismiss(.operation)
+            }
+        }
+    }
+
+    /// 按仲裁裁决关掉当前在场的那一张抽屉（只关它，不连带清其他状态）。
+    private func dismissCurrentArbitratedSheet() {
+        switch sheetArbiter.current {
+        case .installedAction:
+            installedActionApp = nil
+        case .detail:
+            detailApp = nil
+        case .operation:
+            viewModel.dismissOperation()
+        case .batchResult:
+            viewModel.dismissBatchRefresh()
+        case nil:
+            break
+        }
     }
 
     /// `.sheet(item:)` 不能直接观察后台批次的临时会话，否则它会把后台“安装中”
@@ -498,7 +601,8 @@ struct AppsRootView: View {
                 BatchResultPresentationPolicy.shouldPresentBatchResultSheet(
                     isPresentationRequested: viewModel.isBatchRefreshSheetPresented,
                     hasBatchRefreshSession: viewModel.batchRefreshSession != nil
-                ) ? viewModel.batchRefreshSession : nil
+                ) && sheetArbiter.allowsPresentation(of: .batchResult)
+                    ? viewModel.batchRefreshSession : nil
             },
             set: { session in
                 if session == nil {
@@ -509,11 +613,12 @@ struct AppsRootView: View {
     }
 
     private func operationSheetDismissed() {
-        // A completed signing/renewal must never reveal an older action route
-        // during the native dismissal transaction.
-        installedActionApp = nil
-        detailApp = nil
+        // 交接纪律归仲裁：操作抽屉关闭完成后才向仲裁报到，待呈现的抽屉
+        // （如批量结果）随之转正。不再在这里强清其他抽屉状态 —— 仲裁保证
+        // 同一时刻只有一张在场，能被清的本来就不该同时存在。
+        _ = sheetArbiter.sheetDidDismiss(.operation)
         viewModel.dismissOperation()
+        consumeDeferredRenewalIfArbitrationAllows()
         guard let operationAppID else { return }
         self.operationAppID = nil
         Task { @MainActor in

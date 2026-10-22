@@ -1,6 +1,81 @@
 import SwiftUI
 import UIKit
 
+/// 签名证书页「本机已安装 App」区域的纯判定：序列号取源与展示列表回落。
+///
+/// 抽成纯函数是为了能单测 —— 这层组合此前只写在视图里，五组中间集合无任何
+/// 覆盖，真机恒空时只能靠猜（0.1.52 第 5 项定位，见 parts-0152/part-5.md）。
+enum CertificateInstalledAppsPolicy {
+    /// 证书序列号的统一取源，与 `SettingsViewModel.makeCertificateHealthStatus`
+    /// 的健康口径同源：`selected ?? certificate ?? secret`，逐级跳过 nil 与
+    /// 纯空白。旧实现只认 `certificateSerialNumber`：用户在证书页切换证书时
+    /// `selectCertificate` 只写 `selected`，区域便拿旧/空序列号去比对 ——
+    /// 空串经 `normalizedSerialNumber` 归一为 `"0"`，任何真实序列号都不
+    /// 等于 `"0"`，结果恒空。
+    static func effectiveCertificateSerialNumber(
+        selectedCertificateSerialNumber: String?,
+        certificateSerialNumber: String?,
+        secretCertificateSerialNumber: String? = nil
+    ) -> String {
+        for candidate in [selectedCertificateSerialNumber, certificateSerialNumber, secretCertificateSerialNumber] {
+            let trimmed = candidate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmed.isEmpty == false { return trimmed }
+        }
+        return ""
+    }
+
+    static func effectiveCertificateSerialNumber(
+        for account: AppleAccountRecord,
+        secretCertificateSerialNumber: String? = nil
+    ) -> String {
+        effectiveCertificateSerialNumber(
+            selectedCertificateSerialNumber: account.selectedCertificateSerialNumber,
+            certificateSerialNumber: account.certificateSerialNumber,
+            secretCertificateSerialNumber: secretCertificateSerialNumber
+        )
+    }
+
+    /// 已安装区域最终展示哪份列表。
+    enum Display: Equatable {
+        /// 本地扫描命中的 App（扫描行渲染）。
+        case localApps
+        /// 记录口径的 App 列表（记录行渲染）。
+        case recordApps([AppRecord])
+        /// 无任何可展示记录，显示「暂无」。
+        case empty
+        /// 既无设备清单也无关联记录，显示「暂无关联记录」。
+        case noAssociatedRecords
+    }
+
+    /// 展示列表的组合判定。
+    ///
+    /// 🔴 本地扫描分支的回落（根因 A）：旧实现只要本地扫描非 nil 就只认
+    /// `locallyVisibleApps`，为空即整体显示「暂无」，把已算好的记录口径
+    /// 列表全部丢弃 —— 而本地分支的同团队判据依赖扫描出的 `teamID`
+    /// （私有 API，取不到为 nil）或 bundle ID 尾段，序列号再对不上时恒空。
+    /// 新口径：本地扫描只能缩小到「已证实在机」的集合，不能把记录口径
+    /// 已证实的关联整体吞成「暂无」；本地为空时先回落设备清单核验过的
+    /// `installedApps`，再回落全量记录口径 `certificateApps`。
+    static func display(
+        hasLocalScan: Bool,
+        locallyVisibleIsEmpty: Bool,
+        hasInstalledBundleIdentifiers: Bool,
+        installedApps: [AppRecord],
+        certificateApps: [AppRecord]
+    ) -> Display {
+        if hasLocalScan {
+            if locallyVisibleIsEmpty == false { return .localApps }
+            if installedApps.isEmpty == false { return .recordApps(installedApps) }
+            if certificateApps.isEmpty == false { return .recordApps(certificateApps) }
+            return .empty
+        }
+        if hasInstalledBundleIdentifiers {
+            return installedApps.isEmpty ? .empty : .recordApps(installedApps)
+        }
+        return certificateApps.isEmpty ? .noAssociatedRecords : .recordApps(certificateApps)
+    }
+}
+
 struct SigningCertificateSettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
     let relatedApps: [AppRecord]
@@ -101,6 +176,18 @@ struct SigningCertificateSettingsView: View {
         return viewModel.activeAccount
     }
 
+    /// 本页统一的证书序列号取源（健康口径，见 `CertificateInstalledAppsPolicy`）。
+    ///
+    /// View 拿不到 Keychain 里的 secret 本体：记录两级皆空时，用健康状态的
+    /// `serialNumber` 兜底 —— 它正是 ViewModel 按
+    /// `selected ?? certificate ?? secret` 算出的结果，与健康口径不分叉。
+    private func effectiveCertificateSerialNumber(for account: AppleAccountRecord) -> String {
+        let fromRecord = CertificateInstalledAppsPolicy.effectiveCertificateSerialNumber(for: account)
+        if fromRecord.isEmpty == false { return fromRecord }
+        let healthSerial = viewModel.certificateHealthStatus(for: account.id)?.serialNumber ?? ""
+        return healthSerial.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func refreshInstalledBundleIdentifiers() async {
         guard isRefreshingInstalledBundleIdentifiers == false else {
             installedBundleIdentifierRetryRequested = true
@@ -145,7 +232,7 @@ struct SigningCertificateSettingsView: View {
         let knownTeams = viewModel.accounts.map(\.teamID)
         let certificateBundleIdentifiers = Set(viewModel.accounts.flatMap { account in
             CertificateRevocationImpact.associatedApps(
-                serialNumber: account.certificateSerialNumber ?? "",
+                serialNumber: effectiveCertificateSerialNumber(for: account),
                 apps: relatedApps
             ).map { $0.mappedBundleIdentifier ?? $0.preferredBundleIdentifier ?? $0.originalBundleIdentifier }
         }.compactMap(InstalledAppRefreshProbePolicy.normalizedBundleIdentifier))
@@ -329,7 +416,7 @@ struct SigningCertificateSettingsView: View {
     /// 单个证书卡片：本机在用证书（如有）在上，账号下其余证书（可撤销）合并展示。
     private func unifiedCertificateCard(account: AppleAccountRecord) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if account.certificateSerialNumber?.isEmpty == false {
+            if effectiveCertificateSerialNumber(for: account).isEmpty == false {
                 localCertificateSection(account: account)
             } else {
                 missingCertificateHeader
@@ -362,7 +449,7 @@ struct SigningCertificateSettingsView: View {
             }
             .padding(.bottom, 8)
 
-            Text(fullSerialText(account.certificateSerialNumber ?? ""))
+            Text(fullSerialText(effectiveCertificateSerialNumber(for: account)))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(Color.sealTextSecondary)
                 .padding(.bottom, 14)
@@ -439,11 +526,20 @@ struct SigningCertificateSettingsView: View {
     private func nonLocalCertificates(account: AppleAccountRecord) -> [ApplePortalCertificateSnapshot] {
         let inventory = viewModel.certificateInventory(for: account.id)
         let allCertificates = inventory?.certificates ?? []
-        return deduplicatedCertificates(allCertificates).filter {
-            !CertificateRevocationImpact.isLocalCertificate(
-                serialNumber: $0.serialNumber,
+        // 本机证书的认定与上方本机区同源（统一取源）：`isLocalCertificate`
+        // 只认 `certificateSerialNumber`，切换过证书（只写 selected）时，
+        // 正在用的那张会被同时列进「其他证书」并给出撤销入口 —— 必须按
+        // effective 序列号一并排除（归一化比对，与全仓序列号口径一致）。
+        let effectiveSerial = effectiveCertificateSerialNumber(for: account)
+        let normalizedEffective = SigningCertificateSelectionPolicy.normalizedSerialNumber(effectiveSerial)
+        return deduplicatedCertificates(allCertificates).filter { certificate in
+            guard CertificateRevocationImpact.isLocalCertificate(
+                serialNumber: certificate.serialNumber,
                 account: account
-            )
+            ) == false else { return false }
+            guard effectiveSerial.isEmpty == false else { return true }
+            return SigningCertificateSelectionPolicy.normalizedSerialNumber(certificate.serialNumber)
+                != normalizedEffective
         }
     }
 
@@ -635,8 +731,8 @@ struct SigningCertificateSettingsView: View {
     }
 
     private func localCertificateDisplayName(_ account: AppleAccountRecord) -> String {
-        guard let localSerial = account.certificateSerialNumber?.trimmingCharacters(in: .whitespacesAndNewlines),
-              localSerial.isEmpty == false,
+        let localSerial = effectiveCertificateSerialNumber(for: account)
+        guard localSerial.isEmpty == false,
               let inventory = viewModel.certificateInventory(for: account.id) else {
             return "本机证书"
         }
@@ -648,12 +744,13 @@ struct SigningCertificateSettingsView: View {
 
     @ViewBuilder
     private func installedAppsSection(account: AppleAccountRecord) -> some View {
+        let effectiveSerial = effectiveCertificateSerialNumber(for: account)
         let certificateApps = CertificateRevocationImpact.associatedApps(
-            serialNumber: account.certificateSerialNumber ?? "",
+            serialNumber: effectiveSerial,
             apps: relatedApps
         )
         let installedApps = CertificateRevocationImpact.installedAppsAssociated(
-            serialNumber: account.certificateSerialNumber ?? "",
+            serialNumber: effectiveSerial,
             apps: relatedApps,
             installedBundleIdentifiers: installedBundleIdentifiers ?? []
         )
@@ -661,7 +758,7 @@ struct SigningCertificateSettingsView: View {
             InstalledAppRefreshProbePolicy.normalizedBundleIdentifier($0.bundleIdentifier)
         })
         let localCertificateApps = CertificateRevocationImpact.installedAppsAssociated(
-            serialNumber: account.certificateSerialNumber ?? "",
+            serialNumber: effectiveSerial,
             apps: relatedApps,
             installedBundleIdentifiers: locallyInstalledBundleIdentifiers
         )
@@ -681,6 +778,19 @@ struct SigningCertificateSettingsView: View {
             return certificateBundleIdentifiers.contains(bundleIdentifier)
                 || sameTeamApps.contains { $0.bundleIdentifier == app.bundleIdentifier }
         }
+        let display = CertificateInstalledAppsPolicy.display(
+            hasLocalScan: localInstalledApps != nil,
+            locallyVisibleIsEmpty: locallyVisibleApps.isEmpty,
+            hasInstalledBundleIdentifiers: installedBundleIdentifiers != nil,
+            installedApps: installedApps,
+            certificateApps: certificateApps
+        )
+        // 在构建器外把记录列表解出来：视图内只用最普通的 if / if let 分支，
+        // 不把模式匹配塞进 @ViewBuilder（本机无工具链，编译只能等 CI，取最稳形态）。
+        let recordApps: [AppRecord]? = {
+            if case .recordApps(let apps) = display { return apps }
+            return nil
+        }()
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(localInstalledApps != nil || installedBundleIdentifiers != nil ? "本机已安装 App" : "签名记录")
@@ -691,26 +801,18 @@ struct SigningCertificateSettingsView: View {
                     .font(.caption2)
                     .foregroundStyle(Color.sealTextSecondary)
             }
-            if localInstalledApps != nil {
-                if locallyVisibleApps.isEmpty {
-                    Text("暂无")
-                        .font(.caption)
-                        .foregroundStyle(Color.sealTextSecondary)
-                } else {
-                    localInstalledAppRows(locallyVisibleApps, certificateBundleIdentifiers: certificateBundleIdentifiers)
-                }
-            } else if installedBundleIdentifiers != nil, installedApps.isEmpty {
-                Text("暂无")
-                    .font(.caption)
-                    .foregroundStyle(Color.sealTextSecondary)
-            } else if installedBundleIdentifiers != nil {
-                installedAppRows(installedApps)
-            } else if certificateApps.isEmpty {
+            if display == .localApps {
+                localInstalledAppRows(locallyVisibleApps, certificateBundleIdentifiers: certificateBundleIdentifiers)
+            } else if let recordApps {
+                installedAppRows(recordApps)
+            } else if display == .noAssociatedRecords {
                 Text("暂无关联记录")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
             } else {
-                installedAppRows(certificateApps)
+                Text("暂无")
+                    .font(.caption)
+                    .foregroundStyle(Color.sealTextSecondary)
             }
         }
         .padding(.vertical, 12)

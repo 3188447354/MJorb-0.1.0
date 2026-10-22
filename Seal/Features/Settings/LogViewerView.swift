@@ -72,7 +72,7 @@ struct LogViewerView: View {
                     }
                     .buttonStyle(.plain)
                     Button(action: emailLogs) {
-                        Image(systemName: "envelope")
+                        Image(systemName: "paperplane")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.accentColor)
                             .frame(width: 36, height: 36)

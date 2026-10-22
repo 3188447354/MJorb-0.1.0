@@ -123,6 +123,44 @@ actor SelfAppRegistrar {
             return
         }
 
+        // 现行两记录模型的待更新保护：待更新源是独立新记录，靠
+        // `replacesInstalledAppID` 指向已安装记录（通常还带
+        // `pendingUpdateSourceFingerprint`），已安装记录上的
+        // `hasPendingSelfUpdateSource` 在这套模型里恒为 false，上面的旧标志分支
+        // 看不见它 ⇒ 保护曾静默失效，待更新记录随后被版本一致分支当「重复 Seal」
+        // 连文件删掉（签名抽屉再点就是 SEAL-SIGN-404）。判据与重复清理的豁免
+        // 同源（`SelfAppPendingUpdateProtection`）。本轮只回补已安装快照并清理
+        // （清理会豁免待更新源），绝不用运行包覆盖待更新源，也绝不替它结算 ——
+        // 交接只能由签名安装 / 新进程自替换对账完成。
+        // 仅当待更新源文件仍在、且其版本不低于运行版本时才提前收口；不满足时
+        // 落到下面的常规分支，清理豁免照样保住待更新源（见 cleanup 实现）。
+        if let existing,
+           let pendingSource = SelfAppPendingUpdateProtection.pendingUpdateSource(in: records),
+           pendingSource.ipaRelativePath.isEmpty == false,
+           try await fileStore.exists(relativePath: pendingSource.ipaRelativePath),
+           Version.compare(pendingSource.version, metadata.version) != .orderedAscending {
+            if pendingSource.id != existing.id {
+                // 两记录并存：回补的是已安装记录的快照，不是待更新源。
+                try await reconcileSealRecordFromRunningBundleIfNeeded(
+                    existing: existing,
+                    metadata: metadata,
+                    accounts: accounts
+                )
+            } else if pendingSource.version == metadata.version,
+                      pendingSource.buildNumber == metadata.buildNumber {
+                // 只剩待更新记录、且它与运行包同版本同构建（已装上的更新待清
+                // 残留链接的形态）：与旧版本一致分支同等回补，链接的清理由上面的
+                // 旧标志分支与结算路径负责，本分支不代劳。
+                try await reconcileSealRecordFromRunningBundleIfNeeded(
+                    existing: existing,
+                    metadata: metadata,
+                    accounts: accounts
+                )
+            }
+            try await cleanupDuplicateSealRecords(records: records, keepID: existing.id)
+            return
+        }
+
         // 版本一致且文件存在 → 直接跳过，只清理重复记录
         if let existing,
            existing.version == metadata.version,
@@ -532,7 +570,20 @@ actor SelfAppRegistrar {
         records: [AppRecord],
         keepID: UUID
     ) async throws {
-        for record in records where record.isSeal && record.id != keepID {
+        // 删除决定必须按**执行时刻的现行记录**做，不能用入参这份快照：三个调用点
+        // （待更新保护 / 版本一致 / 原子更新后）传的都是 `registerIfNeeded` 开头
+        // 抓的 `records`，中间隔着自替换对账、回补与打包等步骤 —— 快照里已不存在
+        // 的记录会被重复尝试删除，快照之后才出现的记录（尤其是刚导入的待更新
+        // 记录）则完全不在视野里。重取失败时整轮不删（fail closed：跳过清理只
+        // 留下残留，误删会连文件一起删掉用户尚未签名的更新包）。
+        // 豁免判据与待更新保护分支同源：`replacesInstalledAppID != nil` 的记录
+        // 在其指向的更新结算完成前一律不删（结算会把该链接清掉，见
+        // `SelfAppPendingUpdateProtection`）。
+        guard let currentRecords = try? await appStore.fetchAll() else { return }
+        for record in SelfAppPendingUpdateProtection.duplicateCleanupCandidates(
+            in: currentRecords,
+            keepID: keepID
+        ) {
             // 先删除文件，再删除数据库记录，避免产生孤儿文件
             try? await fileStore.removeApp(appID: record.id)
             try? await appStore.delete(id: record.id)

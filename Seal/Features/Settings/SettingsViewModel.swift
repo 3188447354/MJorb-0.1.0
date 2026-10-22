@@ -173,6 +173,9 @@ final class SettingsViewModel: ObservableObject {
     @Published private(set) var isSelfManagementLoading = true
     /// 当前运行 Seal 的真实 CMS 签名者；读不出来时为 nil（证书行据此打标签）。
     @Published private(set) var sealActualSignerSerialNumber: String?
+    /// 「凭据待恢复」一次性提示的节流集合（进程内）：同一账号只提示一次，
+    /// 根治 `SEAL-INVENTORY-100b` 每次进证书页成对刷错误日志（见 `CredentialRecoveryPolicy`）。
+    private var credentialRecoveryNotifiedAccountIDs: Set<UUID> = []
 
     let verificationBroker = VerificationCodeBroker()
 
@@ -771,7 +774,17 @@ final class SettingsViewModel: ObservableObject {
             try await keychain.save(clearedSecret, for: account.id)
 
             var clearedAccount = account
-            if CertificateRevocationImpact.isLocalCertificate(serialNumber: serialNumber, account: account) {
+            // 本机证书的认定与证书健康口径同源（selected ?? certificate ?? secret，
+            // 见 makeCertificateHealthStatus）：`isLocalCertificate` 本体只读
+            // account.certificateSerialNumber，切换过证书时实际在用的序列号在
+            // selected 里（或只在 secret 里），只喂记录字段会漏清已撤销证书的
+            // 绑定。这里只换喂入的取源：归一化比对与空值守卫仍走
+            // isLocalCertificate 本体，判定语义其余部分不变。
+            var localCertificateSource = account
+            localCertificateSource.certificateSerialNumber = account.selectedCertificateSerialNumber
+                ?? account.certificateSerialNumber
+                ?? originalSecret.certificateSerialNumber
+            if CertificateRevocationImpact.isLocalCertificate(serialNumber: serialNumber, account: localCertificateSource) {
                 clearedAccount.certificateSerialNumber = nil
                 clearedAccount.selectedCertificateSerialNumber = nil
             }
@@ -1547,6 +1560,11 @@ final class SettingsViewModel: ObservableObject {
 
     private func refreshApplePortalInventory(for account: AppleAccountRecord, force: Bool = false) async {
         guard let keychain, let applePortalInventoryService else { return }
+        // 凭据待恢复账号直接跳过：不打网络、不写日志（待恢复标记已在首次缺失时落下）。
+        if CredentialRecoveryPolicy.shouldSkipInventorySync(account) {
+            certificateInventoryFailures[account.id] = CredentialRecoveryPolicy.recoveryFailure(for: account)
+            return
+        }
         // 缓存 5 分钟内有效：证书页反复进出不重复打 Apple 门户，又慢又费流量。
         // 下拉刷新（force: true）不受此限。
         if force == false,
@@ -1566,12 +1584,11 @@ final class SettingsViewModel: ObservableObject {
 
         do {
             guard let storedSecret = try await keychain.load(accountID: account.id) else {
-                throw Self.failure(
-                    title: "Apple ID 同步失败",
-                    reason: "本机没有此 Apple ID 的登录凭据。",
-                    recovery: "重新验证 Apple ID",
-                    code: "SEAL-INVENTORY-100b"
-                )
+                // 0.1.52 第 7 项：`load` 已查钥匙串主存 + 保险库两处，两处都 miss 才是真缺失。
+                // 不再以错误级抛 `SEAL-INVENTORY-100b`（旧行为每次进页成对刷错误日志）：
+                // 标记「凭据待恢复」+ 一次性信息提示即返回，后续同步由待恢复标记直接跳过。
+                await handleMissingInventoryCredential(for: account, updatesHealth: true)
+                return
             }
             let secret = try await ensurePortalSession(
                 account: account,
@@ -1659,6 +1676,10 @@ final class SettingsViewModel: ObservableObject {
         force: Bool = true
     ) async {
         guard let keychain, let applePortalInventoryService else { return }
+        if CredentialRecoveryPolicy.shouldSkipInventorySync(account) {
+            certificateInventoryFailures[account.id] = CredentialRecoveryPolicy.recoveryFailure(for: account)
+            return
+        }
         if force == false, certificateInventories[account.id]?.appIDs.isEmpty == false { return }
         if certificateInventoryLoadingIDs.contains(account.id) { return }
 
@@ -1667,14 +1688,11 @@ final class SettingsViewModel: ObservableObject {
 
         do {
             guard let storedSecret = try await keychain.load(accountID: account.id) else {
-                // 后台同步不改变账号验证状态：Keychain 瞬时不可读不应把 ID 标为失效。
-                // 凭据缺失只记录同步失败，用户主动验证时才会标记 needsVerification。
-                throw Self.failure(
-                    title: "Apple ID 同步失败",
-                    reason: "本机没有此 Apple ID 的登录凭据。",
-                    recovery: "重新验证 Apple ID",
-                    code: "SEAL-INVENTORY-100"
-                )
+                // 与 `SEAL-INVENTORY-100b` 同口径（0.1.52 第 7 项）：真缺失（主存 + 保险库
+                // 都 miss）才标记待恢复；钥匙串瞬时不可读抛的是 `KeychainError`、走下方
+                // 通用失败路径，不会误标 —— 旧注释担心的「瞬时不可读误标失效」并不成立。
+                await handleMissingInventoryCredential(for: account, updatesHealth: false)
+                return
             }
             let secret = try await ensurePortalSession(
                 account: account,
@@ -1787,6 +1805,10 @@ final class SettingsViewModel: ObservableObject {
         force: Bool = true
     ) async {
         guard let keychain, let applePortalInventoryService else { return }
+        if CredentialRecoveryPolicy.shouldSkipInventorySync(account) {
+            certificateInventoryFailures[account.id] = CredentialRecoveryPolicy.recoveryFailure(for: account)
+            return
+        }
         if force == false, certificateInventories[account.id] != nil { return }
         if force == false, certificateInventoryLoadingIDs.contains(account.id) { return }
 
@@ -1795,13 +1817,9 @@ final class SettingsViewModel: ObservableObject {
 
         do {
             guard let storedSecret = try await keychain.load(accountID: account.id) else {
-                // 后台同步不改变账号验证状态，同上。
-                throw Self.failure(
-                    title: "Apple 侧同步失败",
-                    reason: "本机没有此 Apple ID 的登录凭据。",
-                    recovery: "重新验证 Apple ID",
-                    code: "SEAL-INVENTORY-100a"
-                )
+                // 与 `SEAL-INVENTORY-100b` 同口径（0.1.52 第 7 项）：标记待恢复 + 一次性提示，不再错误级抛错。
+                await handleMissingInventoryCredential(for: account, updatesHealth: true)
+                return
             }
             let secret = try await ensurePortalSession(
                 account: account,
@@ -1877,6 +1895,47 @@ final class SettingsViewModel: ObservableObject {
                 code: failure.code
             )
         }
+        logs = (try? await logStore?.entries()) ?? logs
+        await refreshLogExportText()
+    }
+
+    /// 库存同步发现凭据真缺失（钥匙串主存 + 保险库都 miss）时的统一出口。
+    ///
+    /// 动作只有三件，都不产生错误级日志：
+    /// 1. 账号标记「凭据待恢复」（复用 `needsVerification` + `localCredentialsMissing`，
+    ///    与签名链路 `SEAL-AUTH-105a` 的标记口径一致；呈现沿用现有状态，无新枚举）；
+    /// 2. 页面级失败位写待恢复提示（证书页可见，不弹窗打扰）；
+    /// 3. 每个账号每进程只写一条**信息级**日志（`SEAL-KEYCHAIN-005`，只带脱敏邮箱）。
+    /// 节流依据：待恢复是持久状态而非事件——首次标记已把全部信息（哪个账号、怎么办）
+    /// 说清，之后每次同步再记一条不提供新信息，只会冲掉 1000 条环形缓冲里的真错误。
+    /// 标记落下后，三处库存同步都由 `CredentialRecoveryPolicy.shouldSkipInventorySync`
+    /// 在入口直接跳过；批量入口 `refreshApplePortalInventories` 按可选性过滤、
+    /// 天然不再选中待恢复账号。恢复路径 = 用户重新验证（保存 secret 时状态回 `.verified`）。
+    private func handleMissingInventoryCredential(
+        for account: AppleAccountRecord,
+        updatesHealth: Bool
+    ) async {
+        await persistVerificationFailure(.localCredentialsMissing, for: account)
+        if let index = accounts.firstIndex(where: { $0.id == account.id }) {
+            accounts[index].status = .needsVerification
+            accounts[index].verificationFailureReason = .localCredentialsMissing
+        }
+        certificateInventoryFailures[account.id] = CredentialRecoveryPolicy.recoveryFailure(for: account)
+        if updatesHealth {
+            let health = await localCertificateHealthStatus(account: account, portalState: .unknown)
+            certificateHealthStatuses[account.id] = health
+        }
+        guard CredentialRecoveryPolicy.shouldEmitRecoveryNotice(
+            accountID: account.id,
+            alreadyNotifiedAccountIDs: credentialRecoveryNotifiedAccountIDs
+        ) else { return }
+        credentialRecoveryNotifiedAccountIDs.insert(account.id)
+        try? await logStore?.append(
+            category: .account,
+            level: .info,
+            message: "Apple ID 凭据待恢复（\(account.maskedEmail)）：本机与保险库均无登录凭据，库存同步已暂停，重新验证后自动恢复",
+            code: "SEAL-KEYCHAIN-005"
+        )
         logs = (try? await logStore?.entries()) ?? logs
         await refreshLogExportText()
     }
@@ -2352,7 +2411,12 @@ final class SettingsViewModel: ObservableObject {
             )
         } ?? baseRecord
 
-        let previousSecret = try await keychain.load(accountID: record.id)
+        // 先按记录 UUID 查，再按归一化登录 ID 查（0.1.52 第 7 项）：删号重加会换新 UUID，
+        // 旧 secret 靠登录 ID 键接回，历史证书材料经 `preservingSigningMaterial` 一并保留。
+        var previousSecret = try await keychain.load(accountID: record.id)
+        if previousSecret == nil {
+            previousSecret = try? await keychain.load(loginID: authenticated.secret.email)
+        }
         let mergedSecret = authenticated.secret.preservingSigningMaterial(from: previousSecret)
         try await keychain.save(mergedSecret, for: record.id)
         do {
@@ -2363,7 +2427,9 @@ final class SettingsViewModel: ObservableObject {
                 if let previousSecret {
                     try await keychain.save(previousSecret, for: record.id)
                 } else {
-                    try await keychain.delete(accountID: record.id)
+                    // 回滚只解除新记录的关联，**不删 secret**（0.1.52 第 7 项「永不自动删」）：
+                    // 刚存的凭据留在保险库，用户重试添加同一 Apple ID 时按登录 ID 接回。
+                    try await keychain.detach(accountID: record.id)
                 }
             } catch {
                 throw Self.failure(
@@ -2457,7 +2523,9 @@ final class SettingsViewModel: ObservableObject {
         }
         do {
             try await accountRepository.delete(id: account.id)
-            try await keychain.delete(accountID: account.id)
+            // 只解除关联、**不删 secret**（0.1.52 第 7 项「永不自动删」）：凭据留在
+            // 钥匙串归一化键 + 保险库里，重新添加同一 Apple ID 时按登录 ID 自动接回。
+            try await keychain.detach(accountID: account.id)
             if activeAccountID == account.id {
                 activeAccountID = nil
                 await signingPreferenceStore?.setActiveAccountID(nil)
@@ -2465,7 +2533,7 @@ final class SettingsViewModel: ObservableObject {
             await load(force: true)
             try? await logStore?.append(
                 category: .account,
-                message: "Apple ID 已移除；关联应用保留原账号绑定，用于防止误用其他账号续签。关联应用数：\(relatedApps.count)"
+                message: "Apple ID 已移除；本机凭据保留在保险库，重新添加同一 Apple ID 时自动接回；关联应用保留原账号绑定，用于防止误用其他账号续签。关联应用数：\(relatedApps.count)"
             )
         } catch {
             var rollbackFailures: [String] = []
@@ -3010,6 +3078,16 @@ final class SettingsViewModel: ObservableObject {
                 }
                 throw failure
             } catch {
+                // anisette 候选全灭必须排在泛化网络判据之前：它同为网络错误，但根源是
+                // 本机网络连不上 anisette 服务，与 Apple 开发者服务无关（SEAL-ANI-116，
+                // 与 FailureClassifier 同口径，见 parts-0152/part-6.md §4）。
+                if AppleServiceFailurePolicy.transportAttribution(for: error) == .anisetteServersUnreachable {
+                    throw AppleServiceFailurePolicy.anisetteServersUnreachableFailure(
+                        underlying: error,
+                        operation: .validateAccount,
+                        origin: .authentication
+                    )
+                }
                 if AppleServiceFailurePolicy.isNetworkError(error) {
                     throw AppleServiceFailurePolicy.networkFailure(
                         underlying: error,

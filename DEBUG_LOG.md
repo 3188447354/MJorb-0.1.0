@@ -1,3 +1,75 @@
+# 2026-10-22 — 日志页工具栏邮件按钮图标与另两钮不对齐（0.1.52）
+
+- **现象**：日志页工具栏三个按钮（删除 trash、导出 square.and.arrow.up、邮件 envelope）同为 16 号字，但 envelope 天生宽扁（约 21×12），与另两个近方形符号（约 14×17）高度明显不对齐。
+- **根因**：符号本身宽高比差异，非字号/frame 问题——三钮字号 16、36×36 frame 一致，只有 envelope 的字形轮廓矮。
+- **修复**：`LogViewerView.swift:75` 邮件按钮 SF 符号 `envelope` → `paperplane`（近方形约 17×17，同字号直接对齐）；字号、accentColor、36×36 frame、accessibilityLabel「邮件发送日志」、emailLogs 动作全部未动，仅此一处字符串。
+- **涉及文件**：`Seal/Features/Settings/LogViewerView.swift`。
+- **验证状态**：守卫无钉住该符号的断言（已 grep 确认）；真机目测三钮高度对齐即可。
+
+# 2026-10-22 — 更新下载改造：后台会话＋断点续传＋进度节流＋SHA256 校验下沉（0.1.52 第 1 项）
+
+- **现象**：更新 IPA 下载走前台 URLSession，切后台/进程被挂起即断；失败一律删档重来，弱网大包（27MB+）体验差；进度回调每块数据起一个无结构 Task 洪泛 UI；SHA256 校验只在 View 层、下载器本身不设防。
+- **根因**：`UpdateIPADownloader` 用 `URLSessionConfiguration.default` + async `download(for:delegate:)`（前台模型，无 resumeData 概念），错误分支统一删文件；旧 `ProgressDownloadDelegate.didWriteData` 无节流；校验逻辑放错层（View 抓校验文件，下载器调用方若换人即裸奔）。
+- **修复**：改为单例后台会话控制器（identifier `eu.seal.update-ipa-download`，永不 invalidate；进程被杀后凭 pending 记录接管在途任务/找回已完成文件；AppDelegate 转发点经 `SealAppDelegate` 接线 `handleEventsForBackgroundURLSession`），delegate 事件经既有 `ContinuationBox` 桥回 async（未新增并发盒）；resumeData 按源 URL 摘要持久化、失败/取消（含切网络）优先续传、续传失效自动回退全新一次，判据抽纯函数 `UpdateDownloadResumePolicy`；进度经 `UpdateDownloadProgressPolicy`（150ms/256KB）+ NSLock 持有者节流合并、终态必达；SHA256 校验下沉进下载器，落盘后流式校验（复用 `AppFileStore.streamingSHA256` 与 `UpdateChecker` 解析/比对），不符删文件抛 ImportFailure `SEAL-UPDATE-DL-506`（顺延 501–505），View 只保留版本交叉校验与 nil 资产 fail closed。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Features/UpdateNoticeView.swift`、`Seal/App/SealApp.swift`、新增 `SealTests/Update/UpdateDownloadPolicyTests.swift`（14 条）、`Scripts/verify-release-safety.py`（R138；R107②/R122 钉子随形态迁移）。
+- **验证状态**：本地守卫 892 项断言 0 失败（含 R138 与 R107②/R122 新锚点变异自检）；Swift 编译与单测待 CI；真机待验：下载中切后台/锁屏后续传完成、飞行模式切换后续传、故意损坏 IPA 时 506 拦截不进安装。另：AGENTS.md 第 6 节「更新链路只校验 tag 与版本串」已与代码不符，本批同步修订。
+
+# 2026-10-22 — 更新连点 3 次 0 秒 SEAL-SIGN-404：入口无就绪门＋待更新记录被自注册误删（0.1.52 第 2 项）
+
+- **现象**：更新导入完成后在更新抽屉点「签名并更新」连败 3 次、每次 0 秒、均为 SEAL-SIGN-404（log-46，2026-10-22 19:16:08–09 三条轮次总结），随后一次成功。
+- **根因**：两段叠加。① 入口无就绪门：`signAndInstall` 只查一次记录即终态抛错，且单签/批量两条外层重试都不认 404。② 待更新记录可被 `SelfAppRegistrar.cleanupDuplicateSealRecords` 误删：2026-10-09 重设计后待更新记录是独立新记录（新 UUID、`replacesInstalledAppID` 指向已安装记录、只带指纹），而自注册的待更新保护仍判已安装记录的 `hasPendingSelfUpdateSource`（恒 false），版本一致分支随即把待更新记录当「重复 Seal」连文件删除；该清理每次回前台都会跑，且删除决定用的是函数开头快照。记录被删后签名抽屉靠旧快照回落继续放行点击。本次具体哪次自注册触发删除，现存日志因环形缓冲淘汰 OP 明细无法证明（证据缺口如实记录）。
+- **修复**：① `SigningCoordinator` 新增纯函数 `SignRecordReadinessPolicy`（最多 4 次查询、退避 250/500/1000ms、最坏 1.75s、仅查不到时付出，首命中零新增等待）＋ `fetchRecordForSigning` 就绪门，终态仍抛原 404 并新增「应用记录缺失诊断」日志（appID 前缀＋现存 Seal 记录清单）；平行入口 `installSignedArtifact`（SEAL-INSTALL-719）一并接入、诊断码参数化不串码。② 根因侧：新增同源纯判据 `SelfAppPendingUpdateProtection`（`isSeal && replacesInstalledAppID != nil`；指纹刻意不设必要条件——同指纹导入会把指纹置 nil 而链接仍在），重复清理豁免待更新记录连同文件、删除决定改按执行时刻重取的现行记录（重取失败整轮不删）；保护分支旧标志原样保留＋其后加现行模型分支，两记录并存时只回补已安装快照、绝不覆盖/代结算待更新源。③ `AppSigningSheet` 加 `isWorkingRecordMissing`：记录消失即关抽屉、点击瞬间再校验、主按钮同步禁用。
+- **涉及文件**：`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/SelfAppIdentity.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Features/Apps/AppSigningSheet.swift`、新增 `SealTests/Signing/Sign404RecordReadinessPolicyTests.swift`（6 条）与 `SealTests/Renewal/SelfAppRegistrarPendingUpdateProtectionTests.swift`（4 条）、`Scripts/verify-release-safety.py`（R139/R140）、`docs/qa/log-code-index.md`（补登 SEAL-SIGN-404/SEAL-INSTALL-719）。
+- **验证状态**：本地守卫 892 项 0 失败；待 CI swift-regression 与真机回归（导入后切后台回前台再点签名并更新，应不再 0 秒 404；抽屉外删掉待更新记录，抽屉应自动关闭）。
+
+# 2026-10-22 — 冷启动点续签通知无结果抽屉＋列表点不动；抽屉交接改呈现仲裁（0.1.52 第 4＋9 项）
+
+- **现象**：log-47 冷启动轮：快捷指令续签在后台完成并持久化结果（RENEW-023），点通知进 App 后没有结果抽屉，已安装列表点任何 App 都没反应；暖启动轮（20:42）则正常。同轮日志里 RENEW-024（恢复消费）与 023 同一秒出现在后台进程内。
+- **根因**：① 结果恢复无呈现授权判据：`AppsViewModel.load()` 无条件 `restorePendingBatchResultIfNeeded()`，且批量收尾在发完成通知前就把 `isBackgroundBatchRefresh` 复位，后台进程内任何一次 `load()` 都会把刚持久化的结果当场恢复消费，前台再无可弹之物。② 假呈现锁死列表：恢复后呈现标志被误报为「已呈现」，`openApp` 被 ready 载荷优先逻辑吞掉、操作抽屉绑定又被假状态锁住，而载荷只在结果抽屉真正关闭时才清——抽屉从未真弹 ⇒ 永久点不动（与同秒的 SEAL-INSTALL-707 无关，707 只是设备清单不可用警告）。③ 抽屉交接本无仲裁：跨流程交接靠 250ms 硬等＋onChange 强清＋绑定门禁三层补丁。
+- **修复**：新增纯状态机 `SheetArbiter`（同一时刻只许一张在场，交接＝请求→关当前→关闭完成事件→开下一张）与 `BatchResultRestorePolicy` 路由：后台进程只登记「待呈现」（新标志 `hasPendingBatchResultAwaitingPresentation`、不写 024、不清载荷），呈现必须经呈现层 flush 的一次性授权令牌；删除 250ms 硬等与两处强清补丁；批量结果撞操作抽屉只排队不关结果（新操作无权替用户消费未看过的结果）；返回值改诚实三连判。结算语义与 R12/R17 锚点逐字未动。视觉零改动（只改绑定来源/时机，detents/字号/颜色/文案未动）。
+- **涉及文件**：新增 `Seal/Core/Renewal/SheetArbitration.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/AppsRootView.swift`、新增 `SealTests/Renewal/SheetArbitrationTests.swift` 与 `BatchResultPresentationDecouplingTests.swift`、`Scripts/verify-release-safety.py`（R141）。
+- **验证状态**：本地守卫 892 项 0 失败；待 CI 与真机回归（冷启动点续签通知应弹结果抽屉；结果待呈现时列表可正常点开操作抽屉）。关联发现（未改，列报告待拍板）：更新抽屉与应用页抽屉不在同一仲裁域；`AppSigningSheet`/`ImportConfirmationView` 各有一份 220ms 硬等平行实现；RootTabView 有根层版强清外观抽屉。
+
+# 2026-10-22 — 签名证书页「已安装应用」恒空/整区不渲染＋详情页悬空判据（0.1.52 第 5 项）
+
+- **现象**：签名证书页「本机已安装 App」区域恒显「暂无」或整区不出现；Apple ID 删除确认的关联应用计数在删号重加后算成 0（任务书指名的 CertificatesRootView 只有转发，区域本体在 SigningCertificateSettingsView）。
+- **根因**：三层叠加。① 区域级遮蔽：本地扫描非 nil（真机常态）时只显示 `locallyVisibleApps`，已算好的记录口径列表（certificateApps/installedApps）被整体丢弃，严判据（序列号归一匹配＋belongsInInstalledList＋设备清单/同团队兜底）任一不成立即恒空。② 序列号取错源：区域与硬门只认 `certificateSerialNumber`，健康口径是 `selected ?? certificate ?? secret`，切证书只写 selected，区域拿旧/空序列号比对（空串归一为 "0" 恒不命中）。③ 同族裸判据：CertificatesRootView 删除计数与 AppleAccountDetailView 四处裸比 `accountID`，命中悬空 UUID 陷阱（删号保留绑定、重加换新 UUID ⇒ 恒不命中）。当次实际触发点日志无记录，需真机三场景回归区分（从未切证书/切过证书/删号重加）。
+- **修复**：新增纯函数 `CertificateInstalledAppsPolicy`（三级取源逐级跳空白＋组合判定四态），区域七处判据统一走 `effectiveCertificateSerialNumber`、硬门同步；本地分支为空时先回落 installedApps、再回落 certificateApps，全空才「暂无」；`nonLocalCertificates` 追加 effective 归一化排除。裸判据改走 `AppleAccountAppNamePolicy.isAccountMatch`（绑定仍在只认 UUID；悬空/未绑定按签名 Team 分流，与 validateAccountAndTeam 同口径）；SettingsViewModel 撤销清理的 `isLocalCertificate` 调用点同步喂三级取源副本。页面视觉零改动（文案/字号/颜色/结构逐字未动；回落时标题保持原样未改「签名记录」，待裁决）。
+- **涉及文件**：`Seal/Features/Settings/SigningCertificateSettingsView.swift`、`Seal/Features/Settings/AppleAccountDetailView.swift`、`Seal/Features/Settings/CertificatesRootView.swift`、`Seal/Features/Settings/SettingsViewModel.swift`（仅 isLocalCertificate 取源一处）、新增 `SealTests/Settings/CertificateInstalledAppsPolicyTests.swift` 等 24 条、`Scripts/verify-release-safety.py`（R142）。
+- **验证状态**：本地守卫 892 项 0 失败；待 CI 与真机三场景回归。
+
+# 2026-10-22 — anisette 全灭被误报为 Apple 服务失败：SEAL-NET-102 → SEAL-ANI-116（0.1.52 第 6 项）
+
+- **现象**：log-46 20:06:48 续签失败，17 台 anisette 候选全部 URLError(-1004)（本机网络不可达），用户侧却报 SEAL-NET-102「与 Apple 开发者服务的请求没有完成」，归因指错方向。
+- **根因**：`AnisetteClient.fetchRemote/resync` 全灭终局抛裸 URLError、无 anisette 来源标记（AnisetteV3Error 只承载 provisioning 语义）；FailureClassifier 与各入口的失败工厂都只有一条 isNetworkError 判据，裸 -1004 必然被吞成 NET-101/102。
+- **修复**：全灭终局且末错为网络错误时才打标记 `AnisetteAllServersNetworkFailure`（单台失败仍内部换台、非网络终局原样上抛）；`AppleServiceFailurePolicy` 新增纯函数 `transportAttribution(for:)`（先判标记含 underlying 递归、再判 isNetworkError）与新码 **SEAL-ANI-116**（ANI 家族顺延、error_catalog 复跑确认唯一；title「暂时连不上网络」、reason 只讲服务全连不上/当前网络暂时不可用、recovery「检查网络连接后稍后重试」，全文不提 Apple 服务）；全部归类入口前置 anisette 分支（FailureClassifier、ApplePortalSigningService.make、AppleAccountClient 三处、SettingsViewModel 兜底一处，下标顺序由 R143② 钉住），裸网络错误仍保留 NET-102 原文案。
+- **涉及文件**：`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Core/Accounts/AppleServiceFailurePolicy.swift`、`Seal/Core/Import/FailureClassifier.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`Seal/Infrastructure/Accounts/AppleAccountClient.swift`、`Seal/Features/Settings/SettingsViewModel.swift`（仅兜底一处）、新增 `SealTests/Accounts/AnisetteFailureAttributionTests.swift`（7 条）、`ApplePortalSigningAnisetteAttributionTests.swift`、`AppleAccountClientAnisetteAttributionTests.swift`（6 条）、`Scripts/verify-release-safety.py`（R143）、`docs/qa/log-code-index.md` 与错误码清单（新码入册）。
+- **验证状态**：本地守卫 892 项 0 失败；待 CI 与真机断网回归（飞行模式下续签应报「暂时连不上网络」而非 Apple 服务失败）。
+
+# 2026-10-22 — Apple ID 凭据会丢：UUID 键悬空＋删记录真删＋100b 错误级刷屏（0.1.52 第 7 项）
+
+- **现象**：log-46 一天内 SEAL-INVENTORY-100b 出现 20 次且成对刷屏；凭据在记录重建/删号重加后丢失，用户被反复要求重新登录。
+- **根因**：secret 以随机 UUID（记录 id）为钥匙串查找键，记录重建/迁移即悬空；删记录连带真删 secret；缺失以错误级 INVENTORY-100/100a/100b 三码在三处库存同步抛出，无自愈、无节流。
+- **修复**：查找键改登录 ID 归一化（新类型 AccountIdentity：邮箱 trim+小写、手机号去空格/横线并 +86 归一；dsid/accountIdentifier 仍保留在内容里）；Keychain 主存＋Application Support AES-GCM 加密保险库双写（口令经 HKDF 派生），load miss 时保险库回填自愈（`loadAllSecrets` 同步签名与原实现逐字保留以守 R125，合并版另设 `loadAllSecretsIncludingVault()`，消费方切换列待拍板）；保险库可导出/导入（口令加密文件、无 iCloud）；永不自动删——删记录与保存回滚改 detach，缺失标「待恢复」（页面级提示＋每账号每进程一条信息级日志，新码 SEAL-KEYCHAIN-005），INVENTORY-100/100a/100b 删除；写后回读验证（失败 SEAL-KEYCHAIN-004），保险库导出/导入失败 SEAL-KEYCHAIN-006；存量 secret 按旧 UUID 键扫描迁移（Team 校验、旧项保留）；重加同号按登录 ID 接回旧 secret 与证书材料。
+- **涉及文件**：`Seal/Infrastructure/Security/KeychainVault.swift`、新增 `Seal/Infrastructure/Security/CredentialVault.swift`、`Seal/Core/Accounts/AccountSecret.swift`、新增 `Seal/Core/Accounts/CredentialRecoveryPolicy.swift`、`Seal/Features/Settings/SettingsViewModel.swift`（三处库存段落＋接回/detach）、新增 CredentialVault 相关单测 16 条、`Scripts/verify-release-safety.py`（R144；R67/R68 注释同步 0.1.52 口径）、`docs/qa/log-code-index.md`（三码移入「已从源码移除」、新码入册）与错误码清单再生成。
+- **验证状态**：本地守卫 892 项 0 失败（R125 已回绿）；待 CI 与真机回归（删号重加同号应接回凭据不重登；杀进程重开库存同步不再刷 100b）。待拍板：保险库口令 UI 形态、R125 两消费方是否切合并版、HKDF→PBKDF2 强度升级。
+
+# 2026-10-22 — 日志同内容同秒刷屏＋环形 1000 条一天丢 7066 条（0.1.52 第 8 项）
+
+- **现象**：log-46/47 头部自述一天丢弃 7066 条；样本里证书解析三件套同秒重复 3 遍、SELF-113 同结算 2 次、anisette 成功类 2 遍、100b 成对。盘点显示高条数主要来自「单点转发、全量放大」入口（AltSign relay 占 63.6%/89.7%、anisette trace 23.7%/4.4%），逐个压产生点压不住。
+- **根因**：`SealLogStore.append` 无条件入队、无合并；环形上限 1000 对全量转发量级太小，签名全程的关键过程留不住。
+- **修复**：存储层按脱敏后 `(category, level, code, message)` 原值同键在 120 秒窗口内合并计数（导出呈现 ×N 后缀；零归一化——不 trim/不折行/不剥数字，宁可不合不可误合）；逐项结果类（带 operationResult/operationSummary）永不合并，由 `LogDedupPolicy` 纯函数判据＋单测钉住；容量 1000→3000（常量 `defaultMaximumEntries`，导出头部文案自动同步）；重脱敏路径保留 repeatCount 防 ×N 丢失。本项未新增日志码。
+- **涉及文件**：`Seal/Infrastructure/Diagnostics/SealLogStore.swift`、`Seal/Core/Diagnostics/SealLogEntry.swift`、新增 LogDedup 单测、`Scripts/verify-release-safety.py`（R145）、`AGENTS.md` 与 `docs/qa/logging-standard.md`、`docs/qa/device-regression-checklist.md`（容量口径同步 3000）。
+- **验证状态**：本地守卫 892 项 0 失败；待 CI 与真机回归（重复操作后导出日志应见 ×N 合并、头部条数 3000）。新发现（未改）：日志页列表不显示 ×N 与导出不一致（UI 项待拍板）；Minimuxer 每条日志强制全量 flush、容量 ×3 后落盘成本放大；entries() 全量重脱敏在 30+ 调用点重复跑。
+
+# 2026-10-22 — 灵动岛配对三态：码出现不弹展开、输码途中会被本地计时器收掉（0.1.52）
+
+- **现象**：MJ 反馈（pending 第 1 条）：配对码出现后灵动岛不是持久展开，要手动点开岛、再点按才能跳回 Seal；配对完成也要手动展开才看得到。
+- **根因**：不在渲染、在呈现机制。① `PairingLiveActivityController.showCode` 用的是**静默 `update`**（无 `AlertConfiguration`）——用户此刻在系统设置页，静默更新只换紧凑态内容，系统不会主动把展开态弹出来；② code 阶段同时设了 `staleDate = now + 180s` 并 `scheduleDismiss` 排了本地到期收尾，输码窗口一长（或叠加 preparing 阶段 210 秒到期）活动会被本地计时器 `finish()` 收掉；③ paired 终态的 `update` 同样不带 alert，展开呈现没有保证（R134 只解决了「后台提交时机」）。系统边界：App 不能强制灵动岛常开，能做的是在码到达与配对成功两个时点用带 `AlertConfiguration` 的 update 让系统主动弹出展开态。
+- **修复**：`showCode` 改带 `AlertConfiguration`（title「Seal 配对码」、body 带六码）的 update、`staleDate: nil`、摘掉 code 阶段的 dismiss 计时与 `expiresAt`（删除 `codeLifetime` 常量）——活动活到配对出结果为止（成功 `markPaired`／失败 `markFailed`／配对会话自身 180 秒超时走失败终局，不会无限残留），preparing 阶段行为不动。`endWithResult` 加 `alertConfiguration` 参数（默认 nil），仅 `markPaired` 传 `pairedAlertConfiguration`（body「配对成功，点击返回 Seal」），失败态不传、呈现行为原样；终态「先 update 送达、再 end + .after(30s)」的既有顺序保留。Widget 仅 `statusText` 的 paired 文案「配对完成」→「配对成功」一处字符串，视图结构/字号/颜色一行未动；paired 的 detail 本就是「点击返回 Seal」、整岛 `widgetURL` 本就指向 `PairingDeepLink`，均核实未改。
+- **涉及文件**：`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealLiveActivity/PairingLiveActivityWidget.swift`、`Scripts/verify-release-safety.py`（R134① 钉子字符串随 update 调用形态更新；新增 R137①② 与 3 条变异）、`project.yml`（MARKETING_VERSION 0.1.51→0.1.52，主 App 与 LiveActivity 扩展同步）、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+- **验证状态**：本地守卫断言（pre-push-check 口径、指向本工作副本）结果见本批实现报告；Swift 编译待 CI。真机回归点：开始配对后切到设置页等码，码到时岛应自动弹出展开；输码停留超过 3 分钟岛不得消失；配对成功后岛应弹出展开显示「配对成功 · 点击返回 Seal」，点岛回 Seal；失败态呈现与旧版一致。
+
 # 2026-10-22 — 0.1.51 第三轮 CI 两红：错误码清单行号未随存活判定同步 + 两条超时单测与 CI 调度赛跑
 
 - **现象**：`edb2142` 的完整 CI（run 39755876377）：signer-tests 绿；build-package 倒在「Audit source error identifiers」步——清单再生成后 `git diff --exit-code` 非空（135 处）；swift-regression 倒在测试步——`DeviceProfileCleanerTests` 两条 `timedOutNativeProfileCall*` 各报 3 个 issue，其余 1072 条测试全过、UI 测试全过。
