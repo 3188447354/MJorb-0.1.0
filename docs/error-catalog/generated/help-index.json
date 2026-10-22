@@ -244,10 +244,10 @@
     {
       "actions": [
         {
-          "title": "查看前一项续签的最终结果"
+          "title": "查看对应版本的续签结果"
         },
         {
-          "title": "等待设备通道恢复后，单独重试未开始的 App"
+          "title": "升级到当前版本后重试续签"
         },
         {
           "title": "如持续出现，导出诊断日志检查设备连接"
@@ -263,7 +263,7 @@
       "source": [
         "Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift:installAndVerify"
       ],
-      "summary": "上一项设备描述文件原生调用超时后仍未返回；本项续签没有开始，以免并发争用同一设备会话。",
+      "summary": "旧版设备描述文件队列行为：前一项原生调用未返回时，后续续签被提前拒绝。当前版本会等待同一 misagent 服务释放后继续；此码用于解读旧日志。",
       "supportData": [
         "同一轮的 SEAL-PROFILE-352 / SEAL-PROFILE-353",
         "设备通道诊断"
