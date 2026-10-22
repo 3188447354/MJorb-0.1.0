@@ -1,3 +1,21 @@
+# 2026-10-22 — 添加 Apple ID 在 Anisette provisioning 阶段长时间转圈
+
+- **现象**：最新版本添加 Apple ID 长时间显示等待，最终失败或需要用户取消。
+- **日志定位**：`Seal-log(43)` 中没有出现 Anisette 就绪、SRP 登录或团队查询；每次都停在远程 Anisette provisioning。首选服务器收到 `GiveStartProvisioningData` 后，Apple provisioning 请求没有及时返回；随后多个公共服务器超时、WebSocket 返回 `Timeout` 或断连。日志里的服务器表也没有 SideStore 当前正式列表新增的 `new.ani.sidestore.io`、`win.ani.sidestore.io`、`mac-ani.jkcoxson.com` 和 `omni.ethxn.xyz`。其中返回 `<MacBookPro13,3>` 的服务未命中原身份归一化前缀。
+- **根因**：构造 Apple provisioning 请求时未设置 `URLRequest.timeoutInterval`，默认请求可等待约 60 秒；所谓 120 秒回退预算只在每台服务器开始前检查，单个请求卡住期间不会生效。过期的静态服务器目录又缺少当前上游新增的候选；同时 `<MacBookPro13,3>` 没被现有公共服务器身份策略识别。
+- **修复**：对 Apple provisioning HTTP 请求明确设置 20 秒超时，使失败及时返回并进入服务器回退；保留现有服务器与已保存账号/设备标识，补入 SideStore 当前正式目录新增的服务；把日志所见的 `<MacBookPro13,3>` 加入已有身份归一化规则，并移除 StikStore 的错误“Windows”标签。
+- **上游对照**：跟随 SideStore 官方 `anisette-servers/servers.json`，将最新提供的新端点作为新增候选；未替换或删除用户已有服务器选择。
+- **涉及文件**：`Seal/Core/Accounts/AnisetteServer.swift`、`Seal/Infrastructure/Accounts/AnisetteClient.swift`。
+- **验证状态**：日志确认失败发生在 Apple 密码认证之前；已查询 SideStore 官方服务器目录，并检查 `new.ani.sidestore.io` 返回客户端身份、`win.ani.sidestore.io` 当前返回 HTTP 502（该端点保留为回退）。`git diff --check` 通过。Windows 无 Xcode；尚未进行云 CI 或真机登录回归，因此尚无实机成功证据。
+
+# 2026-10-22 — 配对实时活动的完成态可能尚未送达就开始收起
+
+- **现象**：手机配对码在系统设置中确认完成后，灵动岛没有显示“配对完成”。
+- **根因**：完成态更新排在正在执行的配对码更新后面，但本地 6 秒倒计时从排队时就开始；更新延迟时，完成态可见时间被压缩甚至错过。结束态也依赖应用进程中的计时任务收尾。
+- **修复**：完成态保留时间延长到 15 秒；等待前序 ActivityKit 操作完成后，直接向系统提交最终内容和 `.after` 收起策略，再启动本地句柄清理计时。这样完成态不与 Seal 前台任务争用计时，并由 ActivityKit 按截止时间收起。
+- **涉及文件**：`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`DEBUG_LOG.md`。
+- **验证状态**：已检查状态更新与结束调用按同一 Activity 顺序串行；Windows 本机未运行 Swift 编译或 CI，灵动岛四态及完成态可见时间仍需云 CI 和真机确认。
+
 # 2026-10-22 — 批量续签挡住独立操作，设备恢复资料没有写入数据库
 
 - **现象**：批量续签期间，其他 App 的签名/续签入口被界面状态整体挡住；Seal 重装后扫描找回的侧载 App 资料不完整，IPA 状态与续签信息重启后丢失。

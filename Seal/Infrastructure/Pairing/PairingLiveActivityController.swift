@@ -19,7 +19,7 @@ final class PairingLiveActivityController {
 
     static let preparationLifetime: TimeInterval = PhonePairingHost.timeoutSeconds + 30
     private static let codeLifetime: TimeInterval = 180
-    private static let completionLifetime: TimeInterval = 6
+    private static let completionLifetime: TimeInterval = 15
     private static let failureLifetime: TimeInterval = 12
 
     init(logStore: SealLogStore? = nil) {
@@ -193,26 +193,23 @@ final class PairingLiveActivityController {
     ) {
         guard let activity else { return }
         self.stage = stage
-        let dismissalDate = Date().addingTimeInterval(lifetime)
         dismissTask?.cancel()
-        expiresAt = dismissalDate
-        let content = ActivityContent(state: state, staleDate: dismissalDate)
+        expiresAt = nil
         let previousOperation = activityOperation
         let activityID = activity.id
-        nonisolated(unsafe) let activityForUpdate = activity
-        activityOperation = Task {
+        nonisolated(unsafe) let activityForEnd = activity
+        activityOperation = Task { [weak self] in
             await previousOperation?.value
-            await activityForUpdate.update(content)
-        }
-        dismissTask = Task { [weak self] in
-            let delay = max(0, dismissalDate.timeIntervalSinceNow)
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard Task.isCancelled == false else { return }
-            await MainActor.run {
-                guard self?.activity?.id == activityID,
-                      self?.stage == stage else { return }
-                self?.finish()
-            }
+            let dismissalDate = Date().addingTimeInterval(lifetime)
+            let content = ActivityContent(state: state, staleDate: dismissalDate)
+            // Submit the terminal state and its system-managed dismissal together. Starting
+            // a local timer before the queued ActivityKit update completed could dismiss the
+            // activity before the user ever saw “配对完成”.
+            await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))
+            guard let self,
+                  self.activity?.id == activityID,
+                  self.stage == stage else { return }
+            self.scheduleDismiss(at: dismissalDate)
         }
     }
 

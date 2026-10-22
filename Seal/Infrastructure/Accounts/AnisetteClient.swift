@@ -22,6 +22,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
     private static let akdUserAgent = "akd/1.0 CFNetwork/808.1.4"
     private static let stockServerClientPrefixes = [
+        "<MacBookPro13,3>",
         "<MacBookPro13,2> <macOS;13.1;22C65>",
         "<MacBookPro15,1> <Mac OS X;10.15.2;19C57>"
     ]
@@ -652,6 +653,7 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
             Self.grandSlamAuthenticationAppInfo,
             forHTTPHeaderField: "X-Apple-App-Info"
         )
+        request.timeoutInterval = 20
         // 对齐 AltSign 与 iloader(2.3.3)：gsa.apple.com 对复用上次失败留下的 idle
         // 连接敏感（代理/TUN 切换后残留连接再复用会被 Apple 回 503），关键 provisioning
         // 请求每次走新连接。

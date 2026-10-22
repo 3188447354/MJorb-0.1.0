@@ -27,19 +27,32 @@ enum AnisetteServerCatalog {
         //   `<MacBookPro13,2> <macOS;13.1;22C65> …(com.apple.akd/1.0)>`   → 200 正常处理
         //   `<Pixel 7> <Android;14;…>`                                    → **503 HTML 硬拒**
         //
-        // 而 13 台公共服务器里**只有 `ani.jkcoxson.com` 返回 Windows 身份**；
-        // `ani.sidestore.io` 等返回的是 Mac 身份，其 ADI 被 Apple 判为不符而回 -80045。
-        // 所以必须把它排在第一位：它排在末尾时，前面那台"能成功返回 Mac 身份"的服务器
-        // 会先命中，Windows 这台**永远不会被 fallback 到** —— 这正是修不好登录的原因。
+        // `ani.jkcoxson.com` 保持首选；SideStore 后续加入的新端点也放在早期回退位，
+        // 避免只依赖旧版服务器名单。旧端点继续保留为后续回退。
         AnisetteServer(
             id: "jkcoxson",
             url: makeURL("https://ani.jkcoxson.com"),
             displayName: "jkcoxson (Windows)"
         ),
         AnisetteServer(
+            id: "sidestore-new",
+            url: makeURL("https://new.ani.sidestore.io"),
+            displayName: "SideStore (New)"
+        ),
+        AnisetteServer(
+            id: "sidestore-win",
+            url: makeURL("https://win.ani.sidestore.io"),
+            displayName: "SideStore (Windows ADI)"
+        ),
+        AnisetteServer(
+            id: "jkcoxson-mac",
+            url: makeURL("https://mac-ani.jkcoxson.com"),
+            displayName: "jkcoxson (Mac)"
+        ),
+        AnisetteServer(
             id: "stikstore2",
             url: makeURL("https://ani2.stikstore.app"),
-            displayName: "stikstore (Windows)"
+            displayName: "stikstore"
         ),
         // ── 以下为 Mac 身份的公共服务器 ──────────────────────────────────────
         // 保留在列表里作为兜底（Apple 对 Mac 身份在边缘是放行的），但**不再优先**。
@@ -112,6 +125,11 @@ enum AnisetteServerCatalog {
             id: "crystall1nedev",
             url: makeURL("https://anisette.crystall1ne.dev"),
             displayName: "crystall1nedev"
+        ),
+        AnisetteServer(
+            id: "ethxn",
+            url: makeURL("https://omni.ethxn.xyz"),
+            displayName: "ethxn"
         )
     ]
 
