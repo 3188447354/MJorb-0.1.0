@@ -18,6 +18,12 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
     public var deviceUniqueIdentifier: String
     public var deviceSerialNumber: String
     public var deviceDescription: String
+    /// The User-Agent the anisette server declared alongside `deviceDescription`.
+    /// GrandSlam requests must present the two as a pair (isideload's
+    /// `base_headers` takes both from the server's `/v3/client_info`); a
+    /// mismatched pair reads as two different machines to Apple's checks.
+    /// Empty for data produced before this field existed.
+    public var userAgent: String
 
     public var date: Date
     public var locale: Locale
@@ -36,7 +42,8 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
         deviceDescription: String,
         date: Date,
         locale: Locale,
-        timeZone: TimeZone
+        timeZone: TimeZone,
+        userAgent: String = ""
     ) {
         self.machineID = machineID
         self.oneTimePassword = oneTimePassword
@@ -48,6 +55,7 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
         self.date = date
         self.locale = locale
         self.timeZone = timeZone
+        self.userAgent = userAgent
         super.init()
     }
 
@@ -80,6 +88,7 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
         deviceUniqueIdentifier == other.deviceUniqueIdentifier &&
         deviceSerialNumber == other.deviceSerialNumber &&
         deviceDescription == other.deviceDescription &&
+        userAgent == other.userAgent &&
         date == other.date &&
         locale == other.locale &&
         timeZone == other.timeZone
@@ -93,6 +102,7 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
         deviceUniqueIdentifier.hashValue ^
         deviceSerialNumber.hashValue ^
         deviceDescription.hashValue ^
+        userAgent.hashValue ^
         date.hashValue ^
         locale.hashValue ^
         timeZone.hashValue
@@ -111,7 +121,8 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
             deviceDescription: deviceDescription,
             date: date,
             locale: locale,
-            timeZone: timeZone
+            timeZone: timeZone,
+            userAgent: userAgent
         )
     }
 
@@ -136,6 +147,10 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
             return nil
         }
 
+        // Archives written before `userAgent` existed have no value for the
+        // key; treat that as the empty string instead of failing the decode.
+        let userAgent = coder.decodeObject(of: NSString.self, forKey: "userAgent") as String? ?? ""
+
         self.init(
             machineID: machineID,
             oneTimePassword: otp,
@@ -146,7 +161,8 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
             deviceDescription: desc,
             date: date,
             locale: locale,
-            timeZone: tz
+            timeZone: tz,
+            userAgent: userAgent
         )
     }
 
@@ -159,6 +175,7 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
         coder.encode(deviceUniqueIdentifier, forKey: "deviceUniqueIdentifier")
         coder.encode(deviceSerialNumber, forKey: "deviceSerialNumber")
         coder.encode(deviceDescription, forKey: "deviceDescription")
+        coder.encode(userAgent, forKey: "userAgent")
 
         coder.encode(date, forKey: "date")
         coder.encode(locale, forKey: "locale")
@@ -205,7 +222,8 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
             deviceDescription: desc,
             date: date,
             locale: locale,
-            timeZone: tz
+            timeZone: tz,
+            userAgent: json["userAgent"] ?? ""
         )
     }
 
@@ -222,6 +240,7 @@ public final class ALTAnisetteData: NSObject, NSCopying, NSSecureCoding {
             "deviceUniqueIdentifier": deviceUniqueIdentifier,
             "deviceSerialNumber": deviceSerialNumber,
             "deviceDescription": deviceDescription,
+            "userAgent": userAgent,
             "date": formatter.string(from: date),
             "locale": locale.sanitizedIdentifier,
             "timeZone":

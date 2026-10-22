@@ -1,3 +1,12 @@
+# 2026-10-22 — 多个账号在换 Xcode token 步被 Apple 回 -80046（登录身份路线跟随 iLoader 改走 Mac 身份）
+
+- **现象**：多个此前正常登录过的 Apple ID 同日突然无法在 Seal 里使用：日志（`Seal-log_45`，构建 0.1.50 (137)）显示 anisette 与 SRP 登录全程成功（ADI 复用命中、dsid 与登录 token 均已拿到），死在随后换 Xcode token 的 apptokens 步，Apple 回 `ec=-80046 / hsc=400`，弹窗原文为 "This action cannot be completed at this time"。同一批账号在 iLoader 下登录、签名均正常。
+- **根因**：Seal 的登录身份策略停留在 2026-10-16 跟随当时 isideload 得出的结论：默认服务器 `ani.jkcoxson.com`（Windows 身份）、把公共服务器的 Mac 身份归一化改写为 Windows iTunes 身份串、GSA 请求的 User-Agent 写死为 Windows 时代的值。上游现已反向：isideload 删除了 `client_info_to_use` 归一化（`get_client_info` 原样采用服务器返回值），iLoader 2.4.0 把默认服务器改为 `mac-ani.jkcoxson.com`（Mac 身份）并移除 legacy Windows 服务器。Windows 身份这条线现被 Apple 在 apptokens 步拒绝——与 10-17 的 `-80045` 同族、换了关口；且 mac-ani 的 `<MacBookPro13,3>` 身份正中旧归一化名单，即便手动换服务器也会被改写回 Windows。
+- **修复**：① 服务器目录：`jkcoxson-mac` 提为首选，删除 `jkcoxson`（`ani.jkcoxson.com`）与 `sidestore-win` 两台 Windows 身份服务器；已保存选择指向被删 id 时，由 `AnisetteServerStore` 新增的一次性迁移清掉，落回新默认。② `AnisetteClient.authenticationClientInfo` 删除归一化改写，服务器 `client_info` 与 `user_agent` 原样直传（UA 为空时仍用既有兜底值）。③ `ALTAnisetteData` 新增 `userAgent` 字段（NSSecureCoding 与 JSON 均向后兼容，旧数据解码为空串），在取 headers 时随 anisette 数据一并穿线；`ALTAppleAPI+Authentication` 的 SRP/complete 与 `/auth` 两处请求头改用数据自带的 UA（空串回退旧值），保证 `X-Mme-Client-Info` 与 User-Agent 是同一台「机器」的一对。
+- **上游对照**：**跟** iLoader 2.4.0 / isideload 现行实现（2026-10-22 MJ 定：Seal 的登录/anisette/身份路线以后跟随 iLoader，上游变了 Seal 跟着变）；对照结论已同步写入 `docs/upstream-alignment.md` 台账。
+- **涉及文件**：`Seal/Core/Accounts/AnisetteServer.swift`、`Seal/Infrastructure/Accounts/AnisetteClient.swift`、`Seal/Infrastructure/Accounts/AnisetteServerStore.swift`、`upstream/AltSign/Sources/Model/ALTAnisetteData.swift`、`upstream/AltSign/Sources/ALTAppleAPI+Authentication.swift`、`SealTests/Accounts/AnisetteV3ClientTests.swift`、`docs/upstream-alignment.md`、`DEBUG_LOG.md`。
+- **验证状态**：本地 `Scripts/pre-push-check.py` 838 项断言 0 失败（本地仅作推前预检，验收以 CI 为准）；Swift 编译与真机登录回归待 CI/Fast 出包后验证。注意：存量用户换身份后 ADI 身份戳不匹配，首次登录会作废旧 ADI 重新 provisioning、可能再过一次 2FA——这是既有身份戳机制的预期行为，不是回归。
+
 # 2026-10-22 — 添加 Apple ID 在 Anisette provisioning 阶段长时间转圈
 
 - **现象**：最新版本添加 Apple ID 长时间显示等待，最终失败或需要用户取消。

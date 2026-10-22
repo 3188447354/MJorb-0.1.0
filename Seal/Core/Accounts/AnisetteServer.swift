@@ -15,24 +15,25 @@ enum AnisetteServerCatalog {
     }
 
     static let official: [AnisetteServer] = [
-        // ── 首选：**提供 Windows（iTunes）身份**的服务器 ──────────────────────
+        // ── 首选：**提供 Mac（akd）身份**的服务器 ────────────────────────────
         //
-        // 2026-10-16 定论（来源：altstoreio/AltStore#1834 的实测记录 + 本机独立探测）：
-        // 从 10-12 起，`-80045 / hsc=500` 的原因是 **anisette 数据与声明的客户端身份
-        // 不是同一套**；而 10-14 ~20:50 UTC 起 Apple 更进一步，**对任何声明安卓身份的
-        // 请求直接返回 503 HTML**。真正还能用的是 **Windows 的 ADI（iTunes）**。
+        // 2026-10-22 定论（跟随 iLoader 2.4.0 / isideload 现行实现）：
+        // 此前的 Windows（iTunes）身份路线（2026-10-16 定论）已经失效——真机日志
+        // Seal-log_45 实测：多个既有账号在 SRP 登录全程成功后，换 Xcode token 的
+        // apptokens 步被 Apple 回 `ec=-80046 / hsc=400`；同一批账号在 iLoader
+        // （默认 `mac-ani.jkcoxson.com` 的 Mac 身份）下登录、签名均正常。
+        // iLoader 2.4.0 同时把默认服务器设为 Jkcoxson (Mac) 并移除了 legacy
+        // Windows 服务器；isideload 也已删除 `client_info_to_use` 的 Windows
+        // 归一化，改为原样采用服务器 `/v3/client_info`（见 `AnisetteClient`
+        // 的 `authenticationClientInfo`）。Seal 按同路线对齐。
         //
-        // 本机探测（直接向 GsService2 发同一个 init 请求，只改身份）：
-        //   `<PC> <Windows;6.2(0,0);9200> …(com.apple.iTunes/12.12.4.1)>` → 200 正常处理
-        //   `<MacBookPro13,2> <macOS;13.1;22C65> …(com.apple.akd/1.0)>`   → 200 正常处理
-        //   `<Pixel 7> <Android;14;…>`                                    → **503 HTML 硬拒**
-        //
-        // `ani.jkcoxson.com` 保持首选；SideStore 后续加入的新端点也放在早期回退位，
-        // 避免只依赖旧版服务器名单。旧端点继续保留为后续回退。
+        // `mac-ani.jkcoxson.com` 与 `new.ani.sidestore.io` 返回同一身份：
+        //   `<MacBookPro13,3> <Mac OS X;10.12.6;16G29> …(com.apple.akd/1.0)>`
+        //   user_agent `akd/1.0 CFNetwork/811.5.4 Darwin/16.7.0`
         AnisetteServer(
-            id: "jkcoxson",
-            url: makeURL("https://ani.jkcoxson.com"),
-            displayName: "jkcoxson (Windows)"
+            id: "jkcoxson-mac",
+            url: makeURL("https://mac-ani.jkcoxson.com"),
+            displayName: "jkcoxson (Mac)"
         ),
         AnisetteServer(
             id: "sidestore-new",
@@ -40,24 +41,11 @@ enum AnisetteServerCatalog {
             displayName: "SideStore (New)"
         ),
         AnisetteServer(
-            id: "sidestore-win",
-            url: makeURL("https://win.ani.sidestore.io"),
-            displayName: "SideStore (Windows ADI)"
-        ),
-        AnisetteServer(
-            id: "jkcoxson-mac",
-            url: makeURL("https://mac-ani.jkcoxson.com"),
-            displayName: "jkcoxson (Mac)"
-        ),
-        AnisetteServer(
             id: "stikstore2",
             url: makeURL("https://ani2.stikstore.app"),
             displayName: "stikstore"
         ),
-        // ── 以下为 Mac 身份的公共服务器 ──────────────────────────────────────
-        // 保留在列表里作为兜底（Apple 对 Mac 身份在边缘是放行的），但**不再优先**。
-        // 它们返回 `<MacBookPro13,2> <macOS;13.1;22C65>`；返回 Xcode 身份的那几台
-        // 会按 SideInstaller 策略归一化为 Windows 身份后继续使用。
+        // ── 以下为其余 Mac 身份的公共服务器，保留作兜底回退 ─────────────────
         AnisetteServer(
             id: "sidestore-io",
             url: makeURL("https://ani.sidestore.io"),

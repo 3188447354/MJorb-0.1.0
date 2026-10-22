@@ -12,34 +12,24 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
     private static let grandSlamAuthenticationXcodeVersion = "27.0 (27A5218g)"
     private static let grandSlamAuthenticationAppInfo = "com.apple.gs.xcode.auth"
 
-    /// 与 SideInstaller 当前 isideload 完全相同的登录身份归一化策略。
-    ///
-    /// 某些 v3 服务器用 Android ADI 生成数据，却仍宣称旧版 Mac/Xcode 或 Android 身份。
-    /// Apple 已会直接拒绝这些声明。SideInstaller 会在这种情况下以 Windows iTunes
-    /// 身份请求，并在 provisioning、SRP 和后续认证中始终使用同一有效身份。
-    /// Seal 必须同样将**归一化后的身份**写入 ADI 身份戳，避免再把旧 ADI 与新声明混用。
-    private static let windowsClientInfo =
-        "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
+    /// 服务器没有给 `user_agent` 时的兜底（与 isideload 旧版硬编码值一致）。
     private static let akdUserAgent = "akd/1.0 CFNetwork/808.1.4"
-    private static let stockServerClientPrefixes = [
-        "<MacBookPro13,3>",
-        "<MacBookPro13,2> <macOS;13.1;22C65>",
-        "<MacBookPro15,1> <Mac OS X;10.15.2;19C57>"
-    ]
 
+    /// 登录身份的来源：**原样采用服务器 `/v3/client_info` 的返回值**。
+    ///
+    /// 与 isideload 当前实现一致（`remote_v3::get_client_info`，其注释写明：
+    /// 身份可以写死，但 Apple 近来变得太快，直接取服务器值更合理）。
+    /// 2026-10-16 曾跟随当时 isideload 的 `client_info_to_use` 把旧 Mac/Xcode
+    /// 与 Android 声明统一归一化为 Windows iTunes 身份；上游现已删除该归一化，
+    /// iLoader 2.4.0 也改为默认 Mac 身份并移除 Windows 服务器。Seal 这边实测
+    /// （Seal-log_45）Windows 身份在 apptokens 步被回 `-80046 / hsc=400`，
+    /// 而 Mac 身份在 iLoader 下正常 —— 故归一化一并删除，provisioning、SRP
+    /// 与后续认证共用服务器声明的同一身份，ADI 身份戳也记这个原值。
     static func authenticationClientInfo(
         advertisedClientInfo: String,
         advertisedUserAgent: String
     ) -> AnisetteV3ClientInfo {
         let clientInfo = advertisedClientInfo.trimmingCharacters(in: .whitespacesAndNewlines)
-        let isStockServerIdentity = stockServerClientPrefixes.contains { clientInfo.hasPrefix($0) }
-        if clientInfo.isEmpty || isStockServerIdentity || clientInfo.contains("<Android;") {
-            return AnisetteV3ClientInfo(
-                clientInfo: windowsClientInfo,
-                userAgent: akdUserAgent
-            )
-        }
-
         let userAgent = advertisedUserAgent.trimmingCharacters(in: .whitespacesAndNewlines)
         return AnisetteV3ClientInfo(
             clientInfo: clientInfo,
@@ -605,11 +595,15 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         var formatted: [String: String] = [
             "deviceSerialNumber": "0",
             "deviceDescription": declaredClientInfo,
+            // 服务器声明的 User-Agent 随数据一起带走：GSA 请求头必须用它，
+            // 与 `deviceDescription` 成对（isideload 的 `base_headers` 同形态），
+            // 不能在认证侧另写一个固定值，否则身份与 UA 不是同一台「机器」。
+            "userAgent": clientInfo.userAgent,
             // 与 header 值保持同一小写形态，Apple 看到的设备标识在两处一致。
             "localUserID": identity.localUserID.lowercased(),
             "deviceUniqueIdentifier": identity.deviceIdentifier.lowercased(),
             "date": Self.currentDateString(),
-            // 固定 en_US：与上面固定的 Windows PC 身份串同属一套声明。
+            // 固定 en_US：声明身份串本身以 en_US 为基准。
             // 取 Locale.current 会在中文机上得到 zh_CN，与身份串自相矛盾
             // （isideload 的 get_client_provided_data() 同样写死 en_US）。
             "locale": Self.authenticationLocaleIdentifier,

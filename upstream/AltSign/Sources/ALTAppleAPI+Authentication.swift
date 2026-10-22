@@ -595,7 +595,13 @@ private extension ALTAppleAPI {
                 "Content-Type": "text/x-xml-plist",
                 "X-MMe-Client-Info": anisetteData.deviceDescription,
                 "Accept": "text/x-xml-plist",
-                "User-Agent": "akd/1.0 CFNetwork/808.1.4",
+                // The User-Agent the anisette server declared together with
+                // this device description (isideload's `base_headers` sends
+                // the pair verbatim). A hardcoded UA from a different
+                // identity family makes the two headers describe different
+                // machines. Data produced before the field existed carries
+                // an empty string and falls back to the legacy value.
+                "User-Agent": anisetteData.userAgent.isEmpty ? "akd/1.0 CFNetwork/808.1.4" : anisetteData.userAgent,
                 // SideInstaller's GrandSlam fingerprint carries both of these
                 // on every GsService2 request — `init` and `complete` included.
                 // Omitting them lets GSA reject the SRP exchange with an HTML
@@ -771,7 +777,9 @@ private extension ALTAppleAPI {
             "Accept": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
             "Accept-Language": "en-us",
             "Content-Type": isPhoneEndpoint ? "application/json" : "text/x-xml-plist",
-            "User-Agent": "akd/1.0 CFNetwork/808.1.4",
+            // Same pairing rule as the GrandSlam exchange above: the server's
+            // declared User-Agent, legacy value only when the data predates it.
+            "User-Agent": anisetteData.userAgent.isEmpty ? "akd/1.0 CFNetwork/808.1.4" : anisetteData.userAgent,
             "X-Apple-App-Info": grandSlamAuthenticationAppInfo,
             "X-Xcode-Version": grandSlamAuthenticationXcodeVersion,
             "X-Apple-Identity-Token": encodedIdentityToken,

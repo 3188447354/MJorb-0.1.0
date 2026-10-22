@@ -21,33 +21,30 @@ struct AnisetteV3ClientTests {
         #expect(servers == AnisetteServerCatalog.official)
     }
 
-    /// **Windows（iTunes）身份的服务器必须排在第一位**（2026-10-16 更正）。
+    /// **Mac（akd）身份的服务器排在第一位，Windows 身份服务器已退出目录**
+    /// （2026-10-22，跟随 iLoader 2.4.0）。
     ///
-    /// 这条断言原来守的是「`ani.sidestore.io` 排第一」——那是基于 SideInstaller 1.5.1
-    /// 仍在用 Mac 身份时的观察。自 2026-10-12 起 Apple 开始返回 `-80045`，
-    /// 原因是 **anisette 数据与声明的客户端身份不同源**；10-14 起连声明安卓/ Xcode
-    /// 身份都会被边缘直接 503。当前唯一可用的是 **Windows ADI（iTunes）**。
-    ///
-    /// 实测（直接向 `GsService2` 发同一个 init 请求，只改身份）：
-    ///   `<PC> <Windows;6.2(0,0);9200> …(com.apple.iTunes/12.12.4.1)>` → 200 正常处理
-    ///   `<MacBookPro13,2> <macOS;13.1;22C65> …(com.apple.akd/1.0)>`   → 200 但登录回 -80045
-    ///   `<Pixel 7> <Android;14;…>` / `dt.Xcode`                       → **503 HTML 硬拒**
-    ///
-    /// 而 13 台公共服务器里**只有 `ani.jkcoxson.com` 返回 Windows 身份**。
-    /// 它曾经排在末尾，于是前面那台"能成功返回 Mac 身份"的服务器先命中、
-    /// Windows 这台**永远不会被 fallback 到** —— 这正是登录一直修不好的直接原因。
+    /// 这条断言此前守的是「`ani.jkcoxson.com`（Windows 身份）排第一」——那是
+    /// 2026-10-16 跟随当时 isideload 的 Windows 归一化得出的结论。2026-10-22
+    /// 真机实测推翻了它：多个既有账号 SRP 登录全程成功后，换 Xcode token 的
+    /// apptokens 步被回 `-80046 / hsc=400`（Seal-log_45），同一批账号在
+    /// iLoader（默认 `mac-ani.jkcoxson.com`）下登录、签名均正常；iLoader 2.4.0
+    /// 已把默认服务器设为 Jkcoxson (Mac) 并移除 legacy Windows 服务器，
+    /// isideload 也删除了 `client_info_to_use` 的 Windows 归一化。
     @Test
-    func windowsIdentityServersComeFirst() throws {
+    func macIdentityServersComeFirstAndWindowsServersAreGone() throws {
         let servers = AnisetteServerCatalog.official
         let first = try #require(servers.first)
 
-        #expect(first.url.absoluteString == "https://ani.jkcoxson.com")
+        #expect(first.url.absoluteString == "https://mac-ani.jkcoxson.com")
         #expect(Set(servers.map(\.id)).count == servers.count)
-        // 只出现一次：既不能被删掉（那样就没有 Windows 身份可用了），也不能重复。
-        #expect(servers.filter { $0.url.absoluteString == "https://ani.jkcoxson.com" }.count == 1)
-        // Mac 身份的服务器保留作兜底，但**必须排在 Windows 之后**。
-        let macIndex = try #require(servers.firstIndex { $0.url.absoluteString == "https://ani.sidestore.io" })
-        #expect(macIndex > 0)
+        #expect(servers.filter { $0.url.absoluteString == "https://mac-ani.jkcoxson.com" }.count == 1)
+        // Windows 身份的两台已退出目录，不许悄悄加回来。
+        #expect(servers.contains { $0.url.absoluteString == "https://ani.jkcoxson.com" } == false)
+        #expect(servers.contains { $0.url.absoluteString == "https://win.ani.sidestore.io" } == false)
+        // 其余 Mac 身份服务器保留作兜底回退。
+        let fallbackIndex = try #require(servers.firstIndex { $0.url.absoluteString == "https://ani.sidestore.io" })
+        #expect(fallbackIndex > 0)
     }
 
     @Test
@@ -136,11 +133,13 @@ struct AnisetteV3ClientTests {
         )
     }
 
-    /// 对齐 SideInstaller 当前的 `client_info_to_use`：旧 Mac/Xcode 与 Android
-    /// 宣称身份统一使用 Windows iTunes 身份；自建服务器的真实身份保留。
+    /// 对齐 isideload 当前的 `get_client_info`：服务器声明的身份与 User-Agent
+    /// **原样采用**，不再做任何归一化（上游已删除 `client_info_to_use` 的
+    /// Windows 归一化，2026-10-22）。唯一的加工是：服务器没给 User-Agent 时
+    /// 用兜底值，避免请求头为空。
     @Test
-    func clientInfoParsingUsesSideInstallerAuthenticationIdentityPolicy() throws {
-        func parsed(_ clientInfo: String, userAgent: String = "akd/1.0 CFNetwork/808.1.4") throws -> AnisetteV3ClientInfo {
+    func clientInfoParsingUsesServerIdentityVerbatim() throws {
+        func parsed(_ clientInfo: String, userAgent: String = "akd/1.0 CFNetwork/811.5.4 Darwin/16.7.0") throws -> AnisetteV3ClientInfo {
             let data = try JSONSerialization.data(withJSONObject: [
                 "client_info": clientInfo,
                 "user_agent": userAgent
@@ -148,15 +147,18 @@ struct AnisetteV3ClientTests {
             return try AnisetteV3Client.parseClientInfo(data: data)
         }
 
-        let windows = "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
-        let fallbackInputs = [
+        // 曾被改写成 Windows 身份的几类声明，现在都必须原样通过——
+        // 包括默认服务器 mac-ani 的 MacBookPro13,3 身份（此前正中改写名单）。
+        let verbatimInputs = [
+            "<MacBookPro13,3> <Mac OS X;10.12.6;16G29> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
             "<MacBookPro13,2> <macOS;13.1;22C65> <com.apple.AuthKit/1 (com.apple.dt.Xcode/3594.4.19)>",
             "<MacBookPro15,1> <Mac OS X;10.15.2;19C57> <com.apple.AuthKit/1 (com.apple.dt.Xcode/1.0)>",
-            "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+            "<Pixel 7> <Android;14;UQ1A.240205.002> <com.apple.AuthKit/1 (com.apple.akd/1.0)>",
+            "<PC> <Windows;6.2(0,0);9200> <com.apple.AuthKit/1 (com.apple.iTunes/12.12.4.1)>"
         ]
-        for value in fallbackInputs {
-            #expect(try parsed(value).clientInfo == windows)
-            #expect(try parsed(value).userAgent == "akd/1.0 CFNetwork/808.1.4")
+        for value in verbatimInputs {
+            #expect(try parsed(value).clientInfo == value)
+            #expect(try parsed(value).userAgent == "akd/1.0 CFNetwork/811.5.4 Darwin/16.7.0")
         }
 
         let custom = "<Mac14,2> <macOS;14.6;23G80> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
