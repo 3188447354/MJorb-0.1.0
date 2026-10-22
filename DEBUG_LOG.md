@@ -1,3 +1,12 @@
+# 2026-10-22 — 已安装列表标记回退全有全无：快照不可用 + 混批记录时本机一条都判定不了
+
+- **现象**：`refreshInstalledApps` 的本机判定链为「LaunchServices 快照 →（快照不可用时）标记回退」。标记回退 `reconcileInstalledAppsFromMarkers` 原是全有全无：整批记录只要混进一条没有当前版标记（v2）的记录（旧版 Seal 装的、其他工具签后找回的），整批都不用标记判定、直接返回未完成。于是快照不可用 + 混批记录时，本机流程一条都判不了，只能等设备隧道核验；隧道不通（没开 WiFi/LocalDevVPN）时，已在外部卸载的 App 会一直留在已安装列表里。
+- **根因**：旧版 Seal 用全 App 共用一个 UTI、其他工具签的 App 没有 Seal 标记，所以「整批都带 v2 标记」曾被当作使用标记判定的前提；但 v2 标记是逐 App 注入的，这个前提对单条记录并不成立——全有全无把单条证据的可用性错误地绑成了整批属性。
+- **修复**：`reconcileInstalledAppsFromMarkers` 改为逐条判定：带 v2 标记的记录各自查 `SealInstalledAppMarker.isDeclared`，标记已不被声明即单独标缺失；无 v2 标记的记录不参与本段，计入未判定数，返回 `isComplete == (undecidedCount == 0)`，未判定记录留给既有设备核验兜底。快照仍是第一权威、入口仍只有 `refreshInstalledApps` 一条流程，不新建平行判定路径；设备会话冲突时仍整段不落判定（与旧语义一致）。同批核查：`ProfileValidated` 信号已在记录恢复的信任门（`InstalledRecordRecoveryPolicy`）中使用，展示层没有同时列侧载与 App Store 应用的位置，本次不硬加展示分组。
+- **上游对照**：标记机制本身即 SideStore 式 per-App UTI（其 `io.sidestore.Installed.*` 对应 Seal 的 `com.mjorb.seal.installed.*`）；SideStore 只用它维护自家数据库，Seal 用作认领后记录的存活证据之一，编排为 Seal 自有。
+- **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`Scripts/verify-release-safety.py`（新增 R135① 与 2 条变异）、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+- **验证状态**：本地守卫断言 870 项 0 失败（与同批 R136 合计）；R135 两条变异内存抽查均被抓（各恰 1 条失败）；`git diff --check` 通过。Swift 编译待 CI；真机回归点：混批记录下断开设备隧道、外部卸载一个带 v2 标记的 App，打开已安装列表应能将其标为已卸载，其余记录不受影响。**推送**：2026-10-22 MJ 指示与 0.1.51 的 CI 编译修复（`d3234eb`）放一起推、同一轮 CI 一并验证；修复专用的旧 CI run 由 workflow 并发组（cancel-in-progress）在新推送时自动取消。
+
 # 2026-10-22 — 灵动岛配对完成仍看不到（终态提交时机与 App 前后台错位）
 
 - **现象**：今早 5694084 修过一轮（完成态随 end 一并提交 + .after 收起、保留 15 秒），build 138 真机配对成功后，MJ 仍反馈灵动岛没有「配对完成」的显示（2026-10-22 16:04 报，16:11 拍板修并并入本批）。

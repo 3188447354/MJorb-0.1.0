@@ -6633,6 +6633,32 @@ def violations(load=read):
           "没有后台执行时间，导入与提交只能等用户切回 Seal 才跑，完成态提交时 App "
           "已在前台、灵动岛不展开；不等待提交就结束后台任务，提交会被挂起打断")
 
+    # ── R135：2026-10-22 已安装列表存活判定：标记回退逐条判定 ──
+    #
+    # 原标记回退是全有全无：整批记录只要混进一条没有当前版标记的（旧版 Seal
+    # 装的、其他工具签后找回的），整批都不用标记判定；而标记回退只在
+    # LaunchServices 快照不可用时才被调用 ⇒ 快照坏 + 混批记录时本机流程一条
+    # 都判不了，只能等设备隧道，隧道不通列表就一直对不齐。
+    # 改为逐条判定：v2 标记是每个 App 自己的证据（标记已不被声明即该 App 不在
+    # 设备上），与同批其他记录的新旧无关，判得了的先判；判不了的计入未判定
+    # 数、回传 isComplete == false，留给设备核验兜底。快照仍是第一权威、
+    # 入口仍只有 refreshInstalledApps 一条流程，不新建平行判定路径。
+    r135_apps_vm_code = strip_comments(
+        load("Seal/Features/Apps/AppsViewModel.swift"))
+    r135_markers_section = section(
+        r135_apps_vm_code,
+        "private func reconcileInstalledAppsFromMarkers",
+        "private func reconcileInstalledAppsWithDevice")
+
+    check("candidates.allSatisfy" not in r135_markers_section
+          and "undecidedCount += 1" in r135_markers_section
+          and "return (undecidedCount == 0, changed)" in r135_markers_section
+          and "SealInstalledAppMarker.isDeclared(for: bundleIdentifier) == false"
+              in r135_markers_section,
+          "R135①: 标记回退必须逐条判定 ✗ —— 恢复全有全无会让一条旧记录拖住整批，"
+          "快照不可用时本机流程一条都判不了、只能干等设备隧道；未判定数不回传，"
+          "上层会误以为本机已判定完毕、跳过设备核验兜底")
+
     # ── R136：2026-10-22 共享 Team 缓存读出跨 actor 必须装 LegacyBox ──
     #
     # 0.1.51 首次完整 CI（run 39746927442）实证：`PortalTeamCache` 是 actor，
@@ -10681,6 +10707,21 @@ def main():
          "            await installChannel?.reset()",
          "            await installChannel?.reset()",
          "R134②:"),
+
+        # ── R135：标记回退逐条判定 ──
+        # ① 恢复全有全无门（一条旧记录拖住整批）⇒ R135① 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "        var undecidedCount = 0",
+         "        guard candidates.allSatisfy({ $0.installedAppMarkerVersion == SealInstalledAppMarker.version }) else {\n"
+         "            return (false, false)\n"
+         "        }\n"
+         "        var undecidedCount = 0",
+         "R135①:"),
+        # ② 未判定数不再回传（永远报完整、跳过设备核验兜底）⇒ R135① 报红。
+        ("Seal/Features/Apps/AppsViewModel.swift",
+         "        return (undecidedCount == 0, changed)",
+         "        return (true, changed)",
+         "R135①:"),
 
         # ── R136：共享 Team 缓存读出装箱 ──
         # ① 缓存返回值脱箱（直接返回存储数组）⇒ R136① 报红（且 CI 编译失败）。

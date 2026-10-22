@@ -1099,16 +1099,29 @@ final class AppsViewModel: ObservableObject {
 
     /// SideStore-style per-app UTI markers make new Seal installs locally verifiable
     /// even when LaunchServices enumeration and the paired-device tunnel are unavailable.
-    /// Legacy records still require a complete inventory because older Seal builds used one shared UTI.
+    ///
+    /// 判定逐条独立，不再要求整批记录都是当前版标记：每个 v2 标记都是对应 App
+    /// 自己的证据——标记已不被任何 App 声明，即证明该 App 已不在设备上，与同批
+    /// 其他记录的新旧无关，可单独据此标缺失。没有当前版标记的记录不参与本段
+    /// （旧版 Seal 用的是全 App 共用一个 UTI，其他工具签的也没有 Seal 标记，
+    /// 查不到 per-App 标记不代表没装），计入未判定数、留给设备核验兜底，
+    /// 本段返回 `isComplete == false`。
     private func reconcileInstalledAppsFromMarkers() async -> (isComplete: Bool, changed: Bool) {
         let candidates = installedApps.filter { $0.isSeal == false }
-        guard candidates.allSatisfy({ $0.installedAppMarkerVersion == SealInstalledAppMarker.version }) else {
-            return (false, false)
+
+        var missingOnDevice: [AppRecord] = []
+        var undecidedCount = 0
+        for app in candidates {
+            guard app.installedAppMarkerVersion == SealInstalledAppMarker.version,
+                  let bundleIdentifier = installedBundleIdentifier(for: app) else {
+                undecidedCount += 1
+                continue
+            }
+            if SealInstalledAppMarker.isDeclared(for: bundleIdentifier) == false {
+                missingOnDevice.append(app)
+            }
         }
-        let missingOnDevice = candidates.filter { app in
-            guard let bundleIdentifier = installedBundleIdentifier(for: app) else { return false }
-            return SealInstalledAppMarker.isDeclared(for: bundleIdentifier) == false
-        }
+
         guard operationCoordinator?.hasDeviceSessionConflict != true else {
             installedAppRefreshPendingAfterOperation = true
             return (false, false)
@@ -1117,7 +1130,7 @@ final class AppsViewModel: ObservableObject {
         for app in missingOnDevice {
             changed = await markMissingOnDevice(app) || changed
         }
-        return (true, changed)
+        return (undecidedCount == 0, changed)
     }
 
     private func reconcileInstalledAppsWithDevice(userInitiated: Bool) async -> Bool {
