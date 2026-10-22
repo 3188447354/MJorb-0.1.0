@@ -19,7 +19,12 @@ import Foundation
 actor PortalTeamCache {
     private var entries: [String: (teams: [ALTTeam], fetchedAt: Date)] = [:]
 
-    func cachedTeams(accountIdentifier: String, now: Date = Date()) -> [ALTTeam]? {
+    /// 返回值必须装进 `LegacyBox`：`[ALTTeam]` 不是 Sendable，存在本 actor 里的
+    /// 数组直接跨 actor 返回会被 Swift 6 严格并发拒绝（0.1.51 首次完整 CI 三处
+    /// 调用点实证编译失败）。与门户其余 AltSign 值跨界传递的既有套路一致；
+    /// `ALTTeam` 构造后不可变（存储属性全是 `let`），多方只读共用同一份快照安全。
+    /// 存入方向没事：值刚由调用方自己的 `LegacyBox` 产生、尚未与任何 actor 相连。
+    func cachedTeams(accountIdentifier: String, now: Date = Date()) -> LegacyBox<[ALTTeam]>? {
         guard let entry = entries[accountIdentifier],
               ApplePortalSigningService.isPortalReadCacheFresh(
                   fetchedAt: entry.fetchedAt,
@@ -27,7 +32,7 @@ actor PortalTeamCache {
               ) else {
             return nil
         }
-        return entry.teams
+        return LegacyBox(entry.teams)
     }
 
     func store(

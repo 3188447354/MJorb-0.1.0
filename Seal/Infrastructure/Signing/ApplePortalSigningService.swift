@@ -1521,7 +1521,7 @@ actor ApplePortalSigningService {
         // 批量缓存：同一账号的团队列表一轮批量里不变（见文件头 MARK 注释）。
         if bypassCache == false,
            let cached = await teamCache.cachedTeams(accountIdentifier: account.identifier) {
-            return cached
+            return cached.value
         }
         let box: LegacyBox<[ALTTeam]> = try await withAppleTimeout {
             try await withCheckedThrowingContinuation {

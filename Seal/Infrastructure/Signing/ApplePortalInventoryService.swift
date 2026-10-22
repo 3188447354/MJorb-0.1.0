@@ -250,7 +250,7 @@ actor ApplePortalInventoryService {
         session: ALTAppleAPISession
     ) async throws -> [ALTTeam] {
         if let cached = await teamCache.cachedTeams(accountIdentifier: account.identifier) {
-            return cached
+            return cached.value
         }
         let box: LegacyBox<[ALTTeam]> = try await withAppleTimeout {
             try await withCheckedThrowingContinuation {

@@ -6633,6 +6633,37 @@ def violations(load=read):
           "没有后台执行时间，导入与提交只能等用户切回 Seal 才跑，完成态提交时 App "
           "已在前台、灵动岛不展开；不等待提交就结束后台任务，提交会被挂起打断")
 
+    # ── R136：2026-10-22 共享 Team 缓存读出跨 actor 必须装 LegacyBox ──
+    #
+    # 0.1.51 首次完整 CI（run 39746927442）实证：`PortalTeamCache` 是 actor，
+    # `cachedTeams` 直接返回 `[ALTTeam]?`——ALTTeam 不是 Sendable，存在缓存
+    # actor 里的数组跨 actor 返回被 Swift 6 严格并发拒绝，三处调用点（签名 /
+    # 证书 / 库存）全部编译失败，swift-regression 与 build-package 两 job 齐红。
+    # 存入方向没事（值刚由调用方自己的 LegacyBox 产生、region 未连接），读出
+    # 方向必须同样装箱：返回值改 `LegacyBox<[ALTTeam]>?`、调用点取 `.value`，
+    # 与门户其余 AltSign 值跨界传递的既有套路一致，不给 ALTTeam 加全局 Sendable。
+    r136_cache_code = strip_comments(
+        load("Seal/Infrastructure/Signing/PortalTeamCache.swift"))
+
+    check("func cachedTeams(accountIdentifier: String, now: Date = Date()) -> LegacyBox<[ALTTeam]>?"
+              in r136_cache_code
+          and "return LegacyBox(entry.teams)" in r136_cache_code
+          and "return cached.value" in section(
+              r91_portal_code,
+              "let cached = await teamCache.cachedTeams",
+              "let box: LegacyBox<[ALTTeam]>")
+          and "return cached.value" in section(
+              r112_cert_service_code,
+              "let cached = await teamCache.cachedTeams",
+              "let box: LegacyBox<[ALTTeam]>")
+          and "return cached.value" in section(
+              r112_inventory_service_code,
+              "let cached = await teamCache.cachedTeams",
+              "let box: LegacyBox<[ALTTeam]>"),
+          "R136①: 共享 Team 缓存读出必须装 LegacyBox ✗ —— [ALTTeam] 不是 Sendable，"
+          "缓存 actor 的存储值直接跨 actor 返回在 Swift 6 下无法编译"
+          "（0.1.51 首次 CI 三处实证）；调用点不取 .value 同样过不了编译")
+
     # ── R113：2026-10-03 导入按钮真液态玻璃 ──
     #
     # 来源：用户真机截图（iOS 27）—— 右上角 `+` 按钮是个白圈描边，玻璃根本没渲染。
@@ -10650,6 +10681,18 @@ def main():
          "            await installChannel?.reset()",
          "            await installChannel?.reset()",
          "R134②:"),
+
+        # ── R136：共享 Team 缓存读出装箱 ──
+        # ① 缓存返回值脱箱（直接返回存储数组）⇒ R136① 报红（且 CI 编译失败）。
+        ("Seal/Infrastructure/Signing/PortalTeamCache.swift",
+         "        return LegacyBox(entry.teams)",
+         "        return entry.teams",
+         "R136①:"),
+        # ② 调用点不取 .value ⇒ R136① 报红。
+        ("Seal/Infrastructure/Signing/ApplePortalCertificateService.swift",
+         "            return cached.value",
+         "            return cached",
+         "R136①:"),
 
         # ── R113：导入按钮真液态玻璃 ──
         # ① 退回手贴 glassEffect（假玻璃又回来了）⇒ R113① 报红。
