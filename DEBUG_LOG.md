@@ -1,10 +1,18 @@
+# 2026-10-22 — 0.1.51 第三轮 CI 两红：错误码清单行号未随存活判定同步 + 两条超时单测与 CI 调度赛跑
+
+- **现象**：`edb2142` 的完整 CI（run 39755876377）：signer-tests 绿；build-package 倒在「Audit source error identifiers」步——清单再生成后 `git diff --exit-code` 非空（135 处）；swift-regression 倒在测试步——`DeviceProfileCleanerTests` 两条 `timedOutNativeProfileCall*` 各报 3 个 issue，其余 1072 条测试全过、UI 测试全过。
+- **根因**：① 存活判定逐条判定（`800fa1b`）给 `AppsViewModel.swift` 净增 15 行，该文件内全部错误码位置整体下移 +15；`docs/qa/generated/error-code-inventory.json` 是生成物，本批改源码时漏了再生成，审计步（再生成 + diff 核对）必然报红。上一批（`a289b76`）有同步生成、本批漏了。② 两条单测用「预算 0.01 秒 vs `Thread.sleep(0.15)`」的墙钟赛跑断言超时语义，只留 140 毫秒绝对余量；`HardTimeout` 的定时器是 `.utility` 优先级的 detached 任务，CI runner 高负载下被饿死超过 140 毫秒 ⇒ 工作先返回、结果成 `.completed`，闸门/租约按「已完成」正常放行，断言全灭。生产代码（`DeviceProfileCleaner`/`HardTimeout`/`OperationCoordinator`/闸门）自上一轮全绿（`f39fff7`）后未动过——是测试在赌调度精度，不是生产回归。
+- **修复**：① 用 `Scripts/error_code_inventory.py` 再生成清单：本地逐行核对恰 135 行变化、全部为 `AppsViewModel.swift` 的 `"line": +15`、零其他变化，与 CI 日志里的 diff 吻合；生成器幂等。② 两条单测改用 `NativeCallLatch`（`NSCondition` 门闩）：门闩打开前工作不可能返回，超时结论与调度速度无关；放行后的闸门重开改为轮询等待（上限约 10 秒），租约等待上限 2 秒 → 10 秒。断言守的契约不变（FFI 未返回前闸门/设备租约保持占用、返回后由迟到完成回调放行）；生产代码一行未动。
+- **涉及文件**：`SealTests/Installation/DeviceProfileCleanerTests.swift`、`docs/qa/generated/error-code-inventory.json`、`DEBUG_LOG.md`。
+- **验证状态**：本地审计链全过（审计单测 20 项 + `error_catalog validate` 15 条 + help-index 再生成无变化 + 清单再生成幂等）；守卫本地复跑 870 项断言 + 638 项变异全过（0 失败）；Swift 编译与单测待 CI 复跑（run 待填）。
+
 # 2026-10-22 — 合并推送首轮 CI 两处红：缓存单测漏改 .value + 标记函数局部量与 R71③ 守卫重名
 
 - **现象**：合并提交 `800fa1b` 的完整 CI（run 39752263845）两 job 红：swift-regression 编译失败（`SealTests/Signing/PortalReadCacheTests.swift:87`：`LegacyBox<[ALTTeam]>` 没有 `first`）；build-package 的守卫变异检查报 R71③ 未被抓（「Guard failed mutation check: R71③」）。
 - **根因**：① LegacyBox 修复只改了三个服务调用点，漏了 0.1.51 同批新增的缓存单测调用点——守卫是纯文本断言、不编译测试 target，只有 swift-regression 能暴露（AGENTS.md §5 的老教训：守卫全绿 ≠ 能编译）。② 存活判定条目里 `reconcileInstalledAppsFromMarkers` 的局部量沿用了 `missingOnDevice` 命名；R71③ 的断言是文件级字面匹配（靠 `missingOnDevice.append(app)` 是否还在判定「先问完再动手」有没有被变异破坏），标记函数里的同名 append 把设备核验函数里被变异删掉的那处遮蔽了，变异检测静默失效。
 - **修复**：单测改取 `fresh?.value.first`；标记函数局部量改名 `markerMissingApps`，并在代码处写明禁与设备核验函数重名的注释；R136① 断言补入单测调用点字面与对应变异（③），以后这类漏改在守卫层就能报红。
 - **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`SealTests/Signing/PortalReadCacheTests.swift`、`Scripts/verify-release-safety.py`（R136① 扩展 + 变异③）、`DEBUG_LOG.md`。
-- **验证状态**：本地断言 870 项 0 失败；R71③、R135（2 条）、R136（3 条）变异逐条抽查均被抓（各恰 1 条失败）；Swift 编译待 CI 复跑（run 待填）。
+- **验证状态**：本地断言 870 项 0 失败；R71③、R135（2 条）、R136（3 条）变异逐条抽查均被抓（各恰 1 条失败）；Swift 编译待 CI 复跑——run 39755876377 已证：单测编译通过（`.value` 修复生效、测试实际跑完）、build-package 守卫步通过；该 run 的两处新红（清单行号未同步、计时单测赛跑）见上一条。
 
 # 2026-10-22 — 已安装列表标记回退全有全无：快照不可用 + 混批记录时本机一条都判定不了
 

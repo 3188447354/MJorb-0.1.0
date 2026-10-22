@@ -19,15 +19,26 @@ struct DeviceProfileCleanerTests {
     @Test
     func timedOutNativeProfileCallHoldsInventoryGateUntilFfiReturns() async throws {
         let gate = InstalledAppRefreshProbeGate()
+        let latch = NativeCallLatch()
         let result = await DeviceProfileNativeCall.perform(gate: gate, seconds: 0.01) {
-            Thread.sleep(forTimeInterval: 0.15)
+            latch.waitUntilOpened()
             return true
         }
 
         #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
         #expect(await gate.begin() == .inFlight)
-        try await Task.sleep(for: .milliseconds(200))
-        guard case .ready(let probeID) = await gate.begin() else {
+        latch.open()
+        // 迟到完成放行闸门只能发生在原生调用真正返回之后；轮询等它，
+        // 不再用固定睡眠去赌 runner 的调度延迟。
+        var reopenedProbeID: UUID?
+        for _ in 0..<100 where reopenedProbeID == nil {
+            if case .ready(let probeID) = await gate.begin() {
+                reopenedProbeID = probeID
+            } else {
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        guard let probeID = reopenedProbeID else {
             Issue.record("The profile gate should reopen after the native call returns")
             return
         }
@@ -40,12 +51,13 @@ struct DeviceProfileCleanerTests {
         let coordinator = OperationCoordinator()
         let renewal = try #require(coordinator.begin(.renewing))
         let gate = InstalledAppRefreshProbeGate()
+        let latch = NativeCallLatch()
         let result = await DeviceProfileNativeCall.perform(
             gate: gate,
             operationCoordinator: coordinator,
             seconds: 0.01
         ) {
-            Thread.sleep(forTimeInterval: 0.15)
+            latch.waitUntilOpened()
         }
 
         #expect({ if case .nativeCallMayStillBeRunning = result { true } else { false } }())
@@ -53,7 +65,8 @@ struct DeviceProfileCleanerTests {
         let signing = try #require(coordinator.begin(.signing, appID: UUID()))
         coordinator.end(signing)
         #expect(coordinator.begin(.resettingPairing) == nil)
-        let reset = await coordinator.beginWaiting(.resettingPairing, timeout: 2)
+        latch.open()
+        let reset = await coordinator.beginWaiting(.resettingPairing, timeout: 10)
         #expect(reset != nil)
         if let reset { coordinator.end(reset) }
     }
@@ -260,5 +273,33 @@ struct DeviceProfileCleanerTests {
 
         #expect(summary.logMessage.contains("，dump 尝试 3 次"))
         #expect(summary.logMessage.contains("，中断于 dump"))
+    }
+}
+
+/// 把「原生调用仍在运行」做成**确定状态**而不是墙钟赛跑。
+///
+/// 原先的写法是「预算 0.01 秒 vs `Thread.sleep(0.15)`」：只留 140 毫秒绝对余量，
+/// 赌 `HardTimeout` 里 `.utility` 优先级的定时器在负载下也能准时醒来。
+/// 2026-10-22 CI（run 39755876377）上定时器被饿死超过 140 毫秒，工作先返回、
+/// 结果变成 `.completed`，两条超时单测一起红 —— 而生产代码自上一轮全绿后没动过。
+/// 门闩关着时工作**不可能**先返回，定时器无论多晚醒来结论都成立；
+/// 断言守的契约不变（FFI 没回来之前闸门/租约不得放行），不再赌调度精度。
+private final class NativeCallLatch: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var opened = false
+
+    func open() {
+        condition.lock()
+        opened = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    func waitUntilOpened() {
+        condition.lock()
+        while opened == false {
+            condition.wait()
+        }
+        condition.unlock()
     }
 }
