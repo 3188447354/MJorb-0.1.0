@@ -61,7 +61,84 @@ permissions:
   contents: read
 
 jobs:
+  # 编译门：只验「Release 能不能编过」，不打包、不跑守卫与各类审计。
+  # build-package 的前置步骤要烧 20 多分钟才轮到编译，编译错误被埋在最后；
+  # 本 job 先行给出编译结论（文件/行号与正式编译一致），红了 build-package 不启动，
+  # 省一整轮 macOS 分钟。只验 Swift 编译：Rust 框架的新旧一致性仍由 build-package
+  # 内的 ensure 步骤把关（仓库自带预编译 xcframework，纯编译不依赖它重编）。
+  compile-gate:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Fetch pinned local AltSign dependencies
+        run: |
+          git clone --depth 1 https://github.com/SideStore/ldid.git upstream/AltSign/Dependencies/ldid
+          git -C upstream/AltSign/Dependencies/ldid fetch --depth 1 origin 48b878ae8c1257af7b22f874d7707a2d00f21d53
+          git -C upstream/AltSign/Dependencies/ldid checkout --detach 48b878ae8c1257af7b22f874d7707a2d00f21d53
+          git -C upstream/AltSign/Dependencies/ldid submodule update --init --recursive
+          git clone --depth 1 https://github.com/zlib-ng/minizip-ng.git upstream/AltSign/Dependencies/minizip-ng
+          git -C upstream/AltSign/Dependencies/minizip-ng fetch --depth 1 origin 7d2917b47f6a3eae9d2f6d38d94b759158ed931c
+          git -C upstream/AltSign/Dependencies/minizip-ng checkout --detach 7d2917b47f6a3eae9d2f6d38d94b759158ed931c
+
+      - name: Cache Xcode DerivedData and SwiftPM (Release)
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            build/DerivedData
+          key: xcode-release-${{ runner.os }}-${{ hashFiles('project.yml', 'Config/*.xcconfig', 'Seal/Resources/Info.plist') }}
+          restore-keys: |
+            xcode-release-${{ runner.os }}-
+
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          echo "available under /Applications:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          if [ -d /Applications/Xcode_26.5.app ]; then
+            selected=/Applications/Xcode_26.5.app
+          else
+            selected="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)"
+          fi
+          if [ -z "${selected:-}" ] || [ ! -d "$selected" ]; then
+            echo "::error::no Xcode found under /Applications"
+            exit 1
+          fi
+          echo "switching to: $selected"
+          sudo xcode-select --switch "$selected/Contents/Developer"
+          xcodebuild -version
+
+      - name: Install pinned XcodeGen
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/xcodegen.zip" \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.45.4/xcodegen.zip
+          echo "090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 --check
+          ditto -x -k "$RUNNER_TEMP/xcodegen.zip" "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/xcodegen/bin/xcodegen" --version
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Compile only (Release, no packaging)
+        run: |
+          xcodebuild build \
+            -project Seal.xcodeproj \
+            -scheme Seal \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}"
+
   build-package:
+    needs: compile-gate
     runs-on: macos-15
     timeout-minutes: 45
     steps:
