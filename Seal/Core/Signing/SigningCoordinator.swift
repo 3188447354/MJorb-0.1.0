@@ -422,7 +422,7 @@ actor SigningCoordinator {
             }
         }
         let knownAccountIDs = Set(knownAccounts.map(\.id))
-        guard var secret = try await keychain.load(accountID: accountID) else {
+        guard var secret = try await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier) else {
             account.status = .needsVerification
             account.verificationFailureReason = .localCredentialsMissing
             try? await accountRepository.save(account)
@@ -763,7 +763,7 @@ actor SigningCoordinator {
             ) {
                 // 清理可能连带清掉「绑定还在但本机无私钥」的旧身份，重读 secret 对齐；
                 // 首次 sign 不再传可能已失效的选中序列号，走「复用剩余本机证书或新建」。
-                if let refreshedSecret = try? await keychain.load(accountID: accountID) {
+                if let refreshedSecret = try? await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier) {
                     secret = refreshedSecret
                 }
                 signSelectedSerial = nil
@@ -816,7 +816,7 @@ actor SigningCoordinator {
                     secret: secret
                 )
                 guard cleanupOutcome == .cleaned,
-                      let refreshedSecret = try await keychain.load(accountID: accountID) else {
+                      let refreshedSecret = try await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier) else {
                     if case .blockedByInUseKeylessCerts(let appNames, let deviceOnlyCount) = cleanupOutcome {
                         if policy(for: app).allowsRevocationPrompt == false {
                             // 自动清理回退不弹通用候选列表；Seal 自签失败有独立入口，
@@ -873,7 +873,7 @@ actor SigningCoordinator {
             }
 
             // 历史 P12 被复用时也要持久化当前绑定；只保存新建路径会留下旧绑定。
-            let persistedSecret = try await keychain.load(accountID: accountID)
+            let persistedSecret = try await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier)
             if persistedSecret != portalResult.updatedSecret {
                 try await persistNewSigningMaterial(
                     portalResult.updatedSecret,
@@ -1091,7 +1091,7 @@ actor SigningCoordinator {
             if account.id == preferredAccountID, preferredSecret != nil {
                 continue
             }
-            if let secret = try? await keychain.load(accountID: account.id) {
+            if let secret = try? await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) {
                 secrets.append(secret)
             }
         }
@@ -1362,7 +1362,7 @@ actor SigningCoordinator {
                 code: "SEAL-AUTH-105"
             )
         }
-        guard let storedSecret = try await keychain.load(accountID: accountID) else {
+        guard let storedSecret = try await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier) else {
             throw Self.failure(
                 reason: "本机 Keychain 中缺少当前 Apple ID 的登录凭据。",
                 recovery: "重新验证 Apple ID",
@@ -1459,7 +1459,7 @@ actor SigningCoordinator {
             )
         }
         guard let account = try await accountRepository.fetchAll().first(where: { $0.id == accountID }),
-              let storedSecret = try await keychain.load(accountID: accountID) else {
+              let storedSecret = try await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier) else {
             throw Self.failure(
                 reason: "无法读取 Apple ID 或本机登录凭据。",
                 recovery: "重新验证 Apple ID",
@@ -1786,12 +1786,12 @@ actor SigningCoordinator {
     ) async throws {
         // 轮换链路可能已经撤销旧证书并把清空后的状态持久化。补偿基线必须读取
         // 此刻的 Keychain/账号记录，不能回滚到函数入口那张已被 Apple 撤销的证书。
-        let rollbackSecret = (try? await keychain.load(accountID: accountID)) ?? originalSecret
+        let rollbackSecret = (try? await keychain.load(accountID: accountID, accountIdentifier: originalAccount.accountIdentifier)) ?? originalSecret
         let currentAccounts = try? await accountRepository.fetchAll()
         let rollbackAccount = currentAccounts?.first(where: { $0.id == accountID }) ?? originalAccount
         do {
             try await keychain.save(updatedSecret, for: accountID)
-            guard let reloaded = try await keychain.load(accountID: accountID),
+            guard let reloaded = try await keychain.load(accountID: accountID, accountIdentifier: rollbackAccount.accountIdentifier),
                   reloaded.certificateSerialNumber?.caseInsensitiveCompare(serialNumber) == .orderedSame,
                   let p12 = reloaded.certificateP12,
                   let certificate = try? ALTCertificate(p12Data: p12, password: nil),

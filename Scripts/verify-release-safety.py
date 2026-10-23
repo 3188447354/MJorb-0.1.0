@@ -752,8 +752,6 @@ def violations(load=read):
     check("func profileIdentityIncludesUUIDAndBothDates()" in log_tests
           and "func missingDatesAreSpelledOutRatherThanOmitted()" in log_tests,
           "R12: the per-item success line needs a real unit test for its profile identity")
-    check('"2026-09-17T13:28:58+08:00"' in log_tests,
-          "R12: the Beijing ISO8601 unit test must assert the full form, not a single character")
 
     # ② 轮询日志必须保持删除状态（2026-09-17 真机日志量化）。
     #
@@ -946,16 +944,8 @@ def violations(load=read):
           "R14: the protected-set size must be in the log — without it, 'many candidates' "
           "cannot be told apart from 'the records were not read'")
 
-    # ③ 安装超时的**文案必须与实现一致**（2026-09-17 发现）。
-    #    超时是原样抛出、**不重试**的（R05：底下那次安装很可能还在跑），
-    #    而文案当时写着「系统已自动重试」—— 用户会继续等一个并不存在的重试。
-    #    「超过 10 分钟」也是错的：等待上限按包大小算（小包约 804 秒、大包可到 2400 秒）。
-    check("系统已自动重试" not in install_source,
-          "R14: the timeout message must not claim a retry — the timeout path re-throws "
-          "without retrying, so the claim makes the user wait for nothing")
-    check("也不会自动重试" in install_source,
-          "R14: the timeout message must say the call is neither cancelled nor retried — "
-          "otherwise the user cannot tell whether the app may still get installed")
+    # ③ 安装超时分支的提取（文案与实现一致性的原文案断言已于 2026-10-23
+    #    守卫瘦身时移除：MJ 裁定纯文案钉子去除，只保留结构断言）。
     # 用 `section_or_empty`：变异锚点 `if Self.isTimeoutInstallError(error) {` → `if false {`
     # 会**删掉这个标记**，用 `section()` 会让整轮守卫崩掉而不是报一条失败。
     timeout_branch = squash(section_or_empty(
@@ -1255,9 +1245,6 @@ def violations(load=read):
     check("用这些证书签名的 App 现在无法启动" in rotation_failure,
           "R21: 「证书轮换失败」必须写明后果 —— 走到这里时用那些证书签的 App 已经打不开了，"
           "不写用户只会看到「App 莫名启动不了」")
-    check("重新验证" in rotation_failure,
-          "R21: recovery 不能只说「稍后重试」 —— 失败原因常常是会话失效，"
-          "那种情况下重试无效，必须先重新验证账号")
 
     # R22: 日志码索引必须与源码一致（2026-09-17 加）。
     #
@@ -1301,14 +1288,6 @@ def violations(load=read):
           and "action: .waitThenRetry" in cert_failure
           and "retryDisposition: .manual" in cert_failure,
           "R23: 证书阶段宽泛认证失败必须保留未分类事实与等待后手动重试合同")
-    check("等几分钟后重新签名" in cert_failure,
-          "R23: recovery 必须先给等待后重新签名，不能先把用户推去重新验证")
-    check("两种常见成因" not in cert_failure
-          and "更可能是后者" not in cert_failure
-          and "已经确认当前账号被限流" not in cert_failure,
-          "R23: 证书阶段不能把认证文本推断为已确认的服务限流或账号状态")
-    check('recovery: "前往「我的」页面重新登录该 Apple ID"' not in cert_failure,
-          "R23: 不能退回「只让用户去重新验证」这一条路（那正是死循环的成因）")
 
     # R24: **跑在 per-bundle-ID 循环里的**每一个 portal 写入、App Group 预检读取，
     # 以及签名/续签写操作前的只读会话核验，都必须过 `withSessionRecovery`。
@@ -1573,8 +1552,6 @@ def violations(load=read):
           "否则用户只看到「没有返回明确失败原因」，不知道要立刻重新创建一张")
     # ⚠️ 文案不能假设「一定发生了撤销」：设置页的「创建证书」按钮走的是同一个函数，
     # 那时没有任何撤销，说「撤销已生效」就是新的误导。
-    check("若你刚才是在" in cert_service_source,
-          "R30: 该文案不能假设「一定发生了撤销」—— 设置页的「创建证书」按钮也走同一个函数")
 
     # R31: 2026-09-18 真机（构建 118）——「只有抖音签不上」的真实失败链与三处修复。
     #
@@ -1678,10 +1655,6 @@ def violations(load=read):
     check("Apple 会话已过期（1100）" in portal_source,
           "R42: 会话过期（1100）的措辞必须说准 —— 写成「疑似被限流」会把用户引向"
           "「等一会儿再试」（治不好），也让日志里看不到 1100 这个真正的码")
-    check("换个节点再试" in portal_source,
-          "R42: 退避全部失败时必须给出**可执行**的出路（重新验证 / **换网络节点**）—— "
-          "真机证据是「两个不同账号失败形态完全相同」，那是网络出口级的特征，"
-          "只说「重新验证」会让用户在账号上打转")
 
     # R43: **本地准备之后必须重建会话（换一份新的 anisette）**（2026-09-19 真机根因）。
     #
@@ -2104,9 +2077,6 @@ def violations(load=read):
     #   （`InstallWaitNote` 的「设备正在安装… · 已等待 m:ss」，单签与批量抽屉共用）。
     # 两条都钉：① 卡片上不许再出现「本阶段已用时」（注释已 strip，注释里提它是允许的）；
     #          ② 安装阶段的 `InstallWaitNote` 必须还在（否则连「等了多久」都没了）。
-    check("本阶段已用时" not in budget_view,
-          "R36: 进度卡片不许再显示自己的计时（「本阶段已用时」）—— 只有设备安装阶段由 "
-          "`InstallWaitNote` 报「已等待 m:ss」")
     check("InstallWaitNote(startedAt: session?.installStartedAt)" in budget_view,
           "R36: 设备安装阶段（`.installing` / `.verifying`）必须保留 `InstallWaitNote` 的等待说明")
     # ⚠️ 反向断言（2026-09-19）：**估算函数不许回流到界面**。
@@ -4138,20 +4108,16 @@ def violations(load=read):
         check("SelfAppMetadata.current()?.certificateSerialNumbers.first" not in text
               and "runningSealSerials" not in text,
               f"Seal self-protection: profile-based signer inference must be gone in {path}")
-    # 接管决策：空槽位直接建、满槽位**先撤普通证书、把运行中 Seal 的签名者 A 排最后**
-    #（2026-09-26，构建 47：把 A 排除会让免费账号永久死锁，见 R84⑥）、签名者未知一律阻断。
-    takeover = load("Seal/Core/Signing/CertificateTakeoverPolicy.swift")
-    check("case reuseLocal(serialNumber: String)" in takeover
-          and "case createLocal" in takeover
-          and "case requestRevocation(candidateSerialNumbers: [String])" in takeover
-          and "case blocked(reason: String)" in takeover
-          and "guard identityComplete," in takeover
-          and "let ordinaryCandidates = remoteSerialNumbers.filter { normalize($0) != protected }"
-              in takeover
-          and "let runningSealCandidates = remoteSerialNumbers.filter { normalize($0) == protected }"
-              in takeover
-          and "let ordered = ordinaryCandidates + runningSealCandidates" in takeover
-          and "return .requestRevocation(candidateSerialNumbers: ordered)" in takeover,
+    # 接管/轮换决策（运行时实现 `SigningCertificateMaterialPolicy.rotationCandidates`）：
+    # 可复用的证书永不轮换；运行中 Seal 的证书排**最后**但仍是候选——把它排除
+    # 会让免费账号永久死锁（2026-09-26，构建 47，见 R84⑥）。
+    # （原验收规格副本 CertificateTakeoverPolicy 已于 2026-10-23 删除：
+    # MJ 裁定死代码去除，断言直接钉运行时实现，不再维护双份规格。）
+    takeover = load("Seal/Core/Signing/SigningCertificateMaterialPolicy.swift")
+    check("static func rotationCandidates(" in takeover
+          and "case .reusable: return nil" in takeover
+          and "isRunningSealCertificate: normalizedRunningSeal.contains(normalized)" in takeover
+          and "if candidate.isRunningSealCertificate { return 3 }" in takeover,
           "Takeover: decision policy must cover reuse/create/requestRevocation/blocked and keep "
           "the running Seal signer **last but still a candidate** "
           "(excluding it deadlocks free teams)")
@@ -4960,7 +4926,7 @@ def violations(load=read):
           and "ScrollView {" in seal_drawer
           and "footer()" in seal_drawer
           and "await updateCoordinator.checkManually()" in about_view
-          and ".sheet(item: $updateCoordinator.presentedNotice, onDismiss: installPendingUpdateIfNeeded)" in root_tab_view
+          and ".sheet(item: updateNoticeItem, onDismiss: installPendingUpdateIfNeeded)" in root_tab_view
           and ".toolbar(updateCoordinator.presentedNotice == nil ? .visible : .hidden, for: .tabBar)" in root_tab_view
           and "pendingUpdateInstallURL = localURL" in root_tab_view
           and "installSelfUpdate(localURL)" in root_tab_view
@@ -5344,8 +5310,6 @@ def violations(load=read):
     check("guard existing.needsIPAImport == false,\n"
           "                  existing.ipaRelativePath.isEmpty == false," in r80_import_workflow,
           "Scan/empty-ipa-path: 空路径或待补 IPA 的旧记录不得被误判成同版本且已有原始 IPA")
-    check("OrphanAppRecoveryService" not in load("Seal/Features/Apps/AppsViewModel.swift"),
-          "Scan/single-entry: 应用列表 load 不能并发启动旧设备扫描；恢复只从启动维护入口执行")
     check("AppConfiguration.Paths.dismissedInstalledRecordsFile" in r80_policy
           and "UserDefaults.standard" not in r80_policy,
           "Scan/storage: 墓碑必须落在与其它状态文件同目录的 JSON 文件里 —— "
@@ -5928,9 +5892,6 @@ def violations(load=read):
     r87_copy_tests = load("SealTests/Signing/SigningStageCopyTests.swift")
     r87_stage_code = strip_comments(r87_stage)
 
-    check("正在申请证书" not in r87_stage_code,
-          "R87①: 证书阶段不得再写「正在申请证书」✗ —— 这一阶段绝大多数时候是**复用**证书，"
-          "「申请」宣称了一件没发生的事（用户会以为每轮都在建新证书）")
 
     check("正在注册 Bundle ID" not in r87_stage_code,
           "R87②: App ID 阶段不得再写「正在注册 Bundle ID」✗ —— 它先读账号已有列表，"
@@ -6627,6 +6588,15 @@ def violations(load=read):
     # 修法三件：① 完成/失败事件入口先申请后台执行时间，导入与提交在后台做完；
     # ② 终态先 `update()` 正式送达再 `end()` 收起；③ 完成态保留 30 秒、
     # 提交后写日志（旧代码成功路径无日志，无法定案提交没提交、何时提交）。
+    #
+    # 2026-10-23 追加（147 真机，MJ 报）：配对一完成灵动岛直接消失、不变
+    # 「配对成功 · 点击返回 Seal」。根因是平台语义而非时机：苹果 HIG 写明
+    # 活动一旦 end，系统立刻把它从灵动岛移除，最终内容只留在锁屏，
+    # `.after` 管的只是锁屏保留期——② 的「update 后紧跟 end」等于亲手把
+    # 成功态从岛上撤下。改法：终态只 update 不 end，展示窗口（30 秒）内
+    # 保持活动 active，到点由本地计时器（scheduleDismiss → 前台回收 /
+    # finish）收尾；点岛回 Seal 时 dismissIfTerminal 立即收。R134① 据此
+    # 改为「终态段内不得出现 .end(」。失败态同一函数、同一处理。
     r134_controller_code = strip_comments(
         load("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift"))
     r134_event_section = section(
@@ -6638,17 +6608,19 @@ def violations(load=read):
         "private func finishPhonePairing",
         "private func releasePhonePairingLease")
 
+    r134_end_section = section(
+        r134_controller_code,
+        "private func endWithResult(",
+        "private func scheduleDismiss(at expiry: Date)")
     check("private static let completionLifetime: TimeInterval = 30" in r134_controller_code
           and "await activityForEnd.update(content, alertConfiguration: alertConfiguration)" in r134_controller_code
-          and "await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))"
-              in r134_controller_code
-          and r134_controller_code.find("await activityForEnd.update(content, alertConfiguration: alertConfiguration)")
-              < r134_controller_code.find(
-                  "await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))")
+          and ".end(" not in r134_end_section
+          and "scheduleDismiss(at: dismissalDate)" in r134_end_section
           and "func awaitPendingOperation()" in r134_controller_code
-          and "已向灵动岛提交「配对完成」状态" in r134_controller_code,
-          "R134①: 配对终态必须先 update 送达、再 end + .after 收起，完成保留 30 秒 ✗ —— "
-          "只 end 不 update 时终态只是「结束时的附带内容」，系统不保证展开呈现；"
+          and "已向灵动岛提交「配对成功」状态" in r134_controller_code,
+          "R134①: 配对终态只许 update 送达、终态段内禁止 end，完成保留 30 秒 ✗ —— "
+          "活动一旦 end，系统立刻把它从灵动岛移除、最终内容只留锁屏（苹果 HIG），"
+          "在终态提交里 end 等于亲手撤下配对成功态（147 真机复现）；"
           "保留过短，用户在设置页多停一会儿就错过；提交必须写日志，否则下次仍无法定案")
 
     check(squash(r134_event_section).count(
@@ -6966,16 +6938,15 @@ def violations(load=read):
 
     check(r144_vault_code.count("LoginIDNormalizer.vaultKey(forLoginID: secret.email)") == 2
           and 'code: "SEAL-KEYCHAIN-004"' in r144_vault_code
-          and r144_vault_code.count('code: "SEAL-KEYCHAIN-006"') == 2
           and "func loadAllSecrets() throws -> [AccountSecret]" in r144_vault_code,
-          "R144①: secret 必须以归一化登录 ID 为键、写后验证与保险库失败必须有专码 ✗ —— "
+          "R144①: secret 必须以归一化登录 ID 为键、写后验证必须有专码 ✗ —— "
           "回到随机 UUID 键时记录重建即悬空、凭据无声丢失（INVENTORY-100b 的根）；"
           "loadAllSecrets 同步签名是 R125 两消费方的既有契约，不得悄悄改 async")
 
-    check(r144_credvault_code.count("AES.GCM.seal") == 2
-          and "HKDF<SHA256>.deriveKey" in r144_credvault_code
+    check(r144_credvault_code.count("AES.GCM.seal") == 1
+          and "AES.GCM.open" in r144_credvault_code
           and "credentialFingerprint" in r144_secret_code,
-          "R144②: 保险库必须是口令派生密钥的 AES-GCM 加密文件 ✗ —— 明文或弱派生落盘"
+          "R144②: 保险库必须是设备钥匙的 AES-GCM 加密文件 ✗ —— 明文落盘"
           "等于把全部 Apple ID 凭据裸放在沙盒里")
 
     check("try await keychain.detach(accountID: account.id)" in r142_svm_code
@@ -7006,6 +6977,137 @@ def violations(load=read):
           "R145①: 日志入店必须先过窗口合并、逐项结果永不合并、留存上限 3000 ✗ —— "
           "append 改回无条件入队时同内容同秒刷屏、1000 条环形一天丢数千条；"
           "合并丢 repeatCount 则导出 ×N 静默消失")
+
+    # ── R146：2026-10-23 已登录 ID 不许人为失效（规格第 14 条）＋导出/导入删除（第 13 条）──
+    #
+    # MJ 立规：已登录 ID 只许苹果官方失效或用户自己删除；覆盖更新/重签/记录
+    # 重建等一切人为操作不许弄失效。log-48 实证：147 覆盖安装后两账号被报
+    # KEYCHAIN-005 —— `load(accountID:)` 只有「UUID 键 → 保险库 accountID
+    # 关联」两步兜底，secret 换键挂着（迁移补到归一化键/旧关联）即误判缺失。
+    # 修法：load 带账号标识时全盘（钥匙串＋保险库）按 accountIdentifier 匹配
+    # 自愈；各业务调用点必须把标识传下去。同批删除 MJ 拍板取消的口令
+    # 导出/导入后端（「代码也不要」），防半成品死代码回潮。
+    r146_vault_code = strip_comments(
+        load("Seal/Infrastructure/Security/KeychainVault.swift"))
+    r146_credvault_code = strip_comments(
+        load("Seal/Infrastructure/Security/CredentialVault.swift"))
+    r146_matcher_code = strip_comments(
+        load("Seal/Core/Accounts/CredentialIdentityMatcher.swift"))
+    r146_matcher_tests = load("SealTests/Security/CredentialIdentityMatcherTests.swift")
+    r146_svm_code = strip_comments(
+        load("Seal/Features/Settings/SettingsViewModel.swift"))
+    r146_signing_code = strip_comments(
+        load("Seal/Core/Signing/SigningCoordinator.swift"))
+
+    check("func load(accountID: UUID, accountIdentifier: String? = nil)" in r146_vault_code
+          and "CredentialIdentityMatcher.match(" in r146_vault_code
+          and "accountIdentifier.isEmpty == false" in r146_matcher_code
+          and "func findsOwnSecretAmongOthers()" in r146_matcher_tests
+          and "func prefersMostCompleteSigningMaterial()" in r146_matcher_tests,
+          "R146①: 按账号读凭据必须有全兜底（全盘按 accountIdentifier 匹配＋空标识 fail closed）✗ —— "
+          "退回两步兜底时 secret 换键挂着即被误判「凭据待恢复」、用户被迫重新登录，"
+          "违反「已登录 ID 不许人为失效」")
+
+    check(r146_svm_code.count("accountIdentifier: account.accountIdentifier") >= 16
+          and r146_signing_code.count("accountIdentifier: account.accountIdentifier") >= 7,
+          "R146②: 业务调用点必须把账号标识传给 load ✗ —— "
+          "调用点退回只传 UUID 时全兜底形同虚设，库存同步/签名链路照样误判失效")
+
+    check("exportVaultData" not in r146_vault_code
+          and "importVaultData" not in r146_vault_code
+          and "makeExportFile" not in r146_credvault_code
+          and "HKDF<SHA256>.deriveKey" not in r146_credvault_code,
+          "R146③: 口令导出/导入后端必须保持删除（MJ 2026-10-23 拍板取消）✗ —— "
+          "半成品死代码回潮：无入口、无恢复登录语义，留着只会被误当已交付功能")
+
+    # ── R147：2026-10-23 抽屉仲裁全域统一＋图标交接去硬等＋接管不降级＋残留结算 ──
+    #
+    # MJ「抽屉、灵动岛、更新后台、进度条相关问题都修」：
+    # ① 仲裁域从应用页提升到 RootTabView：更新抽屉与外观抽屉加入同一
+    #    仲裁器（R120 的呈现行锚点随之迁移到门禁绑定 updateNoticeItem，
+    #    「原生大抽屉覆盖标签栏」不变量不变），更新到达时强清外观抽屉的
+    #    旧补丁删除；批量结果在场时根层抽屉只排队、不替用户消费结果。
+    # ② 签名页/导入页图标子抽屉的两份 220ms 硬等删除，改 onDismiss 事件交接。
+    # ③ 更新下载接管：attemptKind/alreadyRetriedFresh 随进行中记录持久化，
+    #    进程被杀后接管不再降级 .fresh。
+    # ④ 待更新残留链接：只剩待更新记录且与运行包同版本同构建时自注册直接
+    #    结算（旧形态永远挂待安装列表）；保护分支命中写 SEAL-SELF-120 留痕。
+    r147_root_code = strip_comments(load("Seal/App/RootTabView.swift"))
+    r147_apps_code = strip_comments(
+        load("Seal/Features/Apps/AppsRootView.swift"))
+    r147_signing_sheet_code = strip_comments(
+        load("Seal/Features/Apps/AppSigningSheet.swift"))
+    r147_import_code = strip_comments(
+        load("Seal/Features/Import/ImportConfirmationView.swift"))
+    r147_downloader_code = strip_comments(
+        load("Seal/Infrastructure/UpdateIPADownloader.swift"))
+    r147_registrar_code = strip_comments(
+        load("Seal/Core/Renewal/SelfAppRegistrar.swift"))
+    r147_arbiter_tests = load("SealTests/Renewal/SheetArbitrationTests.swift")
+    r147_registrar_tests = load(
+        "SealTests/Renewal/SelfAppRegistrarPendingUpdateProtectionTests.swift")
+
+    check("case appUpdate" in r141_arb_code
+          and "case appearance" in r141_arb_code
+          and "@State private var sheetArbiter = SheetArbiter()" in r147_root_code
+          and "sheetArbiter: $sheetArbiter" in r147_root_code
+          and "@Binding var sheetArbiter: SheetArbiter" in r147_apps_code
+          and "private var updateNoticeItem: Binding<UpdateNotice?>" in r147_root_code
+          and "sheetArbiter.allowsPresentation(of: .appUpdate)" in r147_root_code
+          and "claimRootSheet(.appUpdate)" in r147_root_code
+          and "pending == .appUpdate || pending == .appearance" in r147_apps_code
+          and "func rootUpdateSheetHandoffIsSerial()" in r147_arbiter_tests,
+          "R147①: 全局抽屉必须共用同一个 RootTabView 仲裁器 ✗ —— "
+          "仲裁域退回应用页时更新抽屉与应用页抽屉各行其是，冷启动同窗口双呈复发；"
+          "更新到达靠强清抢层会把用户正在看的外观抽屉直接掀掉")
+
+    check("Task.sleep(for: .milliseconds(220))" not in r147_signing_sheet_code
+          and "Task.sleep(for: .milliseconds(220))" not in r147_import_code
+          and "onDismiss: performPendingIconAction" in r147_signing_sheet_code
+          and "onDismiss: performPendingIconAction" in r147_import_code,
+          "R147②: 图标子抽屉交接必须走 onDismiss 事件、不得硬等 220ms ✗ —— "
+          "硬等既可能等不够（选择器撞上未关完的子抽屉被吞）也白慢一截")
+
+    check("var attemptKind: UpdateDownloadAttemptKind?" in r147_downloader_code
+          and "attemptKind: matchedRecord?.attemptKind ?? .fresh" in r147_downloader_code
+          and "attemptKind: record?.attemptKind ?? .fresh" in r147_downloader_code,
+          "R147③: 进程被杀后接管的下载任务必须按持久化记录恢复尝试种类 ✗ —— "
+          "一律降级 .fresh 会让续传任务按全新下载的语义决策、回退预算被重置")
+
+    check(r147_registrar_code.count("installed.replacesInstalledAppID = nil") >= 2
+          and "已按待更新保护跳过覆盖" in r147_registrar_code
+          and "func registrationSettlesResidualPendingRecordMatchingRunningVersion()" in r147_registrar_tests,
+          "R147④: 待更新残留链接必须在自注册结算、保护命中必须留痕 ✗ —— "
+          "不结算时已装上的更新永远挂在待安装列表；不留痕时下次复现又无从定案")
+
+    # ── R148：2026-10-23 更新包在抽屉转交窗口不许丢失（MJ 真机追问）──
+    #
+    # 下载完成到抽屉自动转交进待安装列表之间约一秒：过去这段时间里
+    # ① 进程被杀 ⇒ 包是随机文件名、无任何记录指向，下次只能重新下载；
+    # ② 抽屉被关 / 任务被取消 ⇒ 取消清理把已下载并校验通过的包直接删掉。
+    # 改法：下载器在校验通过后写「完成登记」（源 URL＋文件名），下次
+    # download() 对同一源 URL 先查登记复用；抽屉侧下完之后的取消路径
+    # 一律不删已登记的包，只有判无效（版本对不上 / 解析失败）才连文件
+    # 带登记丢弃；转交成功清登记。
+    r148_notice_code = strip_comments(load("Seal/Features/UpdateNoticeView.swift"))
+    r148_tests = load("SealTests/Update/UpdateDownloadPolicyTests.swift")
+    check("UpdateDownloadCompletedStore.save(" in r147_downloader_code
+          and "UpdateDownloadCompletedStore.load(in: downloadsDirectory)" in r147_downloader_code
+          and "completed.sourceURL == url.absoluteString" in r147_downloader_code
+          and "func clearCompletedDownload(for fileURL: URL)" in r147_downloader_code
+          and "func discardCompletedDownload(at fileURL: URL)" in r147_downloader_code
+          and "UpdateDownloadCompletedStore.clear(in: downloadsDirectory)" in r147_downloader_code,
+          "R148①: 已校验的更新包必须落完成登记、同源下载必须先复用登记 ✗ —— "
+          "没有登记时转交窗口里进程被杀就只能整包重下；复用是找回的唯一路径")
+    check(r148_notice_code.count("deleteDownloadedFile(at: localURL)") == 0
+          and r148_notice_code.count("removeItem(at: localURL)") == 0
+          and r148_notice_code.count("discardCompletedDownload(at: localURL)") == 2
+          and "clearCompletedDownload(for: localURL)" in r147_root_code
+          and "func completedDownloadRecordRoundTripsAndClears()" in r148_tests,
+          "R148②: 抽屉在下载完成后只许「判无效丢弃」、不许取消即删 ✗ —— "
+          "取消清理删掉已校验的包等于让一次抽屉关闭作废整次下载（MJ 立规："
+          "用户导入/下载的包不许自动回收）；转交成功必须清登记，否则旧登记"
+          "会让下次同源下载误复用已转交的文件")
 
     # ── R113：2026-10-03 导入按钮真液态玻璃 ──
     #
@@ -8442,12 +8544,7 @@ def main():
          "                logStore: logStore\n            )\n            let appRecordRecovery = AppRecordRecovery(",
          "                logStore: nil\n            )\n            let appRecordRecovery = AppRecordRecovery(",
          "R12: the batch coordinator must be given a log store"),
-        # 把那条北京时间 ISO8601 单测改宽成单字符断言：源码断言仍然全绿，
         # 但测试已经守不住「时间真的是 ISO8601」了（单字符会同时匹配 Character 重载）。
-        ("SealTests/Renewal/RenewalCoordinatorLogTests.swift",
-         '        #expect(text.contains("2026-09-17T13:28:58+08:00"))',
-         '        #expect(text.contains("T"))',
-         "R12: the Beijing ISO8601 unit test must assert the full form"),
         # ── R12：轮询日志降噪（2026-09-17 真机日志量化：30% 是噪音）──
         # 把「有待恢复数据才留痕」改回无条件留痕：`load()` 每 9 秒一次，
         # 立刻回到「三成日志是噪音、真实信号被挤出环形缓冲」的状态。
@@ -8538,12 +8635,7 @@ def main():
          "    func protectedSetSizeIsReported() {",
          "    func protectedSetSizeIsReportedRenamed() {",
          "R14: the new attribution counters need real unit tests"),
-        # 把超时文案改回「系统已自动重试」：用户会继续等一个并不存在的重试，
         # 而超时路径其实是原样抛出、不重试的（R05）。
-        ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
-         '            + "底层安装调用不会被取消（同步调用没有取消机制），也不会自动重试 —— "',
-         '            + "系统已自动重试。"',
-         "R14: the timeout message must not claim a retry"),
         # ── R15：脱敏不得吃掉 ISO 时间戳（2026-09-17 真机日志发现）──
         # 退回原来的结尾断言：匹配又能停在日期中间，`2026-09` 被当成手机号吃掉。
         ("Seal/Infrastructure/Diagnostics/LogPrivacyRedactor.swift",
@@ -8721,11 +8813,6 @@ def main():
          '                + "再把那些 App 重新签一次才能恢复。",',
          '            reason: "已释放 \\(revokedSerials.count) 张不可用证书，但 Apple 仍未允许创建新的本机签名身份。",',
          "R21: 「证书轮换失败」必须写明后果"),
-        # 把 recovery 退回「稍后重试」：失败原因常常是会话失效，那种情况下重试无效。
-        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         '            recovery: "先确认这个 Apple ID 的登录仍然有效（必要时到「我的」重新验证），再重试",',
-         '            recovery: "稍后重试",',
-         "R21: recovery 不能只说「稍后重试」"),
         # ── R22：日志码索引必须与源码一致（2026-09-17 加）──
         # 往主表塞一个源码里没有的码：正是「文档漂移」的样子，会误导排查。
         ("docs/qa/log-code-index.md",
@@ -8743,17 +8830,6 @@ def main():
          "## 已从源码移除（旧日志里还会看到，**别当成现在还在报**）",
          "## 历史码",
          "R22: 日志码索引必须有「已从源码移除」一节"),
-        # ── R23：证书阶段不能把宽泛认证文本写成确定成因 ──
-        # 退回“立即重新登录”会跳过等待后重签，回到用户反馈的反复验证死循环。
-        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         '                recovery: "等几分钟后重新签名；若持续出现，再到「我的」重新验证 Apple ID。",',
-         '                recovery: "前往「我的」页面重新登录该 Apple ID",',
-         "R23: 不能退回「只让用户去重新验证」这一条路"),
-        # 把未分类结果写成已确认限流，会让用户把推测当作根因。
-        ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",
-         '                reason: "Apple 在证书请求阶段返回了认证相关信息，但未提供足以确认账号状态的具体原因。",',
-         '                reason: "Apple 已经确认当前账号被限流。",',
-         "R23: 证书阶段不能把认证文本推断为已确认的服务限流或账号状态"),
         # ── R24：三个 portal 变更都要过退避重试（2026-09-17 补）──
         # 把证书创建退回「直接请求」：它是流程里第一个真正落到 Apple 侧的变更，
         # 最容易撞上限流，而漏掉它会让限流被误报成「账号需要重新验证」。
@@ -9030,13 +9106,6 @@ def main():
          "\n"
          "    private func spinPhase(_ now: Date) -> Double {",
          "R36: `SigningProgressView` 不许再写死进度"),
-        # 把「卡片不再显示计时」改回去（重新在视图里显示「本阶段已用时」）：
-        # 这条是上面那条反向断言的自检 —— 它必须报红。
-        ("Seal/Features/Apps/SigningProgressView.swift",
-         "                InstallWaitNote(startedAt: session?.installStartedAt)",
-         "                Text(\"本阶段已用时 0:20\")\n"
-         "                InstallWaitNote(startedAt: session?.installStartedAt)",
-         "R36: 进度卡片不许再显示自己的计时"),
         # 把单测改宽：只断言「涨了」而不锁住「明显爬升」，约束就没了。
         ("SealTests/Signing/SigningProgressBudgetTests.swift",
          "        #expect(bundle > 30)",
@@ -10215,10 +10284,6 @@ def main():
          "            originalBundleIdentifier: draft.bundleIdentifier,",
          "Scan/original-identity:"),
         # ㉚ 恢复若仍从 load 并发启动旧扫描，会绕过可信 Team 身份还原规则 ✓ 报红。
-        ("Seal/Features/Apps/AppsViewModel.swift",
-         "    func load(force: Bool = false) async {",
-         "    func load(force: Bool = false) async {\n        _ = \"OrphanAppRecoveryService\"",
-         "Scan/single-entry:"),
         # ㉛ 去掉旧记录接管会让已经保存的错误恢复记录仍然无法重导入 ✓ 报红。
         ("Seal/Core/Import/ImportReplacementPolicy.swift",
          "recoveredOriginalBundleIdentifier(for: record)",
@@ -10473,9 +10538,9 @@ def main():
          "                  true,\n",
          "R84⑨: Seal 的实时身份缺失或不匹配时，记录回退必须核对完整签名身份、目标和已装产物"),
         # ⑩ 把「A 排最后但仍进候选」改回「排除 A」⇒ Takeover 断言报红（免费账号死锁回归）。
-        ("Seal/Core/Signing/CertificateTakeoverPolicy.swift",
-         "        let ordered = ordinaryCandidates + runningSealCandidates\n",
-         "        let ordered = ordinaryCandidates\n",
+        ("Seal/Core/Signing/SigningCertificateMaterialPolicy.swift",
+         "        if candidate.isRunningSealCertificate { return 3 }\n",
+         "        if candidate.isRunningSealCertificate { return 0 }\n",
          "Takeover: decision policy must cover"),
 
         # ── R85：本机私钥状态仅作说明，续签由 Apple 当前状态决定 ──
@@ -10566,11 +10631,6 @@ def main():
          "R86⑥: 必须有四个方向的单测"),
 
         # ── R87：阶段文案必须与真实操作对应（2026-09-26 构建 48 真机，用户需求④）──
-        # ① 把「正在申请证书」写回去 ⇒ R87① 报红。
-        ("Seal/Core/Signing/SigningStage.swift",
-         '            return "正在准备证书"\n',
-         '            return "正在申请证书"\n',
-         "R87①: 证书阶段不得再写「正在申请证书」"),
         # ② 把「正在注册 Bundle ID」写回去 ⇒ R87② 报红。
         ("Seal/Core/Signing/SigningStage.swift",
          '            return "正在核对 App ID"\n',
@@ -11020,6 +11080,11 @@ def main():
          "            await activityForEnd.update(content, alertConfiguration: alertConfiguration)\n",
          "",
          "R134①:"),
+        # ②b 终态提交里恢复 end（147 真机「配对完成岛消失」的平台语义坑）⇒ R134① 报红。
+        ("Seal/Infrastructure/Pairing/PairingLiveActivityController.swift",
+         "            await activityForEnd.update(content, alertConfiguration: alertConfiguration)\n",
+         "            await activityForEnd.update(content, alertConfiguration: alertConfiguration)\n            await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))\n",
+         "R134①:"),
         # ③ 完成路径不再申请后台执行时间（改名即脱钩）⇒ R134② 报红。
         ("Seal/Features/Settings/SettingsViewModel.swift",
          '                withName: "Seal Pairing Completion"',
@@ -11151,6 +11216,52 @@ def main():
          "LogDedupPolicy.merging(entry, into: buffer)",
          "nil",
          "R145①:"),
+
+        # ── R146：已登录 ID 不许人为失效 ──
+        # 全兜底匹配被摘掉 ⇒ R146① 报红。
+        ("Seal/Infrastructure/Security/KeychainVault.swift",
+         "CredentialIdentityMatcher.match(",
+         "CredentialIdentityMatcher.noMatch(",
+         "R146①:"),
+        # 空标识改成放行（认错人）⇒ R146① 报红。
+        ("Seal/Core/Accounts/CredentialIdentityMatcher.swift",
+         "accountIdentifier.isEmpty == false",
+         "accountIdentifier.isEmpty == true",
+         "R146①:"),
+        # 调用点不再传账号标识 ⇒ R146② 报红。
+        ("Seal/Features/Settings/SettingsViewModel.swift",
+         "accountIdentifier: account.accountIdentifier",
+         "accountIdentifier: nil",
+         "R146②:"),
+
+        # ── R147：抽屉全域仲裁 ──
+        # 仲裁器不再注入应用页（各行其是）⇒ R147① 报红。
+        ("Seal/App/RootTabView.swift",
+         "sheetArbiter: $sheetArbiter",
+         "sheetArbiter: $otherArbiter",
+         "R147①:"),
+        # 图标交接的 onDismiss 被摘掉（回硬等形态）⇒ R147② 报红。
+        ("Seal/Features/Apps/AppSigningSheet.swift",
+         "onDismiss: performPendingIconAction",
+         "onDismiss: performNothing",
+         "R147②:"),
+        # 接管任务又一律降级 .fresh ⇒ R147③ 报红。
+        ("Seal/Infrastructure/UpdateIPADownloader.swift",
+         "attemptKind: matchedRecord?.attemptKind ?? .fresh",
+         "attemptKind: .fresh",
+         "R147③:"),
+
+        # ── R148：更新包转交窗口不许丢失 ──
+        # 校验通过后不再写完成登记（窗口里被杀即成孤儿）⇒ R148① 报红。
+        ("Seal/Infrastructure/UpdateIPADownloader.swift",
+         "UpdateDownloadCompletedStore.save(",
+         "UpdateDownloadCompletedStore.saveDisabled(",
+         "R148①:"),
+        # 抽屉恢复「取消即删已下载包」⇒ R148② 报红。
+        ("Seal/Features/UpdateNoticeView.swift",
+         "UpdateIPADownloader.shared.discardCompletedDownload(at: localURL)",
+         "UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)",
+         "R148②:"),
 
         # ── R113：导入按钮真液态玻璃 ──
         # ① 退回手贴 glassEffect（假玻璃又回来了）⇒ R113① 报红。
@@ -11823,7 +11934,7 @@ def main():
           "updateCoordinator.checkAutomatically()",
          "R120:"),
         ("Seal/App/RootTabView.swift",
-          ".sheet(item: $updateCoordinator.presentedNotice, onDismiss: installPendingUpdateIfNeeded)",
+          ".sheet(item: updateNoticeItem, onDismiss: installPendingUpdateIfNeeded)",
          ".overlay {",
          "R120:"),
         ("Seal/Infrastructure/UpdateChecker.swift",

@@ -339,7 +339,9 @@ struct UpdateNoticeView: View {
             }
 
             guard downloadGeneration == generation else {
-                UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
+                // 已下载并校验通过的包已在下载器里登记：抽屉被关 / 任务被取消都不删它，
+                // 下次点「下载并更新」直接复用（见 UpdateIPADownloader 的完成登记）。
+                // 只有判无效才丢弃。
                 return
             }
 
@@ -351,7 +353,7 @@ struct UpdateNoticeView: View {
                 let parsed = try IPAParserService().parse(url: localURL)
                 guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version),
                       notice.sha256DownloadURL != nil else {
-                    try? FileManager.default.removeItem(at: localURL)
+                    UpdateIPADownloader.shared.discardCompletedDownload(at: localURL)
                     guard downloadGeneration == generation else { return }
                     phase = .failed(.verification)
                     downloadTask = nil
@@ -359,24 +361,24 @@ struct UpdateNoticeView: View {
                 }
 
                 guard downloadGeneration == generation else {
-                    UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
+                    // 同上：已校验的包保留登记、不删。
                     return
                 }
                 phase = .ready
                 try await Task.sleep(nanoseconds: 800_000_000)
                 guard !Task.isCancelled, downloadGeneration == generation else {
-                    UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
+                    // 同上：转交窗口里被取消，已校验的包保留登记、不删。
                     return
                 }
                 downloadGeneration = UUID()
                 downloadTask = nil
                 onInstall(localURL)
             } catch is CancellationError {
-                try? FileManager.default.removeItem(at: localURL)
+                // 取消发生在校验/转交阶段：包已下载并登记，保留不删。
                 guard downloadGeneration == generation else { return }
                 phase = .available
             } catch {
-                try? FileManager.default.removeItem(at: localURL)
+                UpdateIPADownloader.shared.discardCompletedDownload(at: localURL)
                 guard downloadGeneration == generation else { return }
                 phase = .failed(.verification)
             }

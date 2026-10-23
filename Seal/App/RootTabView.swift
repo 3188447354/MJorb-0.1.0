@@ -19,9 +19,15 @@ struct RootTabView: View {
     @State private var isAppearanceThemePresented = false
     @State private var isCustomAccentColorPresented = false
     @State private var shouldPresentCustomAccentColorAfterThemeDismiss = false
+    /// 外观抽屉已请求但还没拿到台面（被批量结果挡下或正等交接）时的意愿登记，
+    /// 台面空出/转正时凭它补呈现，见 `claimRootSheet`。
+    @State private var wantsAppearanceSheet = false
     @State private var launchCheckInProgress = false
     @State private var lastLaunchCheckAt: Date?
     @StateObject private var updateCoordinator = UpdatePresentationCoordinator()
+    /// 全局抽屉仲裁器：根层持有，注入应用页共用 —— 更新抽屉、外观抽屉与
+    /// 应用页四张业务抽屉同一时刻只许一张在场（2026-10-23 统一仲裁域）。
+    @State private var sheetArbiter = SheetArbiter()
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
@@ -31,7 +37,8 @@ struct RootTabView: View {
         TabView(selection: $selection) {
             AppsRootView(
                 viewModel: appsViewModel,
-                settingsViewModel: settingsViewModel
+                settingsViewModel: settingsViewModel,
+                sheetArbiter: $sheetArbiter
             )
             .tabItem {
                 Label(AppSection.apps.title, systemImage: AppSection.apps.systemImage)
@@ -43,7 +50,7 @@ struct RootTabView: View {
                 viewModel: settingsViewModel,
                 relatedApps: appsViewModel.apps,
                 certificateExportHandler: certificateExportHandler,
-                onAppearanceThemeRequested: { isAppearanceThemePresented = true },
+                onAppearanceThemeRequested: { claimRootSheet(.appearance) },
                 updateCoordinator: updateCoordinator
             )
             .tabItem {
@@ -58,7 +65,7 @@ struct RootTabView: View {
         .sealScreenBackground()
         .background {
             Color.clear
-                .sheet(item: $updateCoordinator.presentedNotice, onDismiss: installPendingUpdateIfNeeded) { notice in
+                .sheet(item: updateNoticeItem, onDismiss: installPendingUpdateIfNeeded) { notice in
                     UpdateNoticeView(
                         notice: notice,
                         onDismiss: {
@@ -117,10 +124,33 @@ struct RootTabView: View {
             }
         }
         .onChange(of: updateCoordinator.presentedNotice?.id) { _, noticeID in
+            // 更新抽屉不再靠「强清其他抽屉」抢层：向全局仲裁认领台面，
+            // 台上有人就登记待呈现，等对方关闭完成再上台（交接在
+            // claimRootSheet / 应用页的待呈现观察者 / 各 onDismiss 之间串行）。
             guard noticeID != nil else { return }
-            isAppearanceThemePresented = false
-            isCustomAccentColorPresented = false
-            shouldPresentCustomAccentColorAfterThemeDismiss = false
+            claimRootSheet(.appUpdate)
+        }
+        .onChange(of: sheetArbiter.current) { current in
+            // 外观抽屉经交接转正：此刻才真正置呈现状态。
+            if current == .appearance, wantsAppearanceSheet {
+                wantsAppearanceSheet = false
+                isAppearanceThemePresented = true
+            }
+            // 台面空出来时补认领：认领时被批量结果挡下（不替用户消费未看过的
+            // 结果）的根层抽屉，在结果抽屉关闭后于此重新认领。
+            guard current == nil else { return }
+            if updateCoordinator.presentedNotice != nil {
+                claimRootSheet(.appUpdate)
+            } else if wantsAppearanceSheet {
+                claimRootSheet(.appearance)
+            }
+        }
+        .onChange(of: isCustomAccentColorPresented) { isPresented in
+            // 自定义颜色浮层关闭且主题抽屉没有接续打开时，外观认领释放。
+            guard isPresented == false,
+                  isAppearanceThemePresented == false,
+                  sheetArbiter.current == .appearance else { return }
+            _ = sheetArbiter.sheetDidDismiss(.appearance)
         }
         .onOpenURL { url in
             if LocalDevVPNLink.isCallback(url) {
@@ -159,9 +189,14 @@ struct RootTabView: View {
             Task { await appsViewModel.importSelectedFile(url) }
         }
         .sheet(isPresented: $isAppearanceThemePresented, onDismiss: {
-            guard shouldPresentCustomAccentColorAfterThemeDismiss else { return }
-            shouldPresentCustomAccentColorAfterThemeDismiss = false
-            isCustomAccentColorPresented = true
+            if shouldPresentCustomAccentColorAfterThemeDismiss {
+                // 接续打开自定义颜色浮层：同属外观认领，不释放台面，
+                // 浮层关闭时才向仲裁报到（见 isCustomAccentColorPresented 的 onChange）。
+                shouldPresentCustomAccentColorAfterThemeDismiss = false
+                isCustomAccentColorPresented = true
+            } else {
+                _ = sheetArbiter.sheetDidDismiss(.appearance)
+            }
         }) {
             AppearanceThemeSheet(
                 appearanceRawValue: $appearanceRawValue,
@@ -213,15 +248,70 @@ struct RootTabView: View {
             // 只有导入器确认更新包已进入受管理事务后才删除下载副本；失败时保留原文件，
             // 用户可以直接重试，不会因一次临时错误丢掉已下载的 IPA。
             if staged {
+                UpdateIPADownloader.shared.clearCompletedDownload(for: localURL)
                 UpdateIPADownloader.shared.deleteDownloadedFile(at: localURL)
             }
         }
     }
 
     private func installPendingUpdateIfNeeded() {
+        // 更新抽屉关闭完成：向全局仲裁报到，待呈现的抽屉随之转正。
+        _ = sheetArbiter.sheetDidDismiss(.appUpdate)
         guard let localURL = pendingUpdateInstallURL else { return }
         pendingUpdateInstallURL = nil
         installSelfUpdate(localURL)
+    }
+
+    /// 更新抽屉的呈现绑定：协调器持有「有更新可提示」，仲裁决定「现在能不能上台」。
+    /// 台面被占时返回 nil（不抢层）；仲裁转正后随状态变化自然呈现。
+    private var updateNoticeItem: Binding<UpdateNotice?> {
+        Binding(
+            get: {
+                sheetArbiter.allowsPresentation(of: .appUpdate)
+                    ? updateCoordinator.presentedNotice
+                    : nil
+            },
+            set: { newValue in
+                if newValue == nil {
+                    updateCoordinator.presentedNotice = nil
+                }
+            }
+        )
+    }
+
+    /// 根层抽屉（更新 / 外观）向全局仲裁认领台面。
+    ///
+    /// 批量结果抽屉在场时一律排队：不登记待呈现、更不关它 —— 未被用户
+    /// 看过的结果不能被新抽屉替他消费（与应用页既有纪律同源）；台面空出
+    /// 后由 `sheetArbiter.current` 的 onChange 补认领。更新抽屉的排队凭
+    /// `presentedNotice` 还在，外观的排队凭 `wantsAppearanceSheet`。
+    private func claimRootSheet(_ sheet: ArbitratedSheet) {
+        if sheetArbiter.current == .batchResult {
+            if sheet == .appearance { wantsAppearanceSheet = true }
+            return
+        }
+        if sheet == .appearance { wantsAppearanceSheet = true }
+        switch sheetArbiter.request(sheet) {
+        case .present(let claimed):
+            if claimed == .appearance {
+                wantsAppearanceSheet = false
+                isAppearanceThemePresented = true
+            }
+        case .dismissCurrentThenPresentPending:
+            dismissRootArbitratedSheet()
+        case .none:
+            break
+        }
+    }
+
+    /// 按仲裁裁决关掉根层自己在场的那张抽屉。应用页的抽屉由应用页的
+    /// 待呈现观察者负责关，这里只处理外观；更新抽屉不被交接强关，
+    /// 它的关闭只走自己的按钮与 onDismiss 报到。
+    private func dismissRootArbitratedSheet() {
+        guard sheetArbiter.current == .appearance else { return }
+        shouldPresentCustomAccentColorAfterThemeDismiss = false
+        isAppearanceThemePresented = false
+        isCustomAccentColorPresented = false
     }
 
     @MainActor

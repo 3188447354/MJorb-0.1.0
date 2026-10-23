@@ -22,6 +22,9 @@ struct ImportConfirmationView: View {
     @State private var didTapPrimaryAction = false
     @State private var showDowngradeConfirm = false
     @State private var isIconActionsPresented = false
+    /// 图标操作子抽屉里选好的动作：等子抽屉真正关闭完成（`onDismiss`）
+    /// 再执行，不再硬等 220ms 猜关闭动画（与签名页同形态，2026-10-23 收成一份语义）。
+    @State private var pendingIconAction: AppIconSelectionSheet.Action?
     @State private var isPhotoPickerPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var customIconData: Data?
@@ -313,22 +316,10 @@ struct ImportConfirmationView: View {
         }
         .padding(.horizontal, 16)
         .sealContentCard(.compact)
-        .sheet(isPresented: $isIconActionsPresented) {
+        .sheet(isPresented: $isIconActionsPresented, onDismiss: performPendingIconAction) {
             AppIconSelectionSheet { action in
+                pendingIconAction = action
                 isIconActionsPresented = false
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(220))
-                    switch action {
-                    case .photos:
-                        isPhotoPickerPresented = true
-                    case .files:
-                        // 导入抽屉里暂只支持相册，文件入口在签名页
-                        isPhotoPickerPresented = true
-                    case .original:
-                        customIconData = nil
-                        onIconSelected(nil)
-                    }
-                }
             }
             .presentationDetents([.medium])
         }
@@ -399,6 +390,20 @@ struct ImportConfirmationView: View {
             return "v\(draft.parsedIPA.version)"
         case .unreadableVersion:
             return "无法比较版本变化"
+        }
+    }
+
+    /// 图标操作子抽屉关闭完成后消费暂存的动作（点「取消」关闭时为空操作）。
+    private func performPendingIconAction() {
+        guard let action = pendingIconAction else { return }
+        pendingIconAction = nil
+        switch action {
+        case .photos, .files:
+            // 导入抽屉里暂只支持相册，文件入口在签名页
+            isPhotoPickerPresented = true
+        case .original:
+            customIconData = nil
+            onIconSelected(nil)
         }
     }
 

@@ -150,7 +150,7 @@ final class PairingLiveActivityController {
             stage: .paired,
             state: .init(stage: .paired, code: "", title: "Seal", detail: "点击返回 Seal"),
             lifetime: Self.completionLifetime,
-            logMessage: "已向灵动岛提交「配对完成」状态",
+            logMessage: "已向灵动岛提交「配对成功」状态",
             alertConfiguration: Self.pairedAlertConfiguration
         )
     }
@@ -204,8 +204,12 @@ final class PairingLiveActivityController {
         }
     }
 
-    /// 把结束时刻提交给 ActivityKit。过去只用本地 `Task.sleep`，Seal 被挂起或杀掉时
-    /// 任务不会执行，导致完成卡片长期残留。
+    /// 把终态提交给 ActivityKit 并排定本地收尾。终态只用 `update` 送达、不在这里
+    /// `end`：苹果 HIG 写明活动一旦结束，系统立刻把它从灵动岛移除，最终内容只
+    /// 留在锁屏（`dismissalPolicy: .after` 管的只是锁屏保留期）——147 真机上
+    /// 「配对一完成岛就消失」正是这条。展示窗口内保持活动 active，到点由
+    /// scheduleDismiss → discardExpiredActivityIfNeeded → finish 收尾；
+    /// 点岛回 Seal 时 dismissIfTerminal 也会立即收。
     private func endWithResult(
         stage: PairingActivityAttributes.Stage,
         state: PairingActivityAttributes.ContentState,
@@ -225,15 +229,13 @@ final class PairingLiveActivityController {
             await previousOperation?.value
             let dismissalDate = Date().addingTimeInterval(lifetime)
             let content = ActivityContent(state: state, staleDate: dismissalDate)
-            // Deliver the terminal state as a regular update first, then end with the
-            // system-managed dismissal. The update is what makes the system present the
-            // island while the user is still in Settings; ending alone only schedules
-            // the final content. Starting a local timer before the queued ActivityKit
-            // update completed could dismiss the activity before the user ever saw “配对完成”.
+            // 只 update、不 end（理由见函数头注释）：end 会让系统立刻把活动
+            // 从灵动岛移除，配对成功态永远上不了岛。窗口内保持 active，
+            // staleDate 到点先变陈旧态，本地计时器随后 finish 收尾。
             // 成功态带 AlertConfiguration 送达：与配对码同一机制，让系统在用户
             // 还在设置页时把展开态弹出来；失败态不传（nil），呈现行为保持原样。
+            // （activityForEnd 是历史变量名，现只用于 update 与到点后的 finish。）
             await activityForEnd.update(content, alertConfiguration: alertConfiguration)
-            await activityForEnd.end(content, dismissalPolicy: .after(dismissalDate))
             try? await logStore?.append(category: .pairing, level: .info, message: logMessage)
             guard let self,
                   self.activity?.id == activityID,

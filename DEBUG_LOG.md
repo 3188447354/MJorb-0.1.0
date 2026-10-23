@@ -1,10 +1,48 @@
+# 2026-10-23 — 删除三处死代码＋守卫纯文案断言瘦身（0.1.53 批次第五部分，MJ 裁决）
+
+- **死代码删除**：`OrphanAppRecoveryService.swift`（重装空壳恢复的早期实现，正式恢复走了维护任务那条线，本文件全仓零引用）；`FailureDiagnosticRecord.swift`（结构化诊断记录，从未有生产方/消费方，只有自己的测试在构造）；`CertificateTakeoverPolicy.swift`（证书接管「验收规格副本」——运行时由 `SigningCertificateMaterialPolicy.rotationCandidates` 驱动，双份规格靠人工同步本身就是漂移源）。连带删除后两者的专属测试文件。
+- **守卫同步**：Takeover 断言改钉运行时实现（可复用永不轮换、Seal 证书 rank 最后仍入选），变异锚点随之迁移；「Scan/single-entry」关于已删类型的断言与变异一并删除。`gh-push.py` 增加 `!!del:` 删除条目支持（Git Data API 以 sha=null 删文件），否则删文件推不上去。
+- **守卫瘦身**：按 MJ「纯文案钉子去除」移除 11 条只钉用户文案/测试数据原文的断言（R12 测试数据、R14 超时文案 ×2、R21 恢复文案、R23 文案 ×3、R30 文案、R36 计时文案、R42 文案、R87① 阶段词）＋7 条配套变异；钉结构/根因/机器契约（日志码、深链、格式）的保留。已知取舍：被删的一类含「文案不许说谎」型断言（如不许声称会自动重试），MJ 知情后仍裁定去除。
+- **验证状态**：pre-push-check 838/0；全量守卫交 CI 验证（MJ 2026-10-23 裁定：本地不再跑全量守卫、直接推 CI 当门）；真机无新增验收点（纯删除＋守卫侧调整，运行时行为不变）。
+
+# 2026-10-23 — 更新包在抽屉转交窗口会丢失（0.1.53 批次第四部分，MJ 14:35 追问后下令修）
+
+- **现象**：更新包下载完成、校验通过后，抽屉要约一秒才把它转入待安装列表。这段时间里：① App 被杀（划掉/系统回收）——包是随机文件名、无任何记录指向它，重开 Seal 无人认领，只能整包重新下载，旧文件还成了没人清的孤儿；② 抽屉被程序性关闭——`onDisappear` 取消任务，取消清理把已校验的包直接删掉。切后台本身不丢（抽屉不关、任务暂停后继续），切网络无关（这一步已不用网络）。
+- **修复**：下载器新增「完成登记」（`UpdateDownloadCompletedStore`，源 URL＋文件名，校验通过后写入）：下次 `download()` 对同一源 URL 先查登记、文件在就直接交回不重新下载；新包写入时顺手删上一份未转交的旧包。抽屉侧下载完成后的取消/代次变化路径一律不再删文件（只剩判无效——版本对不上/解析失败——才 `discardCompletedDownload` 连文件带登记丢弃）；转交成功由 RootTabView 调 `clearCompletedDownload` 清登记。
+- **涉及文件**：Seal/Infrastructure/UpdateIPADownloader.swift（登记 store＋复用检查＋clear/discard API）；Seal/Features/UpdateNoticeView.swift（四处删除改判无效丢弃/保留）；Seal/App/RootTabView.swift（转交成功清登记）；SealTests/Update/UpdateDownloadPolicyTests.swift（登记存取清往返测试）；Scripts/verify-release-safety.py（新增 R148＋2 变异）。
+- **验证状态**：本地守卫复跑中（与第三部分合并跑，结果回填）；真机复验：下载完更新包后在抽屉「验证通过」瞬间划掉 Seal，重开再点下载应秒复用不重下。
+
+# 2026-10-23 — 灵动岛配对完成态被 end() 亲手撤下（0.1.53 批次第三部分，MJ 14:17 真机报 147）
+
+- **现象**：147 真机配对完成时，灵动岛没有变成「配对成功 · 点击返回 Seal」，而是直接消失。
+- **根因**：平台语义，不是时机也不是渲染。终态提交 `endWithResult` 先 `update` 再紧跟 `activity.end(content, dismissalPolicy: .after(+30s))`；苹果 HIG 写明：活动一旦 end，系统**立刻把它从灵动岛移除**，最终内容只留在锁屏，`.after` 管的只是锁屏保留期。此前两轮修复（R134 时机、R137 展开提醒）都建立在「end 后岛上会留 30 秒」的错误前提上，所以真机一直复现。Widget 对 `.paired` 的渲染、调用链（markPaired→awaitPendingOperation）均已逐行核对无误。
+- **修复**：`endWithResult` 终态只 `update` 送达、**不再 end**；展示窗口（成功 30 秒/失败 12 秒）内活动保持 active，内容 staleDate 设为窗口终点，到点由既有本地计时器（scheduleDismiss → discardExpiredActivityIfNeeded → finish 立即收）收尾；点岛回 Seal 时 dismissIfTerminal 仍立即收；新一轮配对 prepare 的 finish、启动孤儿回收都是现成兜底。成功态的 AlertConfiguration 送达不变。
+- **涉及文件**：Seal/Infrastructure/Pairing/PairingLiveActivityController.swift（endWithResult）；Scripts/verify-release-safety.py（R134① 改为「终态段内禁止 .end(＋必须排 scheduleDismiss」，新增变异 ②b 在终态段恢复 end 必红；R134 头注释补根因）。
+- **验证状态**：本地守卫复跑中（本条目提交时回填）；真机决定性复验：0.1.53 装上后重新配对，完成时岛应展开显示「配对成功 · 点击返回 Seal」并保留约 30 秒，点岛回 Seal 立即收起。
+
+# 2026-10-23 — 抽屉仲裁全域统一＋图标交接去 220ms 硬等＋下载接管不降级＋待更新残留结算（0.1.53 批次第二部分，MJ「相关问题都修」）
+
+- **现象**：0.1.52 收口时留下的同域问题：① 更新抽屉与应用页抽屉不在同一仲裁域，冷启动同窗口可能双呈，更新到达靠 RootTabView 强清外观抽屉抢层；② 签名页/导入页图标子抽屉交接各有一份 220ms 硬等平行实现；③ 更新下载进程被杀后接管任务的 attemptKind 一律降级 .fresh，续传决策起点失真；④ 待更新残留链接形态（只剩待更新记录且与运行包同版本同构建）自注册只回补不清链接，可永远挂待安装列表；保护分支命中无日志留痕。另灵动岛内部日志写「配对完成」与界面「配对成功」不一致。
+- **修复**：① `ArbitratedSheet` 新增 `.appUpdate`/`.appearance`，仲裁器提升到 RootTabView 持有并以 Binding 注入 AppsRootView；更新抽屉改经 `updateNoticeItem` 门禁绑定（协调器管「有更新」、仲裁管「能不能上台」），外观抽屉改 `claimRootSheet` 认领（主题抽屉＋颜色浮层共用一个槽位、浮层关闭才释放）；批量结果在场时根层抽屉只排队不抢（台面空出后补认领），强清补丁删除；应用页新增根层待呈现观察者负责关自己那张。R120 呈现行锚点随门禁绑定迁移（原生大抽屉覆盖标签栏不变量不变）。② 两处 220ms 删除，统一为「动作暂存 → 子抽屉 onDismiss 时消费」的事件交接。③ `UpdateDownloadPendingRecord` 增 attemptKind/alreadyRetriedFresh（可选字段兼容旧记录），两处落记录点写入、接管/附着两处按记录恢复。④ 残留形态在保护分支内镜像旧标志分支结算（转已安装、清链接、指纹转正，commitInstalledReplacement），并加 SEAL-SELF-120 保护留痕。灵动岛日志改「配对成功」（R134 锚点同步）。
+- **未改两条（有意保留，待 MJ 定夺）**：根因轮未决① 降级待更新记录不被自注册回收——降级包可能是用户故意导入（Seal 支持降级待更新），自动回收等于删用户导入的包，比现状更糟；未决③ 待更新窗口内跳过已安装记录原子对齐——与旧标志分支既定哲学一致，且窗口内已回补快照，影响仅限窗口期。
+- **涉及文件**：`Seal/Core/Renewal/SheetArbitration.swift`、`Seal/App/RootTabView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppSigningSheet.swift`、`Seal/Features/Import/ImportConfirmationView.swift`、`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Core/Renewal/SelfAppRegistrar.swift`、`Seal/Infrastructure/Pairing/PairingLiveActivityController.swift`、`SealTests/Renewal/SheetArbitrationTests.swift`（+rootUpdateSheetHandoffIsSerial）、`SealTests/Renewal/SelfAppRegistrarPendingUpdateProtectionTests.swift`（+残留结算集成）、`Scripts/verify-release-safety.py`（R147＋变异 3 条、R120/R134 锚点迁移）、本条。
+- **验证状态**：本地全量守卫复跑 901 条断言＋658 条变异 PASS（2026-10-23 14:04），`pre-push-check.py` 838 项 0 失败；Swift 编译与单测待 CI；真机：冷启动更新提示撞已开抽屉应串行交接不双呈、下载中杀进程重开后续传语义不变、覆盖更新后已登录账号保持不失效。
+
+# 2026-10-23 — 覆盖安装后两账号被误判「凭据待恢复」：按账号读凭据只有两步兜底（0.1.53 批次，MJ 立规第 14 条）
+
+- **现象**：log-48 实证：09:43 147 自替换覆盖安装完成（Bundle=com.mjorb.seal.3432ZHJUF9），09:44:26 首次库存同步对 318***5***@qq.com 与 sun***n***@gmail.com 报 SEAL-KEYCHAIN-005「本机与保险库均无登录凭据」并标待恢复，同轮另两账号同步正常；MJ 随后删掉这两个账号记录。MJ 立规：已登录 ID 只许苹果官方失效或用户自己删除，一切人为操作不许弄失效、不许要求重新登录。
+- **根因**：`KeychainVault.load(accountID:)` 的兜底只有两步——钥匙串「记录 UUID 键」→ 保险库「accountID 关联」。两步的键都绑在当前账号记录上：记录曾重建换 UUID、或存量 secret 被迁移补存到归一化登录 ID 键/保险库旧关联之下时，secret 仍在本机，函数却返回 nil，上层（库存同步等近 30 个调用点全走这条）随即误判缺失。该两账号命中此断链的直接证据（其 secret 副本当时实际挂在哪个键下）已被删号动作销毁、无法从脱敏日志复原，如实记为证据缺口；断链本身由代码逐行核实成立，且与症状完全吻合。
+- **修复**：① `load` 新增 `accountIdentifier` 入参（默认 nil、旧行为不变）：前两步 miss 且标识非空时全兜底——汇齐钥匙串全部条目＋保险库全部条目，纯函数 `CredentialIdentityMatcher` 按 `accountIdentifier` 匹配（空标识 fail closed、多份命中取签名材料最全、同分取首条），命中即自愈回填当前 UUID 键与保险库关联。② 调用点迁移：SettingsViewModel 19 处、SigningCoordinator 9 处、AppsViewModel 2 处全部传标识；R125 两消费方（loadAllSecrets 同步契约）不动；剩余无记录在手的 load 点（SelfReplacementCoordinator/CertificateExportHandler/内部材料函数）失败只影响当次操作、不打失效标记，已审计记录。③ 同批删除 MJ 拍板取消的口令导出/导入后端（`exportVaultData`/`importVaultData`、导出信封与 HKDF 口令派生、FileStore 导出/导入与 Payload.merge），SEAL-KEYCHAIN-006 移入日志码表「已从源码移除」节，守卫 R144①②锚点随形态修订。
+- **涉及文件**：新增 `Seal/Core/Accounts/CredentialIdentityMatcher.swift`、`SealTests/Security/CredentialIdentityMatcherTests.swift`（5 条）；`Seal/Infrastructure/Security/KeychainVault.swift`、`Seal/Infrastructure/Security/CredentialVault.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`SealTests/Security/CredentialVaultCodecTests.swift`、`Scripts/verify-release-safety.py`（新增 R146＋变异 3 条、R144①②修订）、`docs/qa/log-code-index.md`、本条。
+- **验证状态**：本地全量守卫复跑：897 条断言＋655 条变异，首跑 1 红——证书交接结构守卫（`verify-certificate-handoff.py`）钉的回滚读取旧原文 `load(accountID: accountID)` 未随本批调用点迁移（不变量本身未变：仍是回滚前读取＋回写配对），锚点已迁到新原文、单跑 PASS；`pre-push-check.py` 838 项 0 失败。Swift 编译与单测待 CI；真机决定性复验：147 上已登录多账号 → 装 0.1.53 覆盖更新 → 全部账号应保持已验证、不再出现 KEYCHAIN-005。审计附带结论：换团队重签 Seal 时容器与钥匙串组随 App 身份变、旧凭据平台级不可达（结构限制，本批未解）；证书轮换不动登录凭据；身份路线变更属苹果侧失效且有存密码自动重登兜底。
+
 # 2026-10-23 — 0.1.52 第三轮 CI 两红：保险库单测钥匙不稳定＋纯数字 UUID 被手机号脱敏认领（CI 修复轮三）
 
 - **现象**：提交 894dae4 的完整 CI（run 39876823760）：build-package ✓（编译与守卫全过）、signer-tests ✓；swift-regression ✗，1178 条单测中 2 条失败、共 5 个 issue：① `CredentialVaultCodecTests.fileStorePersistsHealsAndExports` 抛 `authenticationFailure`；② `LogDedupPolicyTests.storeMergesRedactedDuplicatesAndPersistsCount` 合并未发生（条数 3≠2、repeatCount 1≠2、导出无 ×2、重开不保留计数）。纯 `LogDedupPolicy` 判据单测全过，问题都在集成路径。
 - **根因**：① 测试自身的钥匙供给违反契约：模拟「另一台设备」的 FileStore 写成 `{ SymmetricKey(size: .bits256) }`，每次调用生成新随机钥匙——导入落盘与回读不是同一把钥匙，GCM 校验必然失败；生产 `keyProvider` 契约是每次返回同一把（钥匙串存量钥匙），`production()` 与同测另外两个 store 都稳定，只有这一处不稳定。② 生产脱敏管线顺序坑（R15 同族）：纯数字 UUID 满足手机号模式的字符类，`redact()` 里手机号步在 UUID 步之前，先把整段 UUID 当号码 `mask`，mask 保留可区分个体的尾段 ⇒ 两条只差 UUID 的同类日志脱敏后仍不同字，存储层「脱敏后同键＋120 秒窗口」合并静默失效。第 8 项的测试数据正是纯数字 UUID，真机日志里同形态 ID 同理。
 - **修复**：① 单测把「另一台设备」的钥匙固定为一个局部 `otherKey`（契约对齐），并留注释写明契约与本次实证。② `LogPrivacyRedactor.redactPhoneNumbers` 在日期守卫之后加 `isUUIDShaped` 守卫：整段命中 UUID 形状的匹配原样让给后面的 UUID 规则归一成 `前 8 位…[uuid]`（日期守卫的钉子行逐字未动，R15 断言/变异形态不变）；新增单测 `numericUUIDsNormalizeToSameUUIDPlaceholder` 钉住「两条只差纯数字 UUID 的消息脱敏后逐字相等」；守卫 R15 新增一对断言＋一条变异钉住该守卫行与单测存在。
 - **涉及文件**：`SealTests/Security/CredentialVaultCodecTests.swift`、`Seal/Infrastructure/Diagnostics/LogPrivacyRedactor.swift`、`SealTests/Diagnostics/LogPrivacyRedactorTests.swift`、`Scripts/verify-release-safety.py`（R15 扩展）、本条。
-- **验证状态**：待本地全量守卫复跑与 CI 第四轮复跑后补记。
+- **验证状态**：已回填（2026-10-23）：本地全量守卫复跑 894 条断言＋652 条变异 PASS；CI 第四轮 run 39880409841 三 job 全绿、产出 build 147；Release v0.1.52 已发布（Latest，提交 177e47a，三附件齐全）。
 
 # 2026-10-23 — 0.1.52 第二轮 CI 两红：`getAllTasks` 在当前 SDK 无 async 重载（CI 修复轮二）
 

@@ -41,6 +41,30 @@ struct SheetArbitrationTests {
         #expect(arbiter.pending == nil)
     }
 
+    /// 根层更新抽屉撞上正开着的操作抽屉（2026-10-23 统一仲裁域）：
+    /// 与应用页内部交接完全同一套串行语义 —— 更新抽屉登记待呈现，
+    /// 操作抽屉关闭完成才转正，中间不许两张同时可呈现。
+    @Test
+    func rootUpdateSheetHandoffIsSerial() {
+        var arbiter = SheetArbiter()
+        let claimAction = arbiter.request(.operation)
+        #expect(claimAction == .present(.operation))
+
+        let collisionAction = arbiter.request(.appUpdate)
+        #expect(collisionAction == .dismissCurrentThenPresentPending)
+        let updateAllowedBeforeDismissal = arbiter.allowsPresentation(of: .appUpdate)
+        #expect(updateAllowedBeforeDismissal == false)
+        #expect(arbiter.pending == .appUpdate)
+
+        let promotionAction = arbiter.sheetDidDismiss(.operation)
+        #expect(promotionAction == .present(.appUpdate))
+        #expect(arbiter.allowsPresentation(of: .appUpdate))
+
+        let releaseAction = arbiter.sheetDidDismiss(.appUpdate)
+        #expect(releaseAction == .none)
+        #expect(arbiter.isIdle)
+    }
+
     /// 批量结果撞上正开着的操作抽屉：结果登记为待呈现，操作抽屉关完才上台。
     @Test
     func batchResultWaitsForOpenOperationSheetToDismiss() {

@@ -31,7 +31,7 @@ else
     note "跳过 xcodegen generate（未安装 xcodegen）"
 fi
 
-# --- 2. 单元测试（含 CertificateTakeoverPolicy / SignedIPAIdentityReader / SelfReplacement）---
+# --- 2. 单元测试（含 SignedIPAIdentityReader / SelfReplacement）---
 log "2/4 bash Scripts/ci-test.sh"
 bash Scripts/ci-test.sh || fail "ci-test.sh 失败"
 ok "ci-test.sh"

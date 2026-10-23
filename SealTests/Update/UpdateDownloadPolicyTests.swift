@@ -289,6 +289,27 @@ struct UpdateDownloadPolicyTests {
     }
 
     @Test
+    func completedDownloadRecordRoundTripsAndClears() throws {
+        // 完成登记是「下载完成 → 转入待安装」窗口的唯一找回凭据：
+        // 存得进、读得回、清得掉，缺一环窗口里被杀的包就又成孤儿。
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "seal-completed-test-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        #expect(UpdateDownloadCompletedStore.load(in: directory) == nil)
+        let record = UpdateDownloadCompletedRecord(
+            sourceURL: "https://example.com/Seal.ipa",
+            fileName: "seal-update-test.ipa",
+            savedAt: Date(timeIntervalSince1970: 1_800_000_000))
+        UpdateDownloadCompletedStore.save(record, in: directory)
+        let loaded = try #require(UpdateDownloadCompletedStore.load(in: directory))
+        #expect(loaded.sourceURL == record.sourceURL)
+        #expect(loaded.fileName == record.fileName)
+        #expect(abs(loaded.savedAt.timeIntervalSince(record.savedAt)) < 0.001)
+        UpdateDownloadCompletedStore.clear(in: directory)
+        #expect(UpdateDownloadCompletedStore.load(in: directory) == nil)
+    }
+
+    @Test
     func checksumFailureUsesTheNextUniqueUpdateDownloadCode() {
         // 现有 UpdateDownloadError 占用 501...505，新码顺延 506 且不得与它们重复。
         #expect(UpdateDownloadChecksumPolicy.failureCode == "SEAL-UPDATE-DL-506")

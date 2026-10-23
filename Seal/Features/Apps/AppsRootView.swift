@@ -11,6 +11,9 @@ struct AppsRootView: View {
 
     @ObservedObject var viewModel: AppsViewModel
     @ObservedObject var settingsViewModel: SettingsViewModel
+    /// 全局抽屉仲裁器由 `RootTabView` 持有并注入：应用页抽屉与根层的
+    /// 更新抽屉 / 外观抽屉共用同一个仲裁域（2026-10-23 统一）。
+    @Binding var sheetArbiter: SheetArbiter
     @Environment(\.scenePhase) private var scenePhase
     @ScaledMetric(relativeTo: .largeTitle) private var sealTitleSize = 38
     @State private var mode: ListMode = .installed
@@ -28,7 +31,7 @@ struct AppsRootView: View {
     /// 业务抽屉呈现仲裁：同一时刻只许一张在场，交接串行「关完再开」。
     /// 所有抽屉的呈现/关闭都先过它（判据本体在 `SheetArbiter`，可单测），
     /// 不再靠关后硬等延时或事后强清其他抽屉状态来防抢层。
-    @State private var sheetArbiter = SheetArbiter()
+    /// 仲裁器本体在 `RootTabView`（见上方注入的属性），本页只消费。
     /// 已安装操作抽屉点「续签」后、等操作抽屉关闭完成才点火的续签目标。
     /// 载荷先存这里，`installedActionSheetDismissed` 收到关闭完成事件后才消费。
     @State private var deferredRenewalApp: AppRecord?
@@ -237,6 +240,22 @@ struct AppsRootView: View {
                 if sheetArbiter.request(.operation) == .dismissCurrentThenPresentPending,
                    sheetArbiter.current != .batchResult {
                     dismissCurrentArbitratedSheet()
+                }
+            }
+            .onChange(of: sheetArbiter.pending) { pending in
+                // 根层抽屉（更新 / 外观）在仲裁里登记待呈现且台上是本页抽屉时，
+                // 由本页负责关掉自己那张，等关闭完成事件把台面让给根层。
+                // 只认根层两种待呈现：本页内部的交接（续签点火、批量结果）
+                // 各有自己的关抽屉路径，不在这里重复触发。批量结果在场时
+                // 根层请求在认领侧就已被拦下（不会登记为待呈现），这里再
+                // 兜一层：绝不替用户关掉还没看过的结果抽屉。
+                guard pending == .appUpdate || pending == .appearance,
+                      sheetArbiter.current != .batchResult else { return }
+                switch sheetArbiter.current {
+                case .operation, .installedAction, .detail:
+                    dismissCurrentArbitratedSheet()
+                default:
+                    break
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: BackgroundRenewalNotificationRoute.opened)) { _ in
@@ -588,7 +607,8 @@ struct AppsRootView: View {
             viewModel.dismissOperation()
         case .batchResult:
             viewModel.dismissBatchRefresh()
-        case nil:
+        case .appUpdate, .appearance, nil:
+            // 根层抽屉不在本页的关闭职责内（由 RootTabView 处理）。
             break
         }
     }

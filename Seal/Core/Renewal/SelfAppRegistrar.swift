@@ -148,15 +148,36 @@ actor SelfAppRegistrar {
                 )
             } else if pendingSource.version == metadata.version,
                       pendingSource.buildNumber == metadata.buildNumber {
-                // 只剩待更新记录、且它与运行包同版本同构建（已装上的更新待清
-                // 残留链接的形态）：与旧版本一致分支同等回补，链接的清理由上面的
-                // 旧标志分支与结算路径负责，本分支不代劳。
+                // 只剩待更新记录、且它与运行包同版本同构建 = 更新已经装上、
+                // 只剩残留链接没清的形态。本进程正运行这个版本，就是更新
+                // 已落地的硬证据（与旧标志分支的结算同理）：回补后直接结算 ——
+                // 转已安装、清替换链接、待更新指纹转正为已安装指纹；否则这条
+                // 记录会永远挂在待安装列表里（2026-10-23 收口根因轮未决②）。
                 try await reconcileSealRecordFromRunningBundleIfNeeded(
                     existing: existing,
                     metadata: metadata,
                     accounts: accounts
                 )
+                if let replacedID = existing.replacesInstalledAppID {
+                    var installed = try await appStore.fetchAll().first { $0.id == existing.id } ?? existing
+                    installed.state = .installed
+                    installed.signedArtifactStatus = .installed
+                    installed.replacesInstalledAppID = nil
+                    if let pending = installed.pendingUpdateSourceFingerprint {
+                        installed.installedFingerprint = pending
+                    }
+                    installed.pendingUpdateSourceFingerprint = nil
+                    try await appStore.commitInstalledReplacement(installed, replacing: replacedID)
+                }
             }
+            // 保护命中留痕（根因轮未决④）：下次再现待更新异常时，日志里能
+            // 直接看到本轮是保护分支收口，而不是又删了记录。
+            try? await logStore?.append(
+                category: .system,
+                level: .info,
+                message: "Seal 启动检测到待更新源记录（版本 \(pendingSource.version)），已按待更新保护跳过覆盖，等待签名安装或结算",
+                code: "SEAL-SELF-120"
+            )
             try await cleanupDuplicateSealRecords(records: records, keepID: existing.id)
             return
         }

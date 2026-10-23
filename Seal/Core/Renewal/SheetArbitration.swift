@@ -1,6 +1,8 @@
 import Foundation
 
-/// 应用页业务抽屉的种类 —— 只收录曾经互相抢过呈现层的那几张。
+/// 全局业务抽屉的种类 —— 只收录曾经互相抢过呈现层的那几张。
+/// 2026-10-23 起仲裁域提升到 `RootTabView`：应用页四张与根层两张共用
+/// 同一个仲裁器，冷启动同窗口不再可能双呈。
 ///
 /// 导入抽屉 / 账号选择抽屉有各自独立的呈现路径，不在本仲裁范围内。
 enum ArbitratedSheet: Equatable, Sendable {
@@ -12,6 +14,11 @@ enum ArbitratedSheet: Equatable, Sendable {
     case batchResult
     /// 应用详情抽屉（`AppDetailView`）。
     case detail
+    /// 更新提示抽屉（`UpdateNoticeView`，根层呈现）。
+    case appUpdate
+    /// 外观抽屉组（主题抽屉＋自定义颜色浮层，根层呈现，共用一个槽位：
+    /// 主题关闭后接续的颜色浮层不释放认领，浮层关闭才释放）。
+    case appearance
 }
 
 /// 仲裁器对一次「请求呈现」的裁决。

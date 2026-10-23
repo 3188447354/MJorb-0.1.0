@@ -88,7 +88,17 @@ actor KeychainVault {
 
     // MARK: - 读取（主存 → 保险库 → 存量扫描，命中即自愈）
 
-    func load(accountID: UUID) async throws -> AccountSecret? {
+    /// 按账号记录读 secret。`accountIdentifier` 传了才启用最后的全兜底一步
+    /// （见下），旧调用方不传时行为与从前一致。
+    ///
+    /// ⚠️ 为什么必须有全兜底（2026-10-23 立规，规格第 14 条）：已登录 ID 只许
+    /// 苹果官方失效或用户自己删除，人为操作不许弄失效。但前两步的键都绑在
+    /// 「当前记录」上——记录重建换 UUID、迁移把存量补到归一化键/保险库旧关联，
+    /// 都会让 secret 还在、本函数却返回 nil ⇒ 上层误判「凭据待恢复」要用户
+    /// 重新验证（log-48 09:44:26 两账号实证）。故传了账号标识时，前两步 miss
+    /// 后再全盘（钥匙串全部条目＋保险库全部条目）按 `accountIdentifier` 匹配，
+    /// 命中即自愈回填当前 UUID 键与保险库关联，之后走回快路径。
+    func load(accountID: UUID, accountIdentifier: String? = nil) async throws -> AccountSecret? {
         await ensureMigrated()
         if let secret = try rawLoad(key: accountID.uuidString) {
             // 主存命中顺手补齐保险库（旧版本只有钥匙串一份时，保险库靠读路径长出来）。
@@ -101,7 +111,23 @@ actor KeychainVault {
             try healKeychain(with: healed, accountID: accountID)
             return healed
         }
-        return nil
+        guard let accountIdentifier, accountIdentifier.isEmpty == false else { return nil }
+        var candidates: [AccountSecret] = []
+        if let keyed = try? allKeyedSecrets() {
+            candidates.append(contentsOf: keyed.map(\.secret))
+        }
+        if let vaultStore, let payload = try? await vaultStore.loadPayload() {
+            candidates.append(contentsOf: payload.entries.map(\.secret))
+        }
+        guard let found = CredentialIdentityMatcher.match(
+            accountIdentifier: accountIdentifier,
+            in: candidates
+        ) else { return nil }
+        try? healKeychain(with: found, accountID: accountID)
+        if let vaultStore {
+            _ = try? await vaultStore.upsert(found, accountID: accountID)
+        }
+        return found
     }
 
     /// 按登录 ID 查（重加同号接回旧 secret 的入口）：归一化键 → 保险库 → 存量全扫。
@@ -241,61 +267,6 @@ actor KeychainVault {
         return CredentialMigrationSummary(
             migratedCount: applied,
             alreadyMigratedCount: max(0, legacyCount - actions.count)
-        )
-    }
-
-    // MARK: - 口令导出 / 导入（后端；UI 入口形态未决，见 part-7 报告）
-
-    func exportVaultData(passphrase: String) async throws -> Data {
-        guard let vaultStore else { throw Self.vaultUnavailableFailure() }
-        do {
-            return try await vaultStore.exportData(passphrase: passphrase)
-        } catch {
-            throw Self.exportImportFailure()
-        }
-    }
-
-    /// 导入恢复：解开后逐条并入保险库并回填钥匙串（归一化键），返回导入条数。
-    @discardableResult
-    func importVaultData(_ data: Data, passphrase: String) async throws -> Int {
-        guard let vaultStore else { throw Self.vaultUnavailableFailure() }
-        let count: Int
-        do {
-            count = try await vaultStore.importData(data, passphrase: passphrase)
-        } catch {
-            throw Self.exportImportFailure()
-        }
-        for entry in (try? await vaultStore.loadPayload())?.entries ?? [] {
-            try? rawSave(entry.secret, key: entry.key)
-        }
-        return count
-    }
-
-    private static func vaultUnavailableFailure() -> ImportFailure {
-        ImportFailure(
-            title: "凭据保险库不可用",
-            reason: "本机保险库文件位置不可用，无法导出或导入凭据备份。",
-            recovery: "重新打开 Seal 后重试；如持续失败请导出日志",
-            code: "SEAL-KEYCHAIN-006",
-            condition: .localStorageWriteFailed,
-            action: .copyDiagnostics,
-            retryDisposition: .manual,
-            operation: .authenticateAccount,
-            origin: .fileStore
-        )
-    }
-
-    private static func exportImportFailure() -> ImportFailure {
-        ImportFailure(
-            title: "凭据备份处理失败",
-            reason: "备份文件无法解开（口令不正确或文件已损坏），本机凭据未做任何更改。",
-            recovery: "确认口令与备份文件后重试",
-            code: "SEAL-KEYCHAIN-006",
-            condition: .localStorageWriteFailed,
-            action: .copyDiagnostics,
-            retryDisposition: .manual,
-            operation: .authenticateAccount,
-            origin: .fileStore
         )
     }
 

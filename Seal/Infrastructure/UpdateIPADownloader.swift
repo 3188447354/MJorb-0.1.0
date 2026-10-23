@@ -61,6 +61,22 @@ struct UpdateIPADownloader {
         let knownSize = expectedSize.flatMap { $0 > 0 ? $0 : nil }
         await onProgress(0, knownSize)
 
+        // 完成登记复用：同一源 URL 已有「下载并校验通过、尚未转入待安装
+        // 列表」的包（上次在抽屉转交窗口里进程被杀 / 抽屉被关留下的），
+        // 直接交回、不重新下载。登记只在校验通过后写入（见成功路径），
+        // 复用不再验；文件在 App 沙盒内，与已转交的包同一信任级别，
+        // 抽屉侧的版本交叉校验照常执行。
+        if let completed = UpdateDownloadCompletedStore.load(in: downloadsDirectory),
+           completed.sourceURL == url.absoluteString {
+            let completedURL = downloadsDirectory.appending(
+                path: completed.fileName, directoryHint: .notDirectory)
+            if fileManager.fileExists(atPath: completedURL.path) {
+                await onProgress(knownSize ?? 0, knownSize)
+                return completedURL
+            }
+            UpdateDownloadCompletedStore.clear(in: downloadsDirectory)
+        }
+
         var resumeData = UpdateDownloadResumeStore.load(for: url, in: downloadsDirectory)
         var attemptKind: UpdateDownloadAttemptKind =
             UpdateDownloadResumePolicy.startDecision(hasStoredResumeData: resumeData != nil) == .resume
@@ -96,6 +112,20 @@ struct UpdateIPADownloader {
                 if let checksumURL {
                     try await verifyChecksum(fileURL: fileURL, checksumURL: checksumURL)
                 }
+                // 完成登记：从这里到转入待安装列表之间进程被杀 / 抽屉被关，
+                // 靠登记把包找回（见 UpdateDownloadCompletedStore 与本函数开头
+                // 的复用检查）。换新包时顺手删掉上一份未转交的旧包，
+                // 不让下载目录攒无人认领的孤儿。
+                if let previous = UpdateDownloadCompletedStore.load(in: downloadsDirectory),
+                   previous.fileName != fileURL.lastPathComponent {
+                    try? FileManager.default.removeItem(at: downloadsDirectory.appending(
+                        path: previous.fileName, directoryHint: .notDirectory))
+                }
+                UpdateDownloadCompletedStore.save(
+                    .init(sourceURL: url.absoluteString,
+                          fileName: fileURL.lastPathComponent,
+                          savedAt: Date()),
+                    in: downloadsDirectory)
                 return fileURL
             } catch let attemptFailure as UpdateDownloadAttemptFailure {
                 switch attemptFailure.plan {
@@ -151,6 +181,19 @@ struct UpdateIPADownloader {
     /// 删除指定下载文件（导入成功后清理）。
     func deleteDownloadedFile(at url: URL) {
         try? FileManager.default.removeItem(at: url)
+    }
+
+    /// 包已转入待安装列表：只清完成登记，文件由转交方按既有流程清理下载副本。
+    func clearCompletedDownload(for fileURL: URL) {
+        guard let record = UpdateDownloadCompletedStore.load(in: downloadsDirectory),
+              record.fileName == fileURL.lastPathComponent else { return }
+        UpdateDownloadCompletedStore.clear(in: downloadsDirectory)
+    }
+
+    /// 包被判无效（版本对不上 / 解析失败）：连文件带完成登记一起丢弃。
+    func discardCompletedDownload(at fileURL: URL) {
+        clearCompletedDownload(for: fileURL)
+        deleteDownloadedFile(at: fileURL)
     }
 
     /// AppDelegate 的 `application(_:handleEventsForBackgroundURLSession:completionHandler:)`
@@ -248,7 +291,7 @@ final class UpdateDownloadProgressCoalescer: @unchecked Sendable {
 
 // MARK: - 断点续传（纯函数判据 + 持久化）
 
-enum UpdateDownloadAttemptKind: Equatable, Sendable {
+enum UpdateDownloadAttemptKind: String, Codable, Equatable, Sendable {
     case fresh
     case resumed
 }
@@ -327,6 +370,11 @@ private struct UpdateDownloadPendingRecord: Codable {
     var destinationPath: String
     var expectedSize: Int64?
     var isFinished: Bool
+    /// 本次尝试的种类与「已回退过全新下载」标记（2026-10-23 补）：进程被杀后
+    /// 接管任务时凭它恢复原尝试语义，不再一律降级为 `.fresh`。可选是为了
+    /// 兼容旧版本写下的无此字段记录（解码缺省 nil，接管侧回退 `.fresh`）。
+    var attemptKind: UpdateDownloadAttemptKind?
+    var alreadyRetriedFresh: Bool?
 }
 
 private enum UpdateDownloadPendingStore {
@@ -343,6 +391,40 @@ private enum UpdateDownloadPendingStore {
     static func load(in directory: URL) -> UpdateDownloadPendingRecord? {
         guard let data = try? Data(contentsOf: fileURL(in: directory)) else { return nil }
         return try? JSONDecoder().decode(UpdateDownloadPendingRecord.self, from: data)
+    }
+
+    static func clear(in directory: URL) {
+        try? FileManager.default.removeItem(at: fileURL(in: directory))
+    }
+}
+
+
+/// 已下载并校验通过、尚未转入待安装列表的更新包登记。
+///
+/// 下载完成到抽屉自动转交之间只有约一秒，过去这段时间里进程被杀或抽屉
+/// 被关掉，包就成了没人认领的孤儿（随机文件名、无记录指向），只能重新
+/// 下载。登记在校验通过后写入、转交成功或判无效时清除；同一时刻只登记
+/// 一份（单任务下载），新包写入时顺手删旧包文件。
+struct UpdateDownloadCompletedRecord: Codable {
+    var sourceURL: String
+    var fileName: String
+    var savedAt: Date
+}
+
+enum UpdateDownloadCompletedStore {
+    static func fileURL(in directory: URL) -> URL {
+        directory.appending(path: "seal-update-completed.json")
+    }
+
+    static func save(_ record: UpdateDownloadCompletedRecord, in directory: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let data = try? JSONEncoder().encode(record) else { return }
+        try? data.write(to: fileURL(in: directory), options: .atomic)
+    }
+
+    static func load(in directory: URL) -> UpdateDownloadCompletedRecord? {
+        guard let data = try? Data(contentsOf: fileURL(in: directory)) else { return nil }
+        return try? JSONDecoder().decode(UpdateDownloadCompletedRecord.self, from: data)
     }
 
     static func clear(in directory: URL) {
@@ -594,7 +676,9 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
                     sourceURL: url.absoluteString,
                     destinationPath: destination.path,
                     expectedSize: expectedSize,
-                    isFinished: false
+                    isFinished: false,
+                    attemptKind: attemptKind,
+                    alreadyRetriedFresh: alreadyRetriedFresh
                 ),
                 in: downloadsDirectory
             )
@@ -623,8 +707,11 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
                     ?? task.currentRequest?.url
                     ?? URL(fileURLWithPath: "/")
                 let destination: URL
-                if let record, record.sourceURL == sourceURL.absoluteString {
-                    destination = URL(fileURLWithPath: record.destinationPath)
+                let matchedRecord = record.flatMap {
+                    $0.sourceURL == sourceURL.absoluteString ? $0 : nil
+                }
+                if let matchedRecord {
+                    destination = URL(fileURLWithPath: matchedRecord.destinationPath)
                 } else {
                     destination = self.downloadsDirectory.appending(
                         path: "seal-update-recovered-\(task.taskIdentifier).ipa"
@@ -634,8 +721,8 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
                     sourceURL: sourceURL,
                     destination: destination,
                     expectedSize: record?.expectedSize,
-                    attemptKind: .fresh,
-                    alreadyRetriedFresh: false
+                    attemptKind: matchedRecord?.attemptKind ?? .fresh,
+                    alreadyRetriedFresh: matchedRecord?.alreadyRetriedFresh ?? false
                 )
                 state.task = task
                 self.lock.lock()
@@ -663,8 +750,8 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
                 sourceURL: fallbackURL,
                 destination: destination,
                 expectedSize: record?.expectedSize,
-                attemptKind: .fresh,
-                alreadyRetriedFresh: false
+                attemptKind: record?.attemptKind ?? .fresh,
+                alreadyRetriedFresh: record?.alreadyRetriedFresh ?? false
             )
             created.task = task
             states[task.taskIdentifier] = created
@@ -773,7 +860,9 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
                 sourceURL: state.sourceURL.absoluteString,
                 destinationPath: state.destination.path,
                 expectedSize: state.expectedSize,
-                isFinished: true
+                isFinished: true,
+                attemptKind: state.attemptKind,
+                alreadyRetriedFresh: state.alreadyRetriedFresh
             ),
             in: downloadsDirectory
         )

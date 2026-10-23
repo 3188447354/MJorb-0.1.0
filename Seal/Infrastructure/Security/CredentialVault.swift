@@ -55,30 +55,14 @@ struct CredentialVaultPayload: Codable, Equatable, Sendable {
         }
     }
 
-    /// 导入合并：导入条目逐条 upsert，本机已有同键条目保留其关联并以导入 secret 为准
-    /// （导入是用户显式恢复动作，语义就是「用这份备份恢复」）。
-    mutating func merge(_ other: CredentialVaultPayload) {
-        for entry in other.entries {
-            if let index = entries.firstIndex(where: { $0.key == entry.key }) {
-                entries[index].secret = entry.secret
-                for id in entry.accountIDs
-                where entries[index].accountIDs.contains(id) == false {
-                    entries[index].accountIDs.append(id)
-                }
-            } else {
-                entries.append(entry)
-            }
-        }
-    }
 }
 
 // MARK: - 纯编解码（CryptoKit AES-GCM；不自造加密）
 
-/// 保险库文件的加解密与口令导出 / 导入编解码。全部是纯函数：
+/// 保险库文件的加解密与载荷编解码。全部是纯函数：
 /// 给定 (数据, 钥匙) 进、(数据) 出，不碰钥匙串、不碰文件系统 —— 单测直接钉。
 enum CredentialVaultCrypto {
     static let fileFormatVersion = 1
-    static let exportFormat = "seal-credential-vault-export"
 
     struct FileEnvelope: Codable, Equatable, Sendable {
         var version: Int
@@ -86,18 +70,9 @@ enum CredentialVaultCrypto {
         var sealedBox: String
     }
 
-    struct ExportEnvelope: Codable, Equatable, Sendable {
-        var format: String
-        var version: Int
-        /// HKDF 盐（每次导出随机 32 字节）的 base64。
-        var salt: String
-        var sealedBox: String
-    }
-
     enum CryptoError: Error, Equatable, Sendable {
         case malformedEnvelope
         case unsupportedVersion
-        case notAnExportFile
     }
 
     // MARK: 设备钥匙（保险库文件本体）
@@ -118,53 +93,6 @@ enum CredentialVaultCrypto {
         guard let combined = Data(base64Encoded: envelope.sealedBox) else {
             throw CryptoError.malformedEnvelope
         }
-        let box = try AES.GCM.SealedBox(combined: combined)
-        return try AES.GCM.open(box, using: key)
-    }
-
-    // MARK: 用户口令（导出 / 导入）
-
-    /// 口令派生：HKDF-SHA256，口令原文作输入钥匙材料、随机盐防彩虹表、
-    /// info 绑定用途（导出的密钥不能被挪作它用）。派生本身不保存口令。
-    static func deriveExportKey(passphrase: String, salt: Data) -> SymmetricKey {
-        HKDF<SHA256>.deriveKey(
-            inputKeyMaterial: SymmetricKey(data: Data(passphrase.utf8)),
-            salt: salt,
-            info: Data("SealCredentialVaultExport/v1".utf8),
-            outputByteCount: 32
-        )
-    }
-
-    static func makeExportFile(
-        payloadData: Data,
-        passphrase: String,
-        salt: Data = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-    ) throws -> Data {
-        let key = deriveExportKey(passphrase: passphrase, salt: salt)
-        let sealed = try AES.GCM.seal(payloadData, using: key)
-        guard let combined = sealed.combined else { throw CryptoError.malformedEnvelope }
-        let envelope = ExportEnvelope(
-            format: exportFormat,
-            version: fileFormatVersion,
-            salt: salt.base64EncodedString(),
-            sealedBox: combined.base64EncodedString()
-        )
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(envelope)
-    }
-
-    /// 口令错误时 AES-GCM 校验失败直接抛错（`CryptoKitError.authenticationFailure`），
-    /// 不会返回任何明文 —— 调用方据此报 `SEAL-KEYCHAIN-006`。
-    static func openExportFile(_ fileData: Data, passphrase: String) throws -> Data {
-        let envelope = try JSONDecoder().decode(ExportEnvelope.self, from: fileData)
-        guard envelope.format == exportFormat else { throw CryptoError.notAnExportFile }
-        guard envelope.version == fileFormatVersion else { throw CryptoError.unsupportedVersion }
-        guard let salt = Data(base64Encoded: envelope.salt),
-              let combined = Data(base64Encoded: envelope.sealedBox) else {
-            throw CryptoError.malformedEnvelope
-        }
-        let key = deriveExportKey(passphrase: passphrase, salt: salt)
         let box = try AES.GCM.SealedBox(combined: combined)
         return try AES.GCM.open(box, using: key)
     }
@@ -335,25 +263,4 @@ actor CredentialVaultFileStore {
         try savePayload(payload)
     }
 
-    @discardableResult
-    func merge(_ imported: CredentialVaultPayload) throws -> Int {
-        var payload = try loadPayload()
-        payload.merge(imported)
-        try savePayload(payload)
-        return imported.entries.count
-    }
-
-    // MARK: 口令导出 / 导入（后端编解码；UI 入口形态未决，见 0.1.52 part-7 报告）
-
-    func exportData(passphrase: String) throws -> Data {
-        let plain = try CredentialVaultCrypto.encodePayload(try loadPayload())
-        return try CredentialVaultCrypto.makeExportFile(payloadData: plain, passphrase: passphrase)
-    }
-
-    @discardableResult
-    func importData(_ data: Data, passphrase: String) throws -> Int {
-        let plain = try CredentialVaultCrypto.openExportFile(data, passphrase: passphrase)
-        let imported = try CredentialVaultCrypto.decodePayload(plain)
-        return try merge(imported)
-    }
 }

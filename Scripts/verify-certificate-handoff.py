@@ -75,7 +75,7 @@ def violations(load):
          'embedded profile validation must prove this request produced a fresh full-window profile'),
         ('guard Self.certificateReusable(fullCert)' in portal,
          'a newly created certificate must itself cover the complete seven-day profile window'),
-        ('let rollbackSecret = (try? await keychain.load(accountID: accountID))' in coordinator
+        ('let rollbackSecret = (try? await keychain.load(accountID: accountID, accountIdentifier: originalAccount.accountIdentifier))' in coordinator
          and 'let currentAccounts = try? await accountRepository.fetchAll()' in coordinator
          and 'keychain.save(rollbackSecret' in coordinator,
          'post-rotation persistence failure must not restore an Apple-revoked certificate'),

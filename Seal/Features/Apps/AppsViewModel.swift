@@ -943,7 +943,7 @@ final class AppsViewModel: ObservableObject {
         guard let keychain else { return [:] }
         var values: [UUID: AccountSecret] = [:]
         for account in accounts {
-            guard let secret = try? await keychain.load(accountID: account.id) else { continue }
+            guard let secret = try? await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else { continue }
             values[account.id] = secret
         }
         return values
@@ -4226,7 +4226,7 @@ final class AppsViewModel: ObservableObject {
         guard let accountRepository, let keychain else { return records }
         var repaired = records
         for index in repaired.indices where repaired[index].status == .needsVerification {
-            let hasLocalSecret = try await keychain.load(accountID: repaired[index].id) != nil
+            let hasLocalSecret = try await keychain.load(accountID: repaired[index].id, accountIdentifier: repaired[index].accountIdentifier) != nil
             let status = AccountAvailabilityPolicy.repairedStatus(
                 for: repaired[index],
                 hasLocalSecret: hasLocalSecret

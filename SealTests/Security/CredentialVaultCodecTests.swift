@@ -3,8 +3,8 @@ import Foundation
 import Testing
 @testable import Seal
 
-/// 保险库编解码与迁移规划（0.1.52 第 7 项）：AES-GCM 往返、口令导出 / 导入、
-/// 载荷 upsert / detach / merge 语义、旧 UUID 键迁移的幂等性。
+/// 保险库编解码与迁移规划（0.1.52 第 7 项）：AES-GCM 往返、
+/// 载荷 upsert / detach 语义、旧 UUID 键迁移的幂等性。
 /// 全部离线（固定钥匙 + 临时目录），不碰真实钥匙串。
 struct CredentialVaultCodecTests {
     private func secret(
@@ -71,37 +71,10 @@ struct CredentialVaultCodecTests {
         }
     }
 
-    // MARK: 口令导出 / 导入编解码
+    // MARK: 载荷语义（双写 / detach 不删）
 
     @Test
-    func exportRoundTripsWithPassphraseOnly() throws {
-        let plain = try CredentialVaultCrypto.encodePayload(
-            CredentialVaultPayload(entries: [
-                CredentialVaultEntry(key: "user@example.com", accountIDs: [], secret: secret())
-            ])
-        )
-        let salt = Data(repeating: 7, count: 32)
-        let exported = try CredentialVaultCrypto.makeExportFile(
-            payloadData: plain, passphrase: "correct horse", salt: salt
-        )
-        #expect(try CredentialVaultCrypto.openExportFile(exported, passphrase: "correct horse") == plain)
-        // 口令错一个字：AES-GCM 校验失败，不返回任何明文。
-        #expect(throws: (any Error).self) {
-            try CredentialVaultCrypto.openExportFile(exported, passphrase: "wrong horse")
-        }
-        // 设备文件格式不是导出文件：必须拒绝，不能静默当空保险库导入。
-        let deviceFile = try CredentialVaultCrypto.encryptFile(
-            payloadData: plain, key: SymmetricKey(size: .bits256)
-        )
-        #expect(throws: (any Error).self) {
-            try CredentialVaultCrypto.openExportFile(deviceFile, passphrase: "correct horse")
-        }
-    }
-
-    // MARK: 载荷语义（双写 / detach 不删 / 合并）
-
-    @Test
-    func payloadUpsertDetachAndMergeKeepSecret() {
+    func payloadUpsertAndDetachKeepSecret() {
         let accountID = UUID()
         var payload = CredentialVaultPayload.empty
         payload.upsert(secret(), accountID: accountID)
@@ -118,20 +91,12 @@ struct CredentialVaultCodecTests {
         payload.detach(accountID: accountID)
         #expect(payload.entry(forAccountID: accountID) == nil)
         #expect(payload.entry(forKey: "user@example.com")?.secret.authToken == "token-2")
-
-        // 导入合并：同键以导入为准、关联取并集。
-        var imported = CredentialVaultPayload.empty
-        imported.upsert(secret(authToken: "token-3"), accountID: UUID())
-        payload.merge(imported)
-        #expect(payload.entries.count == 1)
-        #expect(payload.entry(forKey: "user@example.com")?.secret.authToken == "token-3")
-        #expect(payload.entry(forKey: "user@example.com")?.accountIDs.count == 1)
     }
 
     // MARK: 文件存储（临时目录 + 固定钥匙）
 
     @Test
-    func fileStorePersistsHealsAndExports() async throws {
+    func fileStorePersistsAndReopens() async throws {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "CredentialVaultTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -147,21 +112,6 @@ struct CredentialVaultCodecTests {
         // 新实例读同一文件：落盘成立（写后回读的存储层证据）。
         let reopened = CredentialVaultFileStore(fileURL: fileURL) { key }
         #expect(try await reopened.secret(forKey: "user@example.com") == secret())
-
-        // 导出 → 换一台「设备」（新文件 + 新钥匙）导入 → 凭据回来。
-        let exported = try await store.exportData(passphrase: "backup-pw")
-        let otherURL = root.appending(path: "Other.json")
-        // keyProvider 契约是「每次返回同一把钥匙」（生产实现从钥匙串读存量钥匙）；
-        // 写成 `{ SymmetricKey(size: .bits256) }` 会每次调用都生成新随机钥匙，
-        // 导入落盘与随后回读用的不是同一把 ⇒ GCM 校验必然 authenticationFailure
-        // （CI run 39876823760 实证）。固定一把「另一台设备」的钥匙才符合契约。
-        let otherKey = SymmetricKey(size: .bits256)
-        let other = CredentialVaultFileStore(fileURL: otherURL) { otherKey }
-        #expect(try await other.importData(exported, passphrase: "backup-pw") == 1)
-        #expect(try await other.secret(forKey: "user@example.com") == secret())
-        await #expect(throws: (any Error).self) {
-            try await other.importData(exported, passphrase: "nope")
-        }
     }
 
     // MARK: 迁移规划（幂等、只补不删）

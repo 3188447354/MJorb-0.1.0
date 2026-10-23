@@ -558,7 +558,7 @@ final class SettingsViewModel: ObservableObject {
         guard let accountRepository, let keychain else { return }
         let secret: AccountSecret?
         do {
-            secret = try await keychain.load(accountID: account.id)
+            secret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier)
         } catch {
             alertFailure = Self.failure(
                 title: "证书不可用",
@@ -620,7 +620,7 @@ final class SettingsViewModel: ObservableObject {
         defer { releaseOperation(operationLease) }
 
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "无法创建证书",
@@ -716,7 +716,7 @@ final class SettingsViewModel: ObservableObject {
         var remoteRevocationConfirmed = false
         var recoveryJournalSaved = true
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "无法撤销证书",
@@ -864,7 +864,7 @@ final class SettingsViewModel: ObservableObject {
         var remoteRevocationConfirmed = false
         var recoveryJournalSaved = true
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "无法更换证书",
@@ -1044,7 +1044,7 @@ final class SettingsViewModel: ObservableObject {
         defer { releaseOperation(operationLease) }
 
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 throw Self.failure(
                     title: "无法分析证书",
                     reason: "本机没有当前 Apple ID 的登录凭据。",
@@ -1137,7 +1137,7 @@ final class SettingsViewModel: ObservableObject {
         defer { releaseOperation(operationLease) }
 
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 throw Self.failure(
                     title: "无法清理证书",
                     reason: "本机没有当前 Apple ID 的登录凭据。",
@@ -1356,7 +1356,7 @@ final class SettingsViewModel: ObservableObject {
     ) async throws {
         do {
             try await keychain.save(material.updatedSecret, for: originalAccount.id)
-            guard let reloaded = try await keychain.load(accountID: originalAccount.id),
+            guard let reloaded = try await keychain.load(accountID: originalAccount.id, accountIdentifier: originalAccount.accountIdentifier),
                   reloaded.certificateSerialNumber?.caseInsensitiveCompare(material.serialNumber) == .orderedSame,
                   let p12 = reloaded.certificateP12 else {
                 throw Self.failure(
@@ -1438,7 +1438,7 @@ final class SettingsViewModel: ObservableObject {
         for var account in storedAccounts {
             var changed = false
             do {
-                if let secret = try await keychain.load(accountID: account.id) {
+                if let secret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) {
                     let readableMaskedEmail = AppleAccountClient.mask(secret.email)
                     if account.maskedEmail != readableMaskedEmail {
                         account.maskedEmail = readableMaskedEmail
@@ -1491,7 +1491,7 @@ final class SettingsViewModel: ObservableObject {
         var values: [UUID: String] = [:]
         for account in accounts {
             do {
-                if let secret = try await keychain.load(accountID: account.id) {
+                if let secret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) {
                     values[account.id] = secret.email
                 }
             } catch {
@@ -1583,7 +1583,7 @@ final class SettingsViewModel: ObservableObject {
         defer { finishCertificateInventoryRefresh(ticket) }
 
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 // 0.1.52 第 7 项：`load` 已查钥匙串主存 + 保险库两处，两处都 miss 才是真缺失。
                 // 不再以错误级抛 `SEAL-INVENTORY-100b`（旧行为每次进页成对刷错误日志）：
                 // 标记「凭据待恢复」+ 一次性信息提示即返回，后续同步由待恢复标记直接跳过。
@@ -1687,7 +1687,7 @@ final class SettingsViewModel: ObservableObject {
         defer { finishCertificateInventoryRefresh(ticket) }
 
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 // 与 `SEAL-INVENTORY-100b` 同口径（0.1.52 第 7 项）：真缺失（主存 + 保险库
                 // 都 miss）才标记待恢复；钥匙串瞬时不可读抛的是 `KeychainError`、走下方
                 // 通用失败路径，不会误标 —— 旧注释担心的「瞬时不可读误标失效」并不成立。
@@ -1816,7 +1816,7 @@ final class SettingsViewModel: ObservableObject {
         defer { finishCertificateInventoryRefresh(ticket) }
 
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 // 与 `SEAL-INVENTORY-100b` 同口径（0.1.52 第 7 项）：标记待恢复 + 一次性提示，不再错误级抛错。
                 await handleMissingInventoryCredential(for: account, updatesHealth: true)
                 return
@@ -1945,7 +1945,7 @@ final class SettingsViewModel: ObservableObject {
     func refreshCertificateHealthLocally(for account: AppleAccountRecord) async {
         guard let keychain else { return }
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else { return }
+            guard let secret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else { return }
             let status = await makeCertificateHealthStatus(
                 account: account,
                 secret: secret,
@@ -1966,7 +1966,7 @@ final class SettingsViewModel: ObservableObject {
     ) async -> CertificateHealthStatus? {
         guard let keychain else { return nil }
         do {
-            guard let secret = try await keychain.load(accountID: account.id) else {
+            guard let secret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 return nil
             }
             return await makeCertificateHealthStatus(
@@ -2413,7 +2413,7 @@ final class SettingsViewModel: ObservableObject {
 
         // 先按记录 UUID 查，再按归一化登录 ID 查（0.1.52 第 7 项）：删号重加会换新 UUID，
         // 旧 secret 靠登录 ID 键接回，历史证书材料经 `preservingSigningMaterial` 一并保留。
-        var previousSecret = try await keychain.load(accountID: record.id)
+        var previousSecret = try await keychain.load(accountID: record.id, accountIdentifier: record.accountIdentifier)
         if previousSecret == nil {
             previousSecret = try? await keychain.load(loginID: authenticated.secret.email)
         }
@@ -2511,7 +2511,7 @@ final class SettingsViewModel: ObservableObject {
             .filter { $0.accountID == account.id } ?? []
         let storedSecret: AccountSecret?
         do {
-            storedSecret = try await keychain.load(accountID: account.id)
+            storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier)
         } catch {
             alertFailure = Self.failure(
                 title: "无法删除 Apple ID",
@@ -2563,7 +2563,7 @@ final class SettingsViewModel: ObservableObject {
 
     func email(for account: AppleAccountRecord) async -> String {
         guard let keychain else { return "" }
-        return (try? await keychain.load(accountID: account.id))?.email ?? ""
+        return (try? await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier))?.email ?? ""
     }
 
     @discardableResult
@@ -3050,7 +3050,7 @@ final class SettingsViewModel: ObservableObject {
 
         diagnosticState = .running
         do {
-            guard let storedSecret = try await keychain.load(accountID: account.id) else {
+            guard let storedSecret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier) else {
                 await persistVerificationFailure(.localCredentialsMissing, for: account)
                 throw Self.failure(
                     title: "账号需要验证",
@@ -3170,7 +3170,7 @@ final class SettingsViewModel: ObservableObject {
         guard let accountRepository, let keychain else { return records }
         var repaired = records
         for index in repaired.indices where repaired[index].status == .needsVerification {
-            let hasLocalSecret = try await keychain.load(accountID: repaired[index].id) != nil
+            let hasLocalSecret = try await keychain.load(accountID: repaired[index].id, accountIdentifier: repaired[index].accountIdentifier) != nil
             let status = AccountAvailabilityPolicy.repairedStatus(
                 for: repaired[index],
                 hasLocalSecret: hasLocalSecret

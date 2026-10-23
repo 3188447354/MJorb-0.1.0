@@ -16,6 +16,9 @@ struct AppSigningSheet: View {
     @State private var isBundleIDEditorPresented = false
     @State private var isNameEditorPresented = false
     @State private var isIconActionsPresented = false
+    /// 图标操作子抽屉里选好的动作：先存这里，等子抽屉真正关闭完成
+    /// （`onDismiss`）再执行 —— 不再硬等 220ms 猜关闭动画是否结束。
+    @State private var pendingIconAction: AppIconSelectionSheet.Action?
     @State private var isUpdatePackageDeleteConfirmPresented = false
     @State private var isPhotoPickerPresented = false
     @State private var isIconFileImporterPresented = false
@@ -70,20 +73,10 @@ struct AppSigningSheet: View {
             }
             .presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $isIconActionsPresented) {
+        .sheet(isPresented: $isIconActionsPresented, onDismiss: performPendingIconAction) {
             AppIconSelectionSheet { action in
+                pendingIconAction = action
                 isIconActionsPresented = false
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(220))
-                    switch action {
-                    case .photos:
-                        isPhotoPickerPresented = true
-                    case .files:
-                        isIconFileImporterPresented = true
-                    case .original:
-                        _ = await viewModel.updatePreferredIcon(for: workingApp, data: nil)
-                    }
-                }
             }
             .presentationDetents([.medium, .large])
         }
@@ -160,6 +153,20 @@ struct AppSigningSheet: View {
             }
         }
         .onAppear { resetBundleIDDraftIfNeeded() }
+    }
+
+    /// 图标操作子抽屉关闭完成后消费暂存的动作（点「取消」关闭时为空操作）。
+    private func performPendingIconAction() {
+        guard let action = pendingIconAction else { return }
+        pendingIconAction = nil
+        switch action {
+        case .photos:
+            isPhotoPickerPresented = true
+        case .files:
+            isIconFileImporterPresented = true
+        case .original:
+            Task { _ = await viewModel.updatePreferredIcon(for: workingApp, data: nil) }
+        }
     }
 
     private func startSigning(completionMode: SigningCompletionMode) {

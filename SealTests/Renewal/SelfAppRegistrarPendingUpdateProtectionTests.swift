@@ -149,6 +149,63 @@ struct SelfAppRegistrarPendingUpdateProtectionTests {
         #expect(FileManager.default.fileExists(atPath: staleURL.path) == false)
     }
 
+    /// 残留链接结算（2026-10-23 收口未决②）：只剩待更新记录、且它与运行包
+    /// 同版本同构建（更新已装上、前任记录已删）时，自注册应直接把它结算为
+    /// 已安装 —— 清替换链接、待更新指纹转正，否则它永远挂在待安装列表。
+    @Test
+    func registrationSettlesResidualPendingRecordMatchingRunningVersion() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "SealPendingResidual-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let documents = root.appending(path: "Documents", directoryHint: .isDirectory)
+        let cache = root.appending(path: "Caches", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let appStore = try CoreDataAppStore(inMemory: true)
+        let fileStore = AppFileStore(documentsDirectory: documents, cacheDirectory: cache)
+
+        var residual = makeRecord(version: "1.0", buildNumber: "1")
+        residual.state = .imported
+        residual.replacesInstalledAppID = UUID()
+        residual.pendingUpdateSourceFingerprint = "pending-fingerprint"
+        let ipaURL = documents.appending(path: "Apps/\(residual.id.uuidString)/Original.ipa")
+        try FileManager.default.createDirectory(
+            at: ipaURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("residual".utf8).write(to: ipaURL)
+        try await appStore.save(residual)
+
+        let currentBundle = root.appending(path: "CurrentSeal.app", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: currentBundle, withIntermediateDirectories: true)
+        let registrar = SelfAppRegistrar(
+            metadata: SelfAppMetadata(
+                bundleURL: currentBundle,
+                bundleIdentifier: "com.mjorb.seal",
+                originalBundleIdentifier: "com.mjorb.seal",
+                name: "Seal",
+                version: "1.0",
+                buildNumber: "1",
+                iconData: nil,
+                expirationDate: nil,
+                signingTeamIdentifier: nil,
+                signingApplicationIdentifier: nil
+            ),
+            appStore: appStore,
+            accountRepository: PendingUpdateEmptyAccountRepository(),
+            fileStore: fileStore
+        )
+
+        try await registrar.ensureRegistered()
+
+        let records = try await appStore.fetchAll()
+        let settled = try #require(records.first { $0.id == residual.id })
+        #expect(settled.state == .installed)
+        #expect(settled.replacesInstalledAppID == nil)
+        #expect(settled.installedFingerprint == "pending-fingerprint")
+        #expect(settled.pendingUpdateSourceFingerprint == nil)
+    }
+
     // MARK: - 夹具
 
     private func makeRecord(version: String, buildNumber: String) -> AppRecord {
