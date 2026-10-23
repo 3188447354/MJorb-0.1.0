@@ -78,6 +78,7 @@ enum LogPrivacyRedactor {
     private static func redactPhoneNumbers(in value: String) -> String {
         return replaceMatches(in: value, regex: phoneRegex) { match in
             guard looksLikeDateFragment(match) == false else { return match }
+            guard isUUIDShaped(match) == false else { return match }
             return AppleAccountClient.mask(match)
         }
     }
@@ -90,6 +91,19 @@ enum LogPrivacyRedactor {
     private static func looksLikeDateFragment(_ match: String) -> Bool {
         let pattern = #"^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?$"#
         return match.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    /// 该片段是否整体就是一个 UUID（纯数字段的 UUID 也满足手机号模式的字符类）。
+    ///
+    /// 纯数字 UUID 若被手机号规则先认领，`mask` 会保留能区分个体的尾段 ⇒
+    /// 两条只差 UUID 的同类日志脱敏后仍不同字，`LogDedupPolicy` 的
+    /// 「脱敏后同键合并」对这类日志静默失效（CI run 39876823760 实证）。
+    /// 归 UUID 规则统一成 `前 8 位…[uuid]` 才同键。含十六进制字母的 UUID
+    /// 本来就进不了手机号模式，所以这里只需按整段形状判。
+    private static func isUUIDShaped(_ match: String) -> Bool {
+        let range = NSRange(match.startIndex..<match.endIndex, in: match)
+        guard let found = uuidRegex.firstMatch(in: match, range: range) else { return false }
+        return found.range.location == range.location && found.range.length == range.length
     }
 
     private static func redactJWTs(in value: String) -> String {

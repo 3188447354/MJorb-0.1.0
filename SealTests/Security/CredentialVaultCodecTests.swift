@@ -151,7 +151,12 @@ struct CredentialVaultCodecTests {
         // 导出 → 换一台「设备」（新文件 + 新钥匙）导入 → 凭据回来。
         let exported = try await store.exportData(passphrase: "backup-pw")
         let otherURL = root.appending(path: "Other.json")
-        let other = CredentialVaultFileStore(fileURL: otherURL) { SymmetricKey(size: .bits256) }
+        // keyProvider 契约是「每次返回同一把钥匙」（生产实现从钥匙串读存量钥匙）；
+        // 写成 `{ SymmetricKey(size: .bits256) }` 会每次调用都生成新随机钥匙，
+        // 导入落盘与随后回读用的不是同一把 ⇒ GCM 校验必然 authenticationFailure
+        // （CI run 39876823760 实证）。固定一把「另一台设备」的钥匙才符合契约。
+        let otherKey = SymmetricKey(size: .bits256)
+        let other = CredentialVaultFileStore(fileURL: otherURL) { otherKey }
         #expect(try await other.importData(exported, passphrase: "backup-pw") == 1)
         #expect(try await other.secret(forKey: "user@example.com") == secret())
         await #expect(throws: (any Error).self) {

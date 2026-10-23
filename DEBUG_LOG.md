@@ -1,10 +1,18 @@
+# 2026-10-23 — 0.1.52 第三轮 CI 两红：保险库单测钥匙不稳定＋纯数字 UUID 被手机号脱敏认领（CI 修复轮三）
+
+- **现象**：提交 894dae4 的完整 CI（run 39876823760）：build-package ✓（编译与守卫全过）、signer-tests ✓；swift-regression ✗，1178 条单测中 2 条失败、共 5 个 issue：① `CredentialVaultCodecTests.fileStorePersistsHealsAndExports` 抛 `authenticationFailure`；② `LogDedupPolicyTests.storeMergesRedactedDuplicatesAndPersistsCount` 合并未发生（条数 3≠2、repeatCount 1≠2、导出无 ×2、重开不保留计数）。纯 `LogDedupPolicy` 判据单测全过，问题都在集成路径。
+- **根因**：① 测试自身的钥匙供给违反契约：模拟「另一台设备」的 FileStore 写成 `{ SymmetricKey(size: .bits256) }`，每次调用生成新随机钥匙——导入落盘与回读不是同一把钥匙，GCM 校验必然失败；生产 `keyProvider` 契约是每次返回同一把（钥匙串存量钥匙），`production()` 与同测另外两个 store 都稳定，只有这一处不稳定。② 生产脱敏管线顺序坑（R15 同族）：纯数字 UUID 满足手机号模式的字符类，`redact()` 里手机号步在 UUID 步之前，先把整段 UUID 当号码 `mask`，mask 保留可区分个体的尾段 ⇒ 两条只差 UUID 的同类日志脱敏后仍不同字，存储层「脱敏后同键＋120 秒窗口」合并静默失效。第 8 项的测试数据正是纯数字 UUID，真机日志里同形态 ID 同理。
+- **修复**：① 单测把「另一台设备」的钥匙固定为一个局部 `otherKey`（契约对齐），并留注释写明契约与本次实证。② `LogPrivacyRedactor.redactPhoneNumbers` 在日期守卫之后加 `isUUIDShaped` 守卫：整段命中 UUID 形状的匹配原样让给后面的 UUID 规则归一成 `前 8 位…[uuid]`（日期守卫的钉子行逐字未动，R15 断言/变异形态不变）；新增单测 `numericUUIDsNormalizeToSameUUIDPlaceholder` 钉住「两条只差纯数字 UUID 的消息脱敏后逐字相等」；守卫 R15 新增一对断言＋一条变异钉住该守卫行与单测存在。
+- **涉及文件**：`SealTests/Security/CredentialVaultCodecTests.swift`、`Seal/Infrastructure/Diagnostics/LogPrivacyRedactor.swift`、`SealTests/Diagnostics/LogPrivacyRedactorTests.swift`、`Scripts/verify-release-safety.py`（R15 扩展）、本条。
+- **验证状态**：待本地全量守卫复跑与 CI 第四轮复跑后补记。
+
 # 2026-10-23 — 0.1.52 第二轮 CI 两红：`getAllTasks` 在当前 SDK 无 async 重载（CI 修复轮二）
 
 - **现象**：提交 d22ba7c 的完整 CI（run 39871049020）：signer-tests ✓；swift-regression ✗ 与 build-package ✗ 同一处编译错误——`UpdateIPADownloader.swift:544` 的 `await session.getAllTasks()` 报 `missing argument for parameter 'completionHandler'`，545 行连带类型推断超时；build-package 的守卫断言与变异本轮全过，倒在编译步（exit 65），不是守卫。
 - **根因**：第 1 项新代码误以为 `URLSession.getAllTasks()` 有 async 重载；当前 SDK（Xcode 26.5）只有 completionHandler 形态。首轮 CI 里该文件先倒在静态 handler 的并发声明、build-package 先倒在守卫变异，这处错误被两层遮蔽，直到本轮才暴露——「守卫 PASS ≠ 能编译」（AGENTS.md §5）的又一实例。全仓 grep 确认 `getAllTasks` 仅此一处使用，其余 `await session.*` 均为 `data(for:)` 真 async API，无同族漏网。
 - **修复**：改用 `withCheckedContinuation` 包 completionHandler 形态，返回值显式标注 `[URLSessionTask]`（同时消除 545 行的推断爆炸）；与同文件 `adoptExistingTasks()` 的 completion 形态一致；未新增并发盒。
 - **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、本条（另顺带回填 0.1.51 第三轮条目的 run 号）。
-- **验证状态**：待本地全量守卫复跑与 CI 第三轮复跑后补记。
+- **验证状态**：本地全量守卫复跑（工作目录写死为本批工作树）：892 项断言＋651 条变异全部 PASS（本次改动无守卫锚点牵连，已 grep 确认）；修复提交 894dae4，CI 第三轮 run 39876823760 复跑中。
 
 # 2026-10-23 — 0.1.52 首轮 CI 两红：静态 handler 并发声明＋三处守卫变异失效（CI 修复轮）
 

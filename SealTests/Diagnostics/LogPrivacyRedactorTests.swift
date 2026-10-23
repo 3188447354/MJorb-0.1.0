@@ -168,4 +168,17 @@ struct LogPrivacyRedactorTests {
         assertNoSecret("编号 2026-13", ["202613"])
         assertNoSecret("编号 2026-09-32", ["20260932"])
     }
+
+    /// 纯数字 UUID 满足手机号模式的字符类，曾被它整段认领并 `mask`，
+    /// 保留了能区分个体的尾段 ⇒ 只差 UUID 的同类日志脱敏后不同字、
+    /// `LogDedupPolicy` 合并不了（CI run 39876823760 实证）。
+    /// 现在手机号规则把整段 UUID 让给 UUID 规则：归一成同一个占位形。
+    /// 注意这里放行的是「换规则处理」不是「不脱敏」：输出里仍不得有原 UUID。
+    @Test
+    func numericUUIDsNormalizeToSameUUIDPlaceholder() {
+        let first = LogPrivacyRedactor.redact("请求 12345678-1111-1111-1111-111111111111 已发出")
+        let second = LogPrivacyRedactor.redact("请求 12345678-2222-2222-2222-222222222222 已发出")
+        #expect(first == second)
+        #expect(first == "请求 12345678…[uuid] 已发出")
+    }
 }

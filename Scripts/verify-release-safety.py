@@ -1006,6 +1006,16 @@ def violations(load=read):
     check("func stillRedactsRealPhoneNumberShapes()" in redactor_tests
           and "func dateShapeDetectorRejectsPhoneLikeNumbers()" in redactor_tests,
           "R15: relaxing the date rule must not leak phone numbers — both sides need a test")
+    # 纯数字 UUID 同样满足手机号模式字符类：被 mask 认领会保留区分个体的尾段，
+    # 「脱敏后同键」的日志去重（R145）对这类日志静默失效（2026-10-23 CI 实证）。
+    # 手机号规则必须把整段 UUID 让给 UUID 规则归一化，两侧都要有单测钉住。
+    check("guard isUUIDShaped(match) == false else { return match }" in redactor_source
+          and "static func isUUIDShaped(" in redactor_source,
+          "R15: the phone redactor must leave UUID-shaped matches to the UUID rule — "
+          "masking a numeric UUID keeps its distinguishing tail, so post-redaction "
+          "dedup keys diverge and LogDedupPolicy silently stops merging")
+    check("func numericUUIDsNormalizeToSameUUIDPlaceholder()" in redactor_tests,
+          "R15: numeric UUIDs normalizing to one placeholder needs a real unit test")
 
     # R16: 缓存设备会话的活性探测（2026-09-17 加，**只取证不改变行为**）。
     #
@@ -8545,6 +8555,12 @@ def main():
          "guard looksLikeDateFragment(match) == false else { return match }",
          "// date guard removed",
          "R15: the phone redactor must actually consult the date guard"),
+        # UUID 形状判据留着但不调用：纯数字 UUID 又被手机号 mask 认领，
+        # 脱敏后不同键、日志去重静默失效（与日期守卫同形的坑）。
+        ("Seal/Infrastructure/Diagnostics/LogPrivacyRedactor.swift",
+         "guard isUUIDShaped(match) == false else { return match }",
+         "// uuid guard removed",
+         "R15: the phone redactor must leave UUID-shaped matches to the UUID rule"),
         # 把日期形状判据放宽到只认「4 位数字-2 位数字」：`1234-56` 这类手机号会被放过去，
         # 脱敏出现口子（这是**放宽**的方向，比多脱敏危险）。
         ("Seal/Infrastructure/Diagnostics/LogPrivacyRedactor.swift",
