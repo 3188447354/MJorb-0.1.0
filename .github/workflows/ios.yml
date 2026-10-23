@@ -142,7 +142,8 @@ jobs:
       - name: Ensure RustBridge matches Rust source
         env:
           RUST_TOOLCHAIN: 1.97.1
-        run: bash Scripts/ensure-rustbridge.sh
+        run: |
+          bash Scripts/ensure-rustbridge.sh
 
       # 复用仓库内 vendored 的 `Unicorn.xcframework`（不再拉上游远程二进制包）。
       # 指纹命中即早退、不重编，但**当场复核产物**：零 ARMv8.1 LSE 指令 + minOS ≤ 17.4。
