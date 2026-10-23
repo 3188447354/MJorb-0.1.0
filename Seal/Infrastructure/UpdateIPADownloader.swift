@@ -541,7 +541,13 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
             UpdateDownloadPendingStore.clear(in: downloadsDirectory)
         }
 
-        let existingTasks = await session.getAllTasks()
+        // URLSession.getAllTasks 在当前 SDK 只有 completionHandler 形态（无 async 重载，
+        // CI run 39871049020 实证），用 continuation 适配；显式标注元素类型避免推断爆炸。
+        let existingTasks: [URLSessionTask] = await withCheckedContinuation { continuation in
+            session.getAllTasks { tasks in
+                continuation.resume(returning: tasks)
+            }
+        }
         let existingTask = existingTasks
             .compactMap { $0 as? URLSessionDownloadTask }
             .first { task in

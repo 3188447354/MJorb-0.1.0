@@ -1,3 +1,11 @@
+# 2026-10-23 — 0.1.52 第二轮 CI 两红：`getAllTasks` 在当前 SDK 无 async 重载（CI 修复轮二）
+
+- **现象**：提交 d22ba7c 的完整 CI（run 39871049020）：signer-tests ✓；swift-regression ✗ 与 build-package ✗ 同一处编译错误——`UpdateIPADownloader.swift:544` 的 `await session.getAllTasks()` 报 `missing argument for parameter 'completionHandler'`，545 行连带类型推断超时；build-package 的守卫断言与变异本轮全过，倒在编译步（exit 65），不是守卫。
+- **根因**：第 1 项新代码误以为 `URLSession.getAllTasks()` 有 async 重载；当前 SDK（Xcode 26.5）只有 completionHandler 形态。首轮 CI 里该文件先倒在静态 handler 的并发声明、build-package 先倒在守卫变异，这处错误被两层遮蔽，直到本轮才暴露——「守卫 PASS ≠ 能编译」（AGENTS.md §5）的又一实例。全仓 grep 确认 `getAllTasks` 仅此一处使用，其余 `await session.*` 均为 `data(for:)` 真 async API，无同族漏网。
+- **修复**：改用 `withCheckedContinuation` 包 completionHandler 形态，返回值显式标注 `[URLSessionTask]`（同时消除 545 行的推断爆炸）；与同文件 `adoptExistingTasks()` 的 completion 形态一致；未新增并发盒。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、本条（另顺带回填 0.1.51 第三轮条目的 run 号）。
+- **验证状态**：待本地全量守卫复跑与 CI 第三轮复跑后补记。
+
 # 2026-10-23 — 0.1.52 首轮 CI 两红：静态 handler 并发声明＋三处守卫变异失效（CI 修复轮）
 
 - **现象**：提交 ce5575a 的完整 CI（run 39808799088）：signer-tests ✓；swift-regression ✗（编译错误 1 处）；build-package ✗（守卫变异自检失败 3 条）。
@@ -84,7 +92,7 @@
 - **根因**：① 存活判定逐条判定（`800fa1b`）给 `AppsViewModel.swift` 净增 15 行，该文件内全部错误码位置整体下移 +15；`docs/qa/generated/error-code-inventory.json` 是生成物，本批改源码时漏了再生成，审计步（再生成 + diff 核对）必然报红。上一批（`a289b76`）有同步生成、本批漏了。② 两条单测用「预算 0.01 秒 vs `Thread.sleep(0.15)`」的墙钟赛跑断言超时语义，只留 140 毫秒绝对余量；`HardTimeout` 的定时器是 `.utility` 优先级的 detached 任务，CI runner 高负载下被饿死超过 140 毫秒 ⇒ 工作先返回、结果成 `.completed`，闸门/租约按「已完成」正常放行，断言全灭。生产代码（`DeviceProfileCleaner`/`HardTimeout`/`OperationCoordinator`/闸门）自上一轮全绿（`f39fff7`）后未动过——是测试在赌调度精度，不是生产回归。
 - **修复**：① 用 `Scripts/error_code_inventory.py` 再生成清单：本地逐行核对恰 135 行变化、全部为 `AppsViewModel.swift` 的 `"line": +15`、零其他变化，与 CI 日志里的 diff 吻合；生成器幂等。② 两条单测改用 `NativeCallLatch`（`NSCondition` 门闩）：门闩打开前工作不可能返回，超时结论与调度速度无关；放行后的闸门重开改为轮询等待（上限约 10 秒），租约等待上限 2 秒 → 10 秒。断言守的契约不变（FFI 未返回前闸门/设备租约保持占用、返回后由迟到完成回调放行）；生产代码一行未动。
 - **涉及文件**：`SealTests/Installation/DeviceProfileCleanerTests.swift`、`docs/qa/generated/error-code-inventory.json`、`DEBUG_LOG.md`。
-- **验证状态**：本地审计链全过（审计单测 20 项 + `error_catalog validate` 15 条 + help-index 再生成无变化 + 清单再生成幂等）；守卫本地复跑 870 项断言 + 638 项变异全过（0 失败）；Swift 编译与单测待 CI 复跑（run 待填）。
+- **验证状态**：本地审计链全过（审计单测 20 项 + `error_catalog validate` 15 条 + help-index 再生成无变化 + 清单再生成幂等）；守卫本地复跑 870 项断言 + 638 项变异全过（0 失败）；Swift 编译与单测待 CI 复跑（run 待填）。**回填（2026-10-23）**：最终提交 8e64fe1 的完整 CI run 39764284510 三 job 全绿，产物 build 143，Release v0.1.51 已发布。
 
 # 2026-10-22 — 合并推送首轮 CI 两处红：缓存单测漏改 .value + 标记函数局部量与 R71③ 守卫重名
 
