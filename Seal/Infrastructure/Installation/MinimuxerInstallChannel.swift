@@ -398,6 +398,35 @@ actor MinimuxerInstallChannel: InstallChannel {
         lastFailure = nil
     }
 
+    /// 启动点火（SideStore 模型，2026-10-24）：进程一起来就在后台把通道建好
+    /// 并常驻，签名/安装时 `start()` 命中缓存直接返回，不再临场付完整诊断的钱。
+    ///
+    /// 两道廉价前置，不满足就静默跳过 —— 启动时没配对、没开隧道都是常态，
+    /// 不许为此跑一遍完整诊断、更不许刷失败日志：
+    /// 1. 没有配对记录：`diagnose()` 第一关就是配对文件，必然失败；
+    /// 2. 就绪判据明确报「VPN 接口未出现」：隧道不在，诊断必然失败。
+    ///    其余不就绪原因（设备暂未出现等）不在此拦：点火本就是尽力而为，
+    ///    交给 `start()` 的完整流程裁决。
+    ///
+    /// 失败收尾：清掉 `start()` 刚写下的失败熔断。熔断的用途是「批量续签
+    /// 别让 N 个 App 各付一遍诊断」；启动点火失败若把熔断留着，用户点火后
+    /// 熔断窗口内点签名会被一个陈旧错误直接挡回 —— 那是拿后台尽力而为的
+    /// 结果惩罚前台真实操作。
+    func prewarmAtLaunch() async {
+        guard await storedDeviceIdentifier() != nil else { return }
+        if let verdict = await readinessVerdict(),
+           verdict.isReady == false,
+           ChannelReadinessPolicy.cause(fromIssueRawValue: verdict.issue?.rawValue) == .vpnNotConnected {
+            return
+        }
+        do {
+            _ = try await start()
+            await log("启动点火完成：设备通道已建立并常驻，后续签名/安装直接复用")
+        } catch {
+            await clearFailureCooldown()
+        }
+    }
+
     func invalidateProfileServiceConnection() async {
         #if !targetEnvironment(simulator)
         Minimuxer.invalidateRemotePairingConnection()

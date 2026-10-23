@@ -43,6 +43,13 @@ struct SealApp: App {
         // 不再无条件常驻。用户要省电，保活只在需要时运行。
         // 幂等，重复调用无副作用。
         container.backgroundKeepAlive.start()
+        // 设备通道启动点火（对齐 SideStore `AppBootManager`）：进程一起来就在
+        // 后台把通道建好并常驻，用户点签名/续签时直接命中缓存，不再临场等
+        // 完整诊断；快捷指令冷启动同理 —— 点火与后续的门户侧准备并行进行。
+        // 尽力而为：未配对 / 隧道未连时通道侧自己跳过，失败也不留熔断。
+        if let installChannel = container.installChannel {
+            Task { await installChannel.prewarmAtLaunch() }
+        }
         // 2026-10-07: 定位保活退役。续签已优化到 4-12 秒，静音音频足够，
         // 定位只费电还挂箭头。LocationKeepAliveService 保留类定义以备后用。
         // 钥匙串可访问性迁移：**必须同步、且必须在任何钥匙串读取之前**。

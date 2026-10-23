@@ -18,6 +18,17 @@ protocol InstallChannel: Actor {
     /// `any InstallChannel` 会静态派发到默认实现，具体实现的覆写不会被调用
     ///（同类坑见下方 `install(onProgress:)` 的注释）。
     func clearFailureCooldown() async
+    /// 进程启动时的通道点火（对齐 SideStore `AppBootManager`：启动即把 minimuxer
+    /// 拉起来**常驻**，之后每个操作只做就绪检查，不再临场建连）。
+    ///
+    /// 语义是**尽力而为**：未配对 / 隧道未连时静默跳过；失败不许毒化
+    /// `start()` 的失败熔断 —— 用户随后真正签名时必须能重新完整诊断，
+    /// 不能被启动时那个陈旧错误挡回。
+    ///
+    /// ⚠️ 与 `clearFailureCooldown()` 同理**必须声明为协议要求**：只在 extension
+    /// 里给默认实现的话，`any InstallChannel` 会静态派发到默认实现，
+    /// 具体实现的覆写不会被调用。
+    func prewarmAtLaunch() async
     /// 只废弃 Rust 的 RSD 会话缓存，保留当前配对文件与 provider 选择。
     /// 用于 profile 服务出现瞬时失败后的立即自愈，避免全量 reset 配对状态。
     func invalidateProfileServiceConnection() async
@@ -64,6 +75,10 @@ extension InstallChannel {
     /// 默认空实现：供测试桩与不实现熔断的类型直接遵循。
     /// 真实实现见 `MinimuxerInstallChannel.clearFailureCooldown()`。
     func clearFailureCooldown() async {}
+
+    /// 默认空实现：供测试桩与不做启动点火的类型直接遵循。
+    /// 真实实现见 `MinimuxerInstallChannel.prewarmAtLaunch()`。
+    func prewarmAtLaunch() async {}
 
     func invalidateProfileServiceConnection() async {}
 

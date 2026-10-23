@@ -83,6 +83,7 @@
 | `SEAL-RENEW-503` | 批量续签某一项撞上**设备通道瞬时失败 / 临时错误**，已退避重试（通道类 8 秒 × 第几次）—— **警告级**。重试前会走与单签同源的通道恢复动作（`SigningCoordinator.prepareInstallChannelForRetry`，通道类 `reset()`、描述文件超时类只清熔断）。看到它说明这一轮通道抖过；没有它时「批量重试了没有 / 重试了几次」在日志上完全看不出来 | `RenewalCoordinator.swift` |
 | `SEAL-PROFILE-365` | **记录里有一条「已导入但尚未安装」的更新源**（覆盖更新把记录写成了新导入包的版本号）⇒ 本次**改为完整重签并安装**，装完新版本才真正生效，之后续签回到「只更新描述文件」。它是**降级而非失败**。看到它说明「已安装列表里显示的版本号」是**待安装的源包**、不是正在运行的版本（用户 2026-09-26 实测：导入 1.3.20 到 1.3.19，点续签「直接续签了」而「关于」里仍是 1.3.19）。级别是 `警告` | `SigningCoordinator.swift` |
 | `SEAL-PROFILE-366` | 普通 IPA 选择共享主描述文件时，某个扩展请求了主应用未声明的能力。Seal 已在创建任何新的 App ID 前停止；用户可取消，或明确选择“改为独立签名”后再额外申请所需 App ID 并完成签名 | `ApplePortalSigningService.swift` |
+| `SEAL-PROFILE-367` | profile-only 快路径被拒的**结构化原因**（message 带 `原因 <token>`：`missingInstalledArtifact` / `incompleteSigningIdentity` / `missingTargetRecord` / `incompleteExtensionSet` 为策略原因；`teamMismatch` / `bundleIdentifierMismatch` / `deviceBindingMismatch` / `missingCertificateSerial` / `certificateSerialMismatch` 为协调器判据）⇒ 本次改为完整重签并安装 —— **警告级**。「更新源未安装」那一条仍走 `SEAL-PROFILE-365`；其余拒绝此前全部静默，2026-10-24 起统一由本码留痕，排查偶发完整重签时先按 token 统计 | `SigningCoordinator.swift` |
 | `SEAL-PROFILE-352` | 注入描述文件超过 30 秒未返回 —— **警告级**。会置「污染」标记：下一次注入前自动重置并重建设备通道（见 `SEAL-PROFILE-355`），并纳入续签重试 | `ProfileOnlyProvisioningProfileInstaller.swift` |
 | `SEAL-PROFILE-353` | 设备端读回描述文件超过 30 秒未完成 —— **警告级**。同样置污染标记 | `ProfileOnlyProvisioningProfileInstaller.swift` |
 | `SEAL-PROFILE-354` | 注入报成功但设备端**读不回**该描述文件 ⇒ 本地到期日未更新（终态失败，不重试） | `ProfileOnlyProvisioningProfileInstaller.swift` |

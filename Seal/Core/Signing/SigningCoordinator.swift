@@ -675,13 +675,12 @@ actor SigningCoordinator {
                     || isInstalledRenewal
             )
 
-            // App ID、证书撤销和描述文件创建都可能改变账号状态，必须先确认设备确实
-            // 可安装。否则本轮明知安装通道不可用仍继续签名，会留下一个不能安装的
-            // 签名包，甚至白白创建新的 App ID。真正安装前仍会再检查一次，覆盖签名
-            // 期间设备断开等不可预知变化。
-            if installAfterSigning {
-                try await requireReadyInstallChannel(channelStart, beforeSigning: true)
-            }
+            // 签前通道门禁到此已统一完成：上方已等并行预热的 `start()` 落地并跑过
+            // `requireReadyForSigning()` —— 证书、App ID、描述文件等账号侧资源都在
+            // 那道门之后才动（「明知装不了还白白创建 App ID」的防护就在那里）。
+            // 这里不再设第二道重复门禁（对齐 SideStore：每个操作前只 ensureReady
+            // 一次，重复探测只是白付就绪判据的钱）；签名期间设备断开由安装前的
+            // `requireReadyInstallChannel(beforeSigning: false)` 兜底。
 
             if installAfterSigning, !forceResign,
                let cachedInstall = try await installCachedSignedIPAIfPossible(
@@ -1122,22 +1121,41 @@ actor SigningCoordinator {
         // 🔴 先算决策、再进 guard：guard 里只判 `case .eligible`，被拒的**理由**会被吞掉，
         // 而「为什么这次没走快路径」正是真机排查的第一问（见下面 `SEAL-PROFILE-365`）。
         let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: liveIdentity)
-        guard forceResign,
-              installAfterSigning,
-              (liveIdentity?.teamIdentifier ?? app.signingTeamID)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .caseInsensitiveCompare(teamIdentifier) == .orderedSame,
-              app.mappedBundleIdentifier?.caseInsensitiveCompare(targetBundleIdentifier) == .orderedSame,
-              ProfileOnlyRenewalPolicy.isBoundToCurrentDevice(
-                  app: app,
-                  deviceIdentifier: deviceIdentifier,
-                  liveIdentity: liveIdentity
-              ),
-              case .eligible = decision,
-              let storedSerial = ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
-                  app: app,
-                  liveIdentity: liveIdentity
-              ) else {
+        // 非续签场景（首次签名 / 签完不装到设备）本就不走快路径，不是「被拒」，不留痕。
+        guard forceResign, installAfterSigning else { return false }
+        // 以下逐项判、逐项留痕（`SEAL-PROFILE-367`）：旧实现是一道复合 guard，
+        // 除「更新源未安装」外其余拒绝全部静默 —— 偶发完整重签在日志里无从归因。
+        guard (liveIdentity?.teamIdentifier ?? app.signingTeamID)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(teamIdentifier) == .orderedSame else {
+            await logProfileOnlyRejection(
+                app: app,
+                token: "teamMismatch",
+                detail: "记录里的签名团队与当前账号团队不一致"
+            )
+            return false
+        }
+        guard app.mappedBundleIdentifier?.caseInsensitiveCompare(targetBundleIdentifier) == .orderedSame else {
+            await logProfileOnlyRejection(
+                app: app,
+                token: "bundleIdentifierMismatch",
+                detail: "记录里的目标 Bundle ID 与本次签名目标不一致"
+            )
+            return false
+        }
+        guard ProfileOnlyRenewalPolicy.isBoundToCurrentDevice(
+            app: app,
+            deviceIdentifier: deviceIdentifier,
+            liveIdentity: liveIdentity
+        ) else {
+            await logProfileOnlyRejection(
+                app: app,
+                token: "deviceBindingMismatch",
+                detail: "记录未绑定到当前设备"
+            )
+            return false
+        }
+        guard case .eligible = decision else {
             // 🔴 **「已导入的更新源尚未安装」必须留痕**（2026-09-26 用户实测）。
             //
             // 这条拒绝以前是**静默**的：guard 只判 `case .eligible`，被拒的理由被丢掉
@@ -1157,15 +1175,59 @@ actor SigningCoordinator {
                         + "本次改为完整重签并安装，装完新版本才真正生效：\(app.name)",
                     code: "SEAL-PROFILE-365"
                 )
+            } else if case .requiresFullResign(let reason) = decision {
+                await logProfileOnlyRejection(
+                    app: app,
+                    token: String(describing: reason),
+                    detail: ProfileOnlyRenewalPolicy.describe(reason)
+                )
             }
+            return false
+        }
+        guard let storedSerial = ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
+            app: app,
+            liveIdentity: liveIdentity
+        ) else {
+            await logProfileOnlyRejection(
+                app: app,
+                token: "missingCertificateSerial",
+                detail: "记录里没有可用的证书序列号"
+            )
             return false
         }
         if let selectedCertificateSerialNumber,
            SigningCertificateSelectionPolicy.normalizedSerialNumber(selectedCertificateSerialNumber)
                != SigningCertificateSelectionPolicy.normalizedSerialNumber(storedSerial) {
+            await logProfileOnlyRejection(
+                app: app,
+                token: "certificateSerialMismatch",
+                detail: "本轮选中的证书与记录里的签名证书不一致"
+            )
             return false
         }
         return true
+    }
+
+    /// profile-only 被拒的**结构化留痕**（`SEAL-PROFILE-367`，2026-10-24）。
+    ///
+    /// 此前只有「更新源未安装」一条有日志（`SEAL-PROFILE-365`），其余拒绝
+    /// （记录缺产物 / 身份不完整 / 扩展集不全 / 团队或 Bundle ID 对不上 /
+    /// 未绑定当前设备 / 证书序列号缺失或对不上）全部静默回落完整重签 ——
+    /// 真机日志只能看到「走了完整重签」，查不出为什么，偶发完整重签长期
+    /// 无从定位。本方法把**实际命中的那一个**原因以稳定 token 落日志，
+    /// 排查时按 token 统计即可。归因精确性与 365 同标准：只记当前这道
+    /// 判据命中的原因，不把别的判据拦下的算进来。
+    private func logProfileOnlyRejection(
+        app: AppRecord,
+        token: String,
+        detail: String
+    ) async {
+        try? await logStore?.append(
+            category: .renewal,
+            level: .warning,
+            message: "profile-only 快路径不可用（原因 \(token)）：\(detail)，本次改为完整重签并安装：\(app.name)",
+            code: "SEAL-PROFILE-367"
+        )
     }
 
     private func renewProfilesOnly(
