@@ -19,7 +19,7 @@ struct AppContainer {
     /// 设备安装通道。`SealApp.init()` 用它做启动点火（SideStore 模型：通道开机
     /// 常驻，签名/安装只做就绪检查）。UI 测试与启动失败分支没有真实通道
     /// ⇒ 为 `nil`，点火跳过。
-    let installChannel: (any InstallChannel)? = nil
+    let installChannel: (any InstallChannel)?
 
     /// 把升级前写入的 `WhenUnlocked` 钥匙串条目迁到「首次解锁后可读」——
     /// **这是「锁屏下快捷指令续签」的必要条件**（判据与原因见 `SealKeychainAccessibility`）。
@@ -53,7 +53,8 @@ struct AppContainer {
                 ),
                 backgroundKeepAlive: BackgroundKeepAliveService(logStore: nil),
                 locationKeepAlive: LocationKeepAliveService(logStore: nil),
-                logStore: nil
+                logStore: nil,
+                installChannel: nil
             )
         }
 
@@ -337,7 +338,8 @@ struct AppContainer {
                 ),
                 backgroundKeepAlive: BackgroundKeepAliveService(logStore: nil),
                 locationKeepAlive: LocationKeepAliveService(logStore: nil),
-                logStore: nil
+                logStore: nil,
+                installChannel: nil
             )
         }
     }
