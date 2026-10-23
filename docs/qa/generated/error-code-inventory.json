@@ -3211,7 +3211,7 @@
     "SEAL-CERT-204b": {
       "auditStatus": "reference_only",
       "identifierKinds": {
-        "standard_error_code": 12
+        "standard_error_code": 11
       },
       "locations": [
         {
@@ -3249,15 +3249,6 @@
           "semanticFields": [],
           "semanticValues": {},
           "source": "case \"SEAL-CERT-204\", \"SEAL-CERT-204a\", \"SEAL-CERT-204b\","
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 8,
-          "path": "Seal/Core/Signing/CertificateTakeoverPolicy.swift",
-          "role": "comment_reference",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "/// ⇒ 签任何 App 都报 `SEAL-CERT-204b`（3022 名额满），用户「啥也干不了」。"
         },
         {
           "identifierKind": "standard_error_code",
@@ -3323,9 +3314,9 @@
           "source": "code: \"SEAL-CERT-204b\""
         }
       ],
-      "occurrenceCount": 12,
+      "occurrenceCount": 11,
       "roles": {
-        "comment_reference": 3,
+        "comment_reference": 2,
         "executable_reference": 7,
         "internal_event_or_log": 2
       }
@@ -8703,70 +8694,6 @@
         "structured_failure_emission": 1
       }
     },
-    "SEAL-KEYCHAIN-006": {
-      "auditStatus": "contracted",
-      "identifierKinds": {
-        "standard_error_code": 3
-      },
-      "locations": [
-        {
-          "identifierKind": "standard_error_code",
-          "line": 158,
-          "path": "Seal/Infrastructure/Security/CredentialVault.swift",
-          "role": "comment_reference",
-          "semanticFields": [],
-          "semanticValues": {},
-          "source": "/// 不会返回任何明文 —— 调用方据此报 `SEAL-KEYCHAIN-006`。"
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 279,
-          "path": "Seal/Infrastructure/Security/KeychainVault.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [
-            "condition",
-            "action",
-            "retryDisposition",
-            "operation",
-            "origin"
-          ],
-          "semanticValues": {
-            "action": ".copyDiagnostics",
-            "condition": ".localStorageWriteFailed",
-            "operation": ".authenticateAccount",
-            "origin": ".fileStore",
-            "retryDisposition": ".manual"
-          },
-          "source": "code: \"SEAL-KEYCHAIN-006\","
-        },
-        {
-          "identifierKind": "standard_error_code",
-          "line": 293,
-          "path": "Seal/Infrastructure/Security/KeychainVault.swift",
-          "role": "structured_failure_emission",
-          "semanticFields": [
-            "condition",
-            "action",
-            "retryDisposition",
-            "operation",
-            "origin"
-          ],
-          "semanticValues": {
-            "action": ".copyDiagnostics",
-            "condition": ".localStorageWriteFailed",
-            "operation": ".authenticateAccount",
-            "origin": ".fileStore",
-            "retryDisposition": ".manual"
-          },
-          "source": "code: \"SEAL-KEYCHAIN-006\","
-        }
-      ],
-      "occurrenceCount": 3,
-      "roles": {
-        "comment_reference": 1,
-        "structured_failure_emission": 2
-      }
-    },
     "SEAL-LOG-001": {
       "auditStatus": "reference_only",
       "identifierKinds": {
@@ -10899,7 +10826,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 489,
+          "line": 510,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -11592,7 +11519,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 585,
+          "line": 592,
           "path": "Seal/Features/Apps/AppSigningSheet.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -11967,7 +11894,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 109,
+          "line": 116,
           "path": "Seal/Core/Renewal/SheetArbitration.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11998,7 +11925,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 111,
+          "line": 118,
           "path": "Seal/Core/Renewal/SheetArbitration.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -12007,7 +11934,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 126,
+          "line": 133,
           "path": "Seal/Core/Renewal/SheetArbitration.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -12119,7 +12046,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 506,
+          "line": 527,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12140,7 +12067,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 514,
+          "line": 535,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12744,7 +12671,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 398,
+          "line": 419,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12766,7 +12693,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 414,
+          "line": 435,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12787,7 +12714,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 461,
+          "line": 482,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12829,7 +12756,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 390,
+          "line": 411,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12974,12 +12901,21 @@
     "SEAL-SELF-120": {
       "auditStatus": "reference_only",
       "identifierKinds": {
-        "standard_error_code": 1
+        "standard_error_code": 2
       },
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 198,
+          "line": 179,
+          "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
+          "role": "internal_event_or_log",
+          "semanticFields": [],
+          "semanticValues": {},
+          "source": "code: \"SEAL-SELF-120\""
+        },
+        {
+          "identifierKind": "standard_error_code",
+          "line": 219,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -12987,9 +12923,9 @@
           "source": "code: \"SEAL-SELF-120\""
         }
       ],
-      "occurrenceCount": 1,
+      "occurrenceCount": 2,
       "roles": {
-        "internal_event_or_log": 1
+        "internal_event_or_log": 2
       }
     },
     "SEAL-SELF-130": {
@@ -13240,7 +13176,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 47,
+          "line": 50,
           "path": "Seal/Features/Apps/AppSigningSheet.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -14112,7 +14048,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 261,
+          "line": 282,
           "path": "Seal/Core/Renewal/SelfAppRegistrar.swift",
           "role": "structured_failure_emission",
           "semanticFields": [],
@@ -14154,7 +14090,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 374,
+          "line": 456,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -14163,7 +14099,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 415,
+          "line": 497,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -14185,7 +14121,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 416,
+          "line": 498,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -14206,7 +14142,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 419,
+          "line": 501,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -14227,7 +14163,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 418,
+          "line": 500,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -14248,7 +14184,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 417,
+          "line": 499,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],
@@ -14269,7 +14205,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 348,
+          "line": 350,
           "path": "Seal/Features/UpdateNoticeView.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -14278,7 +14214,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 401,
+          "line": 403,
           "path": "Seal/Features/UpdateNoticeView.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -14296,7 +14232,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 375,
+          "line": 457,
           "path": "Seal/Infrastructure/UpdateIPADownloader.swift",
           "role": "executable_reference",
           "semanticFields": [],
@@ -14491,7 +14427,7 @@
   "summary": {
     "auditStatuses": {
       "conflicted": 2,
-      "contracted": 70,
+      "contracted": 69,
       "diagnostic_only": 5,
       "mixed": 3,
       "reference_only": 281,
@@ -14500,21 +14436,21 @@
     "identifierKinds": {
       "diagnostic_tag": 75,
       "legacy_error_identifier": 2,
-      "standard_error_code": 811
+      "standard_error_code": 808
     },
-    "occurrences": 888,
+    "occurrences": 885,
     "roles": {
-      "comment_reference": 150,
+      "comment_reference": 148,
       "executable_reference": 128,
       "failure_emission_candidate": 231,
-      "internal_event_or_log": 209,
-      "structured_failure_emission": 170
+      "internal_event_or_log": 210,
+      "structured_failure_emission": 168
     },
     "structuredFailureContracts": {
-      "directOccurrences": 170,
-      "withExplicitSemantics": 88,
+      "directOccurrences": 168,
+      "withExplicitSemantics": 86,
       "withoutExplicitSemantics": 82
     },
-    "uniqueIdentifiers": 434
+    "uniqueIdentifiers": 433
   }
 }
