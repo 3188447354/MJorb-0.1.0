@@ -1,3 +1,10 @@
+# 2026-10-24 — 本批 CI 首轮红：两个本批引入的编译错（compile-gate＋swift-regression 红，signer-tests 绿）
+- 现象：run 40075975474，compile-gate 与 swift-regression 失败，build-package skipped（等 compile-gate 放行）。
+- 根因 1：`SealAppearance.swift` 的 `uiColor`——本批自定义色深色适配给 `.custom` 分支加了语句（`let base`＋`return`），switch 从表达式 switch 退化成语句 switch，六个预设分支的裸 `.systemBlue` 等失去上下文类型，报 `reference to member cannot be resolved without a contextual type`。修复：六个分支补显式 `return`。
+- 根因 2：`SigningCoordinator.swift:1310`——本批新增 `onProgress` 参数在调用点排在 `onTaintHealed` 之前，与 `installAndVerify` 声明顺序（`onTaintHealed` 在前）不一致，Swift 要求调用点顺序与声明一致。修复：调用点两段闭包对调（尾逗号随之调整：跟随项补逗号、末项去逗号）。
+- 涉及文件：`Seal/DesignSystem/SealAppearance.swift`、`Seal/Core/Signing/SigningCoordinator.swift`。
+- 验证状态：本地守卫 891 项 0 失败；本地无 Swift 编译器，编译靠 CI；修复后按「CI 失败类明确 bug 修了就推」重推，新 run 待报。未发版。
+
 # 2026-10-24 — 下一批 A–E（配对拆分／续签进度／点火日志／骨架／显示 Top 8／主题 6 色／审计小项，MJ 13:53 冻结范围，未推送）
 
 - **范围**：以 `~/workspace/goals/github-ipa-project-modification/hidden_files/next-batch-scope-2026-10-24.md` 为准一字不差。MJ 13:55 亲口拿掉两项，本批不做：① 已等待计时恢复（2026-09-26「去掉阶段计时」裁定继续有效）；② 灵动岛主题跟随（不再查证 App Group）。更早欠账（官网帮助页、微信桥、软件源、公众号改名、Codex 申请、旧审查清单等）一律不动。绝不推送。

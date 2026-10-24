@@ -57,12 +57,12 @@ enum SealAccentTheme: String, CaseIterable, Identifiable {
 
     var uiColor: UIColor {
         switch self {
-        case .system: .systemBlue
-        case .red: .systemRed
-        case .yellow: .systemYellow
-        case .green: .systemGreen
-        case .amber: .systemOrange
-        case .purple: .systemPurple
+        case .system: return .systemBlue
+        case .red: return .systemRed
+        case .yellow: return .systemYellow
+        case .green: return .systemGreen
+        case .amber: return .systemOrange
+        case .purple: return .systemPurple
         case .custom:
             let base = UIColor(sealHex: Self.customHex) ?? .systemBlue
             // 自定义色深色适配（2026-10-24）：亮色下用原值，深色下向白色提亮 30%，

@@ -1283,6 +1283,17 @@ actor SigningCoordinator {
             certificateSerialNumber: result.certificateSerialNumber,
             channel: installChannel,
             operationCoordinator: operationCoordinator,
+            // actor 在串行排队后若发现污染（363 提前标记 / 上一项注入失败留下），
+            // 会自己消费 + 重置；这里只负责留痕（`SEAL-PROFILE-355`）。
+            onTaintHealed: { [logStore] in
+                try? await logStore?.append(
+                    category: .renewal,
+                    level: .warning,
+                    message: "profile-only 续签：上一次描述文件设备操作超时留下的传输可能仍被占用，"
+                        + "已重置并重新建立设备通道后继续（避免一次抖动毒掉后续全部续签）",
+                    code: "SEAL-PROFILE-355"
+                )
+            },
             // 设备注入子阶段上报：阶段仍是 .preparingProfiles（轨道预算模型要求
             // 它独占第 5 格，切阶段会让轨道往回跳），只把子状态经 detail 送界面——
             // 界面据此把标题切到「正在更新描述文件」、提示换成子状态文案、
@@ -1304,17 +1315,6 @@ actor SigningCoordinator {
                     detail = "注入未响应，正在重试"
                 }
                 await progress(SigningStageUpdate(stage: .preparingProfiles, app: app, detail: detail))
-            },
-            // actor 在串行排队后若发现污染（363 提前标记 / 上一项注入失败留下），
-            // 会自己消费 + 重置；这里只负责留痕（`SEAL-PROFILE-355`）。
-            onTaintHealed: { [logStore] in
-                try? await logStore?.append(
-                    category: .renewal,
-                    level: .warning,
-                    message: "profile-only 续签：上一次描述文件设备操作超时留下的传输可能仍被占用，"
-                        + "已重置并重新建立设备通道后继续（避免一次抖动毒掉后续全部续签）",
-                    code: "SEAL-PROFILE-355"
-                )
             }
         )
         let injectElapsed = injectStart.duration(to: .now)
