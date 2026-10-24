@@ -1,9 +1,16 @@
+# 2026-10-24 — 0.1.54 第三轮 CI 红：错误码清单行号漂移一格（首轮编译修复连带）
+
+- **现象**：run 40055311227：compile-gate / swift-regression / signer-tests 全绿，build-package 内全量守卫（891 断言＋653 变异）通过，但红在随后的错误码清单校验步——CI 现场再生 `docs/qa/generated/error-code-inventory.json` 后 `git diff --exit-code` 报一处差异：`Seal/Application/AppContainer.swift` 的 `SEAL-RENEW-020` 注释引用行号，清单记 207、源码实为 208。
+- **根因**：清单逐条记录错误码在源码中的行号，校验步逐字节比对。首轮编译修复（dede892b）在 AppContainer 补显式 `installChannel: nil` 实参时多出一行，该注释引用顺移一格；首轮与第二轮都未再生清单。0.1.53 的教训「动含错误码的文件必须同步再生清单」——这次动的是含错误码**引用**的文件，同样适用，当时漏了。
+- **修复**：同步树本地重跑 `Scripts/error_code_inventory.py` 再生清单，差异核对仅此一行（207→208；434 码 / 889 处与 CI 现场再生数字一致）；回填第二轮条目验证状态。无代码改动、无守卫改动。
+- **验证状态**：本地再生差异仅一行；`Scripts.tests.test_error_code_inventory` 11 条单测本地全过；CI 复核中（run 待填）。
+
 # 2026-10-24 — 0.1.54 第二轮 CI 守卫红：断言/锚点未跟随判定形态（本地预检盲区）
 
 - **现象**：run 40003858031 的 compile-gate / signer-tests / swift-regression 全绿，build-package 红于全量守卫 5 条：R84③、R94③ 两条断言失败＋Mutation anchor missing ×2（同一锚点）＋R89⑦ 变异无判别力。本地 pre-push-check（只跑断言、跳过变异）报的是掺了旧基线文件的 838 项，与 CI 的 891 项不是同一棵树，是本轮预检盲区。
 - **根因**：① R84③ 断言钉 `case .eligible = decision,`——0.1.54 已把复合 guard 拆成逐项 guard（`guard case .eligible = decision else`），形态变了断言没跟。② R94③ 用 `cause(fromIssueRawValue` 出现次数 ==1 守「分类只许一份」，而启动点火为判 VPN 未连第二次调用了分类——判据本身仍只有一份（在 Policy 里），通道侧只是多了一次**消费**。③ R82③/R85⑦ 的变异锚点钉旧复合 guard 的两行形态（`guard forceResign,\n installAfterSigning,\n`），拆 guard 后锚点失效。④ R89⑦ 是老账：其断言 `"SEAL-PROFILE-365" in 索引` 被 0.1.54 新增的 367 行文案里提及的「SEAL-PROFILE-365」字样假满足 ⇒ 变异（把 365 主表行改名）不再触发任何 R89⑦ 失败——367 入表前该变异有判别力。
 - **修复**：R84③ 断言改钉新形态 `guard case .eligible = decision`；分类单点消费收进 `ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue:)`（判据仍只此一份），通道 prewarm 改用它、R94③ 计数改为「`switch …cause(…)` 展开次数 ==1」并同步其变异锚点；R82③/R85⑦ 变异锚点更新为新的一行 guard 形态（注入的退化不变：按身份排除 Seal / 私钥门槛）；R89⑦ 索引断言改精确匹配主表行 `| \`SEAL-PROFILE-365\` |`；`ChannelReadinessPolicyTests` 补 isVPNNotConnected 单测。
-- **验证状态**：本地断言 891 项 0 失败；全量 653 条变异锚点 0 缺失；本轮改动文件上的 94 条变异逐条实跑全部有判别力（247 秒）；Swift 编译与剩余变异由 CI 复核中（run 待填）。
+- **验证状态**：本地断言 891 项 0 失败；全量 653 条变异锚点 0 缺失；本轮改动文件上的 94 条变异逐条实跑全部有判别力（247 秒）；Swift 编译与剩余变异已由 CI run 40055311227 复核全过（compile-gate / swift-regression / signer-tests 全绿，build-package 内全量守卫通过）；该 run 最终红于错误码清单行号漂移，与本轮守卫修复无关，见上方第三轮条目。
 
 # 2026-10-24 — 通道改 SideStore 连接生命周期＋profile-only 被拒原因全量留痕（0.1.54 批次，MJ 拍板）
 
