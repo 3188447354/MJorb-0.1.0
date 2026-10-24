@@ -11258,7 +11258,7 @@
       "locations": [
         {
           "identifierKind": "standard_error_code",
-          "line": 1309,
+          "line": 1287,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "comment_reference",
           "semanticFields": [],
@@ -11267,7 +11267,7 @@
         },
         {
           "identifierKind": "standard_error_code",
-          "line": 1316,
+          "line": 1294,
           "path": "Seal/Core/Signing/SigningCoordinator.swift",
           "role": "internal_event_or_log",
           "semanticFields": [],

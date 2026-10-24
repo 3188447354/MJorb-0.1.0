@@ -1,3 +1,10 @@
+# 2026-10-24 — 本批 CI 第四轮：build-package 红在错误码清单行号漂移（前三 job 已绿）
+- 现象：run 40079615393，compile-gate／swift-regression／signer-tests 全绿，build-package 失败。失败步骤：`error_code_inventory.py` 再生后 `git diff --exit-code` 检出差异，`Process completed with exit code 1`。
+- 根因：第二轮修复里对调 onTaintHealed／onProgress 两段闭包，把 SEAL-PROFILE-355 相关引用上移 22 行，清单里两处行号（1309→1287、1316→1294）未同步再生。就是 0.1.54 第三轮的同款教训（动含错误码引用文件必再生清单），这次换顺序时又漏了。
+- 修复：重跑 `Scripts/error_code_inventory.py` 再生清单（434 码／889 处不变，仅两处行号漂移）；清单脚本只扫 `*.swift`，DEBUG_LOG 的新条目不影响再生结果，可同批推送。
+- 涉及文件：`docs/qa/generated/error-code-inventory.json`。
+- 验证状态：本地守卫 891 项 0 失败；按「CI 失败类明确 bug 修了就推」重推，新 run 待报。未发版。
+
 # 2026-10-24 — 本批 CI 第三轮：swift-regression 红在测试调用点（生产 API 改了、测试没跟上）
 - 现象：run 40078030955，compile-gate 已绿，swift-regression 失败，build-package 在跑。报错 `PhonePairingPresentationPolicyTests.swift:10/19 missing argument for parameter 'isPaired' in call`。
 - 根因：本批配对拆分给 `phonePairingStateAfterAutomaticCheck` 加了 `isPaired` 参数（已配对即主状态不回退），生产侧三处调用点都传了，测试侧两处旧调用没跟上。本地无 Swift 编译器、build-package 不编测试 target，此类断裂只有 swift-regression 能暴露（与 2026-09-28 教训同族）。
