@@ -1,3 +1,9 @@
+# 2026-10-24 — 发版 0.1.55：本批 A–E 代码 run 40081728542 四 job 全绿后升版
+
+- 背景：MJ 17:09 已授权发更新源；当时 run 40081728542 未全绿故先等，17:58 终局 completed/success（compile-gate／swift-regression／signer-tests／build-package 全绿，publish-release skipped），远程头 9273a59f。
+- 本提交：project.yml 两处 MARKETING_VERSION（主 App＋LiveActivity 扩展）0.1.54→0.1.55，RELEASE_NOTES.md 加 0.1.55 节，DEBUG_LOG 记一笔。CURRENT_PROJECT_VERSION 未动（与 0.1.54 发版同路）。
+- 后续：等本提交 CI 全绿 → 建 Release v0.1.55 → 官网 api/update.php?action=sync 同步 → IPA 直发 MJ。
+
 # 2026-10-24 — 本批 CI 第四轮：build-package 红在错误码清单行号漂移（前三 job 已绿）
 - 现象：run 40079615393，compile-gate／swift-regression／signer-tests 全绿，build-package 失败。失败步骤：`error_code_inventory.py` 再生后 `git diff --exit-code` 检出差异，`Process completed with exit code 1`。
 - 根因：第二轮修复里对调 onTaintHealed／onProgress 两段闭包，把 SEAL-PROFILE-355 相关引用上移 22 行，清单里两处行号（1309→1287、1316→1294）未同步再生。就是 0.1.54 第三轮的同款教训（动含错误码引用文件必再生清单），这次换顺序时又漏了。
