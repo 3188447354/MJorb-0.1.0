@@ -70,7 +70,7 @@ struct InstalledAppActionSheet: View {
                 Text(app.needsIPAImport ? "v\(app.version) · 设备已安装" : "v\(app.version) · \(app.size.sealFormattedByteCount)")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Color.sealTextSecondary)
-                    .lineLimit(1)
+                    .singleLine()
             }
             Spacer(minLength: 0)
         }
@@ -200,7 +200,7 @@ struct InstalledAppActionSheet: View {
 
     private var expirySummary: String {
         guard let date = AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
-        return SealSettingsDateFormatter.string(from: date)
+        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
     }
 
     private var expiryColor: Color {

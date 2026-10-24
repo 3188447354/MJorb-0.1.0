@@ -97,7 +97,7 @@ struct SettingsRootView: View {
                             settingsRow(
                                 title: "存储与清理",
                                 value: hasLoadedStorageSummary
-                                    ? viewModel.storageUsage.total.formattedByteCount
+                                    ? viewModel.storageUsage.total.sealFormattedByteCount
                                     : "计算中",
                                 icon: "internaldrive",
                                 showsChevron: true,
@@ -232,39 +232,12 @@ struct SettingsRootView: View {
         .sealScreenBackground()
     }
 
-    private var appearanceCard: some View {
-        Button(action: onAppearanceThemeRequested) {
-            HStack(spacing: 16) {
-                Image(systemName: "circle.lefthalf.filled")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Color.sealAccent)
-                    .frame(width: 34)
-                Text("外观与主题")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(.primary)
-                Spacer(minLength: 12)
-                Text("\(currentAppearanceTitle) · \(currentAccentTitle)")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Color.sealTextSecondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.78)
-                Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-            }
-            .frame(minHeight: 56)
-            .padding(.horizontal, 16)
-            .sealContentCard(.standard)
-        }
-        .buttonStyle(.plain)
-    }
-
     private var currentAppearanceTitle: String {
         (SealAppearance(rawValue: appearanceRawValue) ?? .system).title
     }
 
     private var currentAccentTitle: String {
-        (SealAccentTheme(rawValue: accentRawValue) ?? .system).title
+        return (SealAccentTheme(rawValue: accentRawValue) ?? .system).title
     }
 
     private func appearanceIcon(_ appearance: SealAppearance) -> String {
@@ -323,7 +296,7 @@ struct SettingsRootView: View {
             }
             Text(title)
                 .foregroundStyle(.primary)
-                .lineLimit(1)
+                .singleLine()
                 .font(.system(size: 16, weight: .medium))
             Spacer(minLength: 12)
             if let value {
@@ -332,6 +305,9 @@ struct SettingsRootView: View {
                     .font(.system(size: 16, weight: .medium))
                     .lineLimit(1)
                     .minimumScaleFactor(0.72)
+                    // 「计算中」→真值同位替换：数字滚动＋短淡入，不跳变。
+                    .contentTransition(.numericText())
+                    .animation(.easeInOut(duration: 0.25), value: value)
                     .allowsTightening(true)
                     .multilineTextAlignment(.trailing)
                     .frame(minWidth: 0, alignment: .trailing)
@@ -578,12 +554,12 @@ struct AppearanceThemeSheet: View {
 
     private func accentDisplayTitle(_ theme: SealAccentTheme) -> String {
         switch theme {
-        case .system: return "\u{7ECF}\u{5178}\u{84DD}"
+        case .system: return "\u{5B9D}\u{77F3}\u{84DD}"
+        case .red: return "\u{6731}\u{7802}\u{7EA2}"
+        case .yellow: return "\u{91D1}\u{76CF}\u{9EC4}"
         case .green: return "\u{7FE1}\u{7FE0}\u{7EFF}"
-        case .blue: return "\u{6674}\u{7A7A}\u{9752}"
-        case .purple: return "\u{7D2B}\u{7F57}\u{5170}"
         case .amber: return "\u{7425}\u{73C0}\u{6A59}"
-        case .pink: return "\u{73AB}\u{7470}\u{7C89}"
+        case .purple: return "\u{7D2B}\u{7F57}\u{5170}"
         case .custom: return "\u{81EA}\u{5B9A}\u{4E49}"
         }
     }
@@ -601,8 +577,4 @@ struct AppearanceThemeSheet: View {
         }
     }
 }
-private extension Int64 {
-    var formattedByteCount: String {
-        ByteCountFormatter.string(fromByteCount: self, countStyle: .file)
-    }
-}
+

@@ -21,6 +21,8 @@ struct AppsRootView: View {
     @State private var pagerProgress = CaterpillarTabsProgress(value: 1)
     @State private var detailApp: AppRecord?
     @State private var pendingDeleteApp: AppRecord?
+    /// 删除成功震动触发器（计数递增即震一次，见删除确认按钮）。
+    @State private var deleteSuccessTrigger = 0
     @State private var installedActionApp: AppRecord?
     @State private var operationAppID: UUID?
     @State private var didResolveInitialMode = false
@@ -160,11 +162,16 @@ struct AppsRootView: View {
                 Button("删除", role: .destructive) {
                     guard let app = pendingDeleteApp else { return }
                     pendingDeleteApp = nil
-                    Task { _ = await viewModel.delete(app) }
+                    Task {
+                        // 删除成功给一下轻反馈（2026-10-24 全 App 震动通道）；
+                        // 失败走失败提示，不震。
+                        if await viewModel.delete(app) { deleteSuccessTrigger += 1 }
+                    }
                 }
             } message: {
                 Text(deleteAlertMessage)
             }
+            .sensoryFeedback(.success, trigger: deleteSuccessTrigger)
             .alert(item: rootAlertFailure) { failure in
                 standardAlert(failure)
             }
@@ -453,16 +460,11 @@ struct AppsRootView: View {
     }
 
     private func emptyState(_ pageMode: ListMode) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: emptyIcon(for: pageMode))
-                .font(.system(size: 30, weight: .medium))
-                .foregroundStyle(Color.sealAccent)
-            Text(emptyTitle(for: pageMode))
-                .font(.headline)
+        ContentUnavailableView {
+            Label(emptyTitle(for: pageMode), systemImage: emptyIcon(for: pageMode))
+        } description: {
             if pageMode == .unsigned {
                 Text("点击右上角 + 导入 IPA")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, minHeight: 160)

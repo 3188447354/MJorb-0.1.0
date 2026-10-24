@@ -7,7 +7,8 @@ struct AboutView: View {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.1.0"
     }
 
-    @State private var updateAlert: UpdateAlert?
+    /// 检查更新失败的内嵌文案（失败不再弹窗，行内给重试）。
+    @State private var updateFailureDetail: String?
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -27,22 +28,6 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
-        .alert(item: $updateAlert) { alert in
-            if alert.canRetry {
-                Alert(
-                    title: Text(alert.title),
-                    message: Text(alert.message),
-                    primaryButton: .default(Text("重试"), action: checkUpdate),
-                    secondaryButton: .cancel(Text("关闭"))
-                )
-            } else {
-                Alert(
-                    title: Text(alert.title),
-                    message: Text(alert.message),
-                    dismissButton: .default(Text("好"))
-                )
-            }
-        }
     }
 
     private var identity: some View {
@@ -76,7 +61,7 @@ struct AboutView: View {
                     } else {
                         Text(updateStatusText)
                             .foregroundStyle(Color.sealTextSecondary)
-                            .lineLimit(1)
+                            .singleLine()
                         Image(systemName: "chevron.right")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(.tertiary)
@@ -87,6 +72,22 @@ struct AboutView: View {
             }
             .buttonStyle(.plain)
             .disabled(updateCoordinator.isChecking)
+            // 检查更新失败：行内失败行＋重试按钮，不再弹窗；
+            // 「已是最新版本」本就由上方状态行显示，也不再弹窗。
+            if let updateFailureDetail {
+                Divider()
+                HStack(spacing: 12) {
+                    Text(updateFailureDetail)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.sealDanger)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button("重试", action: checkUpdate)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.sealAccent)
+                }
+                .frame(minHeight: 44)
+            }
         }
     }
 
@@ -184,23 +185,13 @@ struct AboutView: View {
     }
 
     private func checkUpdate() {
-        updateAlert = nil
+        updateFailureDetail = nil
         Task {
             guard let result = await updateCoordinator.checkManually() else { return }
             switch result {
             case .unavailable(let failure):
-                updateAlert = UpdateAlert(
-                    title: failure.statusText,
-                    message: failure.detail,
-                    canRetry: true
-                )
-            case .latest:
-                updateAlert = UpdateAlert(
-                    title: "已是最新版本",
-                    message: "当前版本 \(version) 已是最新版本。",
-                    canRetry: false
-                )
-            case .available:
+                updateFailureDetail = failure.detail
+            case .latest, .available:
                 break
             }
         }
@@ -217,10 +208,4 @@ struct AboutView: View {
     }
 }
 
-private struct UpdateAlert: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
-    let canRetry: Bool
-}
 

@@ -161,7 +161,9 @@ private struct AppleAccountAppListView: View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 14) {
                 if case .loading = state {
-                    EmptyView()
+                    // 加载态：名额卡与列表行都按最终版式画骨架，不再整块转圈
+                    // （名额卡旧行为是直接隐藏，列表只有一句「正在读取」）。
+                    skeletonQuotaCard
                 } else {
                     appIDQuotaCard
                 }
@@ -206,15 +208,15 @@ private struct AppleAccountAppListView: View {
     private var content: some View {
         switch state {
         case .loading:
-            AppleAccountLoadingCard(title: "正在读取 App ID")
+            skeletonAppList
         case .failure(let message):
             AppleAccountFailureCard(message: message, onRetry: onRetry)
         case .empty:
-            AppleAccountEmptyCard(
-                icon: "app.dashed",
-                title: "暂无签名应用",
-                subtitle: "这个 Apple ID 还没有签名过任何应用。"
-            )
+            ContentUnavailableView {
+                Label("暂无签名应用", systemImage: "app.dashed")
+            } description: {
+                Text("这个 Apple ID 还没有签名过任何应用。")
+            }
         case .loaded(let items):
             AppleAccountLoadedAppListView(items: items)
         }
@@ -248,7 +250,7 @@ private struct AppleAccountAppRowView: View {
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(Color.primary)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.tail)
                 .textSelection(.enabled)
             accountDetailRow("App ID", item.appIdentifier)
@@ -278,7 +280,7 @@ private struct AppleAccountAppRowView: View {
             Text(value)
                 .font(monospaced ? .caption.monospaced() : .caption)
                 .foregroundStyle(valueColor)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(monospaced ? .middle : .tail)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
@@ -286,17 +288,44 @@ private struct AppleAccountAppRowView: View {
     }
 }
 
-private struct AppleAccountLoadingCard: View {
-    let title: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ProgressView()
-            Text(title)
-                .foregroundStyle(Color.sealTextSecondary)
+extension AppleAccountAppListView {
+    /// 名额卡骨架：与 `appIDQuotaCard` 同版式（标题行＋说明行）。
+    private var skeletonQuotaCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SealSkeletonBar(width: 96, height: 16)
+                Spacer(minLength: 8)
+                SealSkeletonBar(width: 84, height: 16)
+            }
+            SealSkeletonBar(width: 220, height: 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
+        .padding(16)
+        .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.sealHairline.opacity(0.58), lineWidth: 0.8)
+        }
+    }
+
+    /// 列表骨架：3 行 ×（名称灰块＋3 条明细灰块），与已加载列表同版式。
+    private var skeletonAppList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(0..<3, id: \.self) { index in
+                VStack(alignment: .leading, spacing: 7) {
+                    SealSkeletonBar(width: 150, height: 13)
+                    SealSkeletonDetailRow(labelWidth: 48, valueWidth: 170)
+                    SealSkeletonDetailRow(labelWidth: 64, valueWidth: 140)
+                    SealSkeletonDetailRow(labelWidth: 56, valueWidth: 110)
+                }
+                .padding(.vertical, 12)
+                if index < 2 {
+                    Divider()
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
         .sealContentCard(.prominent)
     }
 }
@@ -321,31 +350,6 @@ private struct AppleAccountFailureCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
-        .sealContentCard(.prominent)
-    }
-}
-
-private struct AppleAccountEmptyCard: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 34))
-                .foregroundStyle(Color.sealTextSecondary)
-
-            Text(title)
-                .font(.headline)
-
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(Color.sealTextSecondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(24)
         .sealContentCard(.prominent)
     }
 }
@@ -393,7 +397,7 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
     }
 
     var expirationText: String {
-        expiryDate.map(SealSettingsDateFormatter.string(from:)) ?? "Apple 未提供"
+        expiryDate.map(SealSettingsDateFormatter.stringWithoutSeconds(from:)) ?? "Apple 未提供"
     }
 }
 

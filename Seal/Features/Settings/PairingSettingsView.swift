@@ -45,6 +45,12 @@ struct PairingSettingsView: View {
         }
         .navigationTitle("设备")
         .navigationBarTitleDisplayMode(.inline)
+        // 配对终态轻反馈（2026-10-24 全 App 震动通道）：配对完成一下、失败一下。
+        .sensoryFeedback(trigger: viewModel.phonePairingState) { _, new in
+            if new == .completed { return .success }
+            if case .failed = new { return .error }
+            return nil
+        }
         .fileImporter(
             isPresented: $isFileImporterPresented,
             allowedContentTypes: [
@@ -122,6 +128,8 @@ struct PairingSettingsView: View {
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(presentation.color)
                     .frame(width: 28, height: 28)
+                    // 诊断运行中：运行箭头轻呼吸，停住即不再是「正在跑」。
+                    .symbolEffect(.pulse, isActive: viewModel.diagnosticState == .running)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("设备连接诊断")
                         .font(.headline)
@@ -217,6 +225,8 @@ struct PairingSettingsView: View {
                 } else {
                     Image(systemName: presentation.icon)
                         .font(.system(size: 42, weight: .medium))
+                        // 配对等待态（准备／系统确认／验证中）：图标轻呼吸。
+                        .symbolEffect(.pulse, isActive: isPhonePairingWaiting)
                 }
             }
             .foregroundStyle(presentation.color)
@@ -265,6 +275,7 @@ struct PairingSettingsView: View {
             if let pairing = viewModel.pairingRecord {
                 Divider()
                 phoneDetailRow("设备 UDID", deviceIdentifierText(pairing))
+                    .sealCopyableIdentifier(deviceIdentifierText(pairing))
             }
         }
         .padding(.horizontal, 16)
@@ -279,7 +290,7 @@ struct PairingSettingsView: View {
             Text(value)
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.middle)
         }
         .font(.subheadline)
@@ -352,6 +363,15 @@ struct PairingSettingsView: View {
     }
 
     private var phonePresentation: (title: String, detail: String, icon: String, color: Color, actionTitle: String) {
+        // 配对主状态只认配对记录：已验证的记录在任何自动检查后都仍是「配对完成」，
+        // 隧道状态只影响副文案，不再把横幅打回「等待/需要重新配对」。
+        if viewModel.pairingRecord?.isPaired == true,
+           viewModel.phonePairingState == .idle {
+            if case .ready = viewModel.diagnosticState {
+                return ("配对完成", "设备已准备好，可签名、安装和续签。", "checkmark.circle.fill", .sealSuccess, "重新配对")
+            }
+            return ("配对完成", "设备已配对。LocalDevVPN 连接后即可签名、安装和续签。", "checkmark.circle.fill", .sealSuccess, "重新配对")
+        }
         switch viewModel.phonePairingState {
         case .idle:
             return ("准备配对", "在开发者模式中与 Seal 配对，完成后即可签名、安装和续签。", "iphone.and.arrow.forward", .sealAccent, "开始设备配对")
@@ -373,6 +393,11 @@ struct PairingSettingsView: View {
     }
 
     private var phoneProgressIndex: Int {
+        // 已配对时进度条恒满格：自动检查不得再把进度打回中间步骤。
+        if viewModel.pairingRecord?.isPaired == true,
+           viewModel.phonePairingState == .idle {
+            return 3
+        }
         switch viewModel.phonePairingState {
         case .idle, .requestingLocalNetwork: 0
         case .waitingForSystemConfirmation, .showingCode: 1
@@ -383,6 +408,10 @@ struct PairingSettingsView: View {
     }
 
     private var phonePairingStatusText: String {
+        // 「设备配对」明细行只认配对记录：已验证即永久「已完成」。
+        if viewModel.pairingRecord?.isPaired == true {
+            return "已完成"
+        }
         switch viewModel.phonePairingState {
         case .completed: "已完成"
         case .waitingForLocalDevVPN, .validating: "已保存，待验证"
@@ -393,11 +422,24 @@ struct PairingSettingsView: View {
     }
 
     private var localDevVPNStatusText: String {
+        // 「LocalDevVPN」明细行只认实时通道诊断，不再跟配对主状态走。
+        switch viewModel.diagnosticState {
+        case .ready: "已验证"
+        case .running: "验证中"
+        case .failed: "待连接"
+        case .idle:
+            viewModel.pairingRecord?.isPaired == true ? "待连接" : "待验证"
+        }
+    }
+
+    /// 手机配对是否处于等待态（配对码确认／验证／等隧道期间图标呼吸）。
+    private var isPhonePairingWaiting: Bool {
         switch viewModel.phonePairingState {
-        case .completed: "已验证"
-        case .validating: "验证中"
-        case .waitingForLocalDevVPN: "待连接"
-        default: "待验证"
+        case .requestingLocalNetwork, .waitingForSystemConfirmation, .showingCode,
+             .validating, .waitingForLocalDevVPN:
+            return true
+        case .idle, .completed, .failed:
+            return false
         }
     }
 
@@ -406,6 +448,8 @@ struct PairingSettingsView: View {
             Image(systemName: heroIcon)
                 .font(.system(size: 50, weight: .medium))
                 .foregroundStyle(heroColor)
+                // 设备验证中：运行箭头轻呼吸，验证完即停。
+                .symbolEffect(.pulse, isActive: viewModel.pairingRecord?.validationStatus == .validating)
             Text(heroTitle)
                 .font(.title2.weight(.semibold))
             Text(heroSubtitle)
@@ -423,6 +467,7 @@ struct PairingSettingsView: View {
             detailRow("配对类型", pairing.isRemotePairing ? "远程配对" : "本机配对")
             Divider()
             detailRow("设备 UDID", deviceIdentifierText(pairing))
+                .sealCopyableIdentifier(deviceIdentifierText(pairing))
             Divider()
             detailRow("配对状态", pairing.validationStatus.title)
         }
@@ -497,7 +542,7 @@ struct PairingSettingsView: View {
             Text(value)
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.trailing)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.middle)
         }
         .frame(minHeight: 54)

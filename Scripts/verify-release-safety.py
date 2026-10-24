@@ -2391,7 +2391,9 @@ def violations(load=read):
           "证书轮换子流程里的 Seal 自替换会被当成用户那个 App（判据恒假）")
     check("signingSession?.app.isSeal == true {" not in apps_view_source,
           "R66: 不得留回「只用会话主体判断」的旧写法 —— 它在子流程里恒假")
-    check(apps_view_source.count("updateSigningStage(update.stage, subject: update.subject)") == 2,
+    # 2026-10-24：两处回调新增 `detail` 子状态透传（续签进度子状态），主体仍必须跟着信号走；
+    # 计数改为新形态，语义不变。
+    check(apps_view_source.count("updateSigningStage(update.stage, subject: update.subject, detail: update.detail)") == 2,
           "R66: 两处进度回调（签名 / 重新安装已签名包）都必须把信号主体一起交给状态层；"
           "新增调用点时请同步这里")
     check("let enteredBy = subject?.appName ?? signingSession?.app.displayName ?? \"未知应用\""
@@ -4938,13 +4940,17 @@ def violations(load=read):
           "R120: 更新抽屉须与签名抽屉共用 SealDrawer，并由原生大尺寸抽屉覆盖导航栏和底部标签栏")
 
     update_downloader = strip_comments(load("Seal/Infrastructure/UpdateIPADownloader.swift"))
+    seal_text_helpers = strip_comments(load("Seal/DesignSystem/SealText.swift"))
     # 0.1.52 起下载走后台会话：进度代理即会话控制器本身（建会话时绑定 delegate），
     # 钉子由旧 async API 形态改钉后台会话的委托绑定，百分比呈现不变量不变。
+    # 2026-10-24：百分比拼接收敛到共享入口 `sealPercentText`（定义仍为 Int(*100)%），
+    # 抽屉侧改为调该入口，显示实际百分比的语义不变。
     check("URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)" in update_downloader
           and "func urlSession(" in update_downloader
           and "didWriteData bytesWritten:" in update_downloader
           and "UpdateDownloadProgress.fraction(received: received, total: total)" in update_notice_view
-          and "下载进度 \\(Int(progress * 100))%" in update_notice_view
+          and "下载进度 \\(progress.sealPercentText)" in update_notice_view
+          and "\"\\(Int(self * 100))%\"" in seal_text_helpers
           and "downloadProgressIsDeterminateWhenTheResponseHasAContentLength()" in update_notice_tests,
           "R122: 更新 IPA 下载必须把进度代理绑定到任务，并在抽屉显示实际百分比")
 
@@ -7465,16 +7471,20 @@ def violations(load=read):
 
     # R93②（2026-10-04 并行续签）：「消费 + 重置 + 注入」在 actor 串行临界区原子完成。
     # 直接匹配代码块整体，不依赖 section 提取（section 边界在重构时易漂移）。
+    # 2026-10-24：自愈块内新增子状态上报（`healingTaint`），仍在同一原子区内；
+    # 顺序（消费→上报→重置→重建→留痕）与「注入前」位置不变。
     r93_heal_block = (
         "if taint.consume() {\n"
+        "            await onProgress(.healingTaint)\n"
         "            await channel.reset()\n"
         "            _ = try await channel.start()\n"
         "            await onTaintHealed()\n"
         "        }"
     )
+    # 2026-10-24：注入循环改为 enumerated 形态（上报第 i/N 份），锚点跟随。
     check(r93_heal_block in r93_installer
           and r93_installer.index(r93_heal_block)
-              < r93_installer.index("for material in materials {")
+              < r93_installer.index("for (index, material) in materials.enumerated() {")
           and "Minimuxer.reset()" not in r93_installer,
           "R93②: 「消费 + 重置 + 注入」必须在 actor 串行临界区里原子完成 ✗ —— "
           "消费漏了 ⇒ 一次超时毒掉后续全部续签；"
@@ -9263,8 +9273,8 @@ def main():
          "R66: 回主屏的判据必须用**信号自带的主体**"),
         # 其中一处进度回调丢掉主体：那条入口重新变静默。
         ("Seal/Features/Apps/AppsViewModel.swift",
-         "                    await self?.updateSigningStage(update.stage, subject: update.subject)",
-         "                    await self?.updateSigningStage(update.stage)",
+         "                    await self?.updateSigningStage(update.stage, subject: update.subject, detail: update.detail)",
+         "                    await self?.updateSigningStage(update.stage, detail: update.detail)",
          "R66: 两处进度回调（签名 / 重新安装已签名包）都必须把信号主体一起交给状态层"),
         # 阶段日志丢掉主体名：真机上又看不出「这是谁的阶段」。
         ("Seal/Features/Apps/AppsViewModel.swift",
@@ -11454,8 +11464,8 @@ def main():
          "R93①:"),
         # ②a actor 内不再消费污染标记（一次超时毒掉后续全部续签）⇒ R93② 报红。
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "        if taint.consume() {\n            await channel.reset()",
-         "        if false {\n            await channel.reset()",
+         "        if taint.consume() {\n            await onProgress(.healingTaint)\n            await channel.reset()",
+         "        if false {\n            await onProgress(.healingTaint)\n            await channel.reset()",
          "R93②:"),
         # ②b `reset()` 之后不再重新 `start()`（传输退回 Lockdown、自愈后第一次注入必失败）⇒ R93② 报红。
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",

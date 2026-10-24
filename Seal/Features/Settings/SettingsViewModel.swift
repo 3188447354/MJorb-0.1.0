@@ -514,13 +514,27 @@ final class SettingsViewModel: ObservableObject {
             waitingMessage: "配对信息已导入，等待 LocalDevVPN 连接后验证"
         )
         phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
-            diagnosticState: diagnosticState
+            diagnosticState: diagnosticState,
+            isPaired: pairingRecord?.isPaired == true
         )
     }
 
+    /// 自动检查后的配对页主状态映射。
+    /// 已验证的配对记录即永久配对完成：自动检查（启动/回前台/进页/VPN 回调）
+    /// 不得再把页面打回 waitingForLocalDevVPN 或 failed；通道结果只落
+    /// diagnosticState，由配对页的 LocalDevVPN 明细行单独呈现。
+    /// 通道已就绪时仍进 completed；否则回到 idle，配对页按已配对分支展示
+    /// （主按钮「验证 LocalDevVPN」＋次按钮「重新配对」）。
     static func phonePairingStateAfterAutomaticCheck(
-        diagnosticState: DiagnosticState
+        diagnosticState: DiagnosticState,
+        isPaired: Bool
     ) -> PhonePairingState {
+        if isPaired {
+            if case .ready = diagnosticState {
+                return .completed
+            }
+            return .idle
+        }
         switch diagnosticState {
         case .ready:
             return .completed
@@ -2712,7 +2726,8 @@ final class SettingsViewModel: ObservableObject {
         phonePairingState = .validating
         await testPairingConnection()
         phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
-            diagnosticState: diagnosticState
+            diagnosticState: diagnosticState,
+            isPaired: pairingRecord?.isPaired == true
         )
     }
 
@@ -2876,7 +2891,8 @@ final class SettingsViewModel: ObservableObject {
 
             await runInstallChannelCheck(successMessage: "设备配对和 LocalDevVPN 验证完成")
             phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
-                diagnosticState: diagnosticState
+                diagnosticState: diagnosticState,
+                isPaired: pairingRecord?.isPaired == true
             )
         } catch let failure as ImportFailure {
             markPairingFailed()
@@ -3204,7 +3220,8 @@ final class SettingsViewModel: ObservableObject {
             majorOSVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         ).usesPhonePairing {
             phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
-                diagnosticState: diagnosticState
+                diagnosticState: diagnosticState,
+                isPaired: pairingRecord?.isPaired == true
             )
         }
     }

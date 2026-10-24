@@ -118,10 +118,12 @@ struct BatchRefreshView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color.sealTextSecondary)
                     Spacer()
-                    Text("\(Int(progress * 100))%")
+                    Text(progress.sealPercentText)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color.sealAccent)
                         .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .animation(.easeInOut(duration: 0.25), value: progress)
                 }
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)
@@ -188,7 +190,7 @@ struct BatchRefreshView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 16, weight: .medium))
-                    .lineLimit(1)
+                    .singleLine()
                 Text(queueStatusText(item.state))
                     .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
@@ -223,6 +225,7 @@ struct BatchRefreshView: View {
             Image(systemName: "circle")
                 .font(.system(size: 20))
                 .foregroundStyle(Color.sealTextSecondary.opacity(0.4))
+                .symbolEffect(.pulse)
         case .running, .preparingSealUpdate:
             ProgressView()
                 .scaleEffect(0.9)

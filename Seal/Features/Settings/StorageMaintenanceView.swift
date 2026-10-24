@@ -5,12 +5,21 @@ struct StorageMaintenanceView: View {
     @State private var confirmsTemporaryClear = false
     @State private var confirmsUnusedClear = false
     @State private var confirmsSignedPackageClear = false
+    /// 首轮统计是否已跑完。`storageUsage` 初始是全 0 的 `.empty`，
+    /// 首轮跑完前直接渲染会先显一轮「0 KB」假值再跳变 —— 用骨架挡住这段。
+    /// 后续下拉刷新不重置它，沿用旧值，不闪骨架。
+    @State private var storageLoaded = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
             VStack(spacing: 20) {
-                summaryCard
-                usageCard
+                if storageLoaded {
+                    summaryCard
+                    usageCard
+                } else {
+                    skeletonSummaryCard
+                    skeletonUsageCard
+                }
                 if hasMaintenanceActions {
                     actionCard
                 }
@@ -20,7 +29,10 @@ struct StorageMaintenanceView: View {
         }
         .navigationTitle("存储与维护")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await viewModel.refreshStorageUsage() }
+        .task {
+            await viewModel.refreshStorageUsage()
+            storageLoaded = true
+        }
         .refreshable { await viewModel.refreshStorageUsage() }
         .confirmationDialog(
             "清理临时缓存？",
@@ -75,6 +87,37 @@ struct StorageMaintenanceView: View {
         .frame(maxWidth: .infinity)
         .padding(28)
         .sealContentCard(.prominent)
+    }
+
+    /// 汇总骨架：与 `summaryCard` 同版式（图标位＋大数字＋说明行）。
+    private var skeletonSummaryCard: some View {
+        VStack(spacing: 10) {
+            SealSkeletonBar(width: 48, height: 48)
+            SealSkeletonBar(width: 120, height: 28)
+            SealSkeletonBar(width: 96, height: 16)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(28)
+        .sealContentCard(.prominent)
+    }
+
+    /// 明细骨架：6 行 ×（左名右值），与 `usageCard` 同版式。
+    private var skeletonUsageCard: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<6, id: \.self) { index in
+                HStack {
+                    SealSkeletonBar(width: 96, height: 14)
+                    Spacer()
+                    SealSkeletonBar(width: 72, height: 14)
+                }
+                .frame(minHeight: 54)
+                if index < 5 {
+                    Divider()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .sealContentCard(.standard)
     }
 
     private var usageCard: some View {

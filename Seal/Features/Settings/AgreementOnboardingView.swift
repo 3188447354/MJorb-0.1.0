@@ -211,23 +211,10 @@ private struct AgreementConsentSheet: View {
                 onAgreed()
             }) {
                 Text("同意并继续")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .foregroundStyle(.white)
-                    .background(
-                        LinearGradient(
-                            colors: [
-                                Color(red: 0.04, green: 0.47, blue: 1.0),
-                                Color(red: 0.00, green: 0.37, blue: 0.93)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
-            .buttonStyle(.plain)
+            // 首启协议页主按钮改走主题按钮（2026-10-24）：不再写死蓝渐变，
+            // 跟随用户选的主题色；按钮形态（圆角 14）与原版一致。
+            .sealPrimaryAction(cornerRadius: 14)
             .padding(.horizontal, drawerHorizontalInset)
             .padding(.top, 24)
 

@@ -54,6 +54,22 @@ struct ProfileOnlyOperationLease {
     }
 }
 
+/// 设备注入子阶段的上报事件（只用于界面提示，不改变注入语义）。
+/// 注入器本身不写界面文案：调用方（SigningCoordinator）把事件译成人话后
+/// 经阶段回调送界面；这里只报事实。
+enum ProfileOnlyInjectionProgress: Sendable {
+    /// 串行 actor 正被另一项占用，本项在排队。
+    case waitingForTurn
+    /// 消费到污染标记，正在重置并重建设备通道。
+    case healingTaint
+    /// 正在注入第 index / total 份描述文件。
+    case injecting(index: Int, total: Int)
+    /// 注入完成，正在一次性 dump 逐份读回核验。
+    case verifyingReadback
+    /// 本次注入遇通道瞬时失败，正在重建连接后重试一次。
+    case retryingConnection
+}
+
 /// Serializes profile injection for the entire process. `misagent` uses a
 /// process-wide device transport, so two app renewals must never install a
 /// profile concurrently.
@@ -69,10 +85,15 @@ actor ProfileOnlyProvisioningProfileInstaller {
         channel: any InstallChannel,
         operationCoordinator: OperationCoordinator? = nil,
         // 污染自愈时留痕（`SEAL-PROFILE-355`），由调用方传入日志闭包。
-        onTaintHealed: @Sendable () async -> Void = {}
+        onTaintHealed: @Sendable () async -> Void = {},
+        // 设备注入子阶段上报：调用方译成界面提示。默认空实现，不影响旧调用点。
+        onProgress: @Sendable (ProfileOnlyInjectionProgress) async -> Void = { _ in }
     ) async throws {
         // Actor 在 await 处可重入，因此仅把「等待前驱」放入 task tail 不够：
         // 前驱一入场，后继的门闩也会完成。这里持有 isBusy 直到所有设备操作与读回结束。
+        if isBusy {
+            await onProgress(.waitingForTurn)
+        }
         while isBusy {
             try Task.checkCancellation()
             // 原生调用结束前让同设备写入排队；等候期间释放 actor 执行权，其他 App 操作仍可运行。
@@ -89,22 +110,26 @@ actor ProfileOnlyProvisioningProfileInstaller {
         // 排队等待期间，另一项的注入可能失败并标记污染，或 363 提前标记了污染。
         // 在这里消费 + 重置通道，注入继续，不丢一轮。
         if taint.consume() {
+            await onProgress(.healingTaint)
             await channel.reset()
             _ = try await channel.start()
             await onTaintHealed()
         }
 
-        for material in materials {
+        for (index, material) in materials.enumerated() {
             try Task.checkCancellation()
+            await onProgress(.injecting(index: index + 1, total: materials.count))
             try await inject(
                 material,
                 using: channel,
-                operationCoordinator: operationCoordinator
+                operationCoordinator: operationCoordinator,
+                onProgress: onProgress
             )
         }
 
         // ── 批量读回核验（性能优化）：全部注入完后一次 dump + 全量解析，
         // 逐份核验，避免每份各做一次秒级 dump（2026-10-04）。
+        await onProgress(.verifyingReadback)
         operationLease.beginNativeOperation()
         let readback = await DeviceProfileInspector.containsProfiles(
             matching: materials.map(\.binding),
@@ -157,7 +182,8 @@ actor ProfileOnlyProvisioningProfileInstaller {
     private func inject(
         _ material: ProfileOnlyProfileMaterial,
         using channel: any InstallChannel,
-        operationCoordinator: OperationCoordinator?
+        operationCoordinator: OperationCoordinator?,
+        onProgress: @Sendable (ProfileOnlyInjectionProgress) async -> Void = { _ in }
     ) async throws {
         var recoveredConnection = false
 
@@ -203,6 +229,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
                     throw error
                 }
                 recoveredConnection = true
+                await onProgress(.retryingConnection)
                 await channel.invalidateProfileServiceConnection()
                 _ = try await channel.start()
             }

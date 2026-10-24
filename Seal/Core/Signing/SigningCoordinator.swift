@@ -1283,6 +1283,28 @@ actor SigningCoordinator {
             certificateSerialNumber: result.certificateSerialNumber,
             channel: installChannel,
             operationCoordinator: operationCoordinator,
+            // 设备注入子阶段上报：阶段仍是 .preparingProfiles（轨道预算模型要求
+            // 它独占第 5 格，切阶段会让轨道往回跳），只把子状态经 detail 送界面——
+            // 界面据此把标题切到「正在更新描述文件」、提示换成子状态文案、
+            // 圆环切回不确定转弧，满格不再定格。
+            onProgress: { event in
+                let detail: String
+                switch event {
+                case .waitingForTurn:
+                    detail = "正在等待其他应用完成续签"
+                case .healingTaint:
+                    detail = "正在重建设备连接"
+                case .injecting(let index, let total):
+                    detail = total <= 1
+                        ? "正在注入描述文件"
+                        : "正在注入第 \(index)/\(total) 份描述文件"
+                case .verifyingReadback:
+                    detail = "正在核对描述文件"
+                case .retryingConnection:
+                    detail = "注入未响应，正在重试"
+                }
+                await progress(SigningStageUpdate(stage: .preparingProfiles, app: app, detail: detail))
+            },
             // actor 在串行排队后若发现污染（363 提前标记 / 上一项注入失败留下），
             // 会自己消费 + 重置；这里只负责留痕（`SEAL-PROFILE-355`）。
             onTaintHealed: { [logStore] in

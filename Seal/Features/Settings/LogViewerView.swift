@@ -19,6 +19,13 @@ private struct LogFailureDetail: Identifiable {
 }
 
 /// 仅显示签名、续签和安装的最终结果；完整诊断仍保留在导出日志中。
+/// 日志结果筛选 chip（2026-10-24）：全部／成功／失败。
+private enum LogResultFilter: String, CaseIterable {
+    case all = "全部"
+    case succeeded = "成功"
+    case failed = "失败"
+}
+
 struct LogViewerView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @State private var entries: [SealLogEntry] = []
@@ -27,6 +34,30 @@ struct LogViewerView: View {
     @State private var showClearConfirm = false
     @State private var selectedFailure: LogFailureDetail?
     @State private var exportFailure: ImportFailure?
+    @State private var resultFilter: LogResultFilter = .all
+
+    private var filteredEntries: [SealLogEntry] {
+        switch resultFilter {
+        case .all: return entries
+        case .succeeded: return entries.filter { isSuccessEntry($0) }
+        case .failed: return entries.filter { isFailureEntry($0) }
+        }
+    }
+
+    /// 有汇总的按汇总判（失败／待处理项＞0 即失败）；无汇总的按单条操作结果判。
+    private func isFailureEntry(_ entry: SealLogEntry) -> Bool {
+        if let summary = LogViewerPolicy.operationSummary(for: entry) {
+            return summary.failedCount > 0 || summary.needsActionCount > 0
+        }
+        return LogViewerPolicy.operationResult(for: entry) == .failure
+    }
+
+    private func isSuccessEntry(_ entry: SealLogEntry) -> Bool {
+        if let summary = LogViewerPolicy.operationSummary(for: entry) {
+            return summary.failedCount == 0 && summary.needsActionCount == 0
+        }
+        return LogViewerPolicy.operationResult(for: entry) == .success
+    }
 
     var body: some View {
         ScrollView {
@@ -38,12 +69,50 @@ struct LogViewerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 12)
 
-                ForEach(entries) { entry in
-                    LogEntryRow(entry: entry) { title, reason in
-                        selectedFailure = LogFailureDetail(title: title, reason: reason)
+                HStack(spacing: 8) {
+                    ForEach(LogResultFilter.allCases, id: \.self) { filter in
+                        Button { resultFilter = filter } label: {
+                            Text(filter.rawValue)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(
+                                    resultFilter == filter ? Color.sealAccent : Color.sealTextSecondary
+                                )
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    resultFilter == filter
+                                        ? Color.sealAccent.opacity(0.12)
+                                        : Color.sealSurface,
+                                    in: Capsule()
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .padding(.vertical, 10)
-                    Divider()
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, 8)
+
+                if filteredEntries.isEmpty {
+                    ContentUnavailableView {
+                        Label(
+                            entries.isEmpty ? "暂无日志结果" : "没有符合筛选的结果",
+                            systemImage: entries.isEmpty
+                                ? "doc.text.magnifyingglass" : "line.3.horizontal.decrease.circle"
+                        )
+                    } description: {
+                        Text(entries.isEmpty
+                            ? "签名、续签与安装的结果会出现在这里。"
+                            : "换个筛选条件试试。")
+                    }
+                    .padding(.top, 24)
+                } else {
+                    ForEach(filteredEntries) { entry in
+                        LogEntryRow(entry: entry) { title, reason in
+                            selectedFailure = LogFailureDetail(title: title, reason: reason)
+                        }
+                        .padding(.vertical, 10)
+                        Divider()
+                    }
                 }
             }
             .padding(.horizontal, 18)
@@ -190,8 +259,11 @@ private struct LogEntryRow: View {
         VStack(alignment: .leading, spacing: 5) {
             if let summary {
                 HStack(spacing: 8) {
-                    Text(heading(summary))
-                        .font(.system(size: 14, weight: .semibold))
+                    // 标题行里的日期段同样等宽，与单条行的时间戳成列。
+                    (Text(headingDate(summary))
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        + Text(" · \(headingTitle(summary))")
+                        .font(.system(size: 14, weight: .semibold)))
                         .foregroundStyle(.primary)
                         .singleLine()
                     Spacer(minLength: 2)
@@ -229,8 +301,7 @@ private struct LogEntryRow: View {
             Text(item.appName)
                 .font(.system(size: 14))
                 .foregroundStyle(.primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .singleLine()
 
             Spacer(minLength: 2)
 
@@ -273,13 +344,14 @@ private struct LogEntryRow: View {
                     .singleLine()
             }
         }
-        .frame(height: 23)
+        .frame(minHeight: 23)
     }
 
     private var fallbackRow: some View {
         HStack(spacing: 7) {
+            // 时间戳等宽成列（2026-10-24）：比例字体下各行时间起止参差，列对不齐。
             Text(SealSettingsDateFormatter.string(from: entry.timestamp))
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .singleLine()
             Text("· \(categoryTitle(entry.category))")
                 .font(.system(size: 13, weight: .semibold))
@@ -303,16 +375,19 @@ private struct LogEntryRow: View {
                     .singleLine()
             }
         }
-        .frame(height: 23)
+        .frame(minHeight: 23)
     }
 
-    private func heading(_ summary: RenewalRoundSummary) -> String {
-        let date = SealSettingsDateFormatter.string(from: entry.timestamp)
+    private func headingDate(_ summary: RenewalRoundSummary) -> String {
+        SealSettingsDateFormatter.string(from: entry.timestamp)
+    }
+
+    private func headingTitle(_ summary: RenewalRoundSummary) -> String {
         let title = summary.operation.displayTitle(triggerSource: summary.triggerSource)
         if summary.operation == .batchRenewal {
-            return "\(date) · \(title) · \(summary.items.count)个App"
+            return "\(title) · \(summary.items.count)个App"
         }
-        return "\(date) · \(title)"
+        return title
     }
 
     private func categoryTitle(_ category: SealLogEntry.Category) -> String {
@@ -450,12 +525,6 @@ private struct LogMailComposer: UIViewControllerRepresentable {
         ) {
             controller.dismiss(animated: true, completion: onFinish)
         }
-    }
-}
-
-private extension View {
-    func singleLine() -> some View {
-        lineLimit(1).minimumScaleFactor(0.72)
     }
 }
 

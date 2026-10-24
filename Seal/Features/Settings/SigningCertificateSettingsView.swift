@@ -289,7 +289,7 @@ struct SigningCertificateSettingsView: View {
                         if let account = activeAccount {
                             Text(viewModel.fullEmail(for: account))
                                 .foregroundStyle(Color.sealTextSecondary)
-                                .lineLimit(1)
+                                .singleLine()
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption)
                                 .foregroundStyle(Color.sealTextSecondary)
@@ -319,6 +319,11 @@ struct SigningCertificateSettingsView: View {
         if let account = activeAccount {
             if viewModel.isCertificateInventoryLoading(accountID: account.id) {
                 certificateLoadingCard
+            } else if let failure = viewModel.certificateInventoryFailure(for: account.id),
+                      viewModel.certificateInventory(for: account.id) == nil {
+                // 证书同步失败且无缓存可看：行内失败行＋重试按钮，不再静默空卡。
+                // 有缓存时仍显示缓存数据（失败由刷新入口的提示承载），不挡正常查看。
+                certificateSyncFailureCard(account: account, failure: failure)
             } else {
                 unifiedCertificateCard(account: account)
             }
@@ -327,22 +332,39 @@ struct SigningCertificateSettingsView: View {
         }
     }
 
+    private func certificateSyncFailureCard(account: AppleAccountRecord, failure: ImportFailure) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("证书同步失败")
+                .font(.headline)
+                .foregroundStyle(Color.sealDanger)
+            Text(failure.userMessage)
+                .font(.subheadline)
+                .foregroundStyle(Color.sealTextSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("重新同步") {
+                Task { await viewModel.refreshCertificateInventory(for: account, force: true) }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .sealContentCard(.prominent)
+    }
+
     /// 自管理状态卡：当前真实签名者、本机可用身份、事务状态和下一步。
     /// View 只读 ViewModel 汇总好的展示模型，不自己猜状态。
     private var selfManagementCard: some View {
         if viewModel.isSelfManagementLoading {
+            // 自管理卡加载态：转圈换成一行明细行骨架（标题行＋一行明细），
+            // 与下方真实卡片的「标题＋明细行」版式一致。
             return AnyView(
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
-                        Text("正在读取本机签名身份")
-                            .font(.subheadline.weight(.semibold))
+                        SealSkeletonBar(width: 140, height: 16)
                         Spacer(minLength: 8)
-                        ProgressView()
-                            .controlSize(.small)
+                        SealSkeletonBar(width: 96, height: 12)
                     }
-                    Text("正在核对当前 Seal 与本机证书。")
-                        .font(.caption)
-                        .foregroundStyle(Color.sealTextSecondary)
+                    SealSkeletonDetailRow(labelWidth: 96, valueWidth: 150)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
@@ -386,6 +408,7 @@ struct SigningCertificateSettingsView: View {
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
+                .sealCopyableIdentifier(viewModel.sealActualSignerSerialNumber ?? "")
             }
             if presentation.showsComputerRecovery {
                 Text("不要卸载 Seal。请用电脑按相同的包名（含扩展部分）和团队覆盖安装。")
@@ -398,15 +421,16 @@ struct SigningCertificateSettingsView: View {
         .sealContentCard(.prominent))
     }
 
+    /// 证书卡骨架：同步期间按最终卡片版式画灰块，不再只转圈。
     private var certificateLoadingCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("正在同步证书状态")
-                    .font(.subheadline.weight(.semibold))
+                SealSkeletonBar(width: 140, height: 16)
                 Spacer(minLength: 8)
-                ProgressView()
-                    .controlSize(.small)
+                SealSkeletonBar(width: 96, height: 12)
             }
+            SealSkeletonDetailRow(labelWidth: 72, valueWidth: 170)
+            SealSkeletonDetailRow(labelWidth: 72, valueWidth: 130)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
@@ -697,7 +721,7 @@ struct SigningCertificateSettingsView: View {
         guard let health else { return "检查中" }
         if health.portalPresence == .invalid { return "已撤销或不存在" }
         guard let expirationDate = health.expirationDate else { return "无法确认" }
-        return SealSettingsDateFormatter.string(from: expirationDate)
+        return SealSettingsDateFormatter.stringWithoutSeconds(from: expirationDate)
     }
 
     private func localPrivateKeyText(_ health: CertificateHealthStatus?) -> String {
@@ -717,7 +741,7 @@ struct SigningCertificateSettingsView: View {
         guard let expirationDate = certificate.expirationDate else {
             return "有效期：无法确认"
         }
-        return "有效期至 \(SealSettingsDateFormatter.string(from: expirationDate))"
+        return "有效期至 \(SealSettingsDateFormatter.stringWithoutSeconds(from: expirationDate))"
     }
 
     private func deduplicatedCertificates(
@@ -806,13 +830,13 @@ struct SigningCertificateSettingsView: View {
             } else if let recordApps {
                 installedAppRows(recordApps)
             } else if display == .noAssociatedRecords {
-                Text("暂无关联记录")
-                    .font(.caption)
-                    .foregroundStyle(Color.sealTextSecondary)
+                ContentUnavailableView {
+                    Label("暂无关联记录", systemImage: "tray")
+                }
             } else {
-                Text("暂无")
-                    .font(.caption)
-                    .foregroundStyle(Color.sealTextSecondary)
+                ContentUnavailableView {
+                    Label("暂无", systemImage: "tray")
+                }
             }
         }
         .padding(.vertical, 12)
@@ -829,11 +853,11 @@ struct SigningCertificateSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(app.name)
                         .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
+                        .singleLine()
                     Text(app.bundleIdentifier)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(Color.sealTextSecondary)
-                        .lineLimit(1)
+                        .singleLine()
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 6)
@@ -872,11 +896,11 @@ struct SigningCertificateSettingsView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(app.name)
                         .font(.subheadline.weight(.medium))
-                        .lineLimit(1)
+                        .singleLine()
                     Text(app.mappedBundleIdentifier ?? app.originalBundleIdentifier)
                         .font(.system(.caption2, design: .monospaced))
                         .foregroundStyle(Color.sealTextSecondary)
-                        .lineLimit(1)
+                        .singleLine()
                         .truncationMode(.middle)
                 }
             }

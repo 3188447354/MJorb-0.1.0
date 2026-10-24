@@ -21,6 +21,20 @@ enum SealSettingsDateFormatter {
     static func string(from date: Date) -> String {
         formatter.string(from: date)
     }
+
+    /// 用户可见的**到期时间**专用：精确到分钟，不带秒（2026-10-24）。
+    /// 秒只留给导出日志与「创建时间」这类需要秒级证伪的场景
+    /// （2026-09-25：同一分钟内续签两次，分钟粒度无法区分新旧描述文件）。
+    private static let minuteFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+
+    static func stringWithoutSeconds(from date: Date) -> String {
+        minuteFormatter.string(from: date)
+    }
 }
 
 enum TeamNameDisplayFormatter {

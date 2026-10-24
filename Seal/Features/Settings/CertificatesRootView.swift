@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct CertificatesRootView: View {
     @ObservedObject var viewModel: SettingsViewModel
@@ -7,6 +8,8 @@ struct CertificatesRootView: View {
     @State private var isAddingAccount = false
     @State private var detailAccount: AppleAccountRecord?
     @State private var accountPendingDeletion: AppleAccountRecord?
+    /// 删除账号成功震动触发器（计数递增即震一次）。
+    @State private var deleteSuccessTrigger = 0
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -21,6 +24,7 @@ struct CertificatesRootView: View {
         }
         .navigationTitle("Apple ID 证书")
         .navigationBarTitleDisplayMode(.inline)
+        .sensoryFeedback(.success, trigger: deleteSuccessTrigger)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { isAddingAccount = true } label: {
@@ -41,8 +45,14 @@ struct CertificatesRootView: View {
             presenting: accountPendingDeletion
         ) { account in
             Button("删除账号", role: .destructive) {
-                Task { await viewModel.deleteAccount(account) }
                 accountPendingDeletion = nil
+                Task {
+                    await viewModel.deleteAccount(account)
+                    // 账号已不在库＝删除成功，给一下轻反馈；失败走失败提示，不震。
+                    if viewModel.accounts.contains(where: { $0.id == account.id }) == false {
+                        deleteSuccessTrigger += 1
+                    }
+                }
             }
             Button("取消", role: .cancel) { accountPendingDeletion = nil }
         } message: { account in
@@ -129,7 +139,7 @@ struct CertificatesRootView: View {
                 Text(activeAccountSubtitle)
                     .font(.subheadline)
                     .foregroundStyle(Color.sealTextSecondary)
-                    .lineLimit(1)
+                    .singleLine()
             }
             Spacer()
             Button { isAddingAccount = true } label: {
@@ -152,16 +162,10 @@ struct CertificatesRootView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "person.crop.circle.badge.plus")
-                .font(.system(size: 34))
-                .foregroundStyle(Color.sealAccent)
-            Text("还没有 Apple ID")
-                .font(.headline)
+        ContentUnavailableView {
+            Label("还没有 Apple ID", systemImage: "person.crop.circle.badge.plus")
+        } description: {
             Text("添加并验证后，可用于签名、续签和查看 Apple 账号状态。")
-                .font(.subheadline)
-                .foregroundStyle(Color.sealTextSecondary)
-                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(28)
@@ -190,21 +194,19 @@ struct CertificatesRootView: View {
                     Text(viewModel.fullEmail(for: account))
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .singleLine()
                     Spacer(minLength: 12)
                     Text(certificateStatusTitle(account))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(certificateStatusColor(account))
-                        .lineLimit(1)
+                        .singleLine()
                 }
 
                 HStack(alignment: .firstTextBaseline, spacing: 12) {
                     Text(accountDisplayName(account))
                         .font(.subheadline)
                         .foregroundStyle(Color.sealTextSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .singleLine()
                     Spacer(minLength: 12)
                     Text(appIDQuotaTitle(account))
                         .font(.subheadline.weight(.semibold))
@@ -212,6 +214,9 @@ struct CertificatesRootView: View {
                         .foregroundStyle(Color.sealTextSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.9)
+                        // 「暂未统计」→真值同位替换：数字滚动＋短淡入，不跳变。
+                        .contentTransition(.numericText())
+                        .animation(.easeInOut(duration: 0.25), value: appIDQuotaTitle(account))
                 }
             }
             .frame(minHeight: 62)
@@ -219,6 +224,12 @@ struct CertificatesRootView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button {
+                UIPasteboard.general.string = viewModel.fullEmail(for: account)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            } label: {
+                Label("复制邮箱", systemImage: "doc.on.doc")
+            }
             Button("删除账号", role: .destructive) {
                 accountPendingDeletion = account
             }

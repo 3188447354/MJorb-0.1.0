@@ -130,7 +130,7 @@ struct SealCommunityView: View {
             Spacer(minLength: 0)
         }
         .padding(14)
-        .background(Color.sealSurfaceElevated.opacity(0.6), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .sealContentCard(.compact)
     }
 
     private var gzhCodeSheet: some View {
@@ -147,14 +147,23 @@ struct SealCommunityView: View {
                         .scaledToFill()
                         .frame(width: 240, height: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 } else {
-                    Text("公众号二维码未加载")
-                        .font(.footnote)
-                        .foregroundStyle(Color.sealTextSecondary)
+                    // 缺图占位（2026-10-24）：不再是大白框＋一行小字，改居中图标＋文案，
+                    // 底色走内容面（深色下不刺眼）；有图时仍保留白色静区。
+                    VStack(spacing: 10) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 44, weight: .medium))
+                            .foregroundStyle(Color.sealTextSecondary)
+                        Text("公众号二维码未加载")
+                            .font(.footnote)
+                            .foregroundStyle(Color.sealTextSecondary)
+                    }
+                    .frame(width: 240, height: 240)
+                    .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 }
             }
             .frame(width: 240, height: 240)
-            .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(Color.sealHairline.opacity(0.6), lineWidth: 0.8)

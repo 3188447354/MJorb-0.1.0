@@ -91,6 +91,10 @@ struct SigningSession: Identifiable, Equatable, Sendable {
     /// 为 `nil` 时按「已过 0 秒」处理（回看历史会话、或起点丢失）——
     /// 此时进度停在阶段地板值上，仍然是个**有效**的显示，不会出现负进度或跳变。
     var stageStartedAt: Date?
+    /// 同阶段内的子状态提示（见 `SigningStageUpdate.detail`）。
+    /// 非 nil 时界面用它代替该阶段的常规提示，并把进度环切回不确定转弧；
+    /// 阶段推进（无 detail 的更新）到达时自动清掉，不残留到下一阶段。
+    var stageDetail: String?
 
     init(
         id: UUID = UUID(),
@@ -101,6 +105,7 @@ struct SigningSession: Identifiable, Equatable, Sendable {
         completionMode: SigningCompletionMode = .signAndInstall,
         renewalExecutionPath: RenewalExecutionPath? = nil,
         stageStartedAt: Date? = Date(),
+        stageDetail: String? = nil,
         status: Status
     ) {
         self.id = id
@@ -113,6 +118,7 @@ struct SigningSession: Identifiable, Equatable, Sendable {
         // 默认「会话开始 = 当前阶段开始」：会话总是在一个运行中的阶段里被创建的，
         // 起点留空会让进度停在阶段地板值上直到第一次阶段推进。
         self.stageStartedAt = stageStartedAt
+        self.stageDetail = stageDetail
         self.status = status
     }
 }

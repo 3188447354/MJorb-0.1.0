@@ -2453,7 +2453,7 @@ final class AppsViewModel: ObservableObject {
                 // 永远拿不到「该回主屏了」⇒ installd 一直等旧进程让位（894 秒上限）。
                 // 与证书轮换子流程是同一个坑，一起补上。
                 progress: { [weak self] update in
-                    await self?.updateSigningStage(update.stage, subject: update.subject)
+                    await self?.updateSigningStage(update.stage, subject: update.subject, detail: update.detail)
                 }
             )
             await appendSingleOperationRound(
@@ -3884,7 +3884,7 @@ final class AppsViewModel: ObservableObject {
                     forceResign: forceResign,
                     bypassFreeAccountDeviceLimit: bypassFreeAccountDeviceLimit,
                     progress: { [weak self] update in
-                        await self?.updateSigningStage(update.stage, subject: update.subject)
+                        await self?.updateSigningStage(update.stage, subject: update.subject, detail: update.detail)
                     },
                     onCertificateResolved: { [weak self] serialNumber in
                         await self?.updateResolvedCertificateSerialNumber(serialNumber)
@@ -3965,7 +3965,7 @@ final class AppsViewModel: ObservableObject {
     ///   「会话主体」处理 —— 那正是本 App 自己的阶段。证书轮换子流程推进的是**另一个**
     ///   App（含 Seal 自己）的阶段，必须由信号自带主体；拿会话主体去判断会得出错误结论
     ///   （构建 31 真机：Seal 自替换的「回主屏」永不触发，抽屉停在「正在验证安装」）。
-    private func updateSigningStage(_ stage: SigningStage, subject: SigningStageSubject? = nil) {
+    private func updateSigningStage(_ stage: SigningStage, subject: SigningStageSubject? = nil, detail: String? = nil) {
         let currentStage: SigningStage?
         if case .running(let running) = signingSession?.status {
             currentStage = running
@@ -4036,6 +4036,10 @@ final class AppsViewModel: ObservableObject {
                 currentStage: currentStage,
                 previous: signingSession?.stageStartedAt
             )
+            // 同阶段子状态提示：带 detail 的更新只改提示文案，不重置阶段起点
+            // （stageStart 本就对同阶段保持起点）；无 detail 的阶段推进则清掉
+            // 上一阶段残留的子状态，不让它串到下一阶段。
+            signingSession?.stageDetail = detail
             signingSession?.status = .running(stage)
             // Seal 自续签 = 覆盖安装运行中的自己：iOS 只有在旧进程让出前台后才完成替换，
             // 所以必须由 Seal 主动「回主页」。

@@ -196,6 +196,8 @@ struct UpdateNoticeView: View {
             Text(downloadDetail(received: received, total: total))
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
+                .contentTransition(.numericText())
+                .animation(.easeInOut(duration: 0.25), value: received)
                 .padding(.top, 8)
             if received > 0 {
                 if let progress {
@@ -299,7 +301,7 @@ struct UpdateNoticeView: View {
               let progress = UpdateDownloadProgress.fraction(received: received, total: total) else {
             return "已下载 \(receivedText)"
         }
-        return "下载进度 \(Int(progress * 100))% · 已下载 \(receivedText) / \(total.formatted(.byteCount(style: .file)))"
+        return "下载进度 \(progress.sealPercentText) · 已下载 \(receivedText) / \(total.formatted(.byteCount(style: .file)))"
     }
 
     @MainActor

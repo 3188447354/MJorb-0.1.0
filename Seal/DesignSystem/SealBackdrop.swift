@@ -37,7 +37,9 @@ private extension UIColor {
 }
 
 extension Color {
-    static var sealAccent: Color { SealAccentTheme.current.color }
+    static var sealAccent: Color {
+        return SealAccentTheme.current.color
+    }
     static let sealBackground = Color(uiColor: .sealDynamic(
         light: UIColor(red: 0.965, green: 0.972, blue: 0.985, alpha: 1),
         dark: UIColor(red: 0.035, green: 0.047, blue: 0.075, alpha: 1)

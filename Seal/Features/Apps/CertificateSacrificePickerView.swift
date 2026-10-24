@@ -68,11 +68,15 @@ struct CertificateSacrificePickerView: View {
                     .fixedSize(horizontal: false, vertical: true)
 
                 if isLoading {
-                    HStack(spacing: 10) {
-                        ProgressView()
-                        Text("正在读取 Apple 证书列表")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Color.sealTextSecondary)
+                    // 证书牺牲选择器加载态：转圈换成 3 行列表骨架
+                    // （标题灰块＋明细灰块），与下方候选行同版式。
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 7) {
+                                SealSkeletonBar(width: 170, height: 14)
+                                SealSkeletonBar(width: 230, height: 12)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
@@ -181,12 +185,12 @@ struct CertificateSacrificePickerView: View {
                         Text("Apple Development")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
-                            .lineLimit(1)
+                            .singleLine()
                         if candidate.isCurrentSealSigner || isRecommended {
                             Text(candidate.isCurrentSealSigner ? "当前 Seal · 优先" : "推荐")
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(candidate.isCurrentSealSigner ? Color.sealWarning : Color.sealAccent)
-                                .lineLimit(1)
+                                .singleLine()
                         }
                     }
                     Text("\(expiryText(candidate.certificate.expirationDate)) · 尾号 \(candidate.certificate.serialNumber.suffix(8))")
@@ -219,12 +223,12 @@ struct CertificateSacrificePickerView: View {
 
     private func expiryText(_ date: Date?) -> String {
         guard let date else { return "有效期未知" }
-        return "有效期至 \(SealSettingsDateFormatter.string(from: date))"
+        return "有效期至 \(SealSettingsDateFormatter.stringWithoutSeconds(from: date))"
     }
 
     private func expiryDateText(_ date: Date?) -> String {
         guard let date else { return "未知" }
-        return SealSettingsDateFormatter.string(from: date)
+        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
     }
 
     @MainActor

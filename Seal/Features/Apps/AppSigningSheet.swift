@@ -215,11 +215,11 @@ struct AppSigningSheet: View {
                 Text(workingApp.displayName)
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .singleLine()
                 Text("v\(workingApp.version) · \(Self.fileSizeFormatter.string(fromByteCount: workingApp.size))")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundColor(Color.sealTextSecondary)
-                    .lineLimit(1)
+                    .singleLine()
             }
             Spacer(minLength: 8)
         }
@@ -371,12 +371,12 @@ struct AppSigningSheet: View {
             Text(title)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(.primary)
-                .lineLimit(1)
+                .singleLine()
             Spacer(minLength: 12)
             Text(value)
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .foregroundColor(Color.sealTextSecondary)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.middle)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -626,7 +626,7 @@ private struct SealBundleIDSingleLineText: View {
             if let prefix = parts.prefix {
                 Text(prefix)
                     .foregroundColor(Color.sealTextSecondary)
-                    .lineLimit(1)
+                    .singleLine()
                     .truncationMode(.tail)
             }
             if let suffix = parts.suffix {

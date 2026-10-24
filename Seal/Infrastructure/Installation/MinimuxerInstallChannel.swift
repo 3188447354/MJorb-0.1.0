@@ -413,16 +413,24 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// 熔断窗口内点签名会被一个陈旧错误直接挡回 —— 那是拿后台尽力而为的
     /// 结果惩罚前台真实操作。
     func prewarmAtLaunch() async {
-        guard await storedDeviceIdentifier() != nil else { return }
+        // 点火三个静默出口各留一句人话日志：否则导出日志里无法区分
+        // 「点火成功」与「点火被跳过/失败」，可观测性缺口（2026-10-24）。
+        // 点火只在启动时跑一次，日志不会刷屏。
+        guard await storedDeviceIdentifier() != nil else {
+            await log("启动点火跳过：暂无设备配对记录，等完成配对后再建立常驻通道")
+            return
+        }
         if let verdict = await readinessVerdict(),
            verdict.isReady == false,
            ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: verdict.issue?.rawValue) {
+            await log("启动点火跳过：LocalDevVPN 未连接，等隧道连通后再建立常驻通道")
             return
         }
         do {
             _ = try await start()
             await log("启动点火完成：设备通道已建立并常驻，后续签名/安装直接复用")
         } catch {
+            await log("启动点火未完成：建立设备通道失败，已清除失败冷却，下次操作时重试")
             await clearFailureCooldown()
         }
     }

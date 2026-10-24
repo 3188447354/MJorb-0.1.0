@@ -216,6 +216,7 @@ struct AppDetailView: View {
                 .minimumScaleFactor(0.7)
                 .truncationMode(.middle)
                 .textSelection(.enabled)
+                .sealCopyableIdentifier(value)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.vertical, 15)
@@ -289,6 +290,7 @@ struct AppDetailView: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .sealCopyableIdentifier(value)
         }
         .padding(.vertical, 15)
     }
@@ -377,7 +379,7 @@ struct AppDetailView: View {
     private func expiryDateText(_ app: AppRecord) -> String {
         guard let date = mainSigningTarget(app)?.profileExpirationDate
                 ?? AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
-        return SealSettingsDateFormatter.string(from: date)
+        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
     }
 
     private func extensionExpiryText(_ record: AppExtensionRecord, app: AppRecord) -> String {
@@ -386,7 +388,7 @@ struct AppDetailView: View {
             $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
         })?.profileExpirationDate ?? record.provisioningProfileExpirationDate
         guard let date else { return "未签名" }
-        return SealSettingsDateFormatter.string(from: date)
+        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
     }
 
     private func extensionProfileStrategyText(_ app: AppRecord) -> String {

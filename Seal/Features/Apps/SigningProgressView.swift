@@ -57,6 +57,15 @@ struct SigningProgressView: View {
                 }
             }
         }
+        // 终态轻反馈（2026-10-24 全 App 震动通道）：签名/续签成功一下、
+        // 失败一下；running 内部的阶段流转不触发。
+        .sensoryFeedback(trigger: session?.status) { _, new in
+            switch new {
+            case .succeeded: return .success
+            case .failed: return .error
+            default: return nil
+            }
+        }
     }
 
     @ViewBuilder
@@ -103,9 +112,11 @@ struct SigningProgressView: View {
         )
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 14) {
+                // 设备注入子阶段无可数进度：即使 Portal 计数已满（1/1），也切回
+                // 不确定转弧 —— 满格定格正是用户看到的「卡死」。
                 progressRing(
                     stage,
-                    confirmed: hasRealSignal ? confirmed : nil
+                    confirmed: (hasRealSignal && session?.stageDetail == nil) ? confirmed : nil
                 )
                 Text(stageTitle(for: stage))
                     .font(.system(size: 16, weight: .semibold))
@@ -120,10 +131,12 @@ struct SigningProgressView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Color.sealTextSecondary)
                         Spacer()
-                        Text("\(Int(progress * 100))%")
+                        Text(progress.sealPercentText)
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Color.sealAccent)
                             .monospacedDigit()
+                            .contentTransition(.numericText())
+                            .animation(.easeInOut(duration: 0.25), value: progress)
                     }
                     ProgressView(value: progress)
                         .progressViewStyle(.linear)
@@ -134,7 +147,9 @@ struct SigningProgressView: View {
             }
 
             if isRenewal {
-                Text(renewalTipText)
+                // 设备注入子阶段：提示行报子状态实况（排队/注入/读回/重建/重试），
+                // 后缀仍保留「请保持 Seal 打开」。
+                Text(session?.stageDetail.map { "\($0)，请保持 Seal 打开。" } ?? renewalTipText)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.sealAccent)
                     .fixedSize(horizontal: false, vertical: true)
@@ -510,7 +525,7 @@ struct SigningProgressView: View {
             Text(value)
                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                 .foregroundStyle(Color.sealTextSecondary)
-                .lineLimit(1)
+                .singleLine()
                 .truncationMode(.middle)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -575,11 +590,11 @@ struct SigningProgressView: View {
                 Text(app.displayName)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .singleLine()
                 Text("v\(app.version) · \(app.size.sealFormattedByteCount)")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.sealTextSecondary)
-                    .lineLimit(1)
+                    .singleLine()
             }
             Spacer(minLength: 8)
         }
@@ -645,6 +660,12 @@ struct SigningProgressView: View {
     }
 
     private func stageTitle(for stage: SigningStage) -> String {
+        // 设备注入子阶段（stageDetail 非空）时标题切到「正在更新描述文件」：
+        // 它就是 profile-only 的 .signing 文案，但不真的切阶段 —— 轨道预算模型
+        // 要求 .preparingProfiles 独占第 5 格，真切阶段会让轨道从第 5 格退回第 4 格。
+        if session?.stageDetail != nil, session?.renewalExecutionPath == .profileOnly {
+            return "正在更新描述文件"
+        }
         if let renewalExecutionPath = session?.renewalExecutionPath {
             return renewalExecutionPath.stageTitle(for: stage)
         }
@@ -655,7 +676,7 @@ struct SigningProgressView: View {
         guard let expiryDate = installed.provisioningProfileExpirationDate ?? installed.expiryDate else {
             return "应用已安装"
         }
-        return "有效期至 \(SealSettingsDateFormatter.string(from: expiryDate))"
+        return "有效期至 \(SealSettingsDateFormatter.stringWithoutSeconds(from: expiryDate))"
     }
 
     private func primaryRecoveryTitle(_ failure: ImportFailure) -> String {

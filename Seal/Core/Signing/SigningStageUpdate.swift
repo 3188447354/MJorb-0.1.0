@@ -51,15 +51,21 @@ struct SigningStageUpdate: Sendable, Equatable {
     let stage: SigningStage
     /// 这个阶段属于哪个 App —— **不是**会话主体。
     let subject: SigningStageSubject
+    /// 同阶段内的子状态提示（如设备注入的排队/注入/读回/重试）。
+    /// 为 nil 时界面显示该阶段的常规提示；非 nil 时界面用它代替常规提示，
+    /// 并把进度环切回不确定转弧（子阶段无可数进度，满格定格即「卡死」观感）。
+    let detail: String?
 
-    init(stage: SigningStage, app: AppRecord) {
+    init(stage: SigningStage, app: AppRecord, detail: String? = nil) {
         self.stage = stage
         self.subject = SigningStageSubject(app: app)
+        self.detail = detail
     }
 
-    init(stage: SigningStage, subject: SigningStageSubject) {
+    init(stage: SigningStage, subject: SigningStageSubject, detail: String? = nil) {
         self.stage = stage
         self.subject = subject
+        self.detail = detail
     }
 }
 
