@@ -7,7 +7,8 @@ struct PhonePairingPresentationPolicyTests {
     func automaticChannelCheckRestoresTheCompletedPhonePairingStage() {
         #expect(
             SettingsViewModel.phonePairingStateAfterAutomaticCheck(
-                diagnosticState: .ready(deviceIdentifier: "device-123")
+                diagnosticState: .ready(deviceIdentifier: "device-123"),
+                isPaired: false
             ) == .completed
         )
     }
@@ -16,8 +17,25 @@ struct PhonePairingPresentationPolicyTests {
     func automaticChannelCheckKeepsTheVPNStagePendingWhenNoVerdictExists() {
         #expect(
             SettingsViewModel.phonePairingStateAfterAutomaticCheck(
-                diagnosticState: .idle
+                diagnosticState: .idle,
+                isPaired: false
             ) == .waitingForLocalDevVPN
+        )
+    }
+
+    @Test @MainActor
+    func automaticChannelCheckKeepsPairedStageFromRegressing() {
+        #expect(
+            SettingsViewModel.phonePairingStateAfterAutomaticCheck(
+                diagnosticState: .idle,
+                isPaired: true
+            ) == .idle
+        )
+        #expect(
+            SettingsViewModel.phonePairingStateAfterAutomaticCheck(
+                diagnosticState: .ready(deviceIdentifier: "device-123"),
+                isPaired: true
+            ) == .completed
         )
     }
 

@@ -1,3 +1,11 @@
+# 2026-10-24 — 本批 CI 第三轮：swift-regression 红在测试调用点（生产 API 改了、测试没跟上）
+- 现象：run 40078030955，compile-gate 已绿，swift-regression 失败，build-package 在跑。报错 `PhonePairingPresentationPolicyTests.swift:10/19 missing argument for parameter 'isPaired' in call`。
+- 根因：本批配对拆分给 `phonePairingStateAfterAutomaticCheck` 加了 `isPaired` 参数（已配对即主状态不回退），生产侧三处调用点都传了，测试侧两处旧调用没跟上。本地无 Swift 编译器、build-package 不编测试 target，此类断裂只有 swift-regression 能暴露（与 2026-09-28 教训同族）。
+- 修复：两处旧调用补 `isPaired: false`（保持原断言语义：未配对时纯按诊断映射）；另补一则新测试 `automaticChannelCheckKeepsPairedStageFromRegressing`（已配对＋隧道未就绪 → `.idle` 不回退、已配对＋通道就绪 → `.completed`），把本批 A1 的 headline 行为钉住。
+- 复核：其余测试引用点已排查——`presetThemes.count == 6` 不变、`updateSigningStage` 的 `detail` 带默认值、`systemBlue` 为 UIKit 系统 API，均不受影响。
+- 涉及文件：`SealTests/Pairing/PhonePairingPresentationPolicyTests.swift`。
+- 验证状态：本地守卫 891 项 0 失败；编译与测试靠 CI；按「CI 失败类明确 bug 修了就推」重推，新 run 待报。未发版。
+
 # 2026-10-24 — 本批 CI 第二轮红：同类编译错第二处（配对页两个 getter 缺 return）
 - 现象：run 40076708714，compile-gate 与 swift-regression 仍失败（signer-tests 绿），报错 `PairingSettingsView.swift:408/422 missing return in getter`。
 - 根因：与首轮 uiColor 同一家族——本批配对拆分给 `phoneProgressIndex` 与 `phonePairingStatusText` 两个 getter 的 switch 前加了 `if … return` 早退，switch 从表达式退化成语句 switch，各分支裸值（`0/1/2/3`、`"已完成"` 等）不再是返回值。修复：各分支补显式 `return`。`localDevVPNStatusText` 是纯 switch，未受影响。
