@@ -1,3 +1,10 @@
+# 2026-10-24 — 0.1.54 第二轮 CI 守卫红：断言/锚点未跟随判定形态（本地预检盲区）
+
+- **现象**：run 40003858031 的 compile-gate / signer-tests / swift-regression 全绿，build-package 红于全量守卫 5 条：R84③、R94③ 两条断言失败＋Mutation anchor missing ×2（同一锚点）＋R89⑦ 变异无判别力。本地 pre-push-check（只跑断言、跳过变异）报的是掺了旧基线文件的 838 项，与 CI 的 891 项不是同一棵树，是本轮预检盲区。
+- **根因**：① R84③ 断言钉 `case .eligible = decision,`——0.1.54 已把复合 guard 拆成逐项 guard（`guard case .eligible = decision else`），形态变了断言没跟。② R94③ 用 `cause(fromIssueRawValue` 出现次数 ==1 守「分类只许一份」，而启动点火为判 VPN 未连第二次调用了分类——判据本身仍只有一份（在 Policy 里），通道侧只是多了一次**消费**。③ R82③/R85⑦ 的变异锚点钉旧复合 guard 的两行形态（`guard forceResign,\n installAfterSigning,\n`），拆 guard 后锚点失效。④ R89⑦ 是老账：其断言 `"SEAL-PROFILE-365" in 索引` 被 0.1.54 新增的 367 行文案里提及的「SEAL-PROFILE-365」字样假满足 ⇒ 变异（把 365 主表行改名）不再触发任何 R89⑦ 失败——367 入表前该变异有判别力。
+- **修复**：R84③ 断言改钉新形态 `guard case .eligible = decision`；分类单点消费收进 `ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue:)`（判据仍只此一份），通道 prewarm 改用它、R94③ 计数改为「`switch …cause(…)` 展开次数 ==1」并同步其变异锚点；R82③/R85⑦ 变异锚点更新为新的一行 guard 形态（注入的退化不变：按身份排除 Seal / 私钥门槛）；R89⑦ 索引断言改精确匹配主表行 `| \`SEAL-PROFILE-365\` |`；`ChannelReadinessPolicyTests` 补 isVPNNotConnected 单测。
+- **验证状态**：本地断言 891 项 0 失败；全量 653 条变异锚点 0 缺失；本轮改动文件上的 94 条变异逐条实跑全部有判别力（247 秒）；Swift 编译与剩余变异由 CI 复核中（run 待填）。
+
 # 2026-10-24 — 通道改 SideStore 连接生命周期＋profile-only 被拒原因全量留痕（0.1.54 批次，MJ 拍板）
 
 - **现象**：① 签名/续签时通道要「连两次」：Seal 没有启动点火，通道靠签名流程内的并行预热临场建连，缓存过期或 RSD 会话死亡就在签前/装前整轮重跑完整诊断（握手轮询约 18 秒起），拖长整轮耗时；签前还有两道重复门禁（`requireReadyForSigning()` 与 `requireReadyInstallChannel(beforeSigning: true)` 先后各探一次就绪）。② profile-only 准入被拒时，除「更新源未安装」（`SEAL-PROFILE-365`）外其余原因（记录缺产物/身份不完整/扩展集不全/团队、Bundle ID、设备绑定、证书序列号对不上）全部静默回落完整重签——log-49 实证：快捷指令轮偶发完整重签＋重装，日志里查不出原因。

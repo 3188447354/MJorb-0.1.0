@@ -42,4 +42,13 @@ struct ChannelReadinessPolicyTests {
         let causes = raws.map { ChannelReadinessPolicy.cause(fromIssueRawValue: $0) }
         #expect(Set(causes).count == 5)
     }
+
+    @Test("isVPNNotConnected 只认 noVPNInterface，其余类别与未知一律 false")
+    func vpnNotConnectedHelperOnlyMatchesTheVPNInterfaceIssue() {
+        #expect(ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: "noVPNInterface"))
+        #expect(ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: "tunnelUnreachable") == false)
+        #expect(ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: "noDevice") == false)
+        #expect(ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: nil) == false)
+        #expect(ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: "somethingElse") == false)
+    }
 }

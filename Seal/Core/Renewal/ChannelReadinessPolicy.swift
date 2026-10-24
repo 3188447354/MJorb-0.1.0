@@ -58,4 +58,10 @@ enum ChannelReadinessPolicy {
             return .unknown
         }
     }
+
+    /// 是否属于「VPN 还没连上」这一类（启动点火跳过判据等单点消费用，
+    /// 避免通道里为了一个类别再展开整张 `switch` —— 分类仍只此一份，守卫 R94③）。
+    static func isVPNNotConnected(fromIssueRawValue raw: String?) -> Bool {
+        cause(fromIssueRawValue: raw) == .vpnNotConnected
+    }
 }

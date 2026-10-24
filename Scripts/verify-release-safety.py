@@ -5607,7 +5607,7 @@ def violations(load=read):
     r84_coord_code = strip_comments(r84_coord)
     check("let decision = ProfileOnlyRenewalPolicy.evaluate(app: app, liveIdentity: liveIdentity)"
           in r84_coord_code
-          and "case .eligible = decision," in r84_coord_code
+          and "guard case .eligible = decision" in r84_coord_code
           and "await liveProfileOnlyIdentity(for: app)" in r84_coord_code,
           "R84③: 准入必须**真的用上**双通道 ✗ —— `liveProfileOnlyIdentity(for:)` 算了"
           "却不传给 `evaluate`，等于「上游算好了、下游又退回记录判据」——"
@@ -6070,7 +6070,7 @@ def violations(load=read):
           "R89⑥: `describe(_:)` 必须给这条理由一句可读说明 ✗ —— "
           "新 case 漏了它，日志里就会出现一个没有解释的枚举名")
 
-    check("SEAL-PROFILE-365" in r89_index,
+    check("| `SEAL-PROFILE-365` |" in r89_index,
           "R89⑦: 新日志码必须登记进 `docs/qa/log-code-index.md` 的**主表** ✗ —— "
           "用户发来日志时第一件事就是查码表")
 
@@ -7560,7 +7560,7 @@ def violations(load=read):
           and "static func cause(fromIssueRawValue" in r94_readiness
           and "switch ChannelReadinessPolicy.cause(fromIssueRawValue: issueRawValue) {"
               in r94_channel
-          and r94_channel.count("cause(fromIssueRawValue") == 1,
+          and r94_channel.count("switch ChannelReadinessPolicy.cause(fromIssueRawValue") == 1,
           "R94③: 原因分类只允许**一份**（`ChannelReadinessPolicy`）✗ —— "
           "在通道里再抄一张 `switch` ⇒ 两张表迟早漂移，"
           "「改了一处、漏了另一处」正是本仓反复踩的坑")
@@ -10338,11 +10338,8 @@ def main():
         # ③ 在**执行侧**（而不是准入侧）按身份排除 ⇒ R82③ 报红
         #    （「准入放行、下游又拦」是最难发现的一种退化：改了一半、看起来改完了）。
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "        guard forceResign,\n"
-         "              installAfterSigning,\n",
-         "        guard forceResign,\n"
-         "              installAfterSigning,\n"
-         "              app.isSeal == false,\n",
+         "        guard forceResign, installAfterSigning else { return false }\n",
+         "        guard forceResign, installAfterSigning, app.isSeal == false else { return false }\n",
          "R82③: `shouldUseProfileOnlyRenewal` 与 `renewProfilesOnly` 都**不得**再出现"),
         # ④ 把「Seal 记录完整 ⇒ 可用快路径」那条单测改名 ⇒ R82④ 报红（不变量没人守）。
         ("SealTests/Renewal/ProfileOnlyRenewalPolicyTests.swift",
@@ -10571,9 +10568,9 @@ def main():
          "R85⑥: 进度、详情和操作抽屉展示一致的本机私钥状态"),
         # ⑥ 在 profile-only 准入重新引入本机私钥 gate ⇒ R85⑦ 报红。
         ("Seal/Core/Signing/SigningCoordinator.swift",
-         "        guard forceResign,\n              installAfterSigning,\n",
+         "        guard forceResign, installAfterSigning else { return false }\n",
          "        if SigningCertificateMaterialPolicy.isReusable(secret) == false { return false }\n"
-         "        guard forceResign,\n              installAfterSigning,\n",
+         "        guard forceResign, installAfterSigning else { return false }\n",
          "R85⑦: profile-only 准入不得因本机私钥缺失而降级完整重签"),
         # ⑦ 移除 Apple 证书清单中的序列号匹配 ⇒ R85⑧ 报红。
         ("Seal/Infrastructure/Signing/ApplePortalSigningService.swift",

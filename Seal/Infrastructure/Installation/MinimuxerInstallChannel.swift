@@ -416,7 +416,7 @@ actor MinimuxerInstallChannel: InstallChannel {
         guard await storedDeviceIdentifier() != nil else { return }
         if let verdict = await readinessVerdict(),
            verdict.isReady == false,
-           ChannelReadinessPolicy.cause(fromIssueRawValue: verdict.issue?.rawValue) == .vpnNotConnected {
+           ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: verdict.issue?.rawValue) {
             return
         }
         do {
