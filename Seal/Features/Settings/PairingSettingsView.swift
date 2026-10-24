@@ -399,11 +399,11 @@ struct PairingSettingsView: View {
             return 3
         }
         switch viewModel.phonePairingState {
-        case .idle, .requestingLocalNetwork: 0
-        case .waitingForSystemConfirmation, .showingCode: 1
-        case .validating, .waitingForLocalDevVPN: 2
-        case .completed: 3
-        case .failed: 1
+        case .idle, .requestingLocalNetwork: return 0
+        case .waitingForSystemConfirmation, .showingCode: return 1
+        case .validating, .waitingForLocalDevVPN: return 2
+        case .completed: return 3
+        case .failed: return 1
         }
     }
 
@@ -413,11 +413,11 @@ struct PairingSettingsView: View {
             return "已完成"
         }
         switch viewModel.phonePairingState {
-        case .completed: "已完成"
-        case .waitingForLocalDevVPN, .validating: "已保存，待验证"
-        case .failed: "未完成"
-        case .idle where viewModel.pairingRecord?.isPaired == true: "已完成"
-        default: "待配对"
+        case .completed: return "已完成"
+        case .waitingForLocalDevVPN, .validating: return "已保存，待验证"
+        case .failed: return "未完成"
+        case .idle where viewModel.pairingRecord?.isPaired == true: return "已完成"
+        default: return "待配对"
         }
     }
 

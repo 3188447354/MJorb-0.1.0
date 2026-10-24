@@ -1,3 +1,10 @@
+# 2026-10-24 — 本批 CI 第二轮红：同类编译错第二处（配对页两个 getter 缺 return）
+- 现象：run 40076708714，compile-gate 与 swift-regression 仍失败（signer-tests 绿），报错 `PairingSettingsView.swift:408/422 missing return in getter`。
+- 根因：与首轮 uiColor 同一家族——本批配对拆分给 `phoneProgressIndex` 与 `phonePairingStatusText` 两个 getter 的 switch 前加了 `if … return` 早退，switch 从表达式退化成语句 switch，各分支裸值（`0/1/2/3`、`"已完成"` 等）不再是返回值。修复：各分支补显式 `return`。`localDevVPNStatusText` 是纯 switch，未受影响。
+- 防再犯：修前用启发式扫描全批 Swift 文件（getter 内 switch 前有 `return` 且分支为裸值）：只命中此二处；另三处 func 命中经人工复核是误报（`return switch` 显式返回、赋值语句分支、Task 内 Void 闭包），CI 第二轮也未报它们。
+- 涉及文件：`Seal/Features/Settings/PairingSettingsView.swift`。
+- 验证状态：本地守卫 891 项 0 失败；编译靠 CI；按「CI 失败类明确 bug 修了就推」重推，新 run 待报。未发版。
+
 # 2026-10-24 — 本批 CI 首轮红：两个本批引入的编译错（compile-gate＋swift-regression 红，signer-tests 绿）
 - 现象：run 40075975474，compile-gate 与 swift-regression 失败，build-package skipped（等 compile-gate 放行）。
 - 根因 1：`SealAppearance.swift` 的 `uiColor`——本批自定义色深色适配给 `.custom` 分支加了语句（`let base`＋`return`），switch 从表达式 switch 退化成语句 switch，六个预设分支的裸 `.systemBlue` 等失去上下文类型，报 `reference to member cannot be resolved without a contextual type`。修复：六个分支补显式 `return`。
