@@ -32,6 +32,16 @@ struct RootTabView: View {
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
     @State private var pendingUpdateInstallURL: URL?
+    /// 官方渠道一次性告知（2026-10-25）：标记位与协议同意门控（`AgreementVersion`）完全分开；
+    /// 新用户首次进入主界面、老用户升级到含告知的新版后首次启动各弹一次，点“知道了”后不再弹。
+    /// 文案为源上线前版；软件源上线时正文换成源上线后版（见下方 alert 的注释）。
+    @AppStorage("officialChannelNoticePresented") private var officialChannelNoticePresented = false
+    @State private var isOfficialChannelNoticePresented = false
+    /// 自检告警（2026-10-25）：启动时跑一次，结果只在本进程内有效；
+    /// 警告是状态警告不是一次性告知——只要痕迹还在，每次启动都弹，不设持久标记。
+    @State private var tamperCheckDone = false
+    @State private var tamperFindings: [AppIntegrityIssue] = []
+    @State private var isTamperWarningPresented = false
 
     var body: some View {
         TabView(selection: $selection) {
@@ -227,6 +237,40 @@ struct RootTabView: View {
             }
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isCustomAccentColorPresented)
+        // 系统样式弹窗，不走抽屉仲裁（alert 与 sheet 不抢层）；按钮跟随主题色（根层已 `.tint(.sealAccent)`），深色跟随系统。
+        .alert("认准官方渠道", isPresented: $isOfficialChannelNoticePresented) {
+            Button("知道了") {
+                officialChannelNoticePresented = true
+                // 官方告知弹完再弹自检警告：两个 alert 绝不同时在场。
+                if !tamperFindings.isEmpty { isTamperWarningPresented = true }
+            }
+        } message: {
+            // 源上线后版正文（软件源上线时替换上面这句）：
+            // “Seal 本体免费，凡是花钱买到的 Seal 都不是官方。官方渠道只在应用内社群页“官方资源”。软件源是独立服务，它的收费和 Seal 本体无关。”
+            Text("Seal 免费。凡是花钱买到的，都不是官方。官方渠道只在应用内社群页“官方资源”。")
+        }
+        // 自检警告：只警告、不锁死；不设持久标记，痕迹还在就每次启动都弹。
+        .alert("版本可能被修改", isPresented: $isTamperWarningPresented) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text("此版本可能被修改，非官方渠道，建议从官方渠道重新获取。")
+        }
+        .onAppear {
+            // 主界面出现时定两弹的顺序：协议门控已过，新用户与升级老用户都走这里。
+            // 告知没弹过 → 先弹告知，点“知道了”后再弹自检警告（见上方按钮）；
+            // 告知已弹过 → 自检警告直接上台；UI 测试时两个都不弹，避免挡住既有用例。
+            // 告知标记只在点“知道了”后才写，万一被更新抽屉等盖住没点到，下次启动会再弹，不丢。
+            if !tamperCheckDone {
+                tamperCheckDone = true
+                tamperFindings = AppIntegrityCheck.liveFindings()
+            }
+            guard !ProcessInfo.processInfo.arguments.contains(uiTestingAgreementAcceptedArgument) else { return }
+            if officialChannelNoticePresented {
+                if !tamperFindings.isEmpty { isTamperWarningPresented = true }
+            } else {
+                isOfficialChannelNoticePresented = true
+            }
+        }
     }
 
     /// 从灵动岛 / 锁屏卡片跳回配对页。

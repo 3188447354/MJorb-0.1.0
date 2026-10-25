@@ -1,3 +1,32 @@
+# 2026-10-25 — 防篡改运行时自检层（待推；MJ 确认示意图后动手）
+- 背景：MJ 10-25 确认自检告警示意图与文案，动手写第三层。范围：只警告、不锁死；不能按签名者认官方，只能认被改痕迹。
+- 判据（`Seal/Core/Diagnostics/AppIntegrityCheck.swift`，纯函数 `findings`＋live 包装 `liveFindings`，判据可单测）：① Bundle ID 与工程固定值 com.mjorb.seal 不一致；② Info.plist 缺键／字段为空／CFBundleExecutable 与实际可执行名对不上／SealOriginalBundleIdentifier 与当前 Bundle ID 对不上；③ 主包内必然存在的文件缺失（Info.plist、Assets.car）；④ 加载了系统与主程序之外的动态库（RustBridge 是静态链接，正常构建的主进程不加载任何第三方 Framework，越狱注入与重打包捆入都落在这里）；⑤ 调试器挂接（sysctl 查 P_TRACED，探测失败按无调试器计，不弹假警告）。
+- 呈现（`Seal/App/RootTabView.swift`）：启动时跑一次；标题“版本可能被修改”，正文“此版本可能被修改，非官方渠道，建议从官方渠道重新获取。”，按钮“知道了”。两弹顺序：告知没弹过先弹告知、点“知道了”后再弹自检警告；告知已弹过则自检警告直接上台；两个 alert 绝不同时在场；UI 测试时两个都不弹。自检警告不设持久标记——痕迹还在就每次启动都弹（状态警告，不是你一次性的告知）。
+- 涉及文件：`Seal/Core/Diagnostics/AppIntegrityCheck.swift`（新）、`Seal/App/RootTabView.swift`。
+- 验证状态：本地守卫 891 项 0 失败；本地无 Swift 编译器，编译靠 CI；真机验证待 MJ（正常安装绝不能弹；改包／注入场景应弹）。未推送，与协议层、弹窗、批量续签震动、协议联系渠道放同一批，等 MJ 说「推」。
+
+# 2026-10-25 — 防篡改协议层＋官方渠道告知弹窗（待推；自检告警只画了图，未写代码）
+- 背景：MJ 10-25 早上说「修改吧」，针对 10-24 定的防篡改三层与告知弹窗。范围冻结：协议层＋弹窗动手；自检告警 UI 按“UI 改动先画图确认”只出示意图，等他确认再写代码。
+- 协议层：UserAgreementView「二、使用许可」补未经授权不得破解、注入、二次打包、以收费方式分发，Seal 免费、收费提供均未经官方授权；「八、知识产权」补官方渠道以应用内社群页“官方资源”为准（另 GitHub 官方 Release 与官网），其他渠道版本与开发者无关、出问题不负责。只改文案，AgreementVersion.current（=1）未动，已同意用户不重弹；生效日期未动（与版本保持一致）。
+- 弹窗：RootTabView 挂系统样式 .alert，标题“认准官方渠道”，正文源上线前版“Seal 免费。凡是花钱买到的，都不是官方。官方渠道只在应用内社群页‘官方资源’。”，按钮“知道了”走主题色（根层 .tint(.sealAccent)）、深色跟随系统。标记位 @AppStorage("officialChannelNoticePresented") 与同意门控完全分开；触发在主界面 onAppear：协议门控已过，新用户与升级老用户都走这里；标记只在点“知道了”后写，万一被更新抽屉盖住没点到下次启动再弹，不丢；UI 测试启动参数在场时不弹。源上线后版文案已留注释，源上线时替换一句。
+- 自检告警：未写代码；示意图 ~/workspace/your_files/anti-tamper-selfcheck-alert-mock.html（标题“版本可能被修改”，正文“此版本可能被修改，非官方渠道，建议从官方渠道重新获取。”，按钮“知道了”），等 MJ 确认。
+- 涉及文件：`Seal/Features/Settings/UserAgreementView.swift`、`Seal/App/RootTabView.swift`。
+- 验证状态：本地守卫 891 项 0 失败；本地无 Swift 编译器，编译靠 CI；真机验证待 MJ。未推送，与批量续签震动、协议联系渠道放同一批，等 MJ 说「推」。
+
+# 2026-10-24 — 协议联系渠道改为 mjorb520@gmail.com（待推）
+- 背景：MJ 指定隐私政策、用户协议内的联系渠道用 mjorb520@gmail.com。
+- 改动：两处「联系我们」文案的联系渠道由「应用内“加入社群”」改为 mjorb520@gmail.com，另隐私政策权利一节「可通过应用内“加入社群”联系开发者」同步改为邮箱，三处一致；社群页本身（SealCommunityView／设置入口）不是联系渠道，不动。首启同意页直接内嵌 PrivacyNoticeView／UserAgreementView，改动自动带过去，无重复文案。
+- 注意：只改文案，AgreementVersion.current（=1）未动，已同意过的用户不会被重新弹同意页；如需重新弹，得另动 version（等 MJ 定）。
+- 涉及文件：`Seal/Features/Settings/PrivacyNoticeView.swift`、`Seal/Features/Settings/UserAgreementView.swift`。
+- 验证状态：本地守卫待跑；编译靠 CI。未推送，与批量续签震动修复放同一批，等 MJ 说「推」。
+
+# 2026-10-24 — 0.1.55 真机反馈：批量续签成功无震动（通道漏接，待推）
+- 现象：0.1.55 真机验证，MJ 确认批量续签没有震动反馈。此前他说的「有一次反馈」未在代码中找到批量页内来源（最可能的解释是快捷指令轮完成通知震动，待 MJ 验证，不当定论）。
+- 根因：本批全 App 震动通道漏了批量续签页：BatchRefreshView.swift 全仓 grep 零 sensoryFeedback；手动链路也不发通知（BackgroundRenewalNotifier 只服务快捷指令链，AppsViewModel 注释明言手动续签不通知）；全仓震动仅 6 处（复制轻震、单签终态、配对终态、两处删除成功、证书页一处轻震），无一在批量链路。
+- 修复：BatchRefreshView body 根 SealDrawer 后挂 `.sensoryFeedback(trigger: batchRefreshSession?.status)`：completed 且 failed==0 → .success；completed 且 failed>0 → .warning；failed → .error；其余（preparing/running/preparingSealUpdate）返回 nil，与单签页同一套「终态才震、阶段流转不震」语义。批量页常驻到用户点「完成」才关闭，终态翻转时视图仍在前台，反馈能正常发出。只改 UI 层观察终态，不改续签链路任何逻辑/判据/路径（故不触发 AGENTS.md §1⑤的上游对照要求，该条针对链路逻辑改动）。
+- 涉及文件：`Seal/Features/Apps/BatchRefreshView.swift`。
+- 验证状态：本地守卫待跑；本地无 Swift 编译器，编译靠 CI；真机验证待 MJ（手动批量续签：全成功震一下、部分失败震一下、整轮失败震一下）。未推送，等 MJ 说「推」。
+
 # 2026-10-24 — 发版 0.1.55：本批 A–E 代码 run 40081728542 四 job 全绿后升版
 
 - 背景：MJ 17:09 已授权发更新源；当时 run 40081728542 未全绿故先等，17:58 终局 completed/success（compile-gate／swift-regression／signer-tests／build-package 全绿，publish-release skipped），远程头 9273a59f。

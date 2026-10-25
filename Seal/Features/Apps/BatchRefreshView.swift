@@ -18,6 +18,16 @@ struct BatchRefreshView: View {
             action
         }
         .interactiveDismissDisabled(isRunning)
+        // 终态轻反馈（批量续签震动通道补齐）：全部成功一下、部分失败一下、
+        // 整轮失败一下；运行中各阶段流转不触发，与单签页同一套语义。
+        // 批量页常驻到用户点「完成」才关闭，终态翻转时视图仍在前台，反馈能正常发出。
+        .sensoryFeedback(trigger: viewModel.batchRefreshSession?.status) { _, new in
+            switch new {
+            case .completed(let result): return result.failed == 0 ? .success : .warning
+            case .failed: return .error
+            default: return nil
+            }
+        }
     }
 
     private var drawerTitle: String {
