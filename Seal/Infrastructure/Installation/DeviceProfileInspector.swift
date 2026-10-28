@@ -11,6 +11,28 @@ import Foundation
 @preconcurrency import Minimuxer
 
 struct DeviceProfileInspector: Sendable {
+    /// Read-only `misagent` warmup. A successful UDID/RSD check does not prove the
+    /// profile service is ready; doing this while Apple Portal prepares profiles
+    /// overlaps device setup with network work instead of paying for it at injection.
+    static func prewarmMisagentService(
+        using operationCoordinator: OperationCoordinator? = nil,
+        onNativeCompletion: @escaping @Sendable () async -> Void = {}
+    ) async -> DeviceProfileNativeCall.Outcome<Void> {
+        let workingDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("seal-profile-prewarm-\(UUID().uuidString)", isDirectory: true)
+        return await DeviceProfileNativeCall.perform(
+            operationCoordinator: operationCoordinator,
+            seconds: 8,
+            waitForAvailability: false,
+            onNativeCompletion: onNativeCompletion
+        ) {
+            defer { try? FileManager.default.removeItem(at: workingDir) }
+            let dumpDir = try Provision.dumpProfiles(docsPath: workingDir.path)
+            // An empty profile directory is still a healthy service response.
+            _ = try FileManager.default.contentsOfDirectory(atPath: dumpDir)
+        }
+    }
+
     /// 批量核验：一次 dump + 全量 CMS 解析，核验全部 bindings。
     /// 按输入顺序返回每个 binding 的核验结果（`nil` = dump 不可用，`false` = 枚举成功但未找到）。
     /// 供 `installAndVerify` 一次注入全部后统一核验，避免每份 profile 各做一次秒级 dump。

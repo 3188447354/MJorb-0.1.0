@@ -146,18 +146,19 @@ public struct AppBundle: Sendable, Identifiable, Hashable, Equatable {
     }
 
     private func loadExtensions() -> Set<AppBundle> {
-        let pluginsURL = fileURL.appendingPathComponent("PlugIns")
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: pluginsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) else {
-            return []
+        var extensions = Set<AppBundle>()
+        for directory in ["PlugIns", "Extensions"] {
+            let directoryURL = fileURL.appendingPathComponent(directory, isDirectory: true)
+            let contents = (try? FileManager.default.contentsOfDirectory(
+                at: directoryURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            )) ?? []
+            for url in contents where url.pathExtension.lowercased() == "appex" {
+                if let extensionBundle = AppBundle(fileURL: url) {
+                    extensions.insert(extensionBundle)
+                }
+            }
         }
-        let extensions = contents
-            .filter { $0.pathExtension.lowercased() == "appex" }
-            .compactMap { AppBundle(fileURL: $0) }
-        return Set(extensions)
+        return extensions
     }
 
     private func loadEntitlements() -> [String: any Sendable] {

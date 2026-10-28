@@ -8,6 +8,7 @@
 
 import Foundation
 import libdeflate
+import zlib
 
 #if canImport(Darwin)
 import Darwin
@@ -334,6 +335,13 @@ public enum Archive {
     }
 
     public final class Writer {
+        private static let streamingThreshold = 64 * 1_024 * 1_024
+        // Larger buffers reduce FileHandle writes and transient Data allocations on large IPAs.
+        private static let streamBufferSize = 1 * 1_024 * 1_024
+        private static let regularFileType: UInt32 = 0o100000
+        private static let directoryFileType: UInt32 = 0o040000
+        private static let symbolicLinkFileType: UInt32 = 0o120000
+
         private let destinationURL: URL
         private let fileHandle: FileHandle
         private var compressLevel: Int16 = 0
@@ -388,22 +396,60 @@ public enum Archive {
 
         public func addFile(at fileURL: URL, pathInZip: String) throws {
             verboseLog("[SideSign] Archive.Writer.addFile started: \(fileURL.path) -> \(pathInZip)")
-            let data = try Data(contentsOf: fileURL)
             let attributes = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)) ?? [:]
             let posixPerms = (attributes[.posixPermissions] as? NSNumber)?.uint32Value ?? 0o644
             let modDate = (attributes[.modificationDate] as? Date) ?? Date()
+
+            if let fileSize = (attributes[.size] as? NSNumber)?.int64Value,
+               fileSize >= Int64(Self.streamingThreshold) {
+                try writeStreamingFile(
+                    at: fileURL,
+                    pathInZip: pathInZip,
+                    permissions: posixPerms,
+                    modificationDate: modDate
+                )
+                verboseLog("[SideSign] Archive.Writer.addFile completed with streaming writer")
+                return
+            }
+
+            // mmap keeps the input file out of the app's resident heap. Small files still use
+            // libdeflate's fast one-shot path; large files take the bounded-memory stream above.
+            let data = try Data(contentsOf: fileURL, options: .mappedIfSafe)
 
             try writeEntry(
                 path: pathInZip,
                 data: data,
                 permissions: posixPerms,
                 isDir: false,
+                isSymlink: false,
                 date: modDate
             )
             verboseLog("[SideSign] Archive.Writer.addFile completed successfully")
         }
 
-        public func writeFile(path: String, data: Data?, permissions: UInt32) throws {
+        public func addSymbolicLink(at fileURL: URL, pathInZip: String) throws {
+            let fileManager = FileManager.default
+            let destination = try fileManager.destinationOfSymbolicLink(atPath: fileURL.path)
+            let attributes = (try? fileManager.attributesOfItem(atPath: fileURL.path)) ?? [:]
+            let permissions = (attributes[.posixPermissions] as? NSNumber)?.uint32Value ?? 0o777
+            let modificationDate = (attributes[.modificationDate] as? Date) ?? Date()
+            setCompressLevel(0)
+            try writeEntry(
+                path: pathInZip,
+                data: Data(destination.utf8),
+                permissions: permissions,
+                isDir: false,
+                isSymlink: true,
+                date: modificationDate
+            )
+        }
+
+        public func writeFile(
+            path: String,
+            data: Data?,
+            permissions: UInt32,
+            modificationDate: Date = Date()
+        ) throws {
             verboseLog("[SideSign] Archive.Writer.writeFile started for internal path: '\(path)'")
             let isDir = path.hasSuffix("/") || (data == nil)
             try writeEntry(
@@ -411,7 +457,8 @@ public enum Archive {
                 data: data ?? Data(),
                 permissions: permissions,
                 isDir: isDir,
-                date: Date()
+                isSymlink: false,
+                date: modificationDate
             )
             verboseLog("[SideSign] Archive.Writer.writeFile completed successfully")
         }
@@ -421,12 +468,19 @@ public enum Archive {
             data: Data,
             permissions: UInt32,
             isDir: Bool,
+            isSymlink: Bool,
             date: Date
         ) throws {
             guard !isClosed else { throw Archive.Error.writeFailed(destinationURL) }
 
             let (dosDate, dosTime) = Self.dosDateTime(from: date)
             let nameData = Data(path.utf8)
+            guard nameData.count <= Int(UInt16.max),
+                  centralDirectoryEntries.count < Int(UInt16.max),
+                  currentOffset < UInt64(UInt32.max),
+                  data.count < Int(UInt32.max) else {
+                throw Archive.Error.writeFailed(destinationURL)
+            }
             let uncompressedSize = UInt32(data.count)
 
             let crc: UInt32
@@ -441,7 +495,7 @@ public enum Archive {
             var method: UInt16 = 0 // Store
             var payload = data
 
-            if !isDir && !data.isEmpty && compressLevel > 0 {
+            if !isDir && !isSymlink && !data.isEmpty && compressLevel > 0 {
                 if let compressor = libdeflate_alloc_compressor(Int32(compressLevel)) {
                     defer { libdeflate_free_compressor(compressor) }
                     let maxBound = libdeflate_deflate_compress_bound(compressor, data.count)
@@ -457,7 +511,7 @@ public enum Archive {
                         )
                     }
 
-                    if compressedLen > 0 && compressedLen < data.count {
+                    if compressedLen > 0 {
                         method = 8 // Deflate
                         payload = Data(outBuf.prefix(compressedLen))
                     }
@@ -488,12 +542,17 @@ public enum Archive {
             }
 
             currentOffset += UInt64(30 + nameData.count + payload.count)
+            guard currentOffset < UInt64(UInt32.max) else {
+                throw Archive.Error.writeFailed(destinationURL)
+            }
 
             let externalAttr: UInt32
-            if isDir {
-                externalAttr = (0o040000 | (permissions & 0o777)) << 16
+            if isSymlink {
+                externalAttr = (Self.symbolicLinkFileType | (permissions & 0o777)) << 16
+            } else if isDir {
+                externalAttr = (Self.directoryFileType | (permissions & 0o777)) << 16
             } else {
-                externalAttr = (0o100000 | (permissions & 0o777)) << 16
+                externalAttr = (Self.regularFileType | (permissions & 0o777)) << 16
             }
 
             centralDirectoryEntries.append(CentralDirectoryRecord(
@@ -509,8 +568,232 @@ public enum Archive {
             ))
         }
 
+        private func writeStreamingFile(
+            at fileURL: URL,
+            pathInZip: String,
+            permissions: UInt32,
+            modificationDate: Date
+        ) throws {
+            guard !isClosed,
+                  centralDirectoryEntries.count < Int(UInt16.max) else {
+                throw Archive.Error.writeFailed(destinationURL)
+            }
+
+            let fileManager = FileManager.default
+            let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
+            guard let expectedSize = (attributes[.size] as? NSNumber)?.int64Value,
+                  expectedSize >= 0,
+                  expectedSize < Int64(UInt32.max) else {
+                throw Archive.Error.writeFailed(fileURL)
+            }
+
+            let nameData = Data(pathInZip.utf8)
+            guard nameData.count <= Int(UInt16.max),
+                  currentOffset < UInt64(UInt32.max) else {
+                throw Archive.Error.writeFailed(destinationURL)
+            }
+
+            let (dosDate, dosTime) = Self.dosDateTime(from: modificationDate)
+            let method: UInt16 = compressLevel > 0 ? 8 : 0
+            let localHeaderOffset = currentOffset
+            let localHeader = Self.localFileHeader(
+                filename: nameData,
+                method: method,
+                dosTime: dosTime,
+                dosDate: dosDate,
+                crc32: 0,
+                compressedSize: 0,
+                uncompressedSize: UInt32(expectedSize)
+            )
+
+            try fileHandle.write(contentsOf: localHeader)
+            try fileHandle.write(contentsOf: nameData)
+            currentOffset += UInt64(localHeader.count + nameData.count)
+
+            let input = try FileHandle(forReadingFrom: fileURL)
+            defer { try? input.close() }
+
+            var checksum: UInt32 = 0
+            var bytesRead: Int64 = 0
+            var compressedSize: UInt64 = 0
+
+            if method == 8 {
+                let outputBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: Self.streamBufferSize)
+                defer { outputBuffer.deallocate() }
+
+                var stream = z_stream()
+                let zlibLevel = Int32(min(max(Int(compressLevel), Int(Z_NO_COMPRESSION)), Int(Z_BEST_COMPRESSION)))
+                let initStatus = ZLIB_VERSION.withCString { version in
+                    deflateInit2_(
+                        &stream,
+                        zlibLevel,
+                        Z_DEFLATED,
+                        -MAX_WBITS,
+                        8,
+                        Z_DEFAULT_STRATEGY,
+                        version,
+                        Int32(MemoryLayout<z_stream>.size)
+                    )
+                }
+                guard initStatus == Z_OK else {
+                    throw Archive.Error.writeFailed(fileURL)
+                }
+                defer { _ = deflateEnd(&stream) }
+
+                var reachedEnd = false
+                while !reachedEnd {
+                    let chunk = try input.read(upToCount: Self.streamBufferSize) ?? Data()
+                    let isFinalChunk = bytesRead + Int64(chunk.count) == expectedSize
+                    if chunk.isEmpty && expectedSize != 0 {
+                        throw Archive.Error.readFailed(fileURL)
+                    }
+                    if !chunk.isEmpty {
+                        checksum = chunk.withUnsafeBytes { rawBuffer in
+                            libdeflate_crc32(
+                                checksum,
+                                rawBuffer.baseAddress,
+                                rawBuffer.count
+                            )
+                        }
+                    }
+                    bytesRead += Int64(chunk.count)
+
+                    try chunk.withUnsafeBytes { rawBuffer in
+                        if let baseAddress = rawBuffer.baseAddress {
+                            stream.next_in = UnsafeMutablePointer(
+                                mutating: baseAddress.assumingMemoryBound(to: Bytef.self)
+                            )
+                        } else {
+                            stream.next_in = nil
+                        }
+                        stream.avail_in = uInt(rawBuffer.count)
+                        let flush = isFinalChunk ? Z_FINISH : Z_NO_FLUSH
+
+                        while true {
+                            stream.next_out = outputBuffer
+                            stream.avail_out = uInt(Self.streamBufferSize)
+                            let status = deflate(&stream, flush)
+                            guard status == Z_OK || status == Z_STREAM_END else {
+                                throw Archive.Error.writeFailed(fileURL)
+                            }
+
+                            let produced = Self.streamBufferSize - Int(stream.avail_out)
+                            if produced > 0 {
+                                try fileHandle.write(contentsOf: Data(bytes: outputBuffer, count: produced))
+                                compressedSize += UInt64(produced)
+                                currentOffset += UInt64(produced)
+                            }
+
+                            if status == Z_STREAM_END {
+                                reachedEnd = true
+                                break
+                            }
+                            if stream.avail_in == 0 && stream.avail_out > 0 && !isFinalChunk {
+                                break
+                            }
+                            if produced == 0 && stream.avail_in == 0 && isFinalChunk {
+                                throw Archive.Error.writeFailed(fileURL)
+                            }
+                        }
+                    }
+
+                    guard bytesRead <= expectedSize else {
+                        throw Archive.Error.readFailed(fileURL)
+                    }
+                }
+            } else {
+                while true {
+                    let chunk = try input.read(upToCount: Self.streamBufferSize) ?? Data()
+                    if chunk.isEmpty { break }
+                    bytesRead += Int64(chunk.count)
+                    guard bytesRead <= expectedSize else {
+                        throw Archive.Error.readFailed(fileURL)
+                    }
+                    checksum = chunk.withUnsafeBytes { rawBuffer in
+                        libdeflate_crc32(checksum, rawBuffer.baseAddress, rawBuffer.count)
+                    }
+                    try fileHandle.write(contentsOf: chunk)
+                    compressedSize += UInt64(chunk.count)
+                    currentOffset += UInt64(chunk.count)
+                }
+            }
+
+            let trailingBytes = try input.read(upToCount: 1) ?? Data()
+            guard bytesRead == expectedSize,
+                  trailingBytes.isEmpty,
+                  compressedSize < UInt64(UInt32.max),
+                  currentOffset < UInt64(UInt32.max) else {
+                throw Archive.Error.readFailed(fileURL)
+            }
+
+            let finalHeader = Self.localFileHeader(
+                filename: nameData,
+                method: method,
+                dosTime: dosTime,
+                dosDate: dosDate,
+                crc32: checksum,
+                compressedSize: UInt32(compressedSize),
+                uncompressedSize: UInt32(expectedSize)
+            )
+            let endOffset = currentOffset
+            try fileHandle.seek(toOffset: localHeaderOffset)
+            try fileHandle.write(contentsOf: finalHeader)
+            try fileHandle.seek(toOffset: endOffset)
+
+            let externalAttributes = (Self.regularFileType | (permissions & 0o777)) << 16
+            centralDirectoryEntries.append(CentralDirectoryRecord(
+                filename: pathInZip,
+                compressionMethod: method,
+                modTime: dosTime,
+                modDate: dosDate,
+                crc32: checksum,
+                compressedSize: UInt32(compressedSize),
+                uncompressedSize: UInt32(expectedSize),
+                externalAttributes: externalAttributes,
+                localHeaderOffset: localHeaderOffset
+            ))
+        }
+
+        private static func localFileHeader(
+            filename: Data,
+            method: UInt16,
+            dosTime: UInt16,
+            dosDate: UInt16,
+            crc32: UInt32,
+            compressedSize: UInt32,
+            uncompressedSize: UInt32
+        ) -> Data {
+            var header = Data(count: 30)
+            header.writeUInt32LE(0x04034b50, at: 0)
+            header.writeUInt16LE(20, at: 4)
+            header.writeUInt16LE(0x0800, at: 6)
+            header.writeUInt16LE(method, at: 8)
+            header.writeUInt16LE(dosTime, at: 10)
+            header.writeUInt16LE(dosDate, at: 12)
+            header.writeUInt32LE(crc32, at: 14)
+            header.writeUInt32LE(compressedSize, at: 18)
+            header.writeUInt32LE(uncompressedSize, at: 22)
+            header.writeUInt16LE(UInt16(filename.count), at: 26)
+            header.writeUInt16LE(0, at: 28)
+            return header
+        }
+
         public func close() throws {
             guard !isClosed else { return }
+
+            let centralDirectorySize = centralDirectoryEntries.reduce(UInt64(0)) { size, entry in
+                size + 46 + UInt64(entry.filename.utf8.count)
+            }
+            let (archiveSizeWithDirectory, sizeOverflow) = currentOffset
+                .addingReportingOverflow(centralDirectorySize + 22)
+            guard centralDirectoryEntries.count < Int(UInt16.max),
+                  currentOffset < UInt64(UInt32.max),
+                  centralDirectorySize < UInt64(UInt32.max),
+                  !sizeOverflow,
+                  archiveSizeWithDirectory < UInt64(UInt32.max) else {
+                throw Archive.Error.writeFailed(destinationURL)
+            }
+
             isClosed = true
 
             let cdStartOffset = currentOffset

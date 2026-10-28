@@ -64,7 +64,7 @@ enum FailureClassifier {
         return ImportFailure(
             title: title(for: operation),
             reason: "操作未能完成，Seal 尚未确认具体原因。",
-            recovery: "复制诊断信息后重试",
+            recovery: unknownRecovery(for: operation),
             code: fallbackCode(for: operation),
             condition: .unexpected,
             action: .copyDiagnostics,
@@ -72,6 +72,15 @@ enum FailureClassifier {
             operation: operation,
             origin: origin
         )
+    }
+
+    private static func unknownRecovery(for operation: FailureOperation) -> String {
+        switch operation {
+        case .sign, .renew, .batchRenew:
+            return "先确认手机与电脑连接同一 Wi-Fi，并检查 LocalDevVPN 已开启；仍失败请导出日志反馈。"
+        case .authenticateAccount, .validateAccount, .install, .importIPA, .exportLog, .unknown:
+            return "复制诊断信息后重试"
+        }
     }
 
     private static func title(for operation: FailureOperation) -> String {

@@ -21,6 +21,23 @@ final class ImportFlowUITests: XCTestCase {
     }
 
     @MainActor
+    func testInvalidBundleIdentifierShowsHintInSigningDrawer() {
+        let app = launch(with: "--ui-testing-imported", "--ui-testing-invalid-bundle-id")
+        XCTAssertTrue(app.buttons["待安装，1 个"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["已安装应用"].waitForExistence(timeout: 10))
+        tapStage(app.buttons["待安装，1 个"])
+
+        let importedApp = element("imported-app-row", in: app)
+        XCTAssertTrue(importedApp.waitForExistence(timeout: 10))
+        importedApp.tap()
+
+        let hint = element("appSigning.bundleIDValidationHint", in: app)
+        XCTAssertTrue(hint.waitForExistence(timeout: 10))
+        XCTAssertTrue(hint.label.contains("Bundle ID 含不支持的字符"))
+        XCTAssertFalse(app.buttons["去添加 Apple ID"].isEnabled)
+    }
+
+    @MainActor
     func testConfirmationKeepsSummaryAndActionsConcise() {
         let app = launch(with: "--ui-testing-confirmation")
         XCTAssertTrue(app.otherElements["import-confirmation"].waitForExistence(timeout: 10))
@@ -110,10 +127,10 @@ final class ImportFlowUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch(with argument: String) -> XCUIApplication {
+    private func launch(with arguments: String...) -> XCUIApplication {
         let app = XCUIApplication()
         // 见上：协议门控不越过的话，所有用例都停在协议页。
-        app.launchArguments = [argument, "--ui-testing-agreement-accepted"]
+        app.launchArguments = arguments + ["--ui-testing-agreement-accepted"]
         app.launch()
         return app
     }

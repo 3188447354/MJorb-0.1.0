@@ -26,20 +26,29 @@ struct SealCommunityView: View {
     //   要抓落地页里的 `群号: <digits>` 或 `"groupcode":"<digits>"` 才知道 ✓。
     private let qqGroupNumber = "1051135067"
     private let qqJoinURL = URL(string: "https://qm.qq.com/q/8HfHpTmOzu")
+    private let telegramFolderURL = URL(string: "https://t.me/addlist/vQ5-N-_q0qYzNWNl")
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 24) {
-                header
-                VStack(spacing: 12) {
-                    sectionTitle("交流与动态")
-                    gzhCard
+            VStack(alignment: .leading, spacing: 24) {
+                headerIntro
+
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("加入交流")
                     qqCard
+                    telegramCard
+                }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    sectionTitle("关注官方动态")
+                    gzhCard
                     douyinCard
                 }
-                footerNote
+
             }
-            .padding(20)
+            .padding(.horizontal, 20)
+            .padding(.top, 14)
+            .padding(.bottom, 32)
         }
         .navigationTitle("加入社群")
         .navigationBarTitleDisplayMode(.inline)
@@ -56,46 +65,36 @@ struct SealCommunityView: View {
         }
     }
 
-    private var header: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(Color.sealSurfaceElevated)
-                    .frame(width: 84, height: 84)
-                Image("SealCommunityIcon")
-                    .resizable()
-                    .renderingMode(.template)
-                    .scaledToFit()
-                    .frame(width: 44, height: 44)
-                    .foregroundStyle(Color.sealAccent)
-            }
-            Text("加入社群")
+    private var headerIntro: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("和 Seal 用户一起交流")
                 .font(.system(size: 22, weight: .bold))
-            Text("反馈问题、获取更新、交流心得")
+                .foregroundStyle(.primary)
+                .singleLine()
+            Text("反馈问题 · 分享经验 · 查看动态")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, 6)
     }
 
     private func sectionTitle(_ title: String) -> some View {
         Text(title)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(Color.sealTextSecondary)
+            .singleLine()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.leading, 4)
-            .padding(.top, 8)
     }
 
     private var gzhCard: some View {
         brandCard(
             brandImage: "BrandWechat",
             title: "关注公众号",
-            subtitle: "更新动态 · 使用教程 · 官方通知",
+            subtitle: "教程 · 版本通知",
             value: nil,
-            isExternal: false,
-            action: { activeSheet = .gzh }
+            action: openGzhArticle
         )
     }
 
@@ -103,9 +102,19 @@ struct SealCommunityView: View {
         brandCard(
             brandImage: "BrandQQ",
             title: "加入 QQ 群",
-            subtitle: "问题反馈 · 交流心得 · 第一时间获取更新",
+            subtitle: "群内交流与使用反馈",
             value: nil,
             action: joinQQGroup
+        )
+    }
+
+    private var telegramCard: some View {
+        brandCard(
+            brandImage: "BrandTelegram",
+            title: "加入 Telegram",
+            subtitle: "交流群 · 发布频道",
+            value: nil,
+            action: openTelegramCommunity
         )
     }
 
@@ -113,24 +122,10 @@ struct SealCommunityView: View {
         brandCard(
             brandImage: "BrandDouyin",
             title: "关注抖音",
-            subtitle: "视频教程 · 使用技巧 · 更新动态",
+            subtitle: "视频教程 · 使用技巧",
             value: nil,
             action: openDouyin
         )
-    }
-
-    private var footerNote: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "info.circle")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color.sealTextSecondary)
-            Text("遇到问题先看公众号教程，群里直接贴日志截图更快定位。")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(Color.sealTextSecondary)
-            Spacer(minLength: 0)
-        }
-        .padding(14)
-        .sealContentCard(.compact)
     }
 
     private var gzhCodeSheet: some View {
@@ -158,6 +153,7 @@ struct SealCommunityView: View {
                         Text("公众号二维码未加载")
                             .font(.footnote)
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                     }
                     .frame(width: 240, height: 240)
                     .background(Color.sealSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -170,22 +166,25 @@ struct SealCommunityView: View {
             }
             .shadow(color: .black.opacity(0.08), radius: 10, y: 4)
 
-            Text("关注公众号，获取更新动态、使用教程与官方通知")
+            Text("关注公众号，查看教程与更新。")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
+                .singleLine()
                 .padding(.horizontal, 24)
 
-            Text("保存图片后，到微信「扫一扫」选择该图片即可关注")
+            Text("保存图片后，用微信扫一扫即可关注。")
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
+                .singleLine()
                 .padding(.horizontal, 24)
 
             Button {
                 saveCodeToAlbum(imageName: "SealCommunityGzh")
             } label: {
                 Text("保存到相册")
+                    .singleLine()
             }
             .sealPrimaryAction(cornerRadius: 14)
             .padding(.horizontal, 24)
@@ -199,17 +198,6 @@ struct SealCommunityView: View {
         .presentationDetents([.medium, .large])
     }
 
-    private func iconBadge(_ systemName: String, tint: Color, background: Color) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(background)
-                .frame(width: 46, height: 46)
-            Image(systemName: systemName)
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(tint)
-        }
-    }
-
     /// 品牌图标卡片：用官方品牌图标（微信/QQ/抖音）替代通用 SF Symbol。
     private func brandCard(
         brandImage: String,
@@ -221,11 +209,7 @@ struct SealCommunityView: View {
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 14) {
-                Image(brandImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 46, height: 46)
-                    .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                brandIcon(brandImage)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.system(size: 16, weight: .semibold))
@@ -234,6 +218,7 @@ struct SealCommunityView: View {
                         Text(subtitle)
                             .font(.system(size: 13, weight: .regular))
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                     }
                 }
                 Spacer(minLength: 8)
@@ -241,6 +226,7 @@ struct SealCommunityView: View {
                     Text(value)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                 }
                 Image(systemName: isExternal ? "arrow.up.right" : "chevron.right")
                     .font(.system(size: 14, weight: .semibold))
@@ -250,6 +236,22 @@ struct SealCommunityView: View {
             .sealContentCard(.standard)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func brandIcon(_ imageName: String) -> some View {
+        let image = Image(imageName)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 46, height: 46)
+
+        // Telegram 是透明圆形图标，保留圆形轮廓；QQ 素材是带浅色底的方形 PNG，
+        // 需要统一圆角裁切，避免深色模式下浅色底板露成方块。
+        if imageName == "BrandTelegram" {
+            image
+        } else {
+            image.clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        }
     }
 
     private func joinQQGroup() {
@@ -269,6 +271,17 @@ struct SealCommunityView: View {
         if let url = URL(string: "https://v.douyin.com/r5NTxx_Ztyk/") {
             openURL(url)
         }
+    }
+
+    private func openGzhArticle() {
+        if let url = URL(string: "https://mp.weixin.qq.com/s/q30q8SpERv2yg_vqSU_G_Q") {
+            openURL(url)
+        }
+    }
+
+    private func openTelegramCommunity() {
+        guard let telegramFolderURL else { return }
+        openURL(telegramFolderURL)
     }
 
     private func saveCodeToAlbum(imageName: String) {

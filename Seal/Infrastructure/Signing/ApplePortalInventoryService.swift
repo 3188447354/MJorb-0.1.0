@@ -120,10 +120,11 @@ actor ApplePortalInventoryService {
     ) async throws -> ApplePortalInventory {
         try Task.checkCancellation()
         let anisette = try await anisetteProvider.fetch()
-        let session = ALTAppleAPISession(
+        let session = AppleAuthenticationDiagnosis.makeAPISession(
             dsid: secret.dsid,
             authToken: secret.authToken,
             anisetteData: anisette,
+            usesCompatibleMacIdentity: secret.usesCompatibleMacIdentity,
             xcodeVersion: AppleAccountClient.xcodeVersion
         )
         let altAccount = ALTAccount()

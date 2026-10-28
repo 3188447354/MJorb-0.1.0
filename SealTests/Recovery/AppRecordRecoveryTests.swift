@@ -152,6 +152,24 @@ struct AppRecordRecoveryTests {
     }
 
     @Test
+    func doesNotRecoverUnmarkedDeviceAppFromMatchingProfile() async throws {
+        let environment = try makeEnvironment()
+        defer { try? FileManager.default.removeItem(at: environment.root) }
+        let summary = try await AppRecordRecovery(
+            appStore: environment.appStore,
+            fileStore: environment.fileStore,
+            deviceScanner: FakeInstalledAppScanner(
+                bundleIdentifier: "com.example.other.ABCDE12345",
+                iconData: Data([0x01]),
+                hasSealMarker: false
+            )
+        ).restoreMissingRecords()
+
+        #expect(summary.recovered == 0)
+        #expect(try await environment.appStore.fetchAll().isEmpty)
+    }
+
+    @Test
     func restoresLocalTeamMappedAppAndRenewalProfileMetadata() async throws {
         let environment = try makeEnvironment()
         defer { try? FileManager.default.removeItem(at: environment.root) }
@@ -392,6 +410,7 @@ struct AppRecordRecoveryTests {
                 size: 0,
                 state: .installed,
                 signingTeamID: "ABCDE12345",
+                lastInstalledAt: Date(),
                 ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
                 needsIPAImport: true,
                 importedAt: Date()
@@ -441,6 +460,7 @@ private extension AppRecordRecoveryTests {
         let bundleIdentifier: String
         let iconData: Data
         var profilesUnavailable = false
+        var hasSealMarker = true
 
         func scanProfileSummaries() async -> [DeviceProvisioningProfileSummary]? {
             guard profilesUnavailable == false else { return nil }
@@ -460,7 +480,8 @@ private extension AppRecordRecoveryTests {
                 displayName: "Demo",
                 shortVersion: "1.0",
                 buildNumber: "1",
-                profileValidated: true
+                profileValidated: true,
+                sealManagedMarkerVersion: hasSealMarker ? SealInstalledAppMarker.version : nil
             )]
         }
 
@@ -517,7 +538,8 @@ private extension AppRecordRecoveryTests {
                 displayName: "Demo",
                 shortVersion: "2.5",
                 buildNumber: "25",
-                profileValidated: nil
+                profileValidated: nil,
+                sealManagedMarkerVersion: SealInstalledAppMarker.version
             )]
         }
 
@@ -572,7 +594,8 @@ private extension AppRecordRecoveryTests {
                 shortVersion: "2.5",
                 buildNumber: "25",
                 profileValidated: nil,
-                teamIdentifier: "ABCDE12345"
+                teamIdentifier: "ABCDE12345",
+                sealManagedMarkerVersion: SealInstalledAppMarker.version
             )]
         }
 

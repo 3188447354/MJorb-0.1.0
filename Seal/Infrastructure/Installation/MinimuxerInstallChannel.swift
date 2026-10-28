@@ -103,10 +103,8 @@ actor MinimuxerInstallChannel: InstallChannel {
     private var selfReplacementGate = SelfReplacementInstallGate()
     private var cachedDeviceIdentifier: String?
     private var lastSuccessfulStart: Date?
-    /// 正在进行的整段隧道诊断。签名链路与 ViewModel 现在会**并发**请求启动通道
-    /// （ViewModel 在签名开始就并行发起、SigningCoordinator 安装前再 ensure 一次），
-    /// 没有它就会各自跑一遍完整诊断（reset + 18s RSD 握手 + 36×500ms 轮询），
-    /// 既重复又让「正在连接设备」耗时翻倍。并发调用一律合并到同一次启动。
+    /// 正在进行的通道启动/复核。签名链路、ViewModel 和启动预热会并发请求通道；
+    /// 单飞覆盖完整诊断与缓存 RSD 活性探测，避免并发调用分别重复做原生检查。
     private var inFlightStart: Task<String, Error>?
     /// 最近一次“拿不到设备标识”的底层错误文本（Rust IdeviceError Debug），用于精准分类，不再黑盒。
     private var lastDiscoveryDetail: String?
@@ -335,6 +333,38 @@ actor MinimuxerInstallChannel: InstallChannel {
     }
 
     func start() async throws -> String {
+        // 在检查缓存前建立单飞任务：start() 的调用方可能来自启动预热、签名进度和安装协调器，
+        // 不能只合并完整诊断，否则缓存命中时这些并发入口仍会各自探测同一条 RSD 会话。
+        if let inFlightStart {
+            return try await inFlightStart.value
+        }
+        let task = Task { () -> String in
+            try await withHardTimeout(seconds: Self.startHardTimeoutSeconds) {
+                try await self.startOnceOrReuseCachedSession()
+            }
+        }
+        inFlightStart = task
+        defer { inFlightStart = nil }
+        do {
+            let deviceIdentifier = try await task.value
+            lastFailureAt = nil
+            lastFailure = nil
+            return deviceIdentifier
+        } catch {
+            lastFailureAt = Date()
+            lastFailure = error
+            throw error
+        }
+    }
+
+    private func startOnceOrReuseCachedSession() async throws -> String {
+        #if !targetEnvironment(simulator)
+        if await WiFiPathAvailability.shared.isAvailable() == false,
+           await storedDeviceIdentifier() != nil {
+            throw Self.wifiUnavailableFailure
+        }
+        #endif
+
         // 优化：如果最近一次成功启动仍在缓存窗口内且设备仍就绪，直接返回缓存的 UDID，
         // 避免批量签名/续签对每个 App 都重跑完整诊断（reset + RSD 握手 + 轮询）卡在「连设备」。
         //
@@ -367,28 +397,7 @@ actor MinimuxerInstallChannel: InstallChannel {
            Date().timeIntervalSince(lastFailureAt) < Self.failureCooldownSeconds {
             throw lastFailure
         }
-        // 单飞：已有诊断在跑就加入它，不再另起一轮。
-        if let inFlightStart {
-            return try await inFlightStart.value
-        }
-        let task = Task { () -> String in
-            // 整体硬超时：最多两轮诊断，避免永久停在"准备环境"。
-            try await withHardTimeout(seconds: Self.startHardTimeoutSeconds) {
-                try await self.startOnce()
-            }
-        }
-        inFlightStart = task
-        defer { inFlightStart = nil }
-        do {
-            let deviceIdentifier = try await task.value
-            lastFailureAt = nil
-            lastFailure = nil
-            return deviceIdentifier
-        } catch {
-            lastFailureAt = Date()
-            lastFailure = error
-            throw error
-        }
+        return try await startOnce()
     }
 
     /// 用户主动刷新时清除熔断，让下一次 `start()` 真正重跑诊断。
@@ -412,26 +421,28 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// 别让 N 个 App 各付一遍诊断」；启动点火失败若把熔断留着，用户点火后
     /// 熔断窗口内点签名会被一个陈旧错误直接挡回 —— 那是拿后台尽力而为的
     /// 结果惩罚前台真实操作。
-    func prewarmAtLaunch() async {
+    func prewarmAtLaunch() async -> Bool {
         // 点火三个静默出口各留一句人话日志：否则导出日志里无法区分
         // 「点火成功」与「点火被跳过/失败」，可观测性缺口（2026-10-24）。
         // 点火只在启动时跑一次，日志不会刷屏。
         guard await storedDeviceIdentifier() != nil else {
             await log("启动点火跳过：暂无设备配对记录，等完成配对后再建立常驻通道")
-            return
+            return false
         }
         if let verdict = await readinessVerdict(),
            verdict.isReady == false,
            ChannelReadinessPolicy.isVPNNotConnected(fromIssueRawValue: verdict.issue?.rawValue) {
             await log("启动点火跳过：LocalDevVPN 未连接，等隧道连通后再建立常驻通道")
-            return
+            return false
         }
         do {
             _ = try await start()
             await log("启动点火完成：设备通道已建立并常驻，后续签名/安装直接复用")
+            return true
         } catch {
             await log("启动点火未完成：建立设备通道失败，已清除失败冷却，下次操作时重试")
             await clearFailureCooldown()
+            return false
         }
     }
 
@@ -451,6 +462,14 @@ actor MinimuxerInstallChannel: InstallChannel {
     /// 一次完整的隧道诊断流程；作为 actor 隔离方法，可直接读写自身缓存状态。
     private func startOnce() async throws -> String {
         var diagnostics = await diagnose()
+        if let failure = diagnostics.failure,
+           ["SEAL-INSTALL-700", "SEAL-INSTALL-701"].contains(failure.code) {
+            // Wi-Fi and a missing VPN route are explicit boundary failures. Resetting and
+            // repeating the same handshake cannot repair either condition, so return the
+            // actionable prompt immediately. Keep the one-shot repair path for device and
+            // RemotePairing-port failures below.
+            throw failure
+        }
         if diagnostics.failure != nil || diagnostics.deviceIdentifier == nil {
             // 第一轮失败：**先试一次 RemotePairing 端口自愈**，再重置 Minimuxer 重新诊断。
             //
@@ -517,6 +536,13 @@ actor MinimuxerInstallChannel: InstallChannel {
             }
             pass(.pairingFile)
 
+            run(.vpnTunnel)
+            #if !targetEnvironment(simulator)
+            if await WiFiPathAvailability.shared.isAvailable() == false {
+                return fail(.vpnTunnel, Self.wifiUnavailableFailure)
+            }
+            #endif
+
             #if targetEnvironment(simulator)
             deviceIdentifier = pairingRecord?.deviceIdentifier ?? "SIMULATOR"
             pass(.vpnTunnel)
@@ -537,11 +563,22 @@ actor MinimuxerInstallChannel: InstallChannel {
             NetworkObserver.shared.start()
             bindTunnelConfiguration()
 
-            run(.vpnTunnel)
             await waitForNetworkRefresh(rounds: 2, delay: .milliseconds(250))
             let tunnelReachable = await onDemandActivator.probeTunnel()
             if tunnelReachable {
                 pass(.vpnTunnel)
+            } else {
+                // Distinguish a missing tunnel from a device that has no response once.
+                // Do not fall through to the full 36 × 500 ms discovery loop when the
+                // first real tunnel probe already proves the route is unavailable.
+                let verdict = await readinessVerdict()
+                if let verdict, verdict.isReady == false {
+                    return fail(
+                        .vpnTunnel,
+                        Self.readinessFailure(for: verdict.issue?.rawValue)
+                    )
+                }
+                return fail(.vpnTunnel, Self.vpnTunnelUnavailableFailure)
             }
             // 不再自动拉起内置 SealTunnel：它只会把 10.7.0.0↔10.7.0.1 来回反射、
             // 不把流量真正转发到设备，Minimuxer 经 10.7.0.1:49152 仍连不上设备，
@@ -975,6 +1012,7 @@ actor MinimuxerInstallChannel: InstallChannel {
     static func isTerminalInstallError(_ detail: String) -> Bool {
         let lower = detail.lowercased()
         if isDeviceStorageExhaustion(detail)
+            || lower.contains("invalidcompanionappbundleidentifier")
             || lower.contains("devicenotsupportedbythinning")
             || lower.contains("device not supported by thinning")
             || lower.contains("integrity")
@@ -1694,6 +1732,17 @@ actor MinimuxerInstallChannel: InstallChannel {
         // 确定性失败优先于连接类判断；错误文本里往往同时含 "device"（如
         // "No space left on device"），必须先识别具体根因，否则会被误判成"设备断开"。
 
+        if lower.contains("invalidcompanionappbundleidentifier") {
+            return ImportFailure(
+                title: "手表组件信息不匹配",
+                reason: "系统拒绝安装：应用中的手表关联标识与主应用不一致。",
+                recovery: "请重新签名后安装；若仍失败，请导出日志反馈。",
+                code: "SEAL-INSTALL-702w",
+                condition: .unexpected, action: .copyDiagnostics,
+                retryDisposition: .none, operation: .install, origin: .installer
+            )
+        }
+
         // 系统明确表示该设备没有可安装的 thinning 变体时，重传不会改变结果。
         if lower.contains("devicenotsupportedbythinning")
             || lower.contains("device not supported by thinning") {
@@ -1731,8 +1780,8 @@ actor MinimuxerInstallChannel: InstallChannel {
             || detail.contains("应用上限") || detail.contains("已达上限") {
             return ImportFailure(
                 title: "达到已安装应用上限",
-                reason: "iOS 拒绝继续安装，因为当前账号在这台设备上的可安装应用数量已达上限。\(detail)",
-                recovery: "卸载一个已安装的自签应用后重试",
+                reason: "此 Apple 账号在这台 iPhone 上可安装的自签应用数量已达上限；仍安装在手机上的过期自签 App 也会占用名额。",
+                recovery: "从手机卸载一个不再使用的自签 App 后重试。",
                 code: "SEAL-INSTALL-702l",
                 condition: .deviceAppLimitReached,
                 action: .removeInstalledApp,
@@ -1942,8 +1991,8 @@ actor MinimuxerInstallChannel: InstallChannel {
 
     private static let vpnTunnelUnavailableFailure = ImportFailure(
         title: "LocalDevVPN 未就绪",
-        reason: "本地隧道未就绪，无法连接设备。Seal 不内置隧道（内置隧道已移除），一律依赖外部 LocalDevVPN 软件把流量真正转发到设备：请先安装并打开它，确认已连接 Wi-Fi 后重试。",
-        recovery: "检查是否打开 LocalDevVPN",
+        reason: "LocalDevVPN 通道未连接。请开启 LocalDevVPN 后重试。",
+        recovery: "打开 LocalDevVPN",
         code: "SEAL-INSTALL-701",
         condition: .tunnelUnavailable,
         action: .openLocalDevVPN,
@@ -1953,10 +2002,22 @@ actor MinimuxerInstallChannel: InstallChannel {
         origin: .deviceChannel
     )
 
+    private static let wifiUnavailableFailure = ImportFailure(
+        title: "未连接 Wi-Fi",
+        reason: "请先连接 Wi-Fi，再重试签名或续签。",
+        recovery: "连接 Wi-Fi 后重试",
+        code: "SEAL-INSTALL-700",
+        condition: .tunnelUnavailable,
+        action: .waitThenRetry,
+        retryDisposition: .manual,
+        operation: .install,
+        origin: .deviceChannel
+    )
+
     private static let deviceNotRespondingFailure = ImportFailure(
-        title: "设备未响应",
-        reason: "设备没有返回响应。当前信息不足以判断是设备状态、网络还是本地通道导致。",
-        recovery: "解锁 iPhone 后重试",
+        title: "设备暂未响应",
+        reason: "Wi-Fi 与 LocalDevVPN 通道正常，但设备暂时没有回应。重新连接设备后重试。",
+        recovery: "重新连接并重试",
         code: "SEAL-INSTALL-708",
         condition: .unexpected,
         action: .retry,

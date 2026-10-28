@@ -98,7 +98,7 @@ actor AppRecordRecovery {
         await recoverRecordsFromLocalInventory(localInventoryOnly: localInventoryOnly)
     }
 
-    /// 从本机安装清单恢复设备上仍存在、但本地记录丢失的 Seal 映射应用。
+    /// 从本机安装清单恢复设备上仍存在、带 Seal 逐应用标记且本地记录丢失的应用。
     /// 只新增系统当前列出的 App；卸载清理由另一条完整清单路径负责。
     private func recoverRecordsFromLocalInventory(
         localInventoryOnly: Bool

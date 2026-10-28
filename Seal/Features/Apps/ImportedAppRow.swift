@@ -45,6 +45,7 @@ struct ImportedAppRow: View {
                         Text("有新版本待安装")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.white)
+                            .singleLine()
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.red, in: RoundedRectangle(cornerRadius: 7))
@@ -52,6 +53,7 @@ struct ImportedAppRow: View {
                         Text("有更新待安装")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.white)
+                            .singleLine()
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.orange, in: RoundedRectangle(cornerRadius: 7))
@@ -59,6 +61,7 @@ struct ImportedAppRow: View {
                         Text("旧版本")
                             .font(.caption.weight(.semibold))
                             .foregroundColor(.white)
+                            .singleLine()
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
                             .background(Color.gray, in: RoundedRectangle(cornerRadius: 7))
@@ -94,10 +97,15 @@ struct ImportedAppRow: View {
         let identifier = displayBundleIdentifier
         if identifier.lowercased().hasSuffix(".seal"), identifier.count > 5 {
             let prefix = String(identifier.dropLast(5))
-            Text(prefix).foregroundColor(Color.sealTextSecondary)
-                + Text(".seal").foregroundColor(Color.sealAccent)
+            (Text(prefix).foregroundColor(Color.sealTextSecondary)
+                + Text(".seal").foregroundColor(Color.sealAccent))
+                .singleLine()
+                .truncationMode(.middle)
         } else {
-            Text(identifier).foregroundStyle(Color.sealTextSecondary)
+            Text(identifier)
+                .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
+                .truncationMode(.middle)
         }
     }
 
@@ -131,6 +139,7 @@ struct ImportedAppRow: View {
             Text("待导入 IPA")
                 .font(.caption.weight(.semibold))
                 .foregroundColor(.white)
+                .singleLine()
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Color.orange, in: RoundedRectangle(cornerRadius: 8))
@@ -140,18 +149,22 @@ struct ImportedAppRow: View {
             Text(installFeedback?.title ?? validity?.text ?? "已安装")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(installFeedback?.color ?? color(for: validity?.tone))
+                .singleLine()
                 .frame(minWidth: 70, alignment: .trailing)
         } else if app.belongsInSignedList {
             Text(pendingInstallStatus)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(pendingInstallColor)
+                .singleLine()
             .frame(minWidth: 82, alignment: .trailing)
         } else {
             VStack(alignment: .trailing, spacing: 5) {
                 Text(app.size.formatted(.byteCount(style: .file)))
                     .font(.subheadline)
+                    .singleLine()
                 Text(AppImportTimeFormatter.string(from: app.importedAt))
                     .font(.caption)
+                    .singleLine()
             }
             .foregroundStyle(Color.sealTextSecondary)
             .frame(minWidth: 82, alignment: .trailing)

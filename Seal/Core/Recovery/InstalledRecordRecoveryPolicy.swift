@@ -133,29 +133,27 @@ enum DismissedInstalledRecordTombstones {
     }
 }
 
-/// 扫回的纯逻辑：把「设备端描述文件摘要 ＋ 现有记录 ＋ 账号」折成待重建的记录草稿。
+/// 扫回的纯逻辑：用 Seal 安装标记确定归属，再结合设备应用与描述文件补齐记录。
 ///
 /// ## 背景（2026-09-25 用户反馈）
 ///
 /// 「只卸载了 Seal，其他应用没卸载，重装 Seal 后它们进不了已安装列表」——
-/// 记录（`Seal.sqlite`）随 Seal 一起没了，设备上的应用却还在。扫描设备上的描述文件，
-/// 根据真实 Bundle ID、可信 Team 和设备安装状态恢复记录，不依赖签名工具的 ID 格式。
+/// 记录（`Seal.sqlite`）随 Seal 一起没了，设备上的应用却还在。新版签名包的
+/// 逐应用标记可证明其由 Seal 管理；Team 与描述文件只用于补全签名身份。
 ///
 /// ## 五条纪律
 ///
-/// 1. **不按命名格式筛选**：Seal、AltStore、SideStore 或用户自定义的有效 Bundle ID，
-///    都按设备描述文件里的实际值识别；Team 只用于确认账号归属，不参与拼 ID。
+/// 1. **不按命名格式猜来源**：逐应用标记确认 Seal 归属；Bundle ID 使用设备真实值，
+///    Team 只用于确认账号归属，不参与拼 ID。
 /// 2. **身份必须诚实**：重建的记录**没有本地 IPA**（文件从未存在过），所以
 ///    `signedIPARelativePath` / `signedIPASHA256` 留空、`signedArtifactStatus` 留 nil。
 ///    这些字段只表示本机真实存在的 IPA 产物；设备 profile 的授权证书集合只放在
 ///    `signingTargets`，不伪装成本机已签名文件或实际签名证书。
 ///    有可用 profile 身份时可更新描述文件；需要完整重签时仍须导入 IPA。
-/// 3. **本策略只做本地筛选**，产出的只是候选。「到底装没装」必须由会抛错的
-///    `Minimuxer.isAppInstalled` 回答（见 `DeviceInstalledAppScanner`）——
-///    少一次设备核验，就会给「已从设备删掉、profile 还留着」的 App 造出僵尸记录。
-/// 4. **Team 必须可信**：设备上 dump 出来的是**全部**描述文件，含别的工具、旧账号
-///    留下的（真机实测过 39 个 Bundle ID 变体 / 33 份孤儿）。Team 是唯一能证明
-///    「这份 profile 属于当前这批账号/记录」的证据。
+/// 3. **必须在已安装应用清单中出现**：描述文件可能在卸载后残留，不能只凭 profile
+///    建记录。系统清单读取失败时不恢复；恢复不会据此清理已有记录。
+/// 4. **Team 只确认账号归属**：设备上的描述文件包含别的工具和旧账号留下的项，
+///    同 Team 或有效 profile 都不能证明 App 是 Seal 签名安装的。
 /// 5. **必须排在设备端旧描述文件清理之前**（`AppMaintenanceJob` 第 1 步 vs 第 4 步）。
 ///    新补回的记录是那份 profile 唯一的本地引用；反过来的顺序会让第 4 步把它的
 ///    profile 当旧账删掉 —— 而设备上的 App 正靠那份 profile 运行，当场打不开。
@@ -340,7 +338,7 @@ enum InstalledRecordRecoveryPolicy {
         )
     }
 
-    /// 本地描述文件筛选 —— **不碰设备**。
+    /// 旧描述文件候选辅助函数；当前自动恢复使用带安装标记的应用清单，不调用此路径。
     static func drafts(
         profiles: [DeviceProvisioningProfileSummary],
         context: Context
@@ -397,10 +395,10 @@ enum InstalledRecordRecoveryPolicy {
         }
     }
 
-    /// Rebuilds records from installed-app metadata. InstallationProxy's ProfileValidated
-    /// flag, a matching profile, a known LaunchServices signing Team, Seal's per-app marker,
-    /// or an exact mapped Team suffix can identify a sideload. The local scan needs no tunnel.
-    /// Exact App ID profiles take precedence over wildcard coverage; ambiguous fields require consensus.
+    /// Rebuilds only apps carrying Seal's per-app installation marker. A matching Team,
+    /// provisioning profile, or ProfileValidated flag describes signing identity but
+    /// cannot prove that Seal installed an otherwise unknown app.
+    /// Exact App ID profiles take precedence over wildcard coverage for metadata.
     static func drafts(
         installedApplications: [DeviceInstalledApplicationSummary],
         profiles: [DeviceProvisioningProfileSummary]?,
@@ -417,6 +415,9 @@ enum InstalledRecordRecoveryPolicy {
                   context.dismissedBundleIdentifiers.contains(normalized) == false else {
                 return nil
             }
+            guard application.sealManagedMarkerVersion == SealInstalledAppMarker.version else {
+                return nil
+            }
 
             let applicationTeam = normalizedTeamIdentifier(application.teamIdentifier)
             let matchingProfiles = profiles.filter {
@@ -430,14 +431,6 @@ enum InstalledRecordRecoveryPolicy {
                 bundleID,
                 knownTeams: context.knownTeamIdentifiers
             )
-            let applicationTeamIsKnown = applicationTeam.map(context.knownTeamIdentifiers.contains) ?? false
-            guard application.profileValidated == true
-                    || trustedMatchingProfiles.isEmpty == false
-                    || mappedTeam != nil
-                    || applicationTeamIsKnown
-                    || application.sealManagedMarkerVersion == SealInstalledAppMarker.version else {
-                return nil
-            }
             let exactProfiles = matchingProfiles.filter {
                 normalizedBundleIdentifier($0.bundleIdentifier) == normalized
             }

@@ -86,15 +86,41 @@ public final class CodeResourcesBuilder {
         }
 
         var hashResults = [HashResult?](repeating: nil, count: candidateFiles.count)
+        let hashResultsLock = NSLock()
+        var failedRelativePath: String?
 
         DispatchQueue.concurrentPerform(iterations: candidateFiles.count) { i in
             let item = candidateFiles[i]
-            let fileData = (try? Data(contentsOf: item.url, options: .alwaysMapped)) ?? (try? Data(contentsOf: item.url)) ?? Data()
+            let fileData: Data
+            do {
+                fileData = try Data(contentsOf: item.url, options: .alwaysMapped)
+            } catch {
+                do {
+                    fileData = try Data(contentsOf: item.url)
+                } catch {
+                    hashResultsLock.lock()
+                    if failedRelativePath == nil {
+                        failedRelativePath = item.relativePath
+                    }
+                    hashResultsLock.unlock()
+                    return
+                }
+            }
             let sha1 = Data(Insecure.SHA1.hash(data: fileData))
             // 🔴 硬件加速（2026-10-03）：Apple 平台走 CryptoKit，输出与 swift-crypto
             // 逐字节一致（见 `FastHash.swift` 与 `FastSHA256Tests`）。
             let sha256 = FastSHA256.hash(data: fileData)
+
+            // Swift Array's storage is not safe for concurrent mutation, even when each worker
+            // writes a different index. Keep all results deterministic and avoid a rare signing
+            // corruption / data-race window in this already-parallel resource pass.
+            hashResultsLock.lock()
             hashResults[i] = HashResult(relativePath: item.relativePath, sha1: sha1, sha256: sha256)
+            hashResultsLock.unlock()
+        }
+
+        if let failedRelativePath {
+            throw CodeSignerError.ioError("Failed to read code resource at \(failedRelativePath)")
         }
 
         let compiledRules = rules.compactMap { CompiledRule(pattern: $0.key, config: $0.value) }

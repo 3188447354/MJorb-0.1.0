@@ -179,6 +179,7 @@ private struct AppleAccountAppListView: View {
                 Text("App ID 名额")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.primary)
+                    .singleLine()
                 Spacer(minLength: 8)
                 if let available = quota?.availableQuantity, available >= 0 {
                     Text("\(available) 个可新建")
@@ -188,12 +189,13 @@ private struct AppleAccountAppListView: View {
                     Text("Apple 未提供")
                         .font(.subheadline)
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                 }
             }
-            Text("已有的 App ID 仍可继续用于签名。")
+            Text("已有 App ID 仍可继续签名。")
                 .font(.footnote)
                 .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -216,6 +218,7 @@ private struct AppleAccountAppListView: View {
                 Label("暂无签名应用", systemImage: "app.dashed")
             } description: {
                 Text("这个 Apple ID 还没有签名过任何应用。")
+                    .singleLine()
             }
         case .loaded(let items):
             AppleAccountLoadedAppListView(items: items)
@@ -339,11 +342,12 @@ private struct AppleAccountFailureCard: View {
             Text("同步失败")
                 .font(.headline)
                 .foregroundStyle(Color.sealDanger)
+                .singleLine()
 
             Text(message)
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
 
             Button("重新同步", action: onRetry)
                 .buttonStyle(.borderedProminent)
@@ -397,7 +401,7 @@ private struct AppleAccountAppItem: Identifiable, Equatable {
     }
 
     var expirationText: String {
-        expiryDate.map(SealSettingsDateFormatter.stringWithoutSeconds(from:)) ?? "Apple 未提供"
+        expiryDate.map(SealSettingsDateFormatter.string(from:)) ?? "Apple 未提供"
     }
 }
 

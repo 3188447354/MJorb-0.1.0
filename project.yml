@@ -1,6 +1,7 @@
 name: Seal
 options:
   createIntermediateGroups: true
+  developmentLanguage: zh-Hans
   # ⚠️ 最低支持 = iOS 17.4（2026-09-24 用户指令：「16.0-17.3.1 禁止使用」）。
   #    17.4 是 Apple 引入 `CoreDeviceProxy`（远程配对）的那一版 ⇒ 这是**唯一**一条
   #    不依赖本机配对 / 免 VPN 的安装链路。部署目标共 **9 处**必须同步：
@@ -18,8 +19,7 @@ configFiles:
   Release: Config/Release.xcconfig
 packages:
   ZIPFoundation:
-    url: https://github.com/weichsel/ZIPFoundation
-    exactVersion: 0.9.20
+    path: Vendor/ZIPFoundation
   AltSign:
     # Seal carries targeted AltSign protocol fixes under `upstream/AltSign`.
     # Building the remote pinned revision silently excludes those fixes even
@@ -56,6 +56,16 @@ targets:
       - path: Shared
     resources:
       - path: Seal/Resources/Anisette
+      - path: Seal/Resources/ThirdPartyNotices.txt
+      - path: Seal/Resources/LicenseTexts/AGPL-3.0.txt
+      - path: Seal/Resources/LicenseTexts/Apache-2.0.txt
+      - path: Seal/Resources/LicenseTexts/GPL-2.0.txt
+      - path: Seal/Resources/LicenseTexts/GPL-3.0.txt
+      - path: Seal/Resources/LicenseTexts/LGPL-2.1.txt
+      - path: Seal/Resources/LicenseTexts/MIT.txt
+      - path: Seal/Resources/LicenseTexts/NOTICE-swift-asn1.txt
+      - path: Seal/Resources/LicenseTexts/NOTICE-swift-crypto.txt
+      - path: Seal/Resources/LicenseTexts/zlib.txt
     dependencies:
       - package: ZIPFoundation
       - package: AltSign
@@ -88,6 +98,9 @@ targets:
     info:
       path: Seal/Resources/Info.plist
       properties:
+        CFBundleDevelopmentRegion: zh-Hans
+        CFBundleLocalizations:
+          - zh-Hans
         CFBundleDisplayName: Seal
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -108,12 +121,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         UIFileSharingEnabled: true
         # 后台保活（「不打开 App 的后台自动续签」三层里的第 ① 层）。
-        # 🔴 `audio + location`：`BackgroundKeepAliveService`（静音音频）＋
-        #    `LocationKeepAliveService`（后台定位）双保险。音频会被来电/闹钟/路由变更/媒体重置
-        #    打断，自愈之间有窗口；后台定位是 iOS 上仅次于 VoIP 的持久保活，与音频的失效模式正交。
-        #    上游 SideStore 自己也声明 `location`（有备选 BackgroundLocationService）；
-        #    Locus / StikDebug 等依赖 LocalDevVPN 的同类 App 同样 `audio + location`。
-        #    ⚠️ `location` 首次会弹定位权限（用户点「始终允许」后无需再干预）。
+        # `BackgroundKeepAliveService` 使用静音音频维持后台续签。
         # ⚠️ **仍不加 `fetch`** —— 那是「系统自己找机会刷」那条路（需要
         #    `UIApplicationDelegate.performFetchWithCompletionHandler`），本项目**还没有**
         #    AppDelegate；声明了却不处理只会让系统白唤醒、并让排查时误以为有这条路径。
@@ -122,7 +130,6 @@ targets:
         #    （上游 SideStore 自己就是侧载 App，一直用它）。
         UIBackgroundModes:
           - audio
-          - location
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: com.apple.itunes.ipa
             UTTypeDescription: iOS App Archive
@@ -137,10 +144,6 @@ targets:
                 - application/x-itunes-ipa
         ITSAppUsesNonExemptEncryption: false
         NSLocalNetworkUsageDescription: Seal 使用本地网络发布设备配对服务，并连接此设备安装应用。
-        # 后台定位保活（`LocationKeepAliveService`）用。⚠️ 缺 `AlwaysAndWhenInUse` 这一项，
-        # `requestAlwaysAuthorization()` 会直接崩溃（权限描述缺失 = iOS 强制终止）。
-        NSLocationWhenInUseUsageDescription: Seal 需要定位权限在后台保持活跃，以便不打开 App 也能自动续签应用。
-        NSLocationAlwaysAndWhenInUseUsageDescription: Seal 需要「始终允许」定位，在锁屏 / 后台时保持活跃，完成自动续签。
         # 🔴 浏览 Bonjour 服务**必须**声明服务类型（iOS 14+）。缺了它 `NWBrowser`
         #    不报错、只是**永远没有结果** —— 端口自愈会静默失效，日志上也看不出来。
         #    这里只列 `RemotePairingPortDiscovery` 真正会浏览的三个
@@ -164,14 +167,20 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal
         PRODUCT_NAME: Seal
         TARGETED_DEVICE_FAMILY: "1,2"
-        MARKETING_VERSION: 0.1.55
-        CURRENT_PROJECT_VERSION: 4
+        MARKETING_VERSION: 1.0.2
+        CURRENT_PROJECT_VERSION: 38
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: Seal/Resources/Seal.entitlements
         # Xcode 16+ Debug 构建默认把代码拆进 <Name>.debug.dylib（预览调试用）。
         # 侧载分发场景第三方签名工具常漏签根目录 dylib → 白图标+秒闪退。关闭之。
         ENABLE_DEBUG_DYLIB: NO
+      configs:
+        Debug:
+          # 本地 Xcode Run 更新当前 Team 对应的安装身份；Release 保持规范 ID，
+          # 由 Seal 的正式签名流程自行追加 Team ID，避免重复追加。
+          DEVELOPMENT_TEAM: 3432ZHJUF9
+          PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.$(DEVELOPMENT_TEAM)
   # 配对码的 Live Activity 界面。**必须**是独立 target：ActivityKit 的视图只能住在
   # widget 扩展里，放进主 App 会编译通过但永远不显示。
   SealLiveActivity:
@@ -229,13 +238,18 @@ targets:
         #    代价：扩展会占用免费 Apple ID 每周 10 个 App ID 名额中的 1 个。
         PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.LiveActivity
         PRODUCT_NAME: SealLiveActivity
-        MARKETING_VERSION: 0.1.55
-        CURRENT_PROJECT_VERSION: 4
+        MARKETING_VERSION: 1.0.2
+        CURRENT_PROJECT_VERSION: 38
         GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
         SKIP_INSTALL: YES
         # 与主 App 同样关掉：扩展里的 Debug dylib 更容易被第三方签名工具漏签。
         ENABLE_DEBUG_DYLIB: NO
+      configs:
+        Debug:
+          # 扩展 ID 也必须留在宿主 ID 前缀下，且与本地 Debug 宿主使用同一 Team。
+          DEVELOPMENT_TEAM: 3432ZHJUF9
+          PRODUCT_BUNDLE_IDENTIFIER: com.mjorb.seal.$(DEVELOPMENT_TEAM).LiveActivity
   DeviceSupport:
     type: library.static
     platform: iOS

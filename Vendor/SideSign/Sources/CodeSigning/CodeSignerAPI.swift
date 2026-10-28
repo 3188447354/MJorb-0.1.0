@@ -33,6 +33,15 @@ enum AppGroupEntitlementCanonicalizer {
         return canonical
     }
 
+    static func omittingEmptyRequestedGroups(
+        from profile: [String: any Sendable], requested: [String: any Sendable]
+    ) -> [String: any Sendable] {
+        guard let groups = requested[key] as? [String], groups.isEmpty else { return profile }
+        var result = profile
+        result.removeValue(forKey: key)
+        return result
+    }
+
     private static func strings(from value: any Sendable) -> [String]? {
         value as? [String]
     }
@@ -54,6 +63,7 @@ public extension CodeSignerAPI {
 public struct AppBundleSigner: CodeSignerAPI, Sendable {
     public let team: Team
     public let keyStore: KeyStore
+    private let removeAppClipAssociation: Bool
 
     private enum SigningTargetType: CustomStringConvertible {
         case mainAppBundleDirectory
@@ -84,9 +94,10 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
         }
     }
 
-    public init(team: Team, keyStore: KeyStore) {
+    public init(team: Team, keyStore: KeyStore, removeAppClipAssociation: Bool = false) {
         self.team = team
         self.keyStore = keyStore
+        self.removeAppClipAssociation = removeAppClipAssociation
     }
 
     public func signApp(at appURL: URL, provisioningProfiles profiles: [ProvisioningProfile], progress: Progress? = nil) async throws
@@ -127,6 +138,9 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
             verboseLog("[SideSign] Original profile entitlements: \(filteredEntitlements)")
 
             let applicationEntitlements = try app.readEntitlements()
+            filteredEntitlements = AppGroupEntitlementCanonicalizer.omittingEmptyRequestedGroups(
+                from: filteredEntitlements, requested: applicationEntitlements
+            )
 
             for (key, _) in filteredEntitlements {
                 if let applicationValue = applicationEntitlements[key] {
@@ -155,6 +169,15 @@ public struct AppBundleSigner: CodeSignerAPI, Sendable {
 
             verboseLog("[SideSign] Filtered entitlements for signing: \(filteredEntitlements)")
 
+            if removeAppClipAssociation && app.fileURL.resolvingSymlinksInPath() == appBundle.fileURL.resolvingSymlinksInPath() {
+                filteredEntitlements.removeValue(forKey: "com.apple.developer.associated-appclip-app-identifiers")
+                let key = "com.apple.developer.associated-domains"
+                if let domains = filteredEntitlements[key] as? [String] {
+                    let retained = domains.filter { !$0.hasPrefix("appclips:") }
+                    if retained.isEmpty { filteredEntitlements.removeValue(forKey: key) }
+                    else { filteredEntitlements[key] = retained }
+                }
+            }
             let plist = try PropertyListSerialization.data(
                 fromPropertyList: filteredEntitlements,
                 format: .xml,

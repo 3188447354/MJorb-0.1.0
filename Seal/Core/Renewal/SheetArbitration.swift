@@ -92,9 +92,18 @@ struct SheetArbiter: Equatable, Sendable {
     /// 只有当前在场抽屉的关闭事件有效；过时抽屉的迟到事件直接忽略，
     /// 不能把后来上台的抽屉误清掉。关闭完成后待呈现者立即上台。
     @discardableResult
-    mutating func sheetDidDismiss(_ sheet: ArbitratedSheet) -> SheetArbitrationAction {
+    mutating func sheetDidDismiss(
+        _ sheet: ArbitratedSheet,
+        promotingPending: Bool = true
+    ) -> SheetArbitrationAction {
         guard sheet == current else { return .none }
         current = nil
+        guard promotingPending else {
+            // 用户主动取消/关闭了这张抽屉：不把一个后台排队请求立刻弹到前台。
+            // 该请求的来源仍由各自业务状态保存，后续明确的前台动作可再次申请呈现。
+            pending = nil
+            return .none
+        }
         guard let next = pending else { return .none }
         pending = nil
         current = next

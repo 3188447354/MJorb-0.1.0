@@ -130,6 +130,7 @@ struct SigningProgressView: View {
                         Text("正在传输到设备")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                         Spacer()
                         Text(progress.sealPercentText)
                             .font(.system(size: 13, weight: .semibold))
@@ -152,7 +153,7 @@ struct SigningProgressView: View {
                 Text(session?.stageDetail.map { "\($0)，请保持 Seal 打开。" } ?? renewalTipText)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.sealAccent)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .singleLine()
                     .opacity(isReturningHome ? 0.72 : 1)
             }
 
@@ -179,7 +180,8 @@ struct SigningProgressView: View {
                 realProgress: session?.installProgress,
                 workUnits: session?.workUnits,
                 renewalExecutionPath: session?.renewalExecutionPath,
-                stageStartedAt: session?.stageStartedAt
+                stageStartedAt: session?.stageStartedAt,
+                deviceChannelReady: viewModel.signingChannelStatus == .ready
             )
         }
     }
@@ -302,10 +304,12 @@ struct SigningProgressView: View {
                     Text("\(installed.displayName) 已更新至 v\(installed.version)")
                         .font(.system(size: 13, weight: .regular))
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                 }
                 Text(expiryText(for: installed))
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
             Spacer()
         }
@@ -326,7 +330,8 @@ struct SigningProgressView: View {
                         Text("开发证书名额已满")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(.primary)
-                        Text("Apple 暂时无法创建新证书。撤销一张旧证书后，可重新尝试签名。")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Apple 暂时无法新建证书；撤销旧证书后可重试。")
                             .font(.system(size: 13))
                             .foregroundStyle(Color.sealTextSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -344,8 +349,8 @@ struct SigningProgressView: View {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.sealWarning)
-                Text("撤销可能影响使用该证书签名的应用，继续前可查看影响范围。")
-                    .font(.system(size: 12))
+                Text("撤销可能影响关联应用；继续前请查看影响范围。")
+                    .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -356,7 +361,8 @@ struct SigningProgressView: View {
                 Text("证书列表已变化")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
-                Text("所选证书当前已不满足撤销条件，本次没有撤销任何证书。请重新读取列表。")
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("撤销条件已变化；未撤销，请重新读取列表。")
                     .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -372,6 +378,7 @@ struct SigningProgressView: View {
                 Text("撤销结果未确认")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(userFacingReason(failure))
                     .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
@@ -390,6 +397,8 @@ struct SigningProgressView: View {
                         .foregroundStyle(Color.sealDanger)
                     Text(failure.title)
                         .font(.system(size: 16, weight: .semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                     Spacer()
                 }
                 Text(userFacingReason(failure))
@@ -435,7 +444,6 @@ struct SigningProgressView: View {
                 }
                 .sealPrimaryAction(cornerRadius: 14)
                 Button("关闭") {
-                    viewModel.dismissSigningResult()
                     dismiss()
                 }
                 .font(.system(size: 15, weight: .medium))
@@ -546,7 +554,7 @@ struct SigningProgressView: View {
             Text(note)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 10)
@@ -660,6 +668,9 @@ struct SigningProgressView: View {
     }
 
     private func stageTitle(for stage: SigningStage) -> String {
+        if stage == .waitingForChannel, viewModel.signingChannelStatus == .ready {
+            return "LocalDevVPN 已就绪"
+        }
         // 设备注入子阶段（stageDetail 非空）时标题切到「正在更新描述文件」：
         // 它就是 profile-only 的 .signing 文案，但不真的切阶段 —— 轨道预算模型
         // 要求 .preparingProfiles 独占第 5 格，真切阶段会让轨道从第 5 格退回第 4 格。
@@ -676,7 +687,7 @@ struct SigningProgressView: View {
         guard let expiryDate = installed.provisioningProfileExpirationDate ?? installed.expiryDate else {
             return "应用已安装"
         }
-        return "有效期至 \(SealSettingsDateFormatter.stringWithoutSeconds(from: expiryDate))"
+        return "有效期至 \(SealSettingsDateFormatter.string(from: expiryDate))"
     }
 
     private func primaryRecoveryTitle(_ failure: ImportFailure) -> String {
@@ -703,13 +714,19 @@ struct SigningProgressView: View {
             isCertificatePickerPresented = true
             return
         }
+        if failure.action == .openLocalDevVPN {
+            // VPN recovery must launch the VPN app itself. Routing through Seal's device
+            // settings page adds an unnecessary stop and hides the action the user needs.
+            dismiss()
+            LocalDevVPNLink.openApplication()
+            return
+        }
         if let route = InstallFailureSettingsRoute.route(for: failure) {
             openSettings(route)
             return
         }
         if performSemanticPrimaryRecovery(for: failure) { return }
         if isNonRetryableFailure(failure) {
-            viewModel.dismissSigningResult()
             dismiss()
         } else if CertificateRequestFailurePolicy.recoveryEligibleCodes.contains(failure.code) {
             isCertificatePickerPresented = true
@@ -726,7 +743,6 @@ struct SigningProgressView: View {
         } else if isCertificateFailure(failure) {
             viewModel.retrySigning()
         } else if isAppIDFailure(failure) || failure.code.hasPrefix("SEAL-BUNDLE-") {
-            viewModel.dismissSigningResult()
             dismiss()
         } else if isPairingFailure(failure) {
             openSettings(.pairing)
@@ -744,7 +760,7 @@ struct SigningProgressView: View {
         return switch failure.action {
         case .fullResign: "重新签名"
         case .repairPairing: "重新配对设备"
-        case .openLocalDevVPN: "检查设备连接"
+        case .openLocalDevVPN: "打开 LocalDevVPN"
         case .reinstallFromSignedArtifact: "重新安装"
         case .retry: "重新签名"
         case .addAccount: "添加 Apple ID"
@@ -767,17 +783,17 @@ struct SigningProgressView: View {
         case .retry:
             viewModel.retrySigning()
         case .reimportIPA:
-            viewModel.dismissSigningResult()
             viewModel.presentImporter()
             dismiss()
-        case .repairPairing, .openLocalDevVPN, .addAccount, .reauthenticateAccount:
+        case .openLocalDevVPN:
+            LocalDevVPNLink.openApplication()
+            dismiss()
+        case .repairPairing, .addAccount, .reauthenticateAccount:
             // 这些动作应该随 `FailureRoute` 一起到达；缺少 route 时不猜测目标页面。
-            viewModel.dismissSigningResult()
             dismiss()
         case .waitThenRetry, .trustDevice, .freeDeviceStorage,
              .removeInstalledApp, .checkInstallationResult, .enterNewVerificationCode,
               .restartSeal, .copyDiagnostics:
-            viewModel.dismissSigningResult()
             dismiss()
         }
         return true
@@ -847,14 +863,15 @@ struct SigningProgressView: View {
         // 双重认证中断（101a）时先把签名上下文存下：用户在账号页重新验证成功后，
         // 那次签名自动续跑，不用手动重发。其他失败存不进去（方法内有判据）。
         viewModel.stashInterruptedSigningForReauthentication()
-        viewModel.dismissSigningResult()
         viewModel.openSettings(route: route)
         dismiss()
     }
 
     private func finish() {
         let completionMode = session?.completionMode ?? .signAndInstall
-        viewModel.dismissSigningResult()
+        // 结果状态由 AppsRootView.operationSheetDismissed 在外层抽屉完全退场后清理。
+        // 若在这里先清掉 signingSession，AppSigningSheet 会立刻切回配置页，
+        // 用户会看到配置抽屉跟着结果抽屉连续退场。
         onFinish(completionMode)
         dismiss()
     }
@@ -875,21 +892,25 @@ struct SigningStageTrack: View {
     let workUnits: SigningWorkUnits?
     let renewalExecutionPath: RenewalExecutionPath?
     let stageStartedAt: Date?
+    let deviceChannelReady: Bool
 
     var body: some View {
-        let hasRealSignal = SigningProgressBudget.hasRealSignal(
+        let hasStageProgressSignal = SigningProgressBudget.hasRealSignal(
             stage: stage,
             realProgress: realProgress,
             workUnits: workUnits,
             renewalExecutionPath: renewalExecutionPath
         )
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: hasRealSignal)) { context in
+        let channelReadyForCurrentStage = stage == .waitingForChannel && deviceChannelReady
+        let pausesTimeline = hasStageProgressSignal || channelReadyForCurrentStage
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: pausesTimeline)) { context in
             HStack(spacing: 6) {
                 ForEach(Array(0..<SigningProgressBudget.bucketCount), id: \.self) { bucket in
                     segment(
                         bucket: bucket,
                         elapsed: Self.elapsed(at: context.date, startedAt: stageStartedAt),
-                        animatesFill: hasRealSignal
+                        animatesFill: hasStageProgressSignal,
+                        deviceChannelReady: channelReadyForCurrentStage
                     )
                 }
             }
@@ -906,14 +927,20 @@ struct SigningStageTrack: View {
     }
 
     @ViewBuilder
-    private func segment(bucket: Int, elapsed: TimeInterval, animatesFill: Bool) -> some View {
+    private func segment(
+        bucket: Int,
+        elapsed: TimeInterval,
+        animatesFill: Bool,
+        deviceChannelReady: Bool
+    ) -> some View {
         let segmentFill = SigningProgressBudget.bucketFill(
             bucket,
             stage: stage,
             elapsed: elapsed,
             realProgress: realProgress,
             workUnits: workUnits,
-            renewalExecutionPath: renewalExecutionPath
+            renewalExecutionPath: renewalExecutionPath,
+            deviceChannelReady: deviceChannelReady
         )
         StageSegmentCell(
             fill: segmentFill,

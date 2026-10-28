@@ -159,6 +159,22 @@ struct SheetArbitrationTests {
         #expect(arbiter.isIdle)
     }
 
+    /// 取消更新提示时，即使后台在它上面排入了结果抽屉，也只关闭更新提示；
+    /// 第二张抽屉不会紧跟着弹出。
+    @Test
+    func dismissingUpdateWithoutPromotionDropsQueuedPresentation() {
+        var arbiter = SheetArbiter()
+        let updateAction = arbiter.request(.appUpdate)
+        #expect(updateAction == .present(.appUpdate))
+        let queuedAction = arbiter.request(.batchResult)
+        #expect(queuedAction == .dismissCurrentThenPresentPending)
+
+        let dismissalAction = arbiter.sheetDidDismiss(.appUpdate, promotingPending: false)
+
+        #expect(dismissalAction == .none)
+        #expect(arbiter.isIdle)
+    }
+
     /// 正常关闭（无待呈现）后仲裁回到空台，下一张可以直接呈现。
     @Test
     func plainDismissalReturnsToIdle() {

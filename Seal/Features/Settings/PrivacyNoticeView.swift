@@ -5,9 +5,10 @@ struct PrivacyNoticeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("生效日期：2026 年 10 月 17 日")
+                Text("生效日期：2026 年 10 月 26 日")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .padding(.top, 4)
 
                 policySection(
@@ -22,12 +23,12 @@ struct PrivacyNoticeView: View {
 
                 policySection(
                     title: "二、权限与系统能力",
-                    body: "本地网络：用于发现、配对并连接同一设备以安装应用。\n\n通知：仅在您允许后，用于应用到期提醒、后台续签结果及 Live Activity 不可用时的配对码提示。\n\n定位：仅当您启用后台自动续签并授予权限时使用，以尝试让续签任务在锁屏或后台期间继续运行。Seal 不读取、不展示、不保存或上传您的地理位置；拒绝该权限不会影响前台手动签名。\n\n相册“添加照片”：仅在您主动保存赞赏码图片时使用，Seal 不读取您的相册。\n\n您可随时在“设置 > 隐私与安全性”中修改系统权限；关闭权限可能使相应功能无法使用。"
+                    body: "本地网络：用于发现、配对并连接同一设备以安装应用。\n\n通知：仅在您允许后，用于应用到期提醒、后台续签结果及 Live Activity 不可用时的配对码提示。\n\n相册“添加照片”：仅在您主动保存赞赏码图片时使用，Seal 不读取您的相册。\n\n您可随时在“设置 > 隐私与安全性”中修改系统权限；关闭权限可能使相应功能无法使用。"
                 )
 
                 policySection(
                     title: "三、信息的对外传输",
-                    body: "Apple：签名、续签、设备注册和 Apple ID 认证需要通过加密连接向 Apple 服务发送必要的认证信息、设备标识、证书和描述文件数据。Apple 对其收到信息的处理适用其自身隐私政策。\n\nAnisette 服务：为完成 Apple 认证，Seal 会向您选择或自动切换的 Anisette 服务发送设备环境标识及认证准备数据，并从其取得认证所需响应。该服务由独立第三方运营；其可能处理连接信息及请求数据，开发者无法控制其独立的数据处理。请仅在您接受相应服务风险时使用。\n\nGitHub：检查更新时，Seal 会访问 GitHub Releases API；下载更新时会访问 GitHub 提供的发布资产。GitHub 可依据其规则处理网络连接信息。\n\n我们不会出售个人信息，不使用广告 SDK，不进行跨 App 或跨网站跟踪，也不将您的信息用于定向广告。"
+                    body: "Apple：签名、续签、设备注册和 Apple ID 认证需要通过加密连接向 Apple 服务发送必要的认证信息、设备标识、证书和描述文件数据。Apple 对其收到信息的处理适用其自身隐私政策。\n\nAnisette 服务：为完成 Apple 认证，Seal 会向您选择或自动切换的 Anisette 服务发送设备环境标识及认证准备数据，并从其取得认证所需响应。该服务由独立第三方运营；其可能处理连接信息及请求数据，开发者无法控制其独立的数据处理。请仅在您接受相应服务风险时使用。\n\n更新服务：检查更新时，Seal 会获取版本信息；下载更新时会请求更新包和校验信息。服务可能处理完成请求所需的网络连接信息。\n\n我们不会出售个人信息，不使用广告 SDK，不进行跨 App 或跨网站跟踪，也不将您的信息用于定向广告。"
                 )
 
                 policySection(
@@ -58,6 +59,7 @@ struct PrivacyNoticeView: View {
                 Text("本隐私政策是《Seal 用户协议》的组成部分。")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .padding(.top, 8)
             }
             .padding(20)
@@ -84,8 +86,9 @@ struct PrivacyNoticeView: View {
             VStack(spacing: 2) {
                 Text(title).font(.headline)
                 Text("v\(AgreementVersion.current) · \(effectiveDate) 生效")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
         }
     }

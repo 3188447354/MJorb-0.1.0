@@ -1,9 +1,183 @@
 import Foundation
 import Testing
 import ZIPFoundation
+import AltSign
+import SideSign
+import CodeSignKit
 @testable import Seal
 
 struct SigningWorkspaceTests {
+    @Test
+    func extensionKitTargetIsDiscoveredAndWatchPlaceholderIsPreserved() throws {
+        let info: [String: Any] = [
+            "CFBundleIdentifier": "com.example.demo.capture",
+            "CFBundleName": "Capture",
+            "CFBundleExecutable": "Capture",
+            "CFBundleShortVersionString": "1.0",
+            "CFBundleVersion": "1",
+            "EXAppExtensionAttributes": ["EXExtensionPointIdentifier": "com.apple.securecapture"]
+        ]
+        let data = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        let source = try IPAArchiveFixture.make(extraEntries: [
+            (path: "Payload/Demo.app/Extensions/Capture.appex/Info.plist", data: data),
+            (path: "Payload/Demo.app/Extensions/Capture.appex/Capture", data: Data(repeating: 0, count: 32)),
+            (path: "Payload/Demo.app/com.apple.WatchPlaceholder/Watch.app/PlugIns/Placeholder.appex/Info.plist", data: data)
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let parsed = try IPAParserService().parse(url: source)
+        #expect(parsed.extensions.count == 1)
+        #expect(parsed.extensions.first?.originalBundleIdentifier == "com.example.demo.capture")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealExtensionKit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SigningWorkspace().prepare(
+            ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID"
+        )
+        let mapped = try #require(prepared.bundleIDMappings["com.example.demo.capture"])
+        #expect(prepared.bundleIDMappings.count == 2)
+        let altApp = try #require(ALTApplication(fileURL: prepared.appURL))
+        #expect(altApp.appExtensions.contains { $0.bundleIdentifier == mapped })
+        let sideApp = try #require(AppBundle(fileURL: prepared.appURL))
+        #expect(sideApp.appExtensions.contains { $0.bundleIdentifier == mapped })
+        let placeholder = prepared.appURL.appendingPathComponent("com.apple.WatchPlaceholder")
+        #expect(CodeSigner.isMetadataOnlyWatchPlaceholder(at: placeholder))
+        #expect(FileManager.default.fileExists(atPath: placeholder.appendingPathComponent("Watch.app/PlugIns/Placeholder.appex/Info.plist").path))
+        try Data([0xcf, 0xfa, 0xed, 0xfe]).write(to: placeholder.appendingPathComponent("unexpected-binary"))
+        #expect(!CodeSigner.isMetadataOnlyWatchPlaceholder(at: placeholder))
+    }
+
+    @Test
+    func metadataWatchPlaceholderReferencesFollowRenamedParent() throws {
+        func plist(_ value: [String: Any]) throws -> Data {
+            try PropertyListSerialization.data(fromPropertyList: value, format: .xml, options: 0)
+        }
+        let watch = "Payload/Demo.app/com.apple.WatchPlaceholder/Watch.app"
+        let source = try IPAArchiveFixture.make(extraEntries: [
+            (path: watch + "/Info.plist", data: try plist([
+                "CFBundleIdentifier": "com.example.demo.watchkitapp",
+                "WKCompanionAppBundleIdentifier": "com.example.demo",
+                "Unrelated": "com.example.demo"
+            ])),
+            (path: watch + "/PlugIns/Watch.appex/Info.plist", data: try plist([
+                "CFBundleIdentifier": "com.example.demo.watchkitapp.extension",
+                "NSExtension": ["NSExtensionAttributes": ["WKAppBundleIdentifier": "com.example.demo.watchkitapp"]]
+            ]))
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealWatchMetadata-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SigningWorkspace().prepare(ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID")
+        let base = prepared.appURL.appendingPathComponent("com.apple.WatchPlaceholder/Watch.app")
+        func load(_ url: URL) throws -> [String: Any] {
+            try #require(PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as? [String: Any])
+        }
+        let app = try load(base.appendingPathComponent("Info.plist"))
+        #expect(app["WKCompanionAppBundleIdentifier"] as? String == prepared.mappedMainBundleID)
+        #expect(app["CFBundleIdentifier"] as? String == prepared.mappedMainBundleID + ".watchkitapp")
+        #expect(app["Unrelated"] as? String == "com.example.demo")
+        let ext = try load(base.appendingPathComponent("PlugIns/Watch.appex/Info.plist"))
+        let nested = try #require(ext["NSExtension"] as? [String: Any])
+        let attrs = try #require(nested["NSExtensionAttributes"] as? [String: Any])
+        #expect(attrs["WKAppBundleIdentifier"] as? String == prepared.mappedMainBundleID + ".watchkitapp")
+        let archive = try Archive(url: source, accessMode: .read)
+        #expect(archive[watch + "/Info.plist"] != nil)
+    }
+
+    @Test
+    func emptyWatchDirectoryDoesNotBlockSigning() throws {
+        let source = try IPAArchiveFixture.make()
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        do {
+            let archive = try Archive(url: source, accessMode: .update)
+            try archive.addEntry(with: "Payload/Demo.app/Watch/", type: .directory, uncompressedSize: Int64(0)) { _, _ in Data() }
+        }
+        let parsed = try IPAParserService().parse(url: source)
+        #expect(!parsed.importWarnings.contains { $0.contains("Watch") })
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealEmptyWatch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SigningWorkspace().prepare(
+            ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID"
+        )
+        #expect(FileManager.default.fileExists(atPath: prepared.appURL.appendingPathComponent("Watch").path))
+    }
+
+    @Test
+    func encryptedWatchCompanionIsRemovedFromCopyOnly() throws {
+        var binary = Data()
+        for value: UInt32 in [0xfeedfacf, 0, 0, 0, 1, 24, 0, 0, 0x2c, 24, 0, 0, 1, 0] {
+            var little = value.littleEndian
+            withUnsafeBytes(of: &little) { binary.append(contentsOf: $0) }
+        }
+        let source = try IPAArchiveFixture.make(extraEntries: [
+            (path: "Payload/Demo.app/Watch/Companion.app/PlugIns/WatchExtension.appex/WatchExtension", data: binary)
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealEncryptedWatch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SigningWorkspace().prepare(ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID")
+        #expect(!FileManager.default.fileExists(atPath: prepared.appURL.appendingPathComponent("Watch/Companion.app").path))
+        let original = try Archive(url: source, accessMode: .read)
+        #expect(original["Payload/Demo.app/Watch/Companion.app/PlugIns/WatchExtension.appex/WatchExtension"] != nil)
+    }
+
+    @Test
+    func freeTeamCanRemoveClipOnlyFromSigningCopy() throws {
+        let path = "Payload/Demo.app/AppClips/DemoClip.app/Info.plist"
+        let source = try IPAArchiveFixture.make(extraEntries: [(path: path, data: Data("clip".utf8))])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealRemoveClip-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = SigningWorkspace()
+        let result = try workspace.prepare(ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID", removeUnsupportedAppClip: true)
+        #expect(result.removedAppClip)
+        #expect(!FileManager.default.fileExists(atPath: result.appURL.appendingPathComponent("AppClips").path))
+        let original = try Archive(url: source, accessMode: .read)
+        #expect(original[path] != nil)
+        do {
+            _ = try workspace.prepare(ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID", purpose: .layoutOnly, removeUnsupportedAppClip: true)
+            Issue.record("Profile-only renewal must not discard an installed target")
+        } catch let failure as ImportFailure {
+            #expect(failure.code == "SEAL-SIGN-401")
+        }
+    }
+
+    @Test
+    func appClipIsNotSilentlyRemovedOrSignedWithMainProfile() throws {
+        let source = try IPAArchiveFixture.make(extraEntries: [
+            (path: "Payload/Demo.app/AppClips/DemoClip.app/Info.plist", data: Data("clip".utf8))
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealAppClip-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            _ = try SigningWorkspace().prepare(ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID")
+            Issue.record("An App Clip requires its own validated identity and profile")
+        } catch let failure as ImportFailure {
+            #expect(failure.code == "SEAL-SIGN-401")
+        }
+        let archive = try Archive(url: source, accessMode: .read)
+        #expect(archive["Payload/Demo.app/AppClips/DemoClip.app/Info.plist"] != nil)
+    }
+
+    @Test
+    func realWatchBundleRemainsBlockedRatherThanRemoved() throws {
+        let source = try IPAArchiveFixture.make(extraEntries: [
+            (path: "Payload/Demo.app/Watch/Companion.app/Info.plist", data: Data("watch".utf8))
+        ])
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let parsed = try IPAParserService().parse(url: source)
+        #expect(parsed.importWarnings.contains { $0.contains("Watch") })
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("SealRealWatch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        do {
+            _ = try SigningWorkspace().prepare(
+                ipaURL: source, workspaceRoot: root, originalBundleID: "com.example.demo", teamID: "TEAMID"
+            )
+            Issue.record("Real Watch bundles must not be silently removed or signed without support")
+        } catch let failure as ImportFailure {
+            #expect(failure.code == "SEAL-SIGN-401")
+        }
+    }
+
     @Test
     func safelyRemapsMainAndExtensionThenPackagesIPA() throws {
         let source = try IPAArchiveFixture.make(includeShareExtension: true)
@@ -234,6 +408,50 @@ struct SigningWorkspaceTests {
             #expect(SigningWorkspace.compressionMethod(forRelativePath: path) == .deflate,
                     "\(path) 未压缩，必须 deflate")
         }
+    }
+
+    @Test
+    func largeStreamingDeflateProducesReadableZipEntryWithValidContents() throws {
+        let root = FileManager.default.temporaryDirectory.appending(
+            path: "SealStreamingArchiveTests-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let payloadRoot = root.appending(path: "Payload", directoryHint: .isDirectory)
+        let appURL = payloadRoot.appending(path: "Demo.app", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: appURL, withIntermediateDirectories: true)
+
+        // A sparse, mostly-zero file forces the >64 MiB streaming path without spending test
+        // time generating a large fixture. The final marker proves the stream didn't truncate.
+        let sourceFile = appURL.appending(path: "large.bin")
+        #expect(FileManager.default.createFile(atPath: sourceFile.path, contents: nil))
+        let sourceHandle = try FileHandle(forWritingTo: sourceFile)
+        let expectedSize: UInt64 = 65 * 1_024 * 1_024 + 123
+        try sourceHandle.truncate(atOffset: expectedSize)
+        try sourceHandle.seek(toOffset: expectedSize - 1)
+        try sourceHandle.write(contentsOf: Data([0x5A]))
+        try sourceHandle.close()
+
+        let output = root.appending(path: "Streaming.ipa")
+        try SigningWorkspace.writeIPA(from: payloadRoot, to: output)
+
+        let archive = try Archive(url: output, accessMode: .read)
+        let entry = try #require(archive.first { $0.path == "Payload/Demo.app/large.bin" })
+        #expect(entry.isCompressed)
+
+        let extracted = root.appending(path: "large-extracted.bin")
+        try archive.extract(entry, to: extracted)
+        let attributes = try FileManager.default.attributesOfItem(atPath: extracted.path)
+        #expect((attributes[.size] as? NSNumber)?.uint64Value == expectedSize)
+
+        let extractedHandle = try FileHandle(forReadingFrom: extracted)
+        let prefix = try extractedHandle.read(upToCount: 16) ?? Data()
+        try extractedHandle.seek(toOffset: expectedSize - 1)
+        let finalByte = try extractedHandle.read(upToCount: 1) ?? Data()
+        try extractedHandle.close()
+        #expect(prefix == Data(repeating: 0, count: 16))
+        #expect(finalByte == Data([0x5A]))
     }
 
     /// 🔴 钉住 `PreparePurpose.layoutOnly` 的**唯一**承诺：

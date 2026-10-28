@@ -66,9 +66,10 @@ struct AddAccountView: View {
         Group {
             VStack(spacing: 10) {
                 Image(systemName: "person.badge.key").font(.system(size: 46)).foregroundStyle(Color.sealAccent)
-                Text("Apple ID").font(.title2.weight(.semibold))
-                Text("用于个人 IPA 签名。账号密码只保存在这台手机上。")
+                Text("Apple ID").font(.title2.weight(.semibold)).singleLine()
+                Text("用于个人IPA 签名，密码只保存本机")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    .singleLine()
             }
             .frame(maxWidth: .infinity).padding(24).sealContentCard(.prominent)
             VStack(spacing: 0) {
@@ -92,10 +93,11 @@ struct AddAccountView: View {
         Group {
             VStack(spacing: 12) {
                 Image(systemName: "lock.shield").font(.system(size: 48)).foregroundStyle(Color.sealAccent)
-                Text("输入验证码").font(.title2.weight(.semibold))
-                Text("请在受信任设备上允许登录，然后输入 Apple 发送的六位验证码。")
+                Text("输入验证码").font(.title2.weight(.semibold)).singleLine()
+                Text("请先在受信任设备上允许登录，再输入验证码。")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Text(email).font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                    .singleLine()
+                Text(email).font(.subheadline.weight(.medium)).foregroundStyle(.secondary).singleLine()
             }
             .frame(maxWidth: .infinity).padding(.vertical, 24)
             TextField("六位验证码", text: $verificationCode)
@@ -106,13 +108,14 @@ struct AddAccountView: View {
                 }
             Text("允许登录后输入验证码。")
                 .font(.caption).foregroundStyle(.secondary)
+                .singleLine()
             Button {
                 verificationBroker.submit(verificationCode)
             } label: {
                 if verificationBroker.hasSubmittedCode {
                     ProgressView().frame(maxWidth: .infinity)
                 } else {
-                    Text("确认验证码")
+                    Text("确认验证码").singleLine()
                 }
             }
             .sealPrimaryAction()

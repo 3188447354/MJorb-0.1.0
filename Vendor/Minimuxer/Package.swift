@@ -14,10 +14,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/weichsel/ZIPFoundation.git",
-            .upToNextMajor(from: "0.9.0")
-        )
+        .package(path: "../ZIPFoundation")
     ],
     targets: [
         .binaryTarget(

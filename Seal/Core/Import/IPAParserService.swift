@@ -334,10 +334,7 @@ struct IPAParserService: Sendable {
         entries: [Entry],
         archive: Archive
     ) throws -> [AppExtensionRecord] {
-        let infoEntries = entries.filter { entry in
-            archivePath(for: entry).hasPrefix("\(appRoot)/PlugIns/")
-                && archivePath(for: entry).hasSuffix(".appex/Info.plist")
-        }
+        let infoEntries = entries.filter { isDirectExtensionInfo(archivePath(for: $0), appRoot: appRoot) }
 
         return try infoEntries.map { entry in
             let info = try propertyList(
@@ -365,6 +362,16 @@ struct IPAParserService: Sendable {
                 kind: extensionKind(for: pointIdentifier)
             )
         }
+    }
+
+    private func isDirectExtensionInfo(_ path: String, appRoot: String) -> Bool {
+        for directory in ["PlugIns", "Extensions"] {
+            let prefix = "\(appRoot)/\(directory)/"
+            guard path.hasPrefix(prefix) else { continue }
+            let components = path.dropFirst(prefix.count).split(separator: "/")
+            return components.count == 2 && components[0].hasSuffix(".appex") && components[1] == "Info.plist"
+        }
+        return false
     }
 
     private func extensionKind(for pointIdentifier: String?) -> AppExtensionKind {
@@ -417,13 +424,15 @@ struct IPAParserService: Sendable {
             warnings.append("主二进制已加密（App Store 版本），需要砸壳后才能签名")
         }
 
-        // Watch / App Clip 当前不由 Seal 签名器处理；签名阶段会在申请 Apple 资源前明确停止，绝不静默删掉组件。
+        // 提示用户：加密 Watch 可能在签名副本中移除，其余不支持的目标仍会阻止签名。
         let hasUnsupportedPlatformTarget = entries.contains { entry in
-            archivePath(for: entry).hasPrefix("\(appRoot)/Watch/")
-                || archivePath(for: entry).hasPrefix("\(appRoot)/AppClips/")
+            let path = archivePath(for: entry)
+            return ["\(appRoot)/Watch/", "\(appRoot)/AppClips/"].contains { prefix in
+                path.hasPrefix(prefix) && path.count > prefix.count
+            }
         }
         if hasUnsupportedPlatformTarget {
-            warnings.append("IPA 包含 Watch 或 App Clip 组件，Seal 当前不会删除这些组件；签名会在申请 Apple 资源前停止")
+            warnings.append("IPA 包含 Watch 或 App Clip 组件；加密 Watch 和免费账号不支持的 App Clip 可能从签名副本移除，其他不支持的组件会阻止签名")
         }
 
         // 检测包内证书文件（可疑，可能导致签名问题）
@@ -451,10 +460,7 @@ struct IPAParserService: Sendable {
         }
 
         // 检测扩展数量
-        let extensionCount = entries.filter { entry in
-            archivePath(for: entry).hasPrefix("\(appRoot)/PlugIns/")
-                && archivePath(for: entry).hasSuffix(".appex/Info.plist")
-        }.count
+        let extensionCount = entries.filter { isDirectExtensionInfo(archivePath(for: $0), appRoot: appRoot) }.count
         if extensionCount > 3 {
             warnings.append("包含 \(extensionCount) 个应用扩展，部分扩展可能无法签名")
         }

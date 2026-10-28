@@ -54,18 +54,18 @@ struct CertificateSacrificePickerView: View {
         SealDrawer(title: "选择要撤销的证书", showsFooter: true) {
             VStack(alignment: .leading, spacing: 10) {
                 if session.app.isSeal {
-                    Text("当前证书正供 Seal 使用；撤销后需完成本次签名并覆盖安装才能恢复。")
+                    Text("Seal 正在使用此证书；撤销后需完成安装才能恢复。")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Color.sealWarning)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .singleLine()
                         .padding(9)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.sealWarning.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                Text("选择一张本机没有私钥的开发证书")
+                Text("选择本机没有私钥的开发证书。")
                     .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .singleLine()
 
                 if isLoading {
                     // 证书牺牲选择器加载态：转圈换成 3 行列表骨架
@@ -86,7 +86,7 @@ struct CertificateSacrificePickerView: View {
                         Text(failureMessage)
                             .font(.system(size: 14))
                             .foregroundStyle(Color.sealDanger)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .singleLine()
                         Button("重新读取") { Task { await loadCandidates() } }
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(Color.sealAccent)
@@ -99,10 +99,11 @@ struct CertificateSacrificePickerView: View {
                         Text(session.app.isSeal ? "未找到当前 Seal 使用的证书" : "没有可选择的旧证书")
                             .font(.system(size: 14, weight: .semibold))
                         Text(session.app.isSeal
-                            ? "确认当前 Apple ID 与安装 Seal 时使用的账号一致，然后重新读取。"
-                            : "刷新 Apple 证书列表后再试。")
+                            ? "请确认 Apple ID 正确，再重新读取。"
+                            : "刷新 Apple 证书列表后重试。")
                             .font(.system(size: 13))
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                         Button("重新读取") { Task { await loadCandidates() } }
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(Color.sealAccent)
@@ -125,8 +126,9 @@ struct CertificateSacrificePickerView: View {
                     }
 
                     Text("影响数量按本机记录统计，其他设备上的应用无法核验。")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                 }
             }
             .padding(.bottom, 8)
@@ -188,18 +190,21 @@ struct CertificateSacrificePickerView: View {
                             .singleLine()
                         if candidate.isCurrentSealSigner || isRecommended {
                             Text(candidate.isCurrentSealSigner ? "当前 Seal · 优先" : "推荐")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(candidate.isCurrentSealSigner ? Color.sealWarning : Color.sealAccent)
                                 .singleLine()
                         }
                     }
                     Text("\(expiryText(candidate.certificate.expirationDate)) · 尾号 \(candidate.certificate.serialNumber.suffix(8))")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.75)
+                        .minimumScaleFactor(0.82)
+                        .allowsTightening(true)
+                        .truncationMode(.middle)
                     Text("本机影响 \(candidate.affectedAppCount) 个应用")
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                 }
                 .foregroundStyle(Color.sealTextSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -223,12 +228,12 @@ struct CertificateSacrificePickerView: View {
 
     private func expiryText(_ date: Date?) -> String {
         guard let date else { return "有效期未知" }
-        return "有效期至 \(SealSettingsDateFormatter.stringWithoutSeconds(from: date))"
+        return "有效期至 \(SealSettingsDateFormatter.string(from: date))"
     }
 
     private func expiryDateText(_ date: Date?) -> String {
         guard let date else { return "未知" }
-        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
+        return SealSettingsDateFormatter.string(from: date)
     }
 
     @MainActor

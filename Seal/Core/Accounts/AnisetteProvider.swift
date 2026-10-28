@@ -6,6 +6,8 @@ protocol AnisetteProvider: Sendable {
     func fetch() async throws -> ALTAnisetteData
     /// 认证与后续门户请求使用同一份 Anisette，会话机器身份不得切换。
     func fetchForAuthentication() async throws -> ALTAnisetteData
+    /// 针对兼容重试，仅可读取当前共享环境，不能重建或清理其他账号使用的环境。
+    func fetchForCompatibilityRetry(expectedDeviceID: String) async throws -> ALTAnisetteData
     func resync(sim: String) async throws -> ALTAnisetteData
     func resetProvisioning() async
 }
@@ -14,6 +16,10 @@ extension AnisetteProvider {
     /// 默认走 fetch，确保认证与后续请求使用相同来源。
     func fetchForAuthentication() async throws -> ALTAnisetteData {
         try await fetch()
+    }
+    /// 未实现只读获取的 provider 必须安全失败，不能回退到可能重建环境的 fetch。
+    func fetchForCompatibilityRetry(expectedDeviceID: String) async throws -> ALTAnisetteData {
+        throw AnisetteV3Error.unavailable
     }
     func resync(sim: String) async throws -> ALTAnisetteData {
         throw AnisetteV3Error.unavailable

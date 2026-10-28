@@ -295,25 +295,16 @@ private extension ALTApplication {
 
     func loadExtensions() -> Set<ALTApplication> {
 
-        guard let pluginsURL = bundle.builtInPlugInsURL else {
-            return []
-        }
-
         var result = Set<ALTApplication>()
-
-        let enumerator = FileManager.default.enumerator(
-            at: pluginsURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsSubdirectoryDescendants]
-        )
-
-        while let url = enumerator?.nextObject() as? URL {
-            guard url.pathExtension.lowercased() == "appex" else {
-                continue
-            }
-
-            if let ext = ALTApplication(fileURL: url) {
-                result.insert(ext)
+        for directory in ["PlugIns", "Extensions"] {
+            let url = fileURL.appendingPathComponent(directory, isDirectory: true)
+            let contents = (try? FileManager.default.contentsOfDirectory(
+                at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+            )) ?? []
+            for candidate in contents where candidate.pathExtension.lowercased() == "appex" {
+                if let ext = ALTApplication(fileURL: candidate) {
+                    result.insert(ext)
+                }
             }
         }
 

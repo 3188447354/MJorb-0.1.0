@@ -85,3 +85,22 @@ done
 | `FastSHA256Tests.hashPageOfEmptyBufferMatchesEmptyHash` | 空缓冲行为一致 |
 
 在 macOS CI（`canImport(CryptoKit)` 为真）上测的是 CryptoKit 分支；在 Linux 上是 swift-crypto 分支（恒等，烟雾测试）。
+
+---
+
+## 2026-10-26 追加：代码页哈希受限并行与资源读取安全
+
+### 为什么改
+
+真机一次约 754 MB IPA 的记录显示，准备阶段约 9 秒、Mach-O 重签约 44 秒、打包约 31 秒，设备安装约 180 秒。原先「签名约 1 秒，因此不要并行」的决策已不适用于这次完整签名记录。签名器仍按主 App、扩展和 Mach-O 的既有依赖顺序处理；只把同一个 Mach-O 内彼此独立的只读代码页摘要分给有限数量的工作线程。
+
+### 变更
+
+| 文件 | 改动 | 正确性边界 |
+| --- | --- | --- |
+| `CodeDirectoryBuilder.swift` | ≥128 页时按连续页分块并行计算 SHA-256/SHA-1；工作线程各自生成结果块，主线程按页序拼回原 CodeDirectory 区域；小文件保持串行 | 页面边界、哈希算法、字节序和输出顺序不变；异常聚合时回退串行重算 |
+| `CodeResourcesBuilder.swift` | 给并发结果数组写入加锁；`.alwaysMapped` 和普通读取都失败时让签名失败，不再用空数据伪造资源哈希 | 文件清单、SHA-1/SHA-256 算法和规则不变；只消除并发写竞态及错误吞掉 |
+
+### 校验
+
+新增 `parallelPageHashesMatchSerialReference`，在超出并行门槛的 258 页输入上逐页对比 SHA-256 和 SHA-1 串行参考值。真机性能收益仍需后续用同一大包复测；本条记录本身不宣称提速倍数。

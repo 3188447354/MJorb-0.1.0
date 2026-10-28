@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Network
 import UIKit
 @preconcurrency import Minimuxer
 
@@ -17,6 +18,12 @@ final class AppsViewModel: ObservableObject {
         case committing
     }
 
+    enum AppListLoadState: Equatable {
+        case loading
+        case loaded
+        case failed
+    }
+
     enum SigningChannelStatus: Equatable {
         case idle
         case connecting
@@ -25,6 +32,7 @@ final class AppsViewModel: ObservableObject {
     }
 
     @Published private(set) var apps: [AppRecord]
+    @Published private(set) var appListLoadState: AppListLoadState = .loading
     @Published private(set) var accounts: [AppleAccountRecord]
     @Published private(set) var fullAccountEmails: [UUID: String] = [:]
     /// 每个**已安装**应用的「本机是否持有当前证书私钥」（界面在「证书序列号」行下面用）。
@@ -153,6 +161,8 @@ final class AppsViewModel: ObservableObject {
     private var installedAppRefreshPendingAfterOperation = false
     private var installedRecordRecoveryPendingAfterOperation = false
     private var installedRecordRecoveryRetryArmed = false
+    /// 账号重新验证后，本机清单不可用时仍必须继续通过配对设备恢复记录。
+    private var installedRecordRecoveryRequiresDeviceFallback = false
     private var installedAppRefreshInProgressCount = 0
 
     private let workflow: ImportWorkflow?
@@ -176,6 +186,9 @@ final class AppsViewModel: ObservableObject {
     private var signingTask: Task<Void, Never>?
     private var batchRefreshTask: Task<Void, Never>?
     private var channelTask: Task<Bool, Never>?
+    private var channelPrewarmTask: Task<Bool, Never>?
+    private var deviceChannelPathMonitor: NWPathMonitor?
+    private var deviceChannelPathSignature: String?
     /// 「这一轮批量续签是**快捷指令在后台**点火的」—— 请求级瞬态标记。
     ///
     /// 🔴 用途只有一个：决定批量收尾时要不要发系统通知。用户明确要求
@@ -222,6 +235,8 @@ final class AppsViewModel: ObservableObject {
         )
         case batch
     }
+
+    var canRetryAppListLoad: Bool { appStore != nil }
 
     init(
         workflow: ImportWorkflow,
@@ -285,6 +300,7 @@ final class AppsViewModel: ObservableObject {
         ) { [weak self] notification in
             guard let accountID = notification.userInfo?["accountID"] as? UUID else { return }
             self?.resumeInterruptedSigningAfterReauthentication(accountID: accountID)
+            self?.requestInstalledRecordRecoveryAfterAccountReverification()
         }
     }
 
@@ -313,6 +329,7 @@ final class AppsViewModel: ObservableObject {
         decodedIconOrder.removeAll()
         phase = .idle
         isImportSheetPresented = false
+        appListLoadState = .failed
         alertFailure = startupFailure
     }
 
@@ -344,6 +361,7 @@ final class AppsViewModel: ObservableObject {
         sheetDraft = draft
         isImportSheetPresented = draft != nil
         hasLoaded = true
+        appListLoadState = .loaded
     }
 
     var unsignedApps: [AppRecord] {
@@ -511,6 +529,89 @@ final class AppsViewModel: ObservableObject {
         return ready
     }
 
+    /// 启动时预热设备通道，并把真实结果同步给签名进度界面。
+    /// 只有预热完整成功才将状态记为 ready；未配对或 VPN 未开启属于正常跳过，
+    /// 后续用户操作仍会自行发起连接，不会被误判为失败。
+    func prewarmSigningChannelAtLaunch() async {
+        guard let installChannel else { return }
+        // NWPathMonitor 会在 VPN 接口和 Wi-Fi 路由变化时多次回调。已有设备会话仍处于
+        // ready 时无需每次都重新做 Minimuxer/RSD 活性探测；真正操作前 `start()` 仍会
+        // 检查缓存会话，路径掉线则由 monitor 将状态清回 idle。
+        guard signingChannelStatus != .ready else { return }
+        if let channelTask {
+            _ = await channelTask.value
+            return
+        }
+        if let channelPrewarmTask {
+            let ready = await channelPrewarmTask.value
+            guard self.channelTask == nil else { return }
+            signingChannelStatus = ready ? .ready : .idle
+            return
+        }
+        if signingChannelStatus != .ready {
+            signingChannelStatus = .connecting
+        }
+        let task = Task { await installChannel.prewarmAtLaunch() }
+        channelPrewarmTask = task
+        let ready = await task.value
+        channelPrewarmTask = nil
+        // 若预热与用户操作并发，用户操作的单飞任务负责最终状态，避免启动回调
+        // 把正在进行的连接错误覆盖成 idle。
+        guard channelTask == nil else { return }
+        signingChannelStatus = ready ? .ready : .idle
+    }
+
+    /// VPN 路由变化时重新核验通道；连通后提前建好 Minimuxer 会话，掉线时不再显示旧的 ready 状态。
+    func startDeviceChannelPathMonitoring() {
+        guard deviceChannelPathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        deviceChannelPathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let signature = Self.makeDeviceChannelPathSignature(for: path)
+                let routeChanged = self.deviceChannelPathSignature.map { $0 != signature } ?? false
+                self.deviceChannelPathSignature = signature
+                if routeChanged {
+                    self.markSigningChannelUnavailableIfIdle()
+                }
+                guard path.status == .satisfied else {
+                    self.markSigningChannelUnavailableIfIdle()
+                    return
+                }
+                let tunnelReachable = await LocalDevVPNOnDemandActivator().probeTunnel()
+                guard tunnelReachable else {
+                    self.markSigningChannelUnavailableIfIdle()
+                    return
+                }
+                await self.prewarmSigningChannelAtLaunch()
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.mjorb.seal.device-channel-path"))
+    }
+
+    private static func makeDeviceChannelPathSignature(for path: NWPath) -> String {
+        let status: String
+        switch path.status {
+        case .satisfied: status = "satisfied"
+        case .requiresConnection: status = "requiresConnection"
+        case .unsatisfied: status = "unsatisfied"
+        @unknown default: status = "unknown"
+        }
+        let interfaces = path.availableInterfaces
+            .map { "\($0.name):\($0.index)" }
+            .sorted()
+            .joined(separator: ",")
+        return "\(status)|\(path.isExpensive)|\(path.isConstrained)|\(path.supportsIPv4)|\(path.supportsIPv6)|\(interfaces)"
+    }
+
+    func markSigningChannelUnavailableIfIdle() {
+        guard channelTask == nil, channelPrewarmTask == nil else { return }
+        if signingChannelStatus == .ready || signingChannelStatus == .connecting {
+            signingChannelStatus = .idle
+        }
+    }
+
     /// 非阻塞版通道启动：把隧道诊断（reset + RSD 握手 + 轮询，冷启动最长 75s）**丢到后台并行**，
     /// 立刻返回让签名链路先跑起来。
     ///
@@ -520,8 +621,17 @@ final class AppsViewModel: ObservableObject {
     /// `SigningCoordinator` 会自己 `await installChannel.start()`（900s 缓存命中即返回，
     /// 并由通道层单飞合并并发启动），所以这里不必等。
     func beginSigningChannel() {
-        guard channelTask == nil, let installChannel else { return }
-        signingChannelStatus = .connecting
+        guard signingChannelStatus != .ready,
+              channelTask == nil,
+              channelPrewarmTask == nil,
+              let installChannel else { return }
+        // 启动预热已确认通道有效时保留 ready：start() 会复核并命中通道缓存，
+        // 进度轨道不必再从头播放“正在连接”。预热进行中时也不另起一条 start()，
+        // 由预热任务回写 ready；签名协调器会等待同一 InstallChannel 的实际就绪结果。
+        // 如果此前未就绪，则显示真实连接过程。
+        if signingChannelStatus != .ready {
+            signingChannelStatus = .connecting
+        }
         let task = Task { [weak self] () -> Bool in
             let ready: Bool
             do {
@@ -546,12 +656,46 @@ final class AppsViewModel: ObservableObject {
     /// 由启动流程在空闲时单独执行。
     func load(force: Bool = false) async {
         guard force || hasLoaded == false, let appStore else { return }
+        let isInitialListLoad = hasLoaded == false
+        let loadStartedAt = ProcessInfo.processInfo.systemUptime
+        if isInitialListLoad {
+            appListLoadState = .loading
+            if let logStore {
+                Task {
+                    try? await logStore.append(
+                        category: .system,
+                        level: .info,
+                        message: "应用列表首屏读取开始：先读取 Seal 本机保存的应用记录"
+                    )
+                }
+            }
+        }
         loadGeneration &+= 1
         let generation = loadGeneration
 
         do {
             let fetched = try await appStore.fetchAll()
             guard generation == loadGeneration else { return }
+
+            // 首屏只依赖本机应用记录。先把记录显示出来，再读取账号状态；账号修复、钥匙串和
+            // 证书私钥派生都不能让两个应用列表一直停在“正在读取”。后续完整加载会更新同一份列表。
+            if isInitialListLoad {
+                apps = fetched
+                hasLoaded = true
+                appListLoadState = .loaded
+                let elapsed = ProcessInfo.processInfo.systemUptime - loadStartedAt
+                if let logStore {
+                    let count = fetched.count
+                    let duration = String(format: "%.2f", elapsed)
+                    Task {
+                        try? await logStore.append(
+                            category: .system,
+                            level: .info,
+                            message: "应用列表首屏读取完成：本机记录 \(count) 个，耗时 \(duration) 秒"
+                        )
+                    }
+                }
+            }
 
             var fetchedAccounts = try await accountRepository?.fetchAll() ?? []
             guard generation == loadGeneration else { return }
@@ -587,6 +731,7 @@ final class AppsViewModel: ObservableObject {
             accounts = fetchedAccounts
             activeAccountID = resolvedAccountID
             hasLoaded = true
+            appListLoadState = .loaded
             restorePendingBatchResultIfNeeded()
 
             // 后台只做「读取 + 派生」：邮箱、图标、签名历史、通知调度。
@@ -649,9 +794,11 @@ final class AppsViewModel: ObservableObject {
             }
         } catch let failure as ImportFailure {
             guard generation == loadGeneration else { return }
+            if hasLoaded == false { appListLoadState = .failed }
             alertFailure = failure
         } catch {
             guard generation == loadGeneration else { return }
+            if hasLoaded == false { appListLoadState = .failed }
             alertFailure = ImportFailure(
                 title: "无法读取应用",
                 reason: "本地应用数据读取失败，应用列表无法加载。请先完全退出再重新打开 Seal；如果还是加载不出来，\(ImportFailure.sendLogToAuthor)。",
@@ -684,6 +831,7 @@ final class AppsViewModel: ObservableObject {
             guard generation == selfRecordSnapshotGeneration,
                   loadToken == loadGeneration else { return }
             hasLoaded = true
+            appListLoadState = .loaded
         } catch {
             try? await logStore?.append(
                 category: .system,
@@ -711,8 +859,8 @@ final class AppsViewModel: ObservableObject {
     @discardableResult
     /// Seal 自注册：启动时无条件调用，不受空闲门禁限制。
     /// 自安装重启后必须立即同步记录，否则"有新版本待安装"标签不消失。
-    func syncSelfRecordOnLaunch() async {
-        await maintenanceJob?.syncSelfRecord()
+    func syncSelfRecordOnLaunch(postNotification: Bool = true) async {
+        await maintenanceJob?.syncSelfRecord(postNotification: postNotification)
     }
 
     /// 启动关键路径只读取本机 LaunchServices 清单，不等待配对设备或 Apple 服务。
@@ -1004,27 +1152,32 @@ final class AppsViewModel: ObservableObject {
         }
         installedRecordRecoveryTask = Task { [weak self, maintenanceJob] in
             let localAttempt = await maintenanceJob.restoreLocalRecords()
-            if case .unavailable = localAttempt {
-                guard let self else { return }
+            guard let self else { return }
+            let requiresDeviceFallback = self.installedRecordRecoveryRequiresDeviceFallback
+            if case .unavailable = localAttempt, requiresDeviceFallback == false {
                 self.installedRecordRecoveryTask = nil
                 return
             }
-            guard let self else { return }
             let attempt: AppMaintenanceJob.RecordRecoveryAttempt
-            attempt = await maintenanceJob.restoreInstalledApps()
+            attempt = await maintenanceJob.restoreInstalledApps(
+                logEmptyResult: requiresDeviceFallback
+            )
             self.installedRecordRecoveryTask = nil
             switch attempt {
             case .completed(let changed):
                 self.installedRecordRecoveryPendingAfterOperation = false
                 self.installedRecordRecoveryRetryArmed = false
+                self.installedRecordRecoveryRequiresDeviceFallback = false
                 if changed {
                     await self.load(force: true)
                 }
             case .unavailable:
                 self.installedRecordRecoveryRetryArmed = false
+                self.installedRecordRecoveryRequiresDeviceFallback = false
             case .failed(let changed):
                 self.installedRecordRecoveryPendingAfterOperation = false
                 self.installedRecordRecoveryRetryArmed = false
+                self.installedRecordRecoveryRequiresDeviceFallback = false
                 if changed {
                     await self.load(force: true)
                 }
@@ -1059,6 +1212,19 @@ final class AppsViewModel: ObservableObject {
         }
         guard installedRecordRecoveryPendingAfterOperation,
               installedRecordRecoveryRetryArmed else {
+            return
+        }
+        _ = scheduleInstalledRecordRecovery()
+    }
+
+    /// 重新验证已有账号不会改变 Team ID；仅监听 Team 集合会漏掉这种成功登录。
+    /// 账号验证通知是新加账号与重新登录的共同出口，因此无论 Team 是否变化都重新扫回。
+    private func requestInstalledRecordRecoveryAfterAccountReverification() {
+        installedRecordRecoveryPendingAfterOperation = true
+        installedRecordRecoveryRetryArmed = true
+        installedRecordRecoveryRequiresDeviceFallback = true
+        if installedAppRefreshInProgressCount > 0 {
+            installedAppRefreshPendingAfterOperation = true
             return
         }
         _ = scheduleInstalledRecordRecovery()
@@ -1440,11 +1606,15 @@ final class AppsViewModel: ObservableObject {
     @discardableResult
     func importSelfUpdateFile(_ url: URL) async -> Bool {
         try? await logStore?.append(category: .system, level: .info, message: "[SEAL-OP] 导入自更新文件: \(url.lastPathComponent)")
-        return await importSelectedFile(url, autoOpenSigning: true)
+        return await importSelectedFile(url, autoOpenSigning: true, isSelfUpdate: true)
     }
 
     @discardableResult
-    private func importSelectedFile(_ url: URL, autoOpenSigning: Bool) async -> Bool {
+    private func importSelectedFile(
+        _ url: URL,
+        autoOpenSigning: Bool,
+        isSelfUpdate: Bool = false
+    ) async -> Bool {
         guard let workflow else { return false }
         // `RootTabView` can hand a downloaded Seal update to this method after
         // another user-selected IPA has already entered its confirmation flow.
@@ -1473,7 +1643,7 @@ final class AppsViewModel: ObservableObject {
         isImportSheetPresented = false
         autoOpenSigningAfterImport = autoOpenSigning
         phase = .preparing
-        await workflow.prepare(sourceURL: url)
+        await workflow.prepare(sourceURL: url, isSelfUpdate: isSelfUpdate)
         await consumeWorkflowState()
         switch await workflow.state {
         case .awaitingConfirmation, .completed:
@@ -1617,6 +1787,12 @@ final class AppsViewModel: ObservableObject {
     /// 这里单独找 Seal 记录。返回 nil 表示不是 Seal 自更新或无需确认。
     private func sealReplacementCandidate(for draft: ImportDraft) async -> AppRecord? {
         guard let appStore, let records = try? await appStore.fetchAll() else { return nil }
+        if draft.isSelfUpdate,
+           let expectedID = draft.selfUpdateTargetRecordID {
+            return records.first(where: {
+                $0.id == expectedID && $0.isSeal && $0.belongsInInstalledList
+            })
+        }
         // 只处理 Seal 自身的 IPA
         let sealBundleIDs = ["com.mjorb.seal", "com.mjorb.Seal"]
         guard sealBundleIDs.contains(where: {
@@ -1678,6 +1854,10 @@ final class AppsViewModel: ObservableObject {
         alertFailure = nil
         let recovery = failure.recovery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard recovery != "知道了" else { return }
+        if failure.action == .openLocalDevVPN {
+            LocalDevVPNLink.openApplication()
+            return
+        }
         if failure.hasStructuredSemantics {
             switch failure.action {
             case .reimportIPA:
@@ -2453,6 +2633,9 @@ final class AppsViewModel: ObservableObject {
                 // 永远拿不到「该回主屏了」⇒ installd 一直等旧进程让位（894 秒上限）。
                 // 与证书轮换子流程是同一个坑，一起补上。
                 progress: { [weak self] update in
+                    if update.stage == .waitingForChannel {
+                        await self?.beginSigningChannel()
+                    }
                     await self?.updateSigningStage(update.stage, subject: update.subject, detail: update.detail)
                 }
             )
@@ -2811,6 +2994,17 @@ final class AppsViewModel: ObservableObject {
         case .preparing, .running, .preparingSealUpdate:
             return
         case .completed, .failed:
+            // 持久化结果与会话状态等外层 sheet 的 onDismiss 收到退场完成后再清理。
+            return
+        }
+    }
+
+    func finalizeBatchRefreshDismissal() {
+        guard let batchRefreshSession else { return }
+        switch batchRefreshSession.status {
+        case .preparing, .running, .preparingSealUpdate:
+            return
+        case .completed, .failed:
             clearPendingBatchResult()
             self.batchRefreshSession = nil
         }
@@ -3043,16 +3237,20 @@ final class AppsViewModel: ObservableObject {
                 await notifyBackgroundRenewalSkipped(.roundFailed(title: failure.title))
             }
         } catch {
-            batchRefreshSession?.status = .failed(
-                ImportFailure(
-                    title: "无法续签应用",
-                    reason: "本轮续签没能跑完，Seal 没拿到具体原因。稍等片刻后重新发起续签；如果反复失败，\(ImportFailure.sendLogToAuthor)。",
-                    recovery: "知道了",
-                    code: "SEAL-RENEW-500a"
-                )
+            let failure = FailureClassifier.classify(
+                error,
+                operation: .batchRenew,
+                origin: .signing
+            )
+            batchRefreshSession?.status = .failed(Self.renewalGuidance(for: failure))
+            try? await logStore?.append(
+                category: .renewal,
+                level: .error,
+                message: "批量续签整轮未能完成：\(ErrorDiagnosticFormatter.diagnostic(for: error))",
+                code: failure.code
             )
             if wasBackgroundTriggered {
-                await notifyBackgroundRenewalSkipped(.roundFailed(title: "无法续签应用"))
+                await notifyBackgroundRenewalSkipped(.roundFailed(title: failure.title))
             }
         }
         if wasBackgroundTriggered {
@@ -3135,7 +3333,8 @@ final class AppsViewModel: ObservableObject {
                 failed: result.failed,
                 needsAction: result.needsAction,
                 awaitingConfirmation: result.awaitingConfirmation
-            )
+            ),
+            roundID: batchRefreshSession?.id
         )
         // 无论发没发都留痕：真机上「用户说没收到通知」与「其实没给权限」必须能分辨。
         try? await logStore?.append(
@@ -3154,8 +3353,39 @@ final class AppsViewModel: ObservableObject {
         _ reason: BackgroundRenewalSkippedNotice.Reason
     ) async {
         guard let backgroundRenewalNotifier else { return }
+        let failure: ImportFailure
+        switch reason {
+        case .blockedByOtherOperation(let blocker):
+            failure = ImportFailure(
+                title: "续签未执行",
+                reason: "\(blocker)正占用设备通道，本轮没有续签。",
+                recovery: "稍后重跑一次快捷指令即可。",
+                code: "SEAL-BACKGROUND-014"
+            )
+        case .roundFailed(let title):
+            if case .failed(let storedFailure)? = batchRefreshSession?.status {
+                failure = storedFailure
+            } else {
+                failure = ImportFailure(
+                    title: title,
+                    reason: "本轮续签未能完成。打开 Seal 查看日志并按提示处理。",
+                    recovery: "检查网络与 LocalDevVPN 后重试。",
+                    code: "SEAL-RENEW-500"
+                )
+            }
+        }
+        let roundID: UUID
+        if case .roundFailed = reason,
+           case .failed? = batchRefreshSession?.status,
+           let batchRefreshSession {
+            roundID = batchRefreshSession.id
+        } else {
+            roundID = UUID()
+        }
+        persistPendingBackgroundBatchFailure(failure, roundID: roundID)
         let delivery = await backgroundRenewalNotifier.post(
-            BackgroundRenewalSkippedNotice(reason: reason)
+            BackgroundRenewalSkippedNotice(reason: reason),
+            roundID: roundID
         )
         try? await logStore?.append(
             category: .renewal,
@@ -3164,6 +3394,30 @@ final class AppsViewModel: ObservableObject {
                 + "\(Self.describeNotificationDelivery(delivery))",
             code: "SEAL-BACKGROUND-016"
         )
+    }
+
+    /// 整轮失败或被其他操作占用时也保存可恢复的结果抽屉内容。
+    /// 固定通知只保留最新一轮，因此持久化结果和通知使用同一个 roundID。
+    private func persistPendingBackgroundBatchFailure(_ failure: ImportFailure, roundID: UUID) {
+        let payload: [String: Any] = [
+            PendingBatchResultPayload.Key.roundID: roundID.uuidString,
+            "succeeded": 0,
+            "failed": 0,
+            "total": 0,
+            "timestamp": Date().timeIntervalSince1970,
+            "items": [[String: Any]](),
+            PendingBatchResultPayload.Key.failure: [
+                "title": failure.title,
+                "reason": failure.reason,
+                "recovery": failure.recovery,
+                "code": failure.code
+            ]
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: Self.pendingBatchResultFileURL, options: .atomic)
+        }
+        UserDefaults.standard.set(payload, forKey: Self.pendingBatchResultKey)
+        UserDefaults.standard.synchronize()
     }
 
     private static func describeNotificationDelivery(
@@ -3346,17 +3600,26 @@ final class AppsViewModel: ObservableObject {
             return
         }
         let itemPayload = session.items.map { item -> [String: Any] in
-            [
+            let persistedState: String
+            if item.isSeal && forceSealAwaiting {
+                persistedState = BatchRefreshSession.Item.State.awaitingSealConfirmation.storageValue
+            } else if case .waiting = item.state {
+                // In a terminal result, waiting means the app was deliberately not
+                // attempted (for example, no usable Apple ID), not an unfinished task.
+                persistedState = "needsAction"
+            } else {
+                persistedState = item.state.storageValue
+            }
+            return [
                 "id": item.id.uuidString,
                 "name": item.name,
                 "isSeal": item.isSeal,
-                "state": (item.isSeal && forceSealAwaiting)
-                    ? BatchRefreshSession.Item.State.awaitingSealConfirmation.storageValue
-                    : item.state.storageValue
+                "state": persistedState
             ]
         }
         let succeeded = itemPayload.filter { ($0["state"] as? String) == "completed" }.count
         let payload: [String: Any] = [
+            PendingBatchResultPayload.Key.roundID: session.id.uuidString,
             "succeeded": succeeded,
             "failed": session.failed,
             "total": session.total,
@@ -3458,13 +3721,23 @@ final class AppsViewModel: ObservableObject {
         let result = PendingBatchResultPayload.restoredResult(from: payload)
         // 载荷结算后必须保留同一张抽屉的身份。换 UUID 会让 SwiftUI 认为旧 sheet
         // 已结束、需要再展示一张新 sheet，造成“先闪一下等待核验、再弹已更新”。
-        var restored = BatchRefreshSession(id: batchRefreshSession?.id ?? UUID())
+        var restored = BatchRefreshSession(
+            id: PendingBatchResultPayload.roundID(in: payload)
+                ?? batchRefreshSession?.id
+                ?? UUID()
+        )
         // 旧持久化载荷没有 needsAction 字段，但计数不变量 `成功+失败+未执行 == 总数` 成立，
         // 因此第三个桶可以直接由差值还原（旧载荷的差值本来就是「未完成」）。
-        restored.status = .completed(result)
+        let restoredFailure = PendingBatchResultPayload.failure(from: payload)
+        if let restoredFailure {
+            restored.status = .failed(restoredFailure)
+        } else {
+            restored.status = .completed(result)
+        }
         restored.currentIndex = result.total
         restored.total = result.total
-        if let itemPayload = payload["items"] as? [[String: Any]] {
+        if restoredFailure == nil,
+           let itemPayload = payload["items"] as? [[String: Any]] {
             restored.items = itemPayload.compactMap { item in
                 guard let idString = item["id"] as? String,
                       let id = UUID(uuidString: idString),
@@ -3487,19 +3760,23 @@ final class AppsViewModel: ObservableObject {
     ///
     /// 这一步不依赖应用列表、设备探测或维护作业。若 Seal 自替换仍待新进程
     /// 对账，保留启动流程的原有顺序，绝不提前显示成功。
-    func hasSettledBackgroundBatchResultReadyForPresentation() -> Bool {
+    func hasSettledBackgroundBatchResultReadyForPresentation(roundID: UUID? = nil) -> Bool {
         // 快捷指令尚在运行时不展示半成品；通知只会在它结算后发出。
         guard isBackgroundBatchRefresh == false else { return false }
         guard let payload = loadPendingBatchResultPayload(),
               PendingBatchResultPayload.isReadyForImmediatePresentation(payload) else {
             return false
         }
+        if let roundID,
+           PendingBatchResultPayload.roundID(in: payload) != roundID {
+            return false
+        }
         return true
     }
 
     @discardableResult
-    func presentSettledBackgroundBatchResultIfNeeded() -> Bool {
-        guard hasSettledBackgroundBatchResultReadyForPresentation() else { return false }
+    func presentSettledBackgroundBatchResultIfNeeded(roundID: UUID? = nil) -> Bool {
+        guard hasSettledBackgroundBatchResultReadyForPresentation(roundID: roundID) else { return false }
         // 呈现层（宿主已就绪且 App active）显式授权这一次恢复真正呈现。
         // 返回值必须诚实：恢复被现场会话挡住时返回 false，呈现层保留待呈现
         // 请求重试 —— 旧实现直接回读呈现标志，后台进程预置的 true 会被误报
@@ -3507,9 +3784,24 @@ final class AppsViewModel: ObservableObject {
         batchResultPresentationAuthorized = true
         defer { batchResultPresentationAuthorized = false }
         restorePendingBatchResultIfNeeded()
-        return isBatchRefreshSheetPresented
+        let didRestore = isBatchRefreshSheetPresented
             && hasRestoredPendingBatchResult
             && batchRefreshSession != nil
+        if didRestore {
+            noteBackgroundRenewalResultPresentation("后台续签结果已恢复，等待应用页提交抽屉")
+        }
+        return didRestore
+    }
+
+    func noteBackgroundRenewalResultPresentation(_ message: String) {
+        Task {
+            try? await logStore?.append(
+                category: .renewal,
+                level: .info,
+                message: "[SEAL-RENEW-032] \(message)",
+                code: "SEAL-RENEW-032"
+            )
+        }
     }
 
     /// 把持久化载荷登记为「待呈现」—— 恢复与呈现解耦后的唯一非呈现入口。
@@ -4292,7 +4584,7 @@ final class AppsViewModel: ObservableObject {
         return ImportFailure(
             title: "签名失败",
             reason: "签名失败了，遇到了未知错误。\(ImportFailure.sendLogToAuthor)。",
-            recovery: "知道了",
+            recovery: "先确认手机与电脑连接同一 Wi-Fi，并检查 LocalDevVPN 已开启；仍失败请导出日志反馈。",
             code: "SEAL-SIGN-500"
         )
     }
@@ -4358,6 +4650,24 @@ final class AppsViewModel: ObservableObject {
             }
             // 全新导入：不弹抽屉，直接导进来。
             if case .newApp = draft.versionCheck {
+                guard draft.isSelfUpdate == false else {
+                    // 应用内更新不允许落入普通新应用的自动导入分支。
+                    // 正常情况下 prepare 已强制解析并绑定当前 Seal 记录；这里是第二道 fail-closed。
+                    alertFailure = ImportFailure(
+                        title: "Seal 更新身份无法确认",
+                        reason: "找不到与当前 Seal 对应的已安装记录。为保护 Apple ID 和本机数据，本次更新已停止。",
+                        recovery: "重新打开 Seal 后重试更新",
+                        code: "SEAL-SELF-117",
+                        condition: .signedArtifactInvalid,
+                        action: .restartSeal,
+                        retryDisposition: .manual,
+                        operation: .importIPA,
+                        origin: .fileStore
+                    )
+                    phase = .idle
+                    isImportSheetPresented = false
+                    return
+                }
                 importReplacementCandidate = nil
                 isImportSheetPresented = false
                 phase = .committing
@@ -4493,6 +4803,9 @@ final class AppsViewModel: ObservableObject {
             size: 1_234_567,
             state: .preflightPassed,
             ipaRelativePath: "Apps/\(appID.uuidString)/Original.ipa",
+            preferredBundleIdentifier: arguments.contains("--ui-testing-invalid-bundle-id")
+                ? "com.example.demo_test"
+                : nil,
             importedAt: Date(timeIntervalSince1970: 1_750_000_000)
         )
         if arguments.contains("--ui-testing-imported") {

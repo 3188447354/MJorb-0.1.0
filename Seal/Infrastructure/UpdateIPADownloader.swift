@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// 应用内更新 IPA 下载服务：后台 URLSession 流式下载到 Application Support/Seal/Downloads，
-/// 带节流合并的进度回调、断点续传与（可选的）Release `.sha256` 完整性校验。
+/// 带节流合并的进度回调、断点续传与更新清单 SHA256 完整性校验。
 /// 遵循项目「大包流式处理」纪律，不整块载入内存。
 ///
 /// 并发说明（不新增第 6 份手写并发盒）：
@@ -12,6 +12,14 @@ import Foundation
 /// - 会话注册表由 `UpdateDownloadSessionController` 的 NSLock 保护，见其注释。
 struct UpdateIPADownloader {
     static let shared = UpdateIPADownloader()
+
+    private static let automaticRetryDelaysNanoseconds: [UInt64] = [
+        1_000_000_000,
+        2_000_000_000,
+        4_000_000_000,
+        8_000_000_000,
+        15_000_000_000,
+    ]
 
     /// 后台会话标识：进程被系统杀掉后，系统仍用同一标识把已完成任务的事件交还给新进程。
     static let backgroundSessionIdentifier = "eu.seal.update-ipa-download"
@@ -33,11 +41,9 @@ struct UpdateIPADownloader {
     private var sessionController: UpdateDownloadSessionController { .shared }
 
     /// 下载 IPA 到本地，返回落盘文件 URL。
-    /// - Parameter expectedSize: Release 元数据中的精确资产大小（响应无 Content-Length 时的进度分母）。
-    /// - Parameter checksumURL: Release `.sha256` 资产直链；非 nil 时下载完成（落盘后、返回前）
-    ///   先流式计算文件 SHA256 与之比对，不一致即删文件并抛 `ImportFailure`
-    ///   （`SEAL-UPDATE-DL-506`），不会把损坏包交到安装链路。为 nil 时不做完整性校验，
-    ///   由调用方按 fail closed 原则自行处置（现有调用方在校验阶段对 nil 单独判失败）。
+    /// - Parameter expectedSize: 更新清单中的精确 IPA 大小（响应无 Content-Length 时的进度分母）。
+    /// - Parameter expectedSHA256: 已随 HTTPS 更新清单取得的 IPA SHA256；下载完成后本地流式计算并比对，
+    ///   不再额外请求 `.sha256` 文件，避免网络切换发生在 100% 后时把完整 IPA 判失败。
     /// - Parameter onProgress: 节流合并后的进度回调（已接收字节数, 总字节数可空），见
     ///   `UpdateDownloadProgressPolicy`：约 150ms 或 256KB 增量才回调一次，终态必达。
     /// - 断点续传：失败 / 取消时系统给出的 resumeData 会持久化到 Downloads 目录
@@ -48,7 +54,7 @@ struct UpdateIPADownloader {
     func download(
         from url: URL,
         expectedSize: Int64? = nil,
-        checksumURL: URL? = nil,
+        expectedSHA256: String,
         onProgress: @escaping @Sendable (Int64, Int64?) async -> Void
     ) async throws -> URL {
         try Task.checkCancellation()
@@ -59,22 +65,29 @@ struct UpdateIPADownloader {
         )
 
         let knownSize = expectedSize.flatMap { $0 > 0 ? $0 : nil }
+        guard UpdateChecker.expectedSHA256(from: expectedSHA256) != nil else {
+            throw UpdateDownloadChecksumPolicy.failure()
+        }
         await onProgress(0, knownSize)
 
-        // 完成登记复用：同一源 URL 已有「下载并校验通过、尚未转入待安装
-        // 列表」的包（上次在抽屉转交窗口里进程被杀 / 抽屉被关留下的），
-        // 直接交回、不重新下载。登记只在校验通过后写入（见成功路径），
-        // 复用不再验；文件在 App 沙盒内，与已转交的包同一信任级别，
-        // 抽屉侧的版本交叉校验照常执行。
+        // 完成登记复用：同一源 URL 已有下载通过校验、尚未转入待安装列表的包时，
+        // 先按本次更新清单里的摘要再校验一次。源 URL 内容或清单摘要若有变化，
+        // 旧文件不会绕过当前版本的完整性校验。
         if let completed = UpdateDownloadCompletedStore.load(in: downloadsDirectory),
            completed.sourceURL == url.absoluteString {
             let completedURL = downloadsDirectory.appending(
                 path: completed.fileName, directoryHint: .notDirectory)
             if fileManager.fileExists(atPath: completedURL.path) {
-                await onProgress(knownSize ?? 0, knownSize)
-                return completedURL
+                do {
+                    try verifyChecksum(fileURL: completedURL, expectedSHA256: expectedSHA256)
+                    await onProgress(knownSize ?? 0, knownSize)
+                    return completedURL
+                } catch {
+                    UpdateDownloadCompletedStore.clear(in: downloadsDirectory)
+                }
+            } else {
+                UpdateDownloadCompletedStore.clear(in: downloadsDirectory)
             }
-            UpdateDownloadCompletedStore.clear(in: downloadsDirectory)
         }
 
         var resumeData = UpdateDownloadResumeStore.load(for: url, in: downloadsDirectory)
@@ -83,6 +96,7 @@ struct UpdateIPADownloader {
                 ? .resumed
                 : .fresh
         var alreadyRetriedFresh = false
+        var automaticRetryAttempts = 0
 
         while true {
             try Task.checkCancellation()
@@ -106,12 +120,10 @@ struct UpdateIPADownloader {
                 } onCancel: {
                     UpdateDownloadSessionController.shared.cancelActiveDownload()
                 }
-                // 成功：清掉续传残留与进行中记录，随后按需做完整性校验，校验失败不返回文件。
+                // 成功：清掉续传残留与进行中记录，随后按清单中的摘要校验；校验失败不返回文件。
                 UpdateDownloadResumeStore.clear(for: url, in: downloadsDirectory)
                 UpdateDownloadPendingStore.clear(in: downloadsDirectory)
-                if let checksumURL {
-                    try await verifyChecksum(fileURL: fileURL, checksumURL: checksumURL)
-                }
+                try verifyChecksum(fileURL: fileURL, expectedSHA256: expectedSHA256)
                 // 完成登记：从这里到转入待安装列表之间进程被杀 / 抽屉被关，
                 // 靠登记把包找回（见 UpdateDownloadCompletedStore 与本函数开头
                 // 的复用检查）。换新包时顺手删掉上一份未转交的旧包，
@@ -135,32 +147,83 @@ struct UpdateIPADownloader {
                     alreadyRetriedFresh = true
                     resumeData = nil
                     attemptKind = .fresh
+                    await onProgress(0, knownSize)
                     continue
-                case .persistResumeDataAndFail, .fail:
-                    throw attemptFailure.underlying
+                case .persistResumeDataAndFail:
+                    // 切换 Wi-Fi/蜂窝后给系统与新网络更多恢复时间；优先续传已有字节，
+                    // 若系统没能生成 resumeData，则从头重试。用户主动取消不自动重开。
+                    guard Task.isCancelled == false,
+                          automaticRetryAttempts < Self.automaticRetryDelaysNanoseconds.count,
+                          Self.isTransientNetworkFailure(attemptFailure.underlying) else {
+                        throw attemptFailure.underlying
+                    }
+                    automaticRetryAttempts += 1
+                    resumeData = UpdateDownloadResumeStore.load(for: url, in: downloadsDirectory)
+                    attemptKind = resumeData == nil ? .fresh : .resumed
+                    if resumeData == nil {
+                        UpdateDownloadResumeStore.clear(for: url, in: downloadsDirectory)
+                        await onProgress(0, knownSize)
+                    }
+                    try await Task.sleep(
+                        nanoseconds: Self.automaticRetryDelaysNanoseconds[automaticRetryAttempts - 1])
+                    continue
+                case .fail:
+                    // 某些网络切换错误不会附带 resumeData；这时从头重试，避免收到大部分
+                    // 数据后直接报失败。错误类型仍受限为可恢复的网络错误，且重试有上限。
+                    guard Task.isCancelled == false,
+                          automaticRetryAttempts < Self.automaticRetryDelaysNanoseconds.count,
+                          Self.isTransientNetworkFailure(attemptFailure.underlying) else {
+                        throw attemptFailure.underlying
+                    }
+                    automaticRetryAttempts += 1
+                    if attemptKind == .resumed {
+                        UpdateDownloadResumeStore.clear(for: url, in: downloadsDirectory)
+                    }
+                    resumeData = nil
+                    attemptKind = .fresh
+                    await onProgress(0, knownSize)
+                    try await Task.sleep(
+                        nanoseconds: Self.automaticRetryDelaysNanoseconds[automaticRetryAttempts - 1])
+                    continue
                 }
+            } catch let checksumFailure as ImportFailure
+                where checksumFailure.code == UpdateDownloadChecksumPolicy.failureCode
+                    && alreadyRetriedFresh == false {
+                // 无论完整下载还是续传，摘要不符都再进行一次完整下载；仍不匹配则拒绝交付。
+                alreadyRetriedFresh = true
+                resumeData = nil
+                attemptKind = .fresh
+                await onProgress(0, knownSize)
+                continue
             }
         }
     }
 
-    /// 流式校验下载文件的 SHA256：校验文件本身只有一行文本，整块读入无碍；
-    /// IPA 本体走 `AppFileStore.streamingSHA256`（CryptoKit 分块读，禁止整块载入）。
-    private func verifyChecksum(fileURL: URL, checksumURL: URL) async throws {
-        let checksumData: Data
-        do {
-            let (data, response) = try await URLSession.shared.data(from: checksumURL)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                try? FileManager.default.removeItem(at: fileURL)
-                throw UpdateDownloadError.transport(URLError(.badServerResponse))
+    private static func isTransientNetworkFailure(_ error: Error) -> Bool {
+        if let downloadError = error as? UpdateDownloadError {
+            switch downloadError {
+            case .timeout:
+                return true
+            case .transport(let underlying):
+                return isTransientNetworkFailure(underlying)
+            case .badHTTPStatus, .saveFailed, .insufficientStorage:
+                return false
             }
-            checksumData = data
-        } catch let error as UpdateDownloadError {
-            throw error
-        } catch {
-            try? FileManager.default.removeItem(at: fileURL)
-            throw UpdateDownloadError.transport(error)
         }
 
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+        switch URLError.Code(rawValue: nsError.code) {
+        case .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+             .cannotFindHost, .dnsLookupFailed, .timedOut, .resourceUnavailable:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 用检查更新时已取得的 HTTPS 清单摘要校验 IPA，不在大包下载结束后再依赖一次网络请求。
+    private func verifyChecksum(fileURL: URL, expectedSHA256: String) throws {
         let actual: String
         do {
             actual = try AppFileStore.streamingSHA256(url: fileURL)
@@ -169,7 +232,7 @@ struct UpdateIPADownloader {
             throw UpdateDownloadChecksumPolicy.failure()
         }
         let classification = UpdateDownloadChecksumPolicy.classification(
-            expectedChecksumText: String(data: checksumData, encoding: .utf8),
+            expectedChecksumText: expectedSHA256,
             actualSHA256: actual
         )
         guard classification == .verified else {
@@ -213,6 +276,11 @@ enum UpdateDownloadProgress {
     static func fraction(received: Int64, total: Int64?) -> Double? {
         guard let total, total > 0 else { return nil }
         return min(max(Double(received) / Double(total), 0), 1)
+    }
+
+    /// 下载任务在 URLSession 确认响应完成前最多显示 99%；100% 留给后续校验阶段。
+    static func inFlightFraction(received: Int64, total: Int64?) -> Double? {
+        fraction(received: received, total: total).map { min($0, 0.99) }
     }
 }
 
@@ -439,7 +507,7 @@ enum UpdateDownloadChecksumPolicy {
     enum Classification: Equatable, Sendable {
         case verified
         case mismatch
-        /// 校验资产取不到 / 内容不是合法的 shasum 输出：fail closed，同样不放行安装。
+        /// 更新清单里的校验值缺失或格式非法：fail closed，不放行安装。
         case checksumUnavailable
     }
 
@@ -526,6 +594,9 @@ private final class UpdateDownloadTaskState: @unchecked Sendable {
     var finishedFileURL: URL?
     var terminalFailure: UpdateDownloadAttemptFailure?
     var delivered = false
+    var resumedOffset: Int64 = 0
+    var receivedBytesAfterResume: Int64 = 0
+    var didResume = false
 
     init(
         sourceURL: URL,
@@ -789,18 +860,50 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
     func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
+        didResumeAtOffset fileOffset: Int64,
+        expectedTotalBytes: Int64
+    ) {
+        guard let state = state(for: downloadTask) else { return }
+        let offset = max(0, fileOffset)
+        lock.lock()
+        state.resumedOffset = offset
+        state.receivedBytesAfterResume = 0
+        state.didResume = true
+        lock.unlock()
+
+        let responseTotal = expectedTotalBytes > 0 ? expectedTotalBytes : nil
+        state.coalescer?.update(
+            received: offset,
+            total: state.expectedSize ?? responseTotal
+        )
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
         didWriteData bytesWritten: Int64,
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
         guard let state = state(for: downloadTask) else { return }
-        // totalBytesExpectedToWrite 在无 Content-Length（GitHub 302 重定向后的响应、
+        // totalBytesExpectedToWrite 在无 Content-Length（跨源重定向后的响应、
         // chunked transfer）时为 -1，不能作为进度分母；总大小仍未知时传 nil，
         // 由 UI 展示已下载字节数，不发假百分比。
-        var expected = downloadTask.countOfBytesExpectedToReceive
-        if expected <= 0 { expected = totalBytesExpectedToWrite }
-        let total: Int64? = expected > 0 ? expected : state.expectedSize
-        state.coalescer?.update(received: totalBytesWritten, total: total)
+        var responseExpected = downloadTask.countOfBytesExpectedToReceive
+        if responseExpected <= 0 { responseExpected = totalBytesExpectedToWrite }
+        // manifest 的 size 是整份 IPA 的大小；续传响应的 Content-Length 可能只是剩余区间，
+        // 不能拿它作整包进度分母，否则 Wi-Fi/蜂窝切换后的 206 会提前显示 100%。
+        let total: Int64? = state.expectedSize ?? (responseExpected > 0 ? responseExpected : nil)
+        lock.lock()
+        let received: Int64
+        if state.didResume {
+            state.receivedBytesAfterResume += max(0, bytesWritten)
+            received = state.resumedOffset + state.receivedBytesAfterResume
+        } else {
+            received = totalBytesWritten
+        }
+        lock.unlock()
+        state.coalescer?.update(received: received, total: total)
     }
 
     func urlSession(
@@ -811,18 +914,28 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
         // 后台会话的临时文件在本方法返回后即被系统删除，必须同步移走。
         guard let state = state(for: downloadTask) else { return }
 
-        if let http = downloadTask.response as? HTTPURLResponse, http.statusCode != 200 {
-            if state.attemptKind == .resumed {
-                UpdateDownloadResumeStore.clear(for: state.sourceURL, in: downloadsDirectory)
-            }
-            deliver(
-                state: state,
-                failure: UpdateDownloadAttemptFailure(
-                    underlying: UpdateDownloadError.badHTTPStatus,
-                    plan: .fail
+        if let http = downloadTask.response as? HTTPURLResponse {
+            let acceptedStatus = http.statusCode == 200
+                || (state.attemptKind == .resumed && http.statusCode == 206)
+            guard acceptedStatus else {
+                let plan = UpdateDownloadResumePolicy.failurePlan(
+                    attempt: state.attemptKind,
+                    errorCarriesResumeData: false,
+                    alreadyRetriedFresh: state.alreadyRetriedFresh,
+                    isCancellation: false
                 )
-            )
-            return
+                if plan == .discardResumeDataAndRetryFresh {
+                    UpdateDownloadResumeStore.clear(for: state.sourceURL, in: downloadsDirectory)
+                }
+                deliver(
+                    state: state,
+                    failure: UpdateDownloadAttemptFailure(
+                        underlying: UpdateDownloadError.badHTTPStatus,
+                        plan: plan
+                    )
+                )
+                return
+            }
         }
 
         do {
@@ -868,7 +981,7 @@ private final class UpdateDownloadSessionController: NSObject, URLSessionDownloa
         )
         UpdateDownloadResumeStore.clear(for: state.sourceURL, in: downloadsDirectory)
         state.coalescer?.finish(
-            received: downloadTask.countOfBytesReceived,
+            received: state.expectedSize ?? downloadTask.countOfBytesReceived,
             total: state.expectedSize
         )
 

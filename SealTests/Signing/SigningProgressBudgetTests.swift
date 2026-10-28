@@ -179,6 +179,27 @@ struct SigningProgressBudgetTests {
     }
 
     @Test
+    func confirmedDeviceChannelFillsItsRailSegmentImmediately() {
+        let readyFill = SigningProgressBudget.bucketFill(
+            0,
+            stage: .waitingForChannel,
+            elapsed: 0,
+            realProgress: nil,
+            deviceChannelReady: true
+        )
+        let connectingFill = SigningProgressBudget.bucketFill(
+            0,
+            stage: .waitingForChannel,
+            elapsed: 0,
+            realProgress: nil,
+            deviceChannelReady: false
+        )
+
+        #expect(readyFill == 1)
+        #expect(connectingFill < 1)
+    }
+
+    @Test
     func everyStageLandsInExactlyOneBucket() {
         // 轨道格数是写死的 5，而阶段数会变 —— 这条断言保证「每个阶段都被某一格接住」。
         // 漏掉一个阶段的话，它在轨道上会完全消失（不崩、不报错，只是那一格不动）。
@@ -232,13 +253,15 @@ struct SigningProgressBudgetTests {
         // 唯一可见证据。用户原话：「去掉那个阶段上的等待多少时间的文案，设备安装阶段的保留。」
         let note = InstallWaitNote(startedAt: Date(timeIntervalSince1970: 1_000))
         let message = note.message(at: Date(timeIntervalSince1970: 1_075))
-        #expect(message.contains("设备正在安装"))
+        #expect(message.contains("安装中"))
+        #expect(message.contains("暂无进度回报"))
         #expect(message.contains("已等待 1:15"))
         // 起点缺失（回看历史会话 / 起点丢失）时只给说明、不给计时 ——
         // 没有起点就没有「等了多久」这个事实，编一个数字比不显示更糟。
         let withoutStart = InstallWaitNote(startedAt: nil)
             .message(at: Date(timeIntervalSince1970: 1_075))
-        #expect(withoutStart.contains("设备正在安装"))
+        #expect(withoutStart.contains("安装中"))
+        #expect(withoutStart.contains("暂无进度回报"))
         #expect(withoutStart.contains("已等待") == false)
     }
 

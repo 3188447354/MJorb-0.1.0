@@ -436,11 +436,18 @@ enum SigningProgressBudget {
         elapsed: TimeInterval,
         realProgress: Double?,
         workUnits: SigningWorkUnits? = nil,
-        renewalExecutionPath: RenewalExecutionPath? = nil
+        renewalExecutionPath: RenewalExecutionPath? = nil,
+        deviceChannelReady: Bool = false
     ) -> Double {
         let budget = plan(for: stage, renewalExecutionPath: renewalExecutionPath)
         if bucket < budget.bucket { return 1 }
         if bucket > budget.bucket { return 0 }
+        // LocalDevVPN / 设备通道以真实就绪状态结算，不走时间估算。
+        // Seal 启动预热已完成时，签名、续签和更新安装直接显示该格满格；
+        // 未确认连接前仍按既有估算显示等待，避免把“正在连接”伪装成已就绪。
+        if stage == .waitingForChannel, deviceChannelReady {
+            return 1
+        }
         let total = bucketTotal(
             budget.bucket,
             renewalExecutionPath: renewalExecutionPath

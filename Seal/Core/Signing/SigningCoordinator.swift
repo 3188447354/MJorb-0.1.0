@@ -157,22 +157,34 @@ actor SigningCoordinator {
     /// 批量续签开始前的**一次性**通道健康预检（2026-10-04 通道优化）。
     ///
     /// 旧行为：N 个 App 各自在注入前做通道诊断，通道坏时每个都要付一遍诊断代价。
-    /// 现在整轮只查一次：`isReady()` 通过直接开工；不通过则 `reset()` + `start()`
-    /// 自愈一次；仍不行就快速失败 —— 用 `ChannelReadinessPolicy` 给出用户可执行的
-    /// 下一步（开 VPN / 重新配对），而不是让每个 App 轮流超时。
+    /// 现在整轮只查一次：`start()` 会先核验缓存会话，并在冷启动失败时自行重置、重查一次。
+    /// 这里不再在它失败后额外 `reset()` + 再跑完整 `start()`；那会把同一轮两次诊断
+    /// 再翻倍，真机冷连接可能因此多等近一分钟。失败后用 `ChannelReadinessPolicy` 给出
+    /// 用户可执行的下一步；用户修复连接后重新发起，start 会重新诊断。
     ///
-    /// - Returns: 通道就绪返回 `true`；返回 `false` 时调用方应整轮快速失败。
-    func ensureChannelReadyForBatch() async -> Bool {
-        if await installChannel.isReady() {
-            return true
-        }
-        // 一次自愈机会：拆掉重建。
-        await installChannel.reset()
+    /// - Returns: 已通过强健康检查的设备 UDID；失败时调用方应整轮快速失败。
+    func ensureChannelReadyForBatch() async throws -> String {
+        let startedAt = ContinuousClock.now
         do {
-            _ = try await installChannel.start()
-            return await installChannel.isReady()
+            // `start()` 会校验缓存 RSD 会话仍存活。将这个已核验的 UDID 传给本轮每个
+            // App，避免 N 个 App 重复做同一轮隧道/RSD 诊断。
+            let deviceIdentifier = try await installChannel.start()
+            let elapsed = startedAt.duration(to: .now)
+            try? await logStore?.append(
+                category: .renewal,
+                level: .info,
+                message: "批量续签设备通道检查完成：耗时 \(elapsed.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))"
+            )
+            return deviceIdentifier
         } catch {
-            return false
+            let elapsed = startedAt.duration(to: .now)
+            try? await logStore?.append(
+                category: .renewal,
+                level: .warning,
+                message: "批量续签设备通道检查失败：耗时 \(elapsed.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))；通道启动流程已完成自身重试：\(DeviceChannelTransientPolicy.diagnostic(error))",
+                code: "SEAL-RENEW-CHANNEL-002"
+            )
+            throw error
         }
     }
 
@@ -305,6 +317,9 @@ actor SigningCoordinator {
         installAfterSigning: Bool = true,
         forceResign: Bool = false,
         bypassFreeAccountDeviceLimit: Bool = false,
+        // 仅批量续签传入：批次开始时已经完成强通道检查；每个 App 仍单独执行
+        // `requireReadyForSigning()`，但不重复启动并诊断同一个 RSD 会话。
+        prevalidatedBatchDeviceIdentifier: String? = nil,
         // 阶段信号**自带主体**（见 `SigningStageUpdate`）：证书轮换子流程推进的是
         // **另一个** App 的阶段，调用方不能假定它等于会话主体。
         progress: @escaping @Sendable (SigningStageUpdate) async -> Void,
@@ -330,6 +345,7 @@ actor SigningCoordinator {
         onWorkUnits: @escaping @Sendable (SigningWorkUnits) async -> Void = { _ in },
         isCertificateRecoveryRun: Bool = false
     ) async throws -> AppRecord {
+        let signingOperationStart = ContinuousClock.now
         try? await logStore?.append(
             category: .system,
             level: .info,
@@ -574,9 +590,15 @@ actor SigningCoordinator {
             if installAfterSigning {
                 try await updateState(appID: appID, stage: .waitingForChannel)
                 await progress(SigningStageUpdate(stage: .waitingForChannel, subject: signingSubject))
-                channelStart = Task { try await installChannel.start() }
+                if prevalidatedBatchDeviceIdentifier == nil {
+                    channelStart = Task { try await installChannel.start() }
+                }
             }
-            if let storedDeviceIdentifier = await installChannel.storedDeviceIdentifier(),
+            if installAfterSigning,
+               let prevalidatedBatchDeviceIdentifier,
+               prevalidatedBatchDeviceIdentifier.isEmpty == false {
+                deviceIdentifier = prevalidatedBatchDeviceIdentifier
+            } else if let storedDeviceIdentifier = await installChannel.storedDeviceIdentifier(),
                storedDeviceIdentifier.isEmpty == false {
                 deviceIdentifier = storedDeviceIdentifier
             } else if installAfterSigning, let channelStart {
@@ -595,6 +617,10 @@ actor SigningCoordinator {
                 // 并在任何证书、App ID 或描述文件操作之前等待并执行最终检查。
                 if let channelStart { _ = try await channelStart.value }
                 try await installChannel.requireReadyForSigning()
+                // 最终通道门禁已通过；下面开始核对当前签名身份与账号资源。
+                // 立刻离开“LocalDevVPN 已就绪”，不把本地前置检查时间继续算在连接阶段。
+                try await updateState(appID: appID, stage: .preparingAccount)
+                await progress(SigningStageUpdate(stage: .preparingAccount, subject: signingSubject))
             }
 
             // 续签 = 覆盖安装**已经存在**的应用（`belongsInInstalledList` 只对已装应用为真）。
@@ -697,6 +723,12 @@ actor SigningCoordinator {
             }
 
             if useProfileOnlyRenewal {
+                let preflightElapsed = signingOperationStart.duration(to: .now)
+                try? await logStore?.append(
+                    category: .renewal,
+                    level: .info,
+                    message: "profile-only 续签前置检查耗时：\(preflightElapsed.formatted(.units(allowed: [.seconds], fractionalPart: .show(length: 1))))：\(app.name)"
+                )
                 // 设备端不做旧 profile 前置枚举；新 profile 注入后由 installer 逐份读回确认。
                 guard let profileOnlyCertificateSerialNumber =
                     ProfileOnlyRenewalPolicy.effectiveCertificateSerialNumber(
@@ -749,24 +781,11 @@ actor SigningCoordinator {
             } else {
                 preferredIconData = nil
             }
-            // 无感一证书策略（前置）：签名前主动撤销「无人使用的孤儿证书」，把「名额满」
-            // 失败消灭在签名前，而不是等首次 sign 撞 204 再清。设备核验失败 / 拉不到远清单 /
-            // 撤销失败都返回非 .cleaned，这里静默跳过（下方 reactive 撞 204 兜底仍在），
-            // 绝不因本次前置清理新增失败面。
-            var signSelectedSerial = profileOnlyRequiresNewCertificate
+            // 不在每次签名前扫描设备并预先撤销证书。先尝试正常复用或申请；
+            // 原有配额/身份失败回退仍走下方的安全检查和证书处理流程。
+            let signSelectedSerial = profileOnlyRequiresNewCertificate
                 ? selectedCertificateSerialNumber
                 : effectiveCertificateSerialNumber
-            if case .cleaned = try await autoCleanOrphanCertificatesIfPossible(
-                account: account,
-                secret: secret
-            ) {
-                // 清理可能连带清掉「绑定还在但本机无私钥」的旧身份，重读 secret 对齐；
-                // 首次 sign 不再传可能已失效的选中序列号，走「复用剩余本机证书或新建」。
-                if let refreshedSecret = try? await keychain.load(accountID: accountID, accountIdentifier: account.accountIdentifier) {
-                    secret = refreshedSecret
-                }
-                signSelectedSerial = nil
-            }
             let portalResult: PortalSigningResult
             do {
                 portalResult = try await portal.sign(
@@ -1248,6 +1267,25 @@ actor SigningCoordinator {
         // 先测量再优化：各阶段耗时进日志，真机验证时才能定位瓶颈。
         let renewStart = ContinuousClock.now
         let portalStart = ContinuousClock.now
+        let profileServiceTaintHealed: @Sendable () async -> Void = { [logStore] in
+            try? await logStore?.append(
+                category: .renewal,
+                level: .warning,
+                message: "profile-only 续签：上一轮描述文件服务探测超时，已等原生调用结束并重建设备连接",
+                code: "SEAL-PROFILE-355"
+            )
+        }
+        // RSD/UDID ready is not enough: the first misagent write can otherwise spend
+        // 30 seconds discovering that the profile service is cold. Warm it while
+        // Apple Portal prepares the new profiles, then renew the short health lease
+        // if the Portal request outlasted it.
+        let profileServicePrewarmTask = Task {
+            await ProfileOnlyProvisioningProfileInstaller.shared.prewarmMisagentService(
+                channel: installChannel,
+                operationCoordinator: operationCoordinator,
+                onTaintHealed: profileServiceTaintHealed
+            )
+        }
         let result = try await portal.prepareProfileOnlyRenewal(
             app: app,
             account: account,
@@ -1267,6 +1305,19 @@ actor SigningCoordinator {
             },
             onWorkUnits: onWorkUnits
         )
+        let initialPrewarmOutcome = await profileServicePrewarmTask.value
+        if case .failed(let failure) = initialPrewarmOutcome {
+            throw failure
+        }
+        let finalPrewarmOutcome = await ProfileOnlyProvisioningProfileInstaller.shared
+            .prewarmMisagentService(
+                channel: installChannel,
+                operationCoordinator: operationCoordinator,
+                onTaintHealed: profileServiceTaintHealed
+            )
+        if case .failed(let failure) = finalPrewarmOutcome {
+            throw failure
+        }
         let portalElapsed = portalStart.duration(to: .now)
         await onCertificateResolved(result.certificateSerialNumber)
         // ── 污染自愈已搬进 actor（2026-10-04 并行续签）──
@@ -1285,15 +1336,7 @@ actor SigningCoordinator {
             operationCoordinator: operationCoordinator,
             // actor 在串行排队后若发现污染（363 提前标记 / 上一项注入失败留下），
             // 会自己消费 + 重置；这里只负责留痕（`SEAL-PROFILE-355`）。
-            onTaintHealed: { [logStore] in
-                try? await logStore?.append(
-                    category: .renewal,
-                    level: .warning,
-                    message: "profile-only 续签：上一次描述文件设备操作超时留下的传输可能仍被占用，"
-                        + "已重置并重新建立设备通道后继续（避免一次抖动毒掉后续全部续签）",
-                    code: "SEAL-PROFILE-355"
-                )
-            },
+            onTaintHealed: profileServiceTaintHealed,
             // 设备注入子阶段上报：阶段仍是 .preparingProfiles（轨道预算模型要求
             // 它独占第 5 格，切阶段会让轨道往回跳），只把子状态经 detail 送界面——
             // 界面据此把标题切到「正在更新描述文件」、提示换成子状态文案、
@@ -2562,7 +2605,13 @@ actor SigningCoordinator {
 
             try await updateState(appID: app.id, stage: .verifying)
             await progress(SigningStageUpdate(stage: .verifying, app: app))
+            let verificationStart = ContinuousClock.now
             try await installChannel.verifyInstalled(bundleID: effectiveBundleID)
+            let verificationDuration = verificationStart.duration(to: .now)
+            try? await logStore?.append(
+                category: .installation,
+                message: "安装核验完成，耗时 \(verificationDuration)；旧描述文件留待空闲维护处理。"
+            )
 
             updated.state = .installed
             updated.signedArtifactStatus = .installed
@@ -2592,7 +2641,8 @@ actor SigningCoordinator {
             } else {
                 try await appStore.save(updated)
             }
-            await removeStaleProfiles(signedData: signedData, effectiveBundleID: effectiveBundleID)
+            // 不在安装事务里启动清理：当前操作占用设备租约，清理会等待查询闸门。
+            // 下次启动的空闲维护会重新读取最新记录并获取设备维护租约；忙时跳过。
             return updated
         } catch {
             // An existing Bundle ID may belong to the previous signing generation.
@@ -2751,45 +2801,6 @@ actor SigningCoordinator {
     /// 来算，不能只认主 Bundle ID —— 否则扩展的旧 profile 会一直堆（2026-09-16 真机：
     /// LiveContainer 的 ShareExtension 一天内累积 6 份，Seal 自身累积 17 份）。
     ///
-    /// 免费账号 7 天续签/反复重签会在设备端累积 profile，旧文件过期可能误导后续校验。
-    /// 全程「最佳努力」：读不到产物内嵌 profile 或任何一步失败都静默跳过，绝不阻断安装结果。
-    ///
-    /// 顺带回收「换 Apple ID 后旧 Team 后缀」的孤儿 profile：换账号会给同一个 App 换一个
-    /// Bundle ID（`BundleIDMapper` 强制附加当前 team 后缀），而这次安装的保留集合只含
-    /// **新** ID ⇒ 旧 ID 的 profile 不在这条路径原本的覆盖范围内，会一直堆。
-    /// 每条都要过设备端核验（会抛错的 `isAppInstalled` + 阳性对照），
-    /// 见 `DeviceProfileCleaner.removeProfiles` 阶段 B。
-    private func removeStaleProfiles(signedData: Data, effectiveBundleID: String) async {
-        let embeddedProfiles = SignedArtifactProfileReader.embeddedProfiles(in: signedData)
-        guard embeddedProfiles.isEmpty == false else {
-            return
-        }
-        var keepingByBundleID: [String: String] = [:]
-        for profile in embeddedProfiles {
-            keepingByBundleID[profile.bundleIdentifier] = profile.uuid
-        }
-        // 2026-10-08：原先是 fire-and-forget 的 Task，App 被杀时清理中断且无记录。
-        // 改成 await，等清理做完再返回（调用方在安装成功后调用，不阻断关键路径）。
-        // 宽松受保护集合：Seal 记录里出现过的**全部** Bundle ID（含扩展，不要求
-        // `signedArtifactStatus == .installed`）。与上面 `keepingByBundleID`（只有本次
-        // 安装产物里的那几个 ID）是**两个不同的集合**，见
-        // `ProfileReclaimPolicy.isReclaimableOrphan`。
-        // 少了它，其它 App 的扩展 ID 会变成回收候选，而扩展的设备端核验恒为「没装」
-        // ⇒ 删掉正在用的扩展 profile（2026-09-17 真机发生过）。
-        // 读不到记录时集合为空 ⇒ `removeProfiles` fail closed，整轮不回收（路径 1 不受影响）。
-        let records = (try? await appStore.fetchAll()) ?? []
-        let summary = await DeviceProfileCleaner.removeStaleProfiles(
-            keepingByBundleID: keepingByBundleID,
-            protectedBundleIDs: ProfileReclaimPolicy.protectedBundleIDs(records: records),
-            reclaimSealOrphans: true,
-            operationCoordinator: operationCoordinator
-        )
-        try? await logStore?.append(
-            category: .installation,
-            message: "安装后旧描述文件清理（主 \(effectiveBundleID)，共 \(keepingByBundleID.count) 个 Bundle ID）：\(summary.logMessage)"
-        )
-    }
-
     /// 安装失败时把自诊断信息（Seal 构建号 + 签名包结构摘要）写入日志，
     /// 使日志导出无需传输 IPA 即可还原安装时的包结构（Frameworks 目录、
     /// 根目录 framework 等），用于远程定位 installd discovery 类错误。
@@ -2872,7 +2883,9 @@ actor SigningCoordinator {
             secret: secret,
             operation: operation
         )
-        guard refreshed.authToken != secret.authToken || refreshed.dsid != secret.dsid else {
+        guard refreshed.authToken != secret.authToken
+            || refreshed.dsid != secret.dsid
+            || refreshed.usesCompatibleMacIdentity != secret.usesCompatibleMacIdentity else {
             if account.status != .verified || account.verificationFailureReason != nil {
                 var verifiedAccount = account
                 verifiedAccount.status = .verified

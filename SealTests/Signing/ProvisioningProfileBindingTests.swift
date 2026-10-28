@@ -88,6 +88,35 @@ struct ProvisioningProfileBindingTests {
         }
     }
 
+    @Test
+    func emptyAppGroupsDoNotRequireAnAbsentProfileEntitlement() throws {
+        try ProvisioningProfileBinding.validateEntitlements(
+            requested: ["com.apple.security.application-groups": .array([])],
+            profile: [:],
+            bundleIdentifier: "com.example.app"
+        )
+    }
+
+    @Test
+    func nonemptyAppGroupsStillRequireMatchingAuthorization() throws {
+        let key = "com.apple.security.application-groups"
+        let group: ProvisioningEntitlementValue = .array([.string("group.example.shared")])
+        #expect(throws: ImportFailure.self) {
+            try ProvisioningProfileBinding.validateEntitlements(requested: [key: group], profile: [:], bundleIdentifier: "com.example.app")
+        }
+        #expect(throws: ImportFailure.self) {
+            try ProvisioningProfileBinding.validateEntitlements(requested: [key: group], profile: [key: .array([.string("group.example.other")])], bundleIdentifier: "com.example.app")
+        }
+        try ProvisioningProfileBinding.validateEntitlements(requested: [key: group], profile: [key: group], bundleIdentifier: "com.example.app")
+    }
+
+    @Test
+    func emptyUnrelatedEntitlementStillRequiresAuthorization() {
+        #expect(throws: ImportFailure.self) {
+            try ProvisioningProfileBinding.validateEntitlements(requested: ["example.other": .array([])], profile: [:], bundleIdentifier: "com.example.app")
+        }
+    }
+
 
     @Test
     func rejectsEntitlementValueMismatch() {

@@ -30,11 +30,12 @@
 | `SEAL-AUTH-80045` | Apple 临时拒绝登录请求；**不表示** Apple ID 被标记、密码错误或已锁定，等待后重试，勿连续登录或改密码 | `AppleServiceFailurePolicy.swift` |
 | `SEAL-VERIFY-500` | Apple 验证返回了**无法分类**的错误；账号状态未改变 | `SettingsViewModel.swift` |
 
-## 证书
+## 签名 / 证书
 
 | 码 | 它在说什么 | 出处 |
 |---|---|---|
 | `SEAL-CERT-204b` | 无法生成有效证书请求，或 Apple 拒绝了请求（**不代表名额已满**） | `CertificateRequestFailurePolicy.swift` |
+| `SEAL-SIGN-407` | IPA 内部 CRC32 校验不一致，文件可能不完整或已损坏；从原来源重新获取完整 IPA 后再导入 | `SigningWorkspace.swift` |
 | `SEAL-SIGN-501` | Apple 暂时拒绝了请求（App ID 阶段撞限流；**先等几分钟重试**） | `ApplePortalSigningService.swift` |
 | `SEAL-SIGN-503` | 单应用签名 / 续签撞上**设备通道瞬时失败**，已按批量同源策略退避重试（8 秒 × 第几次）—— **警告级**。看到它说明这一轮通道抖过；没有它时「本该重试却没有重试」在日志上完全看不出来 | `AppsViewModel.swift` |
 | `SEAL-SIGN-504` | 单应用续签时**设备通道不可用**，自动重试后仍未恢复（底层多为 `Minimuxer.MinimuxerError 1` 的 `NoConnection`）。失败弹窗的「恢复」按钮据此跳 LocalDevVPN 设置页 | `AppsViewModel.swift` |
@@ -54,6 +55,17 @@
 | `SEAL-INSTALL-708` | 已安装页设备核验**跳过**：有前台操作正在进行（避免抢占同一条设备会话） | `AppsViewModel.swift` |
 | `SEAL-INSTALL-719` | 本机签名包记录不完整（已签名包安装入口经就绪门复查后仍查不到记录） | `SigningCoordinator.swift` |
 | `SEAL-INSTALL-739` | 已安装页设备核验**中止**：阳性对照未通过（通道不可信），本轮一条记录都不删 | `AppsViewModel.swift` |
+
+### 新增、待真机首次确认
+
+| 码 | 它在说什么 | 出处 |
+|---|---|---|
+| `SEAL-INSTALL-700` | Wi-Fi 路径不可用；先连接 Wi-Fi。此码不判断 LocalDevVPN 是否开启 | `MinimuxerInstallChannel.swift` |
+
+### VPN 诊断
+
+| 码 | 它在说什么 | 出处 |
+|---|---|---|
 | `SEAL-VPN-001` | 签名完成后仍无法连接设备完成安装 | `SigningCoordinator.swift` |
 | `SEAL-VPN-003` | 观测到**本地隧道掉线**（`broken pipe` / `connection reset` / `early eof` 这类传输层对端消失），已作废 Swift 侧通道会话缓存、下一次操作重建连接 —— **警告级**。看到它说明这一轮撞上了掉线；没有它时「重试三次都撞同一个死会话」在日志上完全看不出来 | `MinimuxerInstallChannel.swift` |
 | `SEAL-VPN-004` | **RemotePairing 端口自愈**：通道诊断 / 安装失败像是「隧道通、设备服务端口不可达」（`SEAL-INSTALL-710` 或 `connection refused` / `no route to host` / `connection timed out` 原文）时，经 Bonjour 重查 `_remotepairing._tcp` 端口，**发现到不同端口才采纳**（同步给 Rust 侧并作废按旧端口建的 RSD 缓存）—— **警告级**。看到它说明设备把服务换到了别的端口；没有它时「隧道明明通、就是连不上」在日志上完全看不出来 | `MinimuxerInstallChannel.swift` |
@@ -80,6 +92,7 @@
 | `SEAL-RENEW-024` | 批量续签结果已从持久化载荷恢复 | `AppsViewModel.swift` |
 | `SEAL-RENEW-025` | 批量续签结果抽屉已关闭（带最终计数） | `AppsViewModel.swift` |
 | `SEAL-RENEW-026` | 上次续签被中断，但 N 个应用的结果**已从载荷结算**（不再标为未知）—— 正常路径留痕 | `AppsViewModel.swift` |
+| `SEAL-RENEW-032` | 后台快捷指令续签通知回跳进度（已切换应用页、结果已恢复、结果抽屉实际出现） | `AppsViewModel.swift` |
 | `SEAL-RENEW-503` | 批量续签某一项撞上**设备通道瞬时失败 / 临时错误**，已退避重试（通道类 8 秒 × 第几次）—— **警告级**。重试前会走与单签同源的通道恢复动作（`SigningCoordinator.prepareInstallChannelForRetry`，通道类 `reset()`、描述文件超时类只清熔断）。看到它说明这一轮通道抖过；没有它时「批量重试了没有 / 重试了几次」在日志上完全看不出来 | `RenewalCoordinator.swift` |
 | `SEAL-PROFILE-365` | **记录里有一条「已导入但尚未安装」的更新源**（覆盖更新把记录写成了新导入包的版本号）⇒ 本次**改为完整重签并安装**，装完新版本才真正生效，之后续签回到「只更新描述文件」。它是**降级而非失败**。看到它说明「已安装列表里显示的版本号」是**待安装的源包**、不是正在运行的版本（用户 2026-09-26 实测：导入 1.3.20 到 1.3.19，点续签「直接续签了」而「关于」里仍是 1.3.19）。级别是 `警告` | `SigningCoordinator.swift` |
 | `SEAL-PROFILE-366` | 普通 IPA 选择共享主描述文件时，某个扩展请求了主应用未声明的能力。Seal 已在创建任何新的 App ID 前停止；用户可取消，或明确选择“改为独立签名”后再额外申请所需 App ID 并完成签名 | `ApplePortalSigningService.swift` |
@@ -121,8 +134,6 @@
 | `SEAL-BACKGROUND-014` | 后台触发**让位**：已有签名 / 续签（或导入配对、管理证书等占着通道的操作）尚未完成，本轮**不重复点火** —— **信息级**。看到它说明「快捷指令这一轮没续上」不是失败，而是进行中的那一轮会完成续签；没有这条日志时，「没续上」与「其实被让位」在日志上长得一模一样 | `AppsViewModel.swift` |
 | `SEAL-BACKGROUND-015` | 快捷指令后台续签**系统通知**的投递结果（已发出 / 本轮无可续签项按规则不发 / 用户未开通知权限 / 投递失败带原因）—— **信息级**（未发出为警告级）。用户报「快捷指令续签成功但没收到通知」时，先用这条分清「其实没给通知权限」与「真的投递失败」 | `AppsViewModel.swift` |
 | `SEAL-BACKGROUND-016` | 快捷指令后台续签**未执行 / 整轮失败**通知的投递结果（让位给非续签操作 / 整轮抛错）—— **信息级**（未发出为警告级）。这两档**没有任何一轮会补上**，后台又没有界面，不发就是静默丢失；看到它可分清「用户点了快捷指令却什么都没发生」到底是哪一档 | `AppsViewModel.swift` |
-| `SEAL-BACKGROUND-017` | 后台保活**第二路（后台定位）已启动**：持续定位更新，与静音音频形成双保险 —— **信息级**。音频被打断（来电/闹钟/路由变更/媒体重置）时，定位兜底让进程不被系统挂起；看到它说明双保险到位，锁屏续签多了一层存活保障 | `LocationKeepAliveService.swift` |
-| `SEAL-BACKGROUND-018` | 后台保活**第二路（后台定位）无法启动**：定位权限被拒绝/受管控 —— **警告级**。此时只剩静音音频一路保活，音频被中断时锁屏续签可能被系统挂起；可作为「音频一路而已」的判据，区别于「双保险」 | `LocationKeepAliveService.swift` |
 
 ## 操作仲裁
 

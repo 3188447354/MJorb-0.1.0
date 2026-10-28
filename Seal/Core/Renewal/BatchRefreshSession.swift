@@ -164,6 +164,9 @@ extension BatchRefreshSession.Item.State {
         case "failed": self = .failed
         case "preparingSealUpdate": self = .preparingSealUpdate
         case "awaitingSealConfirmation": self = .awaitingSealConfirmation
+        // The persisted result distinguishes a settled "not attempted" item from a
+        // queue item that was still waiting when the process stopped.
+        case "needsAction": self = .waiting
         default: self = .waiting
         }
     }

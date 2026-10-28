@@ -241,10 +241,10 @@ def min_os(data):
 
     本函数**曾把 minos 读成 +16（即 sdk）** ⇒ 对 Rust 的目标文件读到 `0.0`（静默假绿灯）、
     对 asn1 的目标文件读到 `26.5`（假报警）——**这道断言实际上从未校验过 minOS**。
-    数值对照（`RustBridge.xcframework/ios-arm64`，真实部署目标 16.0）::
+    数值对照（`RustBridge.xcframework/ios-arm64`，真实部署目标 17.4）::
 
         member                min_os()   off+8(platform)  off+12(minos)  off+16(sdk)
-        cgu.00.rcgu.o         0.0        2 (iOS)          16.0  ✓        0.0
+        cgu.00.rcgu.o         0.0        2 (iOS)          17.4  ✓        0.0
 
     `version_min_command`（老的 `LC_VERSION_MIN_IPHONEOS`）布局不同::
 

@@ -14,9 +14,10 @@ struct AppDetailView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         header(app)
                         if app.needsIPAImport {
-                            Text("此应用由设备扫描恢复，本机没有保存原始 IPA。需要重新签名时，请先导入该应用的 IPA。")
+                            Text("本机无原始 IPA；完整重签前需重新导入。")
                                 .font(.footnote)
                                 .foregroundStyle(Color.sealTextSecondary)
+                                .singleLine()
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         infoCard(app)
@@ -56,6 +57,7 @@ struct AppDetailView: View {
                             .foregroundStyle(.secondary)
                         Text("应用不存在")
                             .font(.headline)
+                            .singleLine()
                     }
                     .frame(maxWidth: .infinity, minHeight: 180)
                 } footer: {
@@ -144,9 +146,11 @@ struct AppDetailView: View {
                     HStack(alignment: .firstTextBaseline, spacing: 14) {
                         Text("扩展")
                             .foregroundStyle(.primary)
+                            .singleLine()
                         Spacer(minLength: 12)
                         Text("\(app.extensions.count) 个")
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                         Image(systemName: showExtensions ? "chevron.up" : "chevron.down")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.sealAccent)
@@ -236,7 +240,7 @@ struct AppDetailView: View {
             Text(note)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 12)
@@ -252,10 +256,12 @@ struct AppDetailView: View {
         return HStack(alignment: .firstTextBaseline, spacing: 14) {
             Text("描述文件")
                 .foregroundStyle(.primary)
+                .singleLine()
             if status != .available {
                 Text(status.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(profileColor(app))
+                    .singleLine()
                     .layoutPriority(1)
             }
             Spacer(minLength: 12)
@@ -379,7 +385,7 @@ struct AppDetailView: View {
     private func expiryDateText(_ app: AppRecord) -> String {
         guard let date = mainSigningTarget(app)?.profileExpirationDate
                 ?? AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
-        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
+        return SealSettingsDateFormatter.string(from: date)
     }
 
     private func extensionExpiryText(_ record: AppExtensionRecord, app: AppRecord) -> String {
@@ -388,7 +394,7 @@ struct AppDetailView: View {
             $0.bundleIdentifier.caseInsensitiveCompare(bundleIdentifier) == .orderedSame
         })?.profileExpirationDate ?? record.provisioningProfileExpirationDate
         guard let date else { return "未签名" }
-        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
+        return SealSettingsDateFormatter.string(from: date)
     }
 
     private func extensionProfileStrategyText(_ app: AppRecord) -> String {

@@ -6,6 +6,23 @@ import Foundation
 /// the first item as their shared-container choice. The portal assignment, copied
 /// bundle metadata, and signed entitlement must therefore receive the same order.
 enum AppGroupOrderingPolicy {
+    /// An empty App Groups array requests no group and need not be provisioned.
+    /// Other types are retained for normal validation rather than silently discarded.
+    static func isEmptyGroupDeclaration(_ value: Any) -> Bool {
+        (value as? [String])?.isEmpty == true
+    }
+
+    static func removingEmptyGroupDeclaration<Key: Hashable>(
+        from entitlements: [Key: any Sendable], groupKey: Key
+    ) -> [Key: any Sendable] {
+        guard let value = entitlements[groupKey], isEmptyGroupDeclaration(value) else {
+            return entitlements
+        }
+        var result = entitlements
+        result.removeValue(forKey: groupKey)
+        return result
+    }
+
     static func canonicalize(_ identifiers: [String]) -> [String] {
         Array(Set(identifiers)).sorted()
     }

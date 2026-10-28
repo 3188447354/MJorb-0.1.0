@@ -13,7 +13,8 @@ import Security
 ///
 /// ## 读取（自愈）
 /// `load` 任一处命中即返回，并把缺失的另一处当场回填 —— 单副本损坏 / 丢失
-/// 不再等于凭据丢失。两处都 miss 才返回 `nil`（凭据待恢复，见 `CredentialRecoveryPolicy`）。
+/// 不再等于凭据丢失。两处均完整读取且都 miss 才返回 `nil`（凭据待恢复，见
+/// `CredentialRecoveryPolicy`）；任一存储无法完整读取时抛错，不能误标账号状态。
 ///
 /// ## 删除（永不删 secret）
 /// 本类**没有**真正删除 secret 的入口：`delete` / `detach` 只解除 UUID 关联
@@ -25,6 +26,7 @@ actor KeychainVault {
     private let decoder = JSONDecoder()
     private let vaultStore: CredentialVaultFileStore?
     private var didAttemptMigration = false
+    private var credentialVaultWarning: String?
 
     init(vaultFileURL: URL? = CredentialVaultFileStore.defaultFileURL()) {
         if let vaultFileURL {
@@ -48,23 +50,40 @@ actor KeychainVault {
         if normalizedKey.isEmpty == false {
             try rawSave(secret, key: normalizedKey)
         }
-        if let vaultStore {
-            _ = try await vaultStore.upsert(secret, accountID: accountID)
+        var vaultSynchronized = false
+        if normalizedKey.isEmpty == false {
+            vaultSynchronized = await synchronizeVault(secret, accountID: accountID)
         }
-        try await verifySaved(secret, normalizedKey: normalizedKey, accountID: accountID)
+        try await verifySaved(
+            secret,
+            normalizedKey: normalizedKey,
+            accountID: accountID,
+            verifyVault: vaultSynchronized
+        )
+    }
+
+    /// 下次账号操作时由调用方写入脱敏日志；不包含 Apple ID、口令或凭据内容。
+    func consumeCredentialVaultWarning() -> String? {
+        defer { credentialVaultWarning = nil }
+        return credentialVaultWarning
     }
 
     /// 写后验证：回读主存与保险库、比对关键字段指纹。不一致当场以
     /// `SEAL-KEYCHAIN-004` 报告，绝不让「以为存上了其实没存上」静默过关。
     /// 归一化键为空（登录 ID 缺失的异常 secret）时主存腿回退按 UUID 键回读、
     /// 保险库腿跳过 —— 保险库以登录 ID 为键，无键可存时不能假报失败。
-    private func verifySaved(_ secret: AccountSecret, normalizedKey: String, accountID: UUID) async throws {
+    private func verifySaved(
+        _ secret: AccountSecret,
+        normalizedKey: String,
+        accountID: UUID,
+        verifyVault: Bool
+    ) async throws {
         let readBackKey = normalizedKey.isEmpty ? accountID.uuidString : normalizedKey
         let keychainCopy = try rawLoad(key: readBackKey)
         guard let keychainCopy, keychainCopy.hasSameCriticalFields(as: secret) else {
             throw Self.writeVerificationFailure(secret: secret, stage: "钥匙串主存回读不一致")
         }
-        if let vaultStore, normalizedKey.isEmpty == false {
+        if let vaultStore, normalizedKey.isEmpty == false, verifyVault {
             let vaultCopy = try await vaultStore.secret(forKey: normalizedKey)
             guard let vaultCopy, vaultCopy.hasSameCriticalFields(as: secret) else {
                 throw Self.writeVerificationFailure(secret: secret, stage: "保险库回读不一致")
@@ -89,7 +108,8 @@ actor KeychainVault {
     // MARK: - 读取（主存 → 保险库 → 存量扫描，命中即自愈）
 
     /// 按账号记录读 secret。`accountIdentifier` 传了才启用最后的全兜底一步
-    /// （见下），旧调用方不传时行为与从前一致。
+    /// （见下）。返回 nil 只代表所有可用存储都成功读完并确认不存在；任何存储
+    /// 读取失败都必须抛出，不能被上层当成「账号凭据丢失」。
     ///
     /// ⚠️ 为什么必须有全兜底（2026-10-23 立规，规格第 14 条）：已登录 ID 只许
     /// 苹果官方失效或用户自己删除，人为操作不许弄失效。但前两步的键都绑在
@@ -102,32 +122,62 @@ actor KeychainVault {
         await ensureMigrated()
         if let secret = try rawLoad(key: accountID.uuidString) {
             // 主存命中顺手补齐保险库（旧版本只有钥匙串一份时，保险库靠读路径长出来）。
-            if let vaultStore {
-                _ = try? await vaultStore.upsert(secret, accountID: accountID)
-            }
+            _ = await synchronizeVault(secret, accountID: accountID)
             return secret
         }
-        if let vaultStore, let healed = try await vaultStore.secret(forAccountID: accountID) {
-            try healKeychain(with: healed, accountID: accountID)
-            return healed
+        var accountScopedVaultFailure: Error?
+        if let vaultStore {
+            do {
+                if let healed = try await vaultStore.secret(forAccountID: accountID) {
+                    try healKeychain(with: healed, accountID: accountID)
+                    return healed
+                }
+            } catch {
+                noteCredentialVaultProblem()
+                accountScopedVaultFailure = error
+            }
         }
-        guard let accountIdentifier, accountIdentifier.isEmpty == false else { return nil }
+
+        guard let accountIdentifier, accountIdentifier.isEmpty == false else {
+            // 没有稳定账号标识就无法安全做全盘匹配。若保险库读取也失败，不能把
+            // 「读不到」伪装成「没有凭据」。
+            if let accountScopedVaultFailure { throw accountScopedVaultFailure }
+            return nil
+        }
+
         var candidates: [AccountSecret] = []
-        if let keyed = try? allKeyedSecrets() {
-            candidates.append(contentsOf: keyed.map(\.secret))
+        var keychainScanFailure: Error?
+        do {
+            candidates.append(contentsOf: try allKeyedSecretsStrict().map(\.secret))
+        } catch {
+            keychainScanFailure = error
         }
-        if let vaultStore, let payload = try? await vaultStore.loadPayload() {
-            candidates.append(contentsOf: payload.entries.map(\.secret))
+        var vaultScanFailure: Error?
+        if let vaultStore {
+            do {
+                candidates.append(contentsOf: try await vaultStore.loadPayload().entries.map(\.secret))
+            } catch {
+                noteCredentialVaultProblem()
+                vaultScanFailure = error
+            }
         }
-        guard let found = CredentialIdentityMatcher.match(
+
+        if let found = CredentialIdentityMatcher.match(
             accountIdentifier: accountIdentifier,
             in: candidates
-        ) else { return nil }
-        try? healKeychain(with: found, accountID: accountID)
-        if let vaultStore {
-            _ = try? await vaultStore.upsert(found, accountID: accountID)
+        ) {
+            // 自愈写回失败也不能抹掉已经找到的凭据；后续保存时会再次补齐。
+            try? healKeychain(with: found, accountID: accountID)
+            _ = await synchronizeVault(found, accountID: accountID)
+            return found
         }
-        return found
+
+        // 至少一份完整扫描失败时，结果是「未知」，不是「不存在」。只在钥匙串与
+        // 保险库都成功扫描且均无匹配时返回 nil，防止上层把暂时读错写成 ID 失效。
+        if let keychainScanFailure { throw keychainScanFailure }
+        if let vaultScanFailure { throw vaultScanFailure }
+        // 账号关联索引读取失败但完整保险库扫描成功时，完整扫描已经给出权威结果。
+        return nil
     }
 
     /// 按登录 ID 查（重加同号接回旧 secret 的入口）：归一化键 → 保险库 → 存量全扫。
@@ -136,24 +186,30 @@ actor KeychainVault {
         let normalizedKey = LoginIDNormalizer.vaultKey(forLoginID: rawLoginID)
         guard normalizedKey.isEmpty == false else { return nil }
         if let secret = try rawLoad(key: normalizedKey) {
-            if let vaultStore {
-                _ = try? await vaultStore.upsert(secret, accountID: nil)
-            }
+            _ = await synchronizeVault(secret, accountID: nil)
             return secret
         }
-        if let vaultStore, let healed = try await vaultStore.secret(forKey: normalizedKey) {
-            try healKeychain(with: healed, accountID: nil)
-            return healed
+        var vaultLookupFailure: Error?
+        if let vaultStore {
+            do {
+                if let healed = try await vaultStore.secret(forKey: normalizedKey) {
+                    try healKeychain(with: healed, accountID: nil)
+                    return healed
+                }
+            } catch {
+                noteCredentialVaultProblem()
+                vaultLookupFailure = error
+            }
         }
         // 存量兜底：迁移未覆盖到的旧 UUID 条目按 secret 内容里的登录 ID 匹配。
-        for item in try allKeyedSecrets()
-        where LoginIDNormalizer.vaultKey(forLoginID: item.secret.email) == normalizedKey {
+        let keyedSecrets = try allKeyedSecretsStrict()
+        for item in keyedSecrets where LoginIDNormalizer.vaultKey(forLoginID: item.secret.email) == normalizedKey {
             try healKeychain(with: item.secret, accountID: nil)
-            if let vaultStore {
-                _ = try? await vaultStore.upsert(item.secret, accountID: nil)
-            }
+            _ = await synchronizeVault(item.secret, accountID: nil)
             return item.secret
         }
+        // 只有保险库 lookup 与钥匙串全量扫描均成功，才能确认该登录 ID 没有凭据。
+        if let vaultLookupFailure { throw vaultLookupFailure }
         return nil
     }
 
@@ -187,10 +243,14 @@ actor KeychainVault {
         var secrets = try loadAllSecrets()
         var seen = Set(secrets.map(\.credentialFingerprint))
         if let vaultStore {
-            for entry in (try? await vaultStore.loadPayload())?.entries ?? [] {
-                guard seen.contains(entry.secret.credentialFingerprint) == false else { continue }
-                seen.insert(entry.secret.credentialFingerprint)
-                secrets.append(entry.secret)
+            do {
+                for entry in try await vaultStore.loadPayload().entries {
+                    guard seen.contains(entry.secret.credentialFingerprint) == false else { continue }
+                    seen.insert(entry.secret.credentialFingerprint)
+                    secrets.append(entry.secret)
+                }
+            } catch {
+                noteCredentialVaultProblem()
             }
         }
         return secrets
@@ -203,7 +263,12 @@ actor KeychainVault {
     func detach(accountID: UUID) async throws {
         try rawDelete(key: accountID.uuidString)
         if let vaultStore {
-            try await vaultStore.detach(accountID: accountID)
+            do {
+                try await vaultStore.detach(accountID: accountID)
+            } catch {
+                // normalized ID 主存仍保留，坏掉的加密副本不能阻断账号记录操作。
+                noteCredentialVaultProblem()
+            }
         }
     }
 
@@ -258,9 +323,7 @@ actor KeychainVault {
                     && $0.secret.credentialFingerprint == action.secret.credentialFingerprint
             }.flatMap { UUID(uuidString: $0.key) }
             guard (try? rawSave(action.secret, key: action.normalizedKey)) != nil else { continue }
-            if let vaultStore {
-                _ = try? await vaultStore.upsert(action.secret, accountID: sourceID)
-            }
+            _ = await synchronizeVault(action.secret, accountID: sourceID)
             applied += 1
         }
         let legacyCount = keyed.filter { LoginIDNormalizer.isLegacyUUIDKey($0.key) }.count
@@ -271,6 +334,61 @@ actor KeychainVault {
     }
 
     // MARK: - 自愈与原始钥匙串操作（不触发迁移 / 保险库逻辑，防递归）
+
+    /// 钥匙串是账号凭据主存；加密文件只是可恢复副本。副本内容校验失败时，
+    /// 先完整保留旧密文，再从钥匙串可读条目重建，任何副本错误都不冒充 Apple 登录失败。
+    @discardableResult
+    private func synchronizeVault(_ secret: AccountSecret, accountID: UUID?) async -> Bool {
+        guard let vaultStore else { return false }
+        do {
+            _ = try await vaultStore.upsert(secret, accountID: accountID)
+            return true
+        } catch CredentialVaultFileStoreError.unreadableContent {
+            do {
+                let keyedSecrets = try allKeyedSecrets().sorted {
+                    LoginIDNormalizer.isLegacyUUIDKey($0.key)
+                        && LoginIDNormalizer.isLegacyUUIDKey($1.key) == false
+                }
+                var recoveredPayload = CredentialVaultPayload.empty
+                for item in keyedSecrets {
+                    let loginKey = LoginIDNormalizer.vaultKey(forLoginID: item.secret.email)
+                    let existingSecret = recoveredPayload.entry(forKey: loginKey)?.secret
+                    let mergedSecret = item.secret.preservingSigningMaterial(from: existingSecret)
+                    recoveredPayload.upsert(
+                        mergedSecret,
+                        accountID: UUID(uuidString: item.key)
+                    )
+                }
+                let loginKey = LoginIDNormalizer.vaultKey(forLoginID: secret.email)
+                let existingSecret = recoveredPayload.entry(forKey: loginKey)?.secret
+                recoveredPayload.upsert(
+                    secret.preservingSigningMaterial(from: existingSecret),
+                    accountID: accountID
+                )
+                try await vaultStore.quarantineUnreadableFileAndSave(recoveredPayload)
+                noteCredentialVaultProblem(
+                    "本机加密凭据副本无法解读，旧文件已保留，并已从钥匙串重建副本。"
+                )
+                return true
+            } catch {
+                noteCredentialVaultProblem(
+                    "本机加密凭据副本暂不可读，原文件已保留；账号钥匙串主存仍可使用。"
+                )
+                return false
+            }
+        } catch {
+            noteCredentialVaultProblem(
+                "本机加密凭据副本同步失败；账号钥匙串主存仍可使用。"
+            )
+            return false
+        }
+    }
+
+    private func noteCredentialVaultProblem(_ message: String = "本机加密凭据副本读取失败；账号钥匙串主存仍可使用。") {
+        if credentialVaultWarning == nil {
+            credentialVaultWarning = message
+        }
+    }
 
     private func healKeychain(with secret: AccountSecret, accountID: UUID?) throws {
         let normalizedKey = LoginIDNormalizer.vaultKey(forLoginID: secret.email)
@@ -324,8 +442,9 @@ actor KeychainVault {
         }
     }
 
-    /// 枚举本 service 下全部 (键, secret)：迁移与存量扫描的原料。
-    /// 解码失败的条目（如异形数据）跳过，不让一条坏数据挡住全量迁移。
+    /// 枚举本 service 下全部 (键, secret)：供幂等迁移与副本重建使用。
+    /// 解码失败的条目（如异形数据）跳过，不让一条坏数据挡住迁移；账号“是否缺失”
+    /// 判定必须使用下方严格版本，不能将被跳过的条目当成不存在。
     private func allKeyedSecrets() throws -> [(key: String, secret: AccountSecret)] {
         var request = baseQuery()
         request[kSecReturnData as String] = true
@@ -346,6 +465,39 @@ actor KeychainVault {
         }
     }
 
+    /// 账号恢复必须区分「扫描完毕且不存在」与「扫描到无法解码的条目」。
+    /// 普通迁移仍使用上面的容错扫描；这里遇到任何结构异常或解码失败都抛错，
+    /// 防止把未读完的钥匙串误判为凭据不存在，继而将 Apple ID 标成待验证。
+    private func allKeyedSecretsStrict() throws -> [(key: String, secret: AccountSecret)] {
+        var request = baseQuery()
+        request[kSecReturnData as String] = true
+        request[kSecReturnAttributes as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitAll
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(request as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess else { throw KeychainError(status: status) }
+        guard let result else { throw KeychainScanFailure.unexpectedResult }
+        let items = (result as? [Any]) ?? [result]
+        var secrets: [(key: String, secret: AccountSecret)] = []
+        secrets.reserveCapacity(items.count)
+        for item in items {
+            guard let dict = item as? [String: Any],
+                  let key = dict[kSecAttrAccount as String] as? String,
+                  let data = dict[kSecValueData as String] as? Data
+            else {
+                throw KeychainScanFailure.malformedEntry
+            }
+            do {
+                secrets.append((key: key, secret: try decoder.decode(AccountSecret.self, from: data)))
+            } catch {
+                throw KeychainScanFailure.unreadableEntry
+            }
+        }
+        return secrets
+    }
+
     private func query(forKey key: String) -> [String: Any] {
         var request = baseQuery()
         request[kSecAttrAccount as String] = key
@@ -358,6 +510,23 @@ actor KeychainVault {
             kSecAttrService as String: service,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any
         ]
+    }
+}
+
+private enum KeychainScanFailure: LocalizedError {
+    case unexpectedResult
+    case malformedEntry
+    case unreadableEntry
+
+    var errorDescription: String? {
+        switch self {
+        case .unexpectedResult:
+            return "钥匙串扫描未返回结果，无法确认账号凭据是否存在。"
+        case .malformedEntry:
+            return "钥匙串包含无法识别的账号凭据条目，无法确认账号凭据是否存在。"
+        case .unreadableEntry:
+            return "钥匙串账号凭据条目无法解码，无法确认账号凭据是否存在。"
+        }
     }
 }
 

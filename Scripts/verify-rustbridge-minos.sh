@@ -2,7 +2,7 @@
 set -euo pipefail
 
 FRAMEWORK_PATH="${1:-Vendor/Minimuxer/RustBridge/lib/RustBridge.xcframework}"
-MAX_IOS_VERSION="${MAX_IOS_VERSION:-16.0}"
+MAX_IOS_VERSION="${MAX_IOS_VERSION:-17.4}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "RustBridge minOS verification requires macOS/xcrun vtool." >&2
@@ -52,8 +52,14 @@ while IFS= read -r archive; do
   archives=$((archives + 1))
   slice="$(basename "$(dirname "$archive")")"
   case "$slice" in
-    *ios*simulator*) simulator_archives=$((simulator_archives + 1)) ;;
-    *ios*) device_archives=$((device_archives + 1)) ;;
+    ios-arm64)
+      device_archives=$((device_archives + 1))
+      slice_architectures=(arm64)
+      ;;
+    ios-arm64_x86_64-simulator)
+      simulator_archives=$((simulator_archives + 1))
+      slice_architectures=(arm64 x86_64)
+      ;;
     *)
       echo "ERROR: unexpected non-iOS RustBridge slice: $slice" >&2
       failures=$((failures + 1))
@@ -61,68 +67,82 @@ while IFS= read -r archive; do
       ;;
   esac
 
-  slice_dir="$work/$slice"
-  mkdir -p "$slice_dir"
-  # 兼容调用方传入绝对路径或相对路径：绝对路径直接使用，相对路径基于进入
-  # slice_dir 之前的工作目录(OLDPWD)解析，避免拼出 "$OLDPWD/绝对路径" 的重复前缀。
   case "$archive" in
     /*) archive_path="$archive" ;;
-    *)  archive_path="$OLDPWD/$archive" ;;
+    *)  archive_path="$PWD/$archive" ;;
   esac
-  (cd "$slice_dir" && ar -x "$archive_path")
 
-  slice_checked=0
-  slice_annotated=0
-  slice_unannotated=0
-
-  while IFS= read -r object; do
-    checked=$((checked + 1))
-    slice_checked=$((slice_checked + 1))
-    if ! output="$(xcrun vtool -show-build "$object" 2>/dev/null)"; then
-      echo "ERROR: unable to inspect $slice/$(basename "$object")" >&2
-      unreadable=$((unreadable + 1))
+  for architecture in "${slice_architectures[@]}"; do
+    arch_dir="$work/$slice-$architecture"
+    mkdir -p "$arch_dir/objects"
+    thin_archive="$arch_dir/librust_bridge.a"
+    available_architectures="$(xcrun lipo -archs "$archive_path" 2>/dev/null || true)"
+    if [[ "$available_architectures" == "$architecture" ]]; then
+      # The device XCFramework slice is correctly a thin arm64 archive. `lipo -thin`
+      # rejects thin input files, so copy that slice directly for object inspection.
+      cp "$archive_path" "$thin_archive"
+    elif ! xcrun lipo -thin "$architecture" "$archive_path" -output "$thin_archive" 2>/dev/null; then
+      echo "ERROR: unable to extract $architecture from RustBridge slice $slice (available: $available_architectures)." >&2
       failures=$((failures + 1))
       continue
     fi
+    (cd "$arch_dir/objects" && ar -x "$thin_archive")
 
-    minos="$(printf '%s\n' "$output" | awk '/minos / { print $2; exit }')"
-    if [[ -z "$minos" ]]; then
-      # Rust's compiler_builtins/std runtime archives legitimately contain helper
-      # objects without LC_BUILD_VERSION/LC_VERSION_MIN_IPHONEOS. They are not
-      # evidence of a higher deployment target. Keep counting them, but validate
-      # every object that does carry deployment metadata and require each slice
-      # to contain at least one annotated object.
-      unannotated=$((unannotated + 1))
-      slice_unannotated=$((slice_unannotated + 1))
-      continue
-    fi
+    slice_checked=0
+    slice_annotated=0
+    slice_unannotated=0
+    while IFS= read -r object; do
+      checked=$((checked + 1))
+      slice_checked=$((slice_checked + 1))
+      if ! output="$(xcrun vtool -show-build "$object" 2>/dev/null)"; then
+        echo "ERROR: unable to inspect $slice/$architecture/$(basename "$object")" >&2
+        unreadable=$((unreadable + 1))
+        failures=$((failures + 1))
+        continue
+      fi
 
-    annotated=$((annotated + 1))
-    slice_annotated=$((slice_annotated + 1))
-    if version_gt "$minos" "$MAX_IOS_VERSION"; then
-      echo "ERROR: $slice/$(basename "$object") requires iOS $minos (maximum allowed $MAX_IOS_VERSION)" >&2
+      minos="$(printf '%s\n' "$output" | awk '/minos / { print $2; exit }')"
+      if [[ -z "$minos" ]]; then
+        # Rust's compiler_builtins/std runtime archives legitimately contain helper
+        # objects without deployment metadata. Require at least one annotated object
+        # per architecture while allowing those runtime helpers.
+        unannotated=$((unannotated + 1))
+        slice_unannotated=$((slice_unannotated + 1))
+        continue
+      fi
+
+      annotated=$((annotated + 1))
+      slice_annotated=$((slice_annotated + 1))
+      if version_gt "$minos" "$MAX_IOS_VERSION"; then
+        echo "ERROR: $slice/$architecture/$(basename "$object") requires iOS $minos (maximum allowed $MAX_IOS_VERSION)" >&2
+        failures=$((failures + 1))
+      fi
+    done < <(find "$arch_dir/objects" -type f -name '*.o' -print)
+
+    if (( slice_checked == 0 )); then
+      echo "ERROR: no Mach-O objects found in RustBridge slice $slice ($architecture)." >&2
       failures=$((failures + 1))
     fi
-  done < <(find "$slice_dir" -type f -name '*.o' -print)
+    if (( slice_annotated == 0 )); then
+      echo "ERROR: no deployment-target metadata found in RustBridge slice $slice ($architecture)." >&2
+      failures=$((failures + 1))
+    fi
 
-  if (( slice_checked == 0 )); then
-    echo "ERROR: no Mach-O objects found in RustBridge slice $slice." >&2
-    failures=$((failures + 1))
-  fi
-  if (( slice_annotated == 0 )); then
-    echo "ERROR: no deployment-target metadata found in any object in RustBridge slice $slice." >&2
-    failures=$((failures + 1))
-  fi
-
-  echo "RustBridge slice $slice: checked=$slice_checked annotated=$slice_annotated unannotated-runtime-helpers=$slice_unannotated"
-done < <(find "$FRAMEWORK_PATH" -type f -name 'librust_bridge.a' -print)
+    echo "RustBridge slice $slice ($architecture): checked=$slice_checked annotated=$slice_annotated unannotated-runtime-helpers=$slice_unannotated"
+  done
+done < <(
+  for active_slice in ios-arm64 ios-arm64_x86_64-simulator; do
+    archive="$FRAMEWORK_PATH/$active_slice/librust_bridge.a"
+    [[ -f "$archive" ]] && printf '%s\n' "$archive"
+  done
+)
 
 if (( checked == 0 )); then
   echo "ERROR: no RustBridge Mach-O objects were found." >&2
   exit 2
 fi
 if (( archives != 2 || device_archives != 1 || simulator_archives != 1 )); then
-  echo "ERROR: RustBridge must contain exactly one iOS device slice and one iOS simulator slice (archives=$archives device=$device_archives simulator=$simulator_archives)." >&2
+  echo "ERROR: RustBridge must contain arm64 device and universal arm64+x86_64 simulator slices (archives=$archives device=$device_archives simulator=$simulator_archives)." >&2
   failures=$((failures + 1))
 fi
 

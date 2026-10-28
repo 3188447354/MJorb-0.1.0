@@ -9,6 +9,7 @@ struct AboutView: View {
 
     /// 检查更新失败的内嵌文案（失败不再弹窗，行内给重试）。
     @State private var updateFailureDetail: String?
+    @State private var isLatestAlertPresented = false
 
     var body: some View {
         ScrollView(showsIndicators: false) {
@@ -20,6 +21,7 @@ struct AboutView: View {
                 Text("由 MJorb 打造")
                     .font(.footnote)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .frame(maxWidth: .infinity)
                     .padding(.top, 2)
             }
@@ -28,6 +30,12 @@ struct AboutView: View {
         .navigationTitle("关于 Seal")
         .navigationBarTitleDisplayMode(.inline)
         .sealScreenBackground()
+        .alert("已是最新版本", isPresented: $isLatestAlertPresented) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text("当前版本 \(version) 已是最新版本。")
+                .singleLine()
+        }
     }
 
     private var identity: some View {
@@ -35,12 +43,15 @@ struct AboutView: View {
             appIcon
             Text("Seal")
                 .font(.title.weight(.semibold))
+                .singleLine()
             Text("个人 IPA 自签与续签工具")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
             Text("版本 \(version)")
                 .font(.footnote)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -54,6 +65,7 @@ struct AboutView: View {
                 HStack(spacing: 16) {
                     Text("检查更新")
                         .foregroundStyle(.primary)
+                        .singleLine()
                     Spacer(minLength: 12)
                     if updateCoordinator.isChecking {
                         ProgressView()
@@ -72,15 +84,14 @@ struct AboutView: View {
             }
             .buttonStyle(.plain)
             .disabled(updateCoordinator.isChecking)
-            // 检查更新失败：行内失败行＋重试按钮，不再弹窗；
-            // 「已是最新版本」本就由上方状态行显示，也不再弹窗。
+            // 检查更新失败：行内失败行＋重试按钮；检查成功后通过状态行或弹窗明确反馈。
             if let updateFailureDetail {
                 Divider()
                 HStack(spacing: 12) {
                     Text(updateFailureDetail)
                         .font(.system(size: 14))
                         .foregroundStyle(Color.sealDanger)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .singleLine()
                     Spacer(minLength: 8)
                     Button("重试", action: checkUpdate)
                         .font(.system(size: 14, weight: .semibold))
@@ -125,6 +136,7 @@ struct AboutView: View {
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
                 .padding(.leading, 8)
             VStack(spacing: 0, content: content)
                 .padding(.horizontal, 16)
@@ -152,6 +164,7 @@ struct AboutView: View {
             Spacer(minLength: 12)
             Text(value)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
         }
         .font(.system(size: 16, weight: .medium))
         .frame(minHeight: 54)
@@ -191,7 +204,10 @@ struct AboutView: View {
             switch result {
             case .unavailable(let failure):
                 updateFailureDetail = failure.detail
-            case .latest, .available:
+            case .latest:
+                isLatestAlertPresented = true
+            case .available:
+                // UpdatePresentationCoordinator 会打开更新抽屉，其中会明确展示新版版本号。
                 break
             }
         }

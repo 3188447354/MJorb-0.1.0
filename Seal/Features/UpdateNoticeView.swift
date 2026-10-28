@@ -14,9 +14,12 @@ struct UpdateNoticeView: View {
     @State private var phase: DownloadPhase = .available
     @State private var downloadTask: Task<Void, Never>?
     @State private var downloadGeneration = UUID()
+    @State private var lastProgressPresentationAt = Date.distantPast
     @State private var fittedDetentHeight: CGFloat?
     @State private var selectedDetent: PresentationDetent = .medium
     @State private var didMeasureInitialDetent = false
+
+    private static let progressPresentationInterval: TimeInterval = 0.5
 
     private enum DownloadFailure: Equatable {
         case download
@@ -30,6 +33,25 @@ struct UpdateNoticeView: View {
         case verifying
         case ready
         case failed(DownloadFailure)
+    }
+
+    /// 进度数字属于下载阶段内部状态，不应每个字节回调都触发抽屉转场动画。
+    private enum PhaseAnimationKey: Equatable {
+        case available
+        case downloading
+        case verifying
+        case ready
+        case failed(DownloadFailure)
+    }
+
+    private var phaseAnimationKey: PhaseAnimationKey {
+        switch phase {
+        case .available: .available
+        case .downloading: .downloading
+        case .verifying: .verifying
+        case .ready: .ready
+        case .failed(let failure): .failed(failure)
+        }
     }
 
     private var currentVersion: String {
@@ -50,7 +72,7 @@ struct UpdateNoticeView: View {
         .presentationDetents(availableDetents, selection: $selectedDetent)
         .presentationContentInteraction(.scrolls)
         .interactiveDismissDisabled(isDismissible == false)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phase)
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: phaseAnimationKey)
         .onPreferenceChange(SealDrawerLayoutMeasurementsPreferenceKey.self) { measurements in
             updateFittedDetent(using: measurements)
         }
@@ -164,6 +186,7 @@ struct UpdateNoticeView: View {
                 Text("更新内容")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .padding(.top, 20)
                     .padding(.bottom, 10)
 
@@ -191,13 +214,12 @@ struct UpdateNoticeView: View {
     }
 
     private func downloadingContent(received: Int64, total: Int64?) -> some View {
-        let progress = UpdateDownloadProgress.fraction(received: received, total: total)
+        let progress = UpdateDownloadProgress.inFlightFraction(received: received, total: total)
         return VStack(alignment: .leading, spacing: 0) {
             Text(downloadDetail(received: received, total: total))
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
-                .contentTransition(.numericText())
-                .animation(.easeInOut(duration: 0.25), value: received)
+                .singleLine()
                 .padding(.top, 8)
             if received > 0 {
                 if let progress {
@@ -213,6 +235,7 @@ struct UpdateNoticeView: View {
                         Text("正在下载")
                             .font(.subheadline)
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                     }
                     .padding(.top, 14)
                 }
@@ -224,6 +247,7 @@ struct UpdateNoticeView: View {
                     Text("正在连接更新源")
                         .font(.subheadline)
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                 }
                 .padding(.top, 14)
             }
@@ -240,6 +264,7 @@ struct UpdateNoticeView: View {
             Text(detail)
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.top, 14)
         }
@@ -251,19 +276,20 @@ struct UpdateNoticeView: View {
         Text("正在打开更新确认")
             .font(.subheadline)
             .foregroundStyle(Color.sealTextSecondary)
+            .singleLine()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 22)
     }
 
     private func failureContent(_ failure: DownloadFailure) -> some View {
         Text(failure == .verification
-             ? "此更新包未通过校验，Seal 已停止使用它。\n当前 Seal 未更改"
+             ? "更新包校验失败，Seal 未更改。"
              : failure == .storage
-                ? "释放设备空间后，再下载更新包"
-                : "更新包未下载完整，当前 Seal 未更改")
+                ? "空间不足；释放空间后重试。"
+                : "下载不完整，Seal 未更改。")
             .font(.subheadline)
             .foregroundStyle(Color.sealTextSecondary)
-            .fixedSize(horizontal: false, vertical: true)
+            .singleLine()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 18)
     }
@@ -284,6 +310,7 @@ struct UpdateNoticeView: View {
             Text(title)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
                 .frame(maxWidth: .infinity, minHeight: 44)
         }
         .buttonStyle(.plain)
@@ -298,10 +325,11 @@ struct UpdateNoticeView: View {
         }
         let receivedText = received.formatted(.byteCount(style: .file))
         guard let total, total > 0,
-              let progress = UpdateDownloadProgress.fraction(received: received, total: total) else {
+              let progress = UpdateDownloadProgress.inFlightFraction(received: received, total: total) else {
             return "已下载 \(receivedText)"
         }
-        return "下载进度 \(progress.sealPercentText) · 已下载 \(receivedText) / \(total.formatted(.byteCount(style: .file)))"
+        let progressText = received >= total ? "正在完成下载" : "下载进度 \(progress.sealPercentText)"
+        return "\(progressText) · 已下载 \(receivedText) / \(total.formatted(.byteCount(style: .file)))"
     }
 
     @MainActor
@@ -311,9 +339,14 @@ struct UpdateNoticeView: View {
             if let url = notice.downloadURL { openURL(url) }
             return
         }
+        guard let expectedSHA256 = notice.expectedSHA256 else {
+            phase = .failed(.verification)
+            return
+        }
 
         let generation = UUID()
         downloadGeneration = generation
+        lastProgressPresentationAt = .distantPast
         phase = .downloading(0, notice.ipaDownloadSize)
         downloadTask = Task {
             let localURL: URL
@@ -321,11 +354,23 @@ struct UpdateNoticeView: View {
                 localURL = try await UpdateIPADownloader.shared.download(
                         from: ipaURL,
                         expectedSize: notice.ipaDownloadSize,
-                        checksumURL: notice.sha256DownloadURL,
+                        expectedSHA256: expectedSHA256,
                         onProgress: { @MainActor received, total in
                             guard downloadGeneration == generation,
                                   case .downloading(let previousBytes, _) = phase else { return }
-                            phase = .downloading(max(received, previousBytes), total)
+                            let now = Date()
+                            let reachedKnownEnd = total.map { received >= $0 } ?? false
+                            guard previousBytes == 0
+                                    || received < previousBytes
+                                    || reachedKnownEnd
+                                    || now.timeIntervalSince(lastProgressPresentationAt) >= Self.progressPresentationInterval else {
+                                return
+                            }
+                            lastProgressPresentationAt = now
+                            let displayedBytes = received < previousBytes
+                                ? received
+                                : max(received, previousBytes)
+                            phase = .downloading(displayedBytes, total)
                         }
                     )
             } catch is CancellationError {
@@ -349,12 +394,9 @@ struct UpdateNoticeView: View {
 
             phase = .verifying
             do {
-                // SHA256 完整性已由下载器在落盘后、返回前校验（SEAL-UPDATE-DL-506）；
-                // 这里只剩版本交叉校验。校验资产缺失（sha256DownloadURL 为 nil）时
-                // 下载器无从校验，继续 fail closed 判校验失败，不放行安装。
+                // SHA256 已用检查更新时取得的清单摘要由下载器校验；此处再核对 IPA 内版本。
                 let parsed = try IPAParserService().parse(url: localURL)
-                guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version),
-                      notice.sha256DownloadURL != nil else {
+                guard UpdateChecker.advertisedVersion(notice.version, matchesIPAVersion: parsed.version) else {
                     UpdateIPADownloader.shared.discardCompletedDownload(at: localURL)
                     guard downloadGeneration == generation else { return }
                     phase = .failed(.verification)

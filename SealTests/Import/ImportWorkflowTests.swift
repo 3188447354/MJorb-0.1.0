@@ -482,6 +482,7 @@ extension ImportWorkflowTests {
             accountID: UUID(),
             signingTeamID: "TEAM000001",
             ipaRelativePath: "",
+            installedAppMarkerVersion: SealInstalledAppMarker.version,
             needsIPAImport: true,
             importedAt: Date(timeIntervalSince1970: 100)
         )
@@ -915,6 +916,7 @@ private extension ImportWorkflowTests {
             size: 0,
             state: .installed,
             ipaRelativePath: "",
+            installedAppMarkerVersion: SealInstalledAppMarker.version,
             needsIPAImport: true,
             importedAt: Date(timeIntervalSince1970: 100)
         ))

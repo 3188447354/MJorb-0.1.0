@@ -9,10 +9,10 @@ struct TeamSelectionView: View {
     var body: some View {
         SealDrawer(title: "选择团队") {
             VStack(alignment: .leading, spacing: 14) {
-                Text("这个 Apple ID 有多个团队。之后签名用的证书和应用信息都会固定使用你选的这个团队。")
+                Text("所选团队将用于后续签名和应用管理。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .singleLine()
 
                 if let pending = viewModel.pendingTeamSelection {
                     ForEach(pending.teams) { team in
@@ -27,10 +27,12 @@ struct TeamSelectionView: View {
                                     Text(team.id)
                                         .font(.caption.monospaced())
                                         .foregroundStyle(.secondary)
+                                        .singleLine()
                                         .textSelection(.enabled)
                                     Text(team.isFreeTeam ? "免费团队" : "付费团队")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                        .singleLine()
                                 }
                                 Spacer(minLength: 8)
                                 Image(systemName: selectedTeamID == team.id ? "checkmark.circle.fill" : "circle")
@@ -66,7 +68,7 @@ struct TeamSelectionView: View {
                     }
                 } label: {
                     if isSaving { ProgressView().frame(maxWidth: .infinity) }
-                    else { Text("保存选择") }
+                    else { Text("保存选择").singleLine() }
                 }
                 .sealPrimaryAction(cornerRadius: 12)
                 .disabled(selectedTeamID == nil || isSaving)

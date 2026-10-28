@@ -160,6 +160,27 @@
     {
       "actions": [
         {
+          "title": "连接 Wi-Fi 后重试签名或续签"
+        }
+      ],
+      "code": "SEAL-INSTALL-700",
+      "confidence": "confirmed",
+      "evidence": [
+        "NWPathMonitor(requiredInterfaceType: .wifi) reports an unsatisfied path"
+      ],
+      "kind": "failure",
+      "notEvidenceOf": [
+        "不能据此判断 LocalDevVPN 是否已开启。"
+      ],
+      "source": [
+        "Seal/Infrastructure/Installation/WiFiPathAvailability.swift",
+        "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift:wifiUnavailableFailure"
+      ],
+      "summary": "签名设备通道没有可用的 Wi-Fi 路径。"
+    },
+    {
+      "actions": [
+        {
           "title": "在 iPhone“设置 > 通用 > iPhone 储存空间”清理可用空间"
         },
         {
@@ -210,6 +231,48 @@
         "超时前后的安装日志",
         "IPA 大小",
         "是否随后在已安装列表中出现"
+      ]
+    },
+    {
+      "actions": [
+        {
+          "title": "重新签名后安装，仍失败时导出日志反馈"
+        }
+      ],
+      "code": "SEAL-INSTALL-702w",
+      "confidence": "confirmed",
+      "evidence": [
+        "InvalidCompanionAppBundleIdentifier"
+      ],
+      "kind": "failure",
+      "source": [
+        "Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift:installationFailure"
+      ],
+      "summary": "系统拒绝安装，手表组件与主应用标识不一致。"
+    },
+    {
+      "actions": [
+        {
+          "title": "在“文件”App 中确认 IPA 已完整下载"
+        },
+        {
+          "title": "重新导入 IPA；仍失败时从原来源重新获取"
+        }
+      ],
+      "code": "SEAL-IPA-214",
+      "confidence": "conditional",
+      "kind": "failure",
+      "notEvidenceOf": [
+        "不能仅凭此码认定 ZIP 内部 CRC32 已损坏。",
+        "不能仅凭此码认定是 Apple ID、签名证书或描述文件问题。"
+      ],
+      "source": [
+        "Seal/Infrastructure/Storage/AppFileStore.swift:copyImportSource"
+      ],
+      "summary": "从文件提供方协调读取 IPA 时，文件读取失败或复制前后大小不一致。",
+      "supportData": [
+        "IPA 来源与文件大小",
+        "导入失败日志"
       ]
     },
     {
@@ -324,6 +387,34 @@
       "supportData": [
         "SEAL-SELF-109 底层诊断",
         "自更新前后的安装阶段日志"
+      ]
+    },
+    {
+      "actions": [
+        {
+          "title": "从原来源重新完整获取 IPA 后再导入"
+        },
+        {
+          "title": "签名前确保可用空间满足 Seal 的提示"
+        },
+        {
+          "title": "仍失败时导出最新日志并提供 IPA 来源与大小"
+        }
+      ],
+      "code": "SEAL-SIGN-407",
+      "confidence": "conditional",
+      "kind": "failure",
+      "notEvidenceOf": [
+        "不能仅凭此码认定是 Apple ID、签名证书或描述文件问题。",
+        "不能仅凭此码确认损坏由网络切换造成。"
+      ],
+      "source": [
+        "Seal/Infrastructure/Signing/SigningWorkspace.swift:prepare"
+      ],
+      "summary": "签名准备阶段发现 IPA 内部 CRC32 校验不一致，文件内容与 ZIP 记录不匹配，可能不完整或已损坏。",
+      "supportData": [
+        "IPA 来源与文件大小",
+        "校验失败前后的日志"
       ]
     },
     {

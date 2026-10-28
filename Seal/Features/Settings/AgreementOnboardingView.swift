@@ -135,6 +135,7 @@ struct AgreementOnboardingView: View {
             Text("Seal")
                 .font(.system(size: AgreementOnboardingLayout.brandNamePointSize, weight: .bold, design: .rounded))
                 .minimumScaleFactor(0.7)
+                .lineLimit(1)
                 .foregroundStyle(
                     LinearGradient(
                         colors: [
@@ -210,7 +211,7 @@ private struct AgreementConsentSheet: View {
                 UserDefaults.standard.set(AgreementVersion.current, forKey: AgreementVersion.storageKey)
                 onAgreed()
             }) {
-                Text("同意并继续")
+                Text("同意并继续").singleLine()
             }
             // 首启协议页主按钮改走主题按钮（2026-10-24）：不再写死蓝渐变，
             // 跟随用户选的主题色；按钮形态（圆角 14）与原版一致。
@@ -234,11 +235,13 @@ private struct AgreementConsentSheet: View {
 
     private var agreementDescription: some View {
         HStack(spacing: 0) {
-            Text("继续即表示你已阅读并同意")
+            Text("请先阅读并同意")
+                .singleLine()
             Button("《隐私政策》") { onOpenPolicy(.privacy) }
                 .foregroundStyle(Color(red: 0, green: 122 / 255.0, blue: 1))
                 .accessibilityIdentifier("agreement-privacy-link")
             Text("与")
+                .singleLine()
             Button("《用户协议》") { onOpenPolicy(.terms) }
                 .foregroundStyle(Color(red: 0, green: 122 / 255.0, blue: 1))
                 .accessibilityIdentifier("agreement-terms-link")

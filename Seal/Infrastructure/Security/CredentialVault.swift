@@ -193,6 +193,12 @@ enum CredentialVaultKeyStore {
 
 // MARK: - 保险库文件存储（Application Support）
 
+enum CredentialVaultFileStoreError: Error {
+    /// 密文无法解开、信封格式异常或明文载荷无法解码。文件读取与钥匙串取钥错误
+    /// 会保留原始错误，避免把权限/设备锁定问题误当成文件损坏。
+    case unreadableContent
+}
+
 /// AES-GCM 加密的保险库文件：全账号 secret 合集的第二副本（双写自愈的「备」）。
 /// 文件里只有密文；钥匙在钥匙串（`CredentialVaultKeyStore`）。
 /// 每次操作整体读—改—写（原子写保证不写一半）。
@@ -228,8 +234,13 @@ actor CredentialVaultFileStore {
     func loadPayload() throws -> CredentialVaultPayload {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return .empty }
         let fileData = try Data(contentsOf: fileURL)
-        let plain = try CredentialVaultCrypto.decryptFile(fileData, key: try keyProvider())
-        return try CredentialVaultCrypto.decodePayload(plain)
+        let key = try keyProvider()
+        do {
+            let plain = try CredentialVaultCrypto.decryptFile(fileData, key: key)
+            return try CredentialVaultCrypto.decodePayload(plain)
+        } catch {
+            throw CredentialVaultFileStoreError.unreadableContent
+        }
     }
 
     func savePayload(_ payload: CredentialVaultPayload) throws {
@@ -239,6 +250,28 @@ actor CredentialVaultFileStore {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try fileData.write(to: fileURL, options: .atomic)
         try? CompleteFileProtector().protect(fileURL)
+    }
+
+    /// 仅在确认文件内容不可读后调用。旧密文先改名保留，再原子写入从钥匙串
+    /// 重建的副本；新副本写入失败时尽力恢复原路径，绝不先删旧凭据副本。
+    func quarantineUnreadableFileAndSave(_ payload: CredentialVaultPayload) throws {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: fileURL.path) else {
+            try savePayload(payload)
+            return
+        }
+
+        let backupURL = fileURL.deletingLastPathComponent()
+            .appendingPathComponent("CredentialVault.recovery-\(UUID().uuidString).backup")
+        try manager.moveItem(at: fileURL, to: backupURL)
+        do {
+            try savePayload(payload)
+        } catch {
+            if manager.fileExists(atPath: fileURL.path) == false {
+                try? manager.moveItem(at: backupURL, to: fileURL)
+            }
+            throw error
+        }
     }
 
     @discardableResult

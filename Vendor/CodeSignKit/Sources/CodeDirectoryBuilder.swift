@@ -202,26 +202,111 @@ public final class CodeDirectoryBuilder {
         // 而 `update(bufferPointer:)` 是**协议要求**，两边都保证可见 ✓。
         // （2026-10-03：这段话描述的是 swift-crypto 分支；CryptoKit 分支走
         // `FastSHA256.hashPage`，见 `FastHash.swift`。）
-        for i in 0..<numPages {
-            let pageStart = i * pageSize
-            let pageEnd = min(pageStart + pageSize, codeLimit)
+        // Hash independent pages in bounded parallel chunks. The outer signer still processes
+        // nested bundles and Mach-O files in dependency order; only these read-only page digests
+        // run concurrently. Each worker builds a private contiguous result, then the caller
+        // stitches chunks back in page order so CodeDirectory bytes remain deterministic.
+        let minimumPagesPerWorker = 128 // 2 MiB per worker at the usual 16 KiB page size.
+        let availableWorkers = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let workerCount = numPages >= minimumPagesPerWorker
+            ? min(availableWorkers, numPages / minimumPagesPerWorker)
+            : 1
 
-            let pageHash: Data = binaryData.withUnsafeBytes { raw -> Data in
-                let page = UnsafeRawBufferPointer(rebasing: raw[pageStart..<pageEnd])
-                if hashType == CodeSigningConstants.CS_HASHTYPE_SHA256 {
-                    return FastSHA256.hashPage(page)
-                } else {
-                    var hasher = Insecure.SHA1()
-                    hasher.update(bufferPointer: page)
-                    return Data(hasher.finalize())
+        if workerCount == 1 {
+            appendPageHashes(
+                range: 0..<numPages,
+                pageSize: pageSize,
+                codeLimit: codeLimit,
+                hashType: hashType,
+                hashSize: hashSize,
+                binaryData: binaryData,
+                actualHashOffset: actualHashOffset,
+                to: &cdData
+            )
+        } else {
+            let pagesPerWorker = (numPages + workerCount - 1) / workerCount
+            let chunksLock = NSLock()
+            var chunks = [Data](repeating: Data(), count: workerCount)
+
+            DispatchQueue.concurrentPerform(iterations: workerCount) { workerIndex in
+                let pageStartIndex = workerIndex * pagesPerWorker
+                let pageEndIndex = min(pageStartIndex + pagesPerWorker, numPages)
+                guard pageStartIndex < pageEndIndex else { return }
+
+                var chunk = Data()
+                chunk.reserveCapacity((pageEndIndex - pageStartIndex) * hashSize)
+                binaryData.withUnsafeBytes { raw in
+                    for pageIndex in pageStartIndex..<pageEndIndex {
+                        let start = pageIndex * pageSize
+                        let end = min(start + pageSize, codeLimit)
+                        let page = UnsafeRawBufferPointer(rebasing: raw[start..<end])
+                        if hashType == CodeSigningConstants.CS_HASHTYPE_SHA256 {
+                            chunk.append(contentsOf: FastSHA256.hashPage(page))
+                        } else {
+                            var hasher = Insecure.SHA1()
+                            hasher.update(bufferPointer: page)
+                            chunk.append(contentsOf: Data(hasher.finalize()))
+                        }
+                    }
                 }
+
+                chunksLock.lock()
+                chunks[workerIndex] = chunk
+                chunksLock.unlock()
             }
 
-            let codeOffset = actualHashOffset + (i * hashSize)
-            cdData.replaceSubrange(codeOffset..<codeOffset + hashSize, with: pageHash)
+            var orderedHashes = Data()
+            orderedHashes.reserveCapacity(numPages * hashSize)
+            for chunk in chunks {
+                orderedHashes.append(contentsOf: chunk)
+            }
+
+            if orderedHashes.count == numPages * hashSize {
+                cdData.replaceSubrange(actualHashOffset..<layout.totalSize, with: orderedHashes)
+            } else {
+                // Defensive correctness fallback: a missing worker result must never emit a
+                // partially zeroed CodeDirectory. Recompute serially if aggregation is invalid.
+                appendPageHashes(
+                    range: 0..<numPages,
+                    pageSize: pageSize,
+                    codeLimit: codeLimit,
+                    hashType: hashType,
+                    hashSize: hashSize,
+                    binaryData: binaryData,
+                    actualHashOffset: actualHashOffset,
+                    to: &cdData
+                )
+            }
         }
 
         return cdData
+    }
+
+    private func appendPageHashes(
+        range: Range<Int>,
+        pageSize: Int,
+        codeLimit: Int,
+        hashType: UInt8,
+        hashSize: Int,
+        binaryData: Data,
+        actualHashOffset: Int,
+        to codeDirectory: inout Data
+    ) {
+        for pageIndex in range {
+            let pageStart = pageIndex * pageSize
+            let pageEnd = min(pageStart + pageSize, codeLimit)
+            let pageHash: Data = binaryData.withUnsafeBytes { raw in
+                let page = UnsafeRawBufferPointer(rebasing: raw[pageStart..<pageEnd])
+                if hashType == CodeSigningConstants.CS_HASHTYPE_SHA256 {
+                    return FastSHA256.hashPage(page)
+                }
+                var hasher = Insecure.SHA1()
+                hasher.update(bufferPointer: page)
+                return Data(hasher.finalize())
+            }
+            let offset = actualHashOffset + pageIndex * hashSize
+            codeDirectory.replaceSubrange(offset..<offset + hashSize, with: pageHash)
+        }
     }
 }
 

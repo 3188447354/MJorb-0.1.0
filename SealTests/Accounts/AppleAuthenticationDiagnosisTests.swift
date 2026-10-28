@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@preconcurrency import AltSign
 @testable import Seal
 
 /// 「Apple 要求双重认证」这条分类的测试。
@@ -11,6 +12,30 @@ import Testing
 /// 而**密码完全没问题**：Apple 已经接受了密码，只是要求走第二步。
 @Suite("Apple 要求双重认证：分类与提示")
 struct AppleAuthenticationDiagnosisTests {
+    @Test
+    func legacyMacRejectionRequiresAppleDomainAndSpecificCode() {
+        #expect(AppleAuthenticationDiagnosis.isLegacyMacRejected(NSError(domain: "Apple.APIError", code: -23782)))
+        #expect(!AppleAuthenticationDiagnosis.isLegacyMacRejected(NSError(domain: "other", code: -23782)))
+        #expect(!AppleAuthenticationDiagnosis.isLegacyMacRejected(NSError(domain: "Apple.APIError", code: -80045)))
+        let failure = AppleAuthenticationFailure.make(stage: .signIn, error: NSError(domain: "Apple.APIError", code: -23782))
+        #expect(failure.reason.contains("Apple 暂时不接受当前登录环境"))
+        #expect(!failure.reason.contains("10.13"))
+    }
+
+    @Test
+    func compatibleMacDataKeepsCredentialsAndDoesNotModifyOriginal() {
+        let source = ALTAnisetteData(machineID: "machine", oneTimePassword: "otp", localUserID: "user", routingInfo: 123, deviceUniqueIdentifier: "device", deviceSerialNumber: "serial", deviceDescription: "old", date: Date(), locale: Locale(identifier: "en_US"), timeZone: .gmt, userAgent: "old-agent")
+        let copy = AppleAuthenticationDiagnosis.compatibleMacData(from: source)
+        #expect(copy !== source)
+        #expect(source.deviceDescription == "old")
+        #expect(source.userAgent == "old-agent")
+        #expect(copy.machineID == source.machineID)
+        #expect(copy.oneTimePassword == source.oneTimePassword)
+        #expect(copy.deviceUniqueIdentifier == source.deviceUniqueIdentifier)
+        #expect(copy.deviceDescription.contains("MacBookPro13,3"))
+        #expect(copy.deviceDescription.contains("macOS;13.6.7;22G720"))
+        #expect(copy.userAgent == "akd/1.0 CFNetwork/1410.1 Darwin/22.6.0")
+    }
     /// 真机取证的那一条：域 `AltStore.AppleDeveloperError`、码 `3018`。
     private func twoFactorError() -> NSError {
         NSError(

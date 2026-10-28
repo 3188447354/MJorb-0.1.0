@@ -2,23 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- ⚠️ 这个文件**不是**最终的 Info.plist。
-	     XcodeGen 会照 `project.yml` 里 `targets.SealLiveActivity.info.properties`
-	     **重新生成**一份，本文件只提供下面这些键。
-
-	     ⇒ `NSExtension`（把本扩展声明成 widget 扩展的那个键）**必须写在 project.yml 里**。
-	       写在下面的 dict 中会被 XcodeGen 静默丢掉 —— 2026-10-16 实测：
-	       产物里 NSExtension 整个键不存在，导致安装被拒、且就算装上灵动岛也永不显示。
-	       那正是我此前三轮都修不好的原因。
-
-	     全部用 Xcode 构建变量，不写字面量：
-	     `CFBundleExecutable` / `CFBundleIdentifier` / `CFBundlePackageType` 这类值由
-	     构建设置决定，硬编码会和 `PRODUCT_NAME` / `TARGETED_DEVICE_FAMILY` 打架。
-	     也**不要**手写 `UIDeviceFamily` —— 它由 `TARGETED_DEVICE_FAMILY` 注入。 -->
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
-	<key>CFBundleDisplayName</key>
-	<string>Seal 配对</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -28,10 +13,15 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
-	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<string>XPC!</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.widgetkit-extension</string>
+	</dict>
 </dict>
 </plist>

@@ -26,9 +26,7 @@ final class SealNotificationPresenter: NSObject, UNUserNotificationCenterDelegat
         if PairingCodeNotification.shouldOpenPairing(
             requestIdentifier: response.notification.request.identifier
         ) {
-            await MainActor.run {
-                PairingCodeNotification.requestPairingScreen()
-            }
+            PairingCodeNotification.recordPairingScreenTap()
             return
         }
 
@@ -38,8 +36,12 @@ final class SealNotificationPresenter: NSObject, UNUserNotificationCenterDelegat
             return
         }
 
-        await MainActor.run {
-            NotificationCenter.default.post(name: BackgroundRenewalNotificationRoute.opened, object: nil)
-        }
+        // The callback can run inside UIKit's scene-restoration transaction. Even a
+        // main-queue hop can then abort in _performBlockAfterCATransactionCommitSynchronizes.
+        // Persist the intent first; the app scene consumes it only after becoming active.
+        let roundID = response.notification.request.content.userInfo[
+            BackgroundRenewalNotificationRoute.roundIDUserInfoKey
+        ] as? String
+        BackgroundRenewalNotificationRoute.recordTap(roundID: roundID)
     }
 }

@@ -184,5 +184,52 @@ struct CodeDirectoryBuilderTests {
             #expect(producedHash == legacyHash, "第 \(i) 页哈希与 legacy subdata 实现不一致")
         }
     }
+
+    /// Covers the bounded parallel path (the preceding fixture intentionally stays serial).
+    @Test
+    func parallelPageHashesMatchSerialReference() throws {
+        let pageSizeShift: UInt8 = 12
+        let pageSize = 1 << Int(pageSizeShift)
+        let codeLimit = pageSize * 257 + 123
+        var payload = Data(count: codeLimit)
+        for i in 0..<codeLimit {
+            payload[i] = UInt8(truncatingIfNeeded: i &* 17 &+ 29)
+        }
+
+        for hashType in [CodeSigningConstants.CS_HASHTYPE_SHA256, CodeSigningConstants.CS_HASHTYPE_SHA1] {
+            let builder = CodeDirectoryBuilder(
+                binaryData: payload,
+                codeLimit: codeLimit,
+                bundleIdentifier: "com.example.parallel",
+                teamIdentifier: "TEAM123456",
+                hashType: hashType,
+                pageSizeShift: pageSizeShift
+            )
+            let produced = builder.build()
+            let actualHashOffset = Int(produced.withUnsafeBytes {
+                $0.loadUnaligned(fromByteOffset: 16, as: UInt32.self).bigEndian
+            })
+            let hashSize = Int(produced[36])
+            let pageCount = Int(produced.withUnsafeBytes {
+                $0.loadUnaligned(fromByteOffset: 28, as: UInt32.self).bigEndian
+            })
+            #expect(pageCount == 258)
+
+            for pageIndex in 0..<pageCount {
+                let start = pageIndex * pageSize
+                let end = min(start + pageSize, codeLimit)
+                let page = payload.subdata(in: start..<end)
+                let expected: Data
+                if hashType == CodeSigningConstants.CS_HASHTYPE_SHA256 {
+                    expected = Data(SHA256.hash(data: page))
+                } else {
+                    expected = Data(Insecure.SHA1.hash(data: page))
+                }
+                let offset = actualHashOffset + pageIndex * hashSize
+                #expect(produced.subdata(in: offset..<offset + hashSize) == expected,
+                        "hash type \(hashType), page \(pageIndex) differs from serial reference")
+            }
+        }
+    }
 }
 

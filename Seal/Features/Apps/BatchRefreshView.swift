@@ -50,9 +50,11 @@ struct BatchRefreshView: View {
                 ProgressView().controlSize(.regular)
                 Text("正在准备续签队列")
                     .font(.system(size: 18, weight: .semibold))
+                    .singleLine()
                 Text("正在检查需要续签的 App")
                     .font(.system(size: 14))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(16)
@@ -65,6 +67,7 @@ struct BatchRefreshView: View {
                     Text("已完成")
                         .font(.system(size: 14))
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                     Spacer()
                     ProgressView().controlSize(.small)
                 }
@@ -82,9 +85,11 @@ struct BatchRefreshView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("其他 App 已完成")
                     .font(.system(size: 18, weight: .semibold))
+                    .singleLine()
                 Text("即将更新 Seal")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Color.sealAccent)
+                    .singleLine()
             }
             .padding(16)
             .sealContentCard(.standard)
@@ -95,6 +100,7 @@ struct BatchRefreshView: View {
                 Text(result.failed == 0 ? "\(result.succeeded) 个 App 已续签" : "\(result.succeeded) 个成功，\(result.failed) 个失败")
                     .font(.system(size: 14))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
             .padding(16)
             .sealContentCard(.standard)
@@ -127,6 +133,7 @@ struct BatchRefreshView: View {
                     Text("正在传输到设备")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                     Spacer()
                     Text(progress.sealPercentText)
                         .font(.system(size: 13, weight: .semibold))
@@ -159,6 +166,7 @@ struct BatchRefreshView: View {
             Text("续签队列")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
@@ -204,6 +212,7 @@ struct BatchRefreshView: View {
                 Text(queueStatusText(item.state))
                     .font(.system(size: 13))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
 
             Spacer(minLength: 10)
@@ -267,14 +276,23 @@ struct BatchRefreshView: View {
                     Button("重试失败项") { viewModel.refreshFailedItems() }
                         .sealOutlineAction(cornerRadius: 14)
                 }
-                Button("完成") { viewModel.dismissBatchRefresh(); dismiss() }
+                Button("完成") { dismiss() }
                     .sealPrimaryAction(cornerRadius: 14)
             }
-        case .failed:
+        case .failed(let failure):
             VStack(spacing: 10) {
-                Button("重试全部") { viewModel.refreshAll() }
+                if failure.action == .openLocalDevVPN {
+                    Button("打开 LocalDevVPN") {
+                        LocalDevVPNLink.openApplication()
+                    }
                     .sealPrimaryAction(cornerRadius: 14)
-                Button("完成") { viewModel.dismissBatchRefresh(); dismiss() }
+                    Button("重试全部") { viewModel.refreshAll() }
+                        .sealOutlineAction(cornerRadius: 14)
+                } else {
+                    Button("重试全部") { viewModel.refreshAll() }
+                        .sealPrimaryAction(cornerRadius: 14)
+                }
+                Button("完成") { dismiss() }
                     .sealOutlineAction(cornerRadius: 14)
             }
         case .preparing, .running, .preparingSealUpdate:
@@ -331,8 +349,8 @@ struct BatchRefreshView: View {
             return AppSigningPresentationHelpers.keepSealOpenTip
         case .preparingSealUpdate:
             return "更新 Seal 时会暂时回到主屏幕，安装完成后请重新打开。"
-        case .failed:
-            return "请确认已连接 Wi-Fi 且 LocalDevVPN 已连接后重试；若提示账号会话过期，请先在「我的」页重新验证。"
+        case .failed(let failure):
+            return failure.recovery
         case .completed, nil:
             return nil
         }
@@ -342,6 +360,9 @@ struct BatchRefreshView: View {
         guard let session = viewModel.batchRefreshSession,
               let stage = session.currentStage else {
             return "正在续签"
+        }
+        if stage == .waitingForChannel, viewModel.signingChannelStatus == .ready {
+            return "设备通道已就绪"
         }
         return session.currentRenewalExecutionPath?.stageTitle(for: stage)
             ?? stage.stageTitle(isRenewal: true)

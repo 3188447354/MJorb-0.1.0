@@ -28,7 +28,8 @@ protocol InstallChannel: Actor {
     /// ⚠️ 与 `clearFailureCooldown()` 同理**必须声明为协议要求**：只在 extension
     /// 里给默认实现的话，`any InstallChannel` 会静态派发到默认实现，
     /// 具体实现的覆写不会被调用。
-    func prewarmAtLaunch() async
+    @discardableResult
+    func prewarmAtLaunch() async -> Bool
     /// 只废弃 Rust 的 RSD 会话缓存，保留当前配对文件与 provider 选择。
     /// 用于 profile 服务出现瞬时失败后的立即自愈，避免全量 reset 配对状态。
     func invalidateProfileServiceConnection() async
@@ -78,7 +79,7 @@ extension InstallChannel {
 
     /// 默认空实现：供测试桩与不做启动点火的类型直接遵循。
     /// 真实实现见 `MinimuxerInstallChannel.prewarmAtLaunch()`。
-    func prewarmAtLaunch() async {}
+    func prewarmAtLaunch() async -> Bool { false }
 
     func invalidateProfileServiceConnection() async {}
 

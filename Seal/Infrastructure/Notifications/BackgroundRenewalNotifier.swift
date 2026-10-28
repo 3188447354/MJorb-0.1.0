@@ -8,10 +8,42 @@ import UserNotifications
 enum BackgroundRenewalNotificationRoute {
     /// Kept outside the main-actor notifier so notification routing stays a pure, testable value rule.
     static let identifier = "com.mjorb.seal.background-renewal"
-    static let opened = Notification.Name("sealBackgroundRenewalNotificationOpened")
+    static let pendingTapKey = "seal.pendingBackgroundRenewalNotificationTap"
+    static let pendingTapRoundIDKey = "seal.pendingBackgroundRenewalNotificationRoundID"
+    static let pendingTapRevisionKey = "seal.pendingBackgroundRenewalNotificationTapRevision"
+    static let roundIDUserInfoKey = "seal.backgroundRenewal.roundID"
 
     static func shouldRequestResultPresentation(requestIdentifier: String) -> Bool {
         requestIdentifier == identifier
+    }
+
+    /// Persist the tap before the notification callback returns. UIKit can still be
+    /// restoring the scene at this point, so the delegate must not notify SwiftUI yet.
+    static func recordTap(roundID: String?) {
+        if let roundID {
+            UserDefaults.standard.set(roundID, forKey: pendingTapRoundIDKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: pendingTapRoundIDKey)
+        }
+        UserDefaults.standard.set(true, forKey: pendingTapKey)
+        let revision = UserDefaults.standard.integer(forKey: pendingTapRevisionKey)
+        UserDefaults.standard.set(revision &+ 1, forKey: pendingTapRevisionKey)
+    }
+
+    static var hasPendingTap: Bool {
+        UserDefaults.standard.bool(forKey: pendingTapKey)
+    }
+
+    static var pendingRoundID: UUID? {
+        guard let value = UserDefaults.standard.string(forKey: pendingTapRoundIDKey) else { return nil }
+        return UUID(uuidString: value)
+    }
+
+    static func clearPendingTap(matching roundID: UUID?) {
+        guard hasPendingTap else { return }
+        if let expectedRoundID = pendingRoundID, expectedRoundID != roundID { return }
+        UserDefaults.standard.removeObject(forKey: pendingTapKey)
+        UserDefaults.standard.removeObject(forKey: pendingTapRoundIDKey)
     }
 }
 
@@ -127,16 +159,26 @@ final class BackgroundRenewalNotifier {
         self.center = center
     }
 
-    func post(_ result: BackgroundRenewalNotificationResult) async -> BackgroundRenewalNotificationDelivery {
+    func post(
+        _ result: BackgroundRenewalNotificationResult,
+        roundID: UUID? = nil
+    ) async -> BackgroundRenewalNotificationDelivery {
         guard result.shouldNotify else { return .skippedNothingToRenew }
-        return await deliver(title: result.title, body: result.body)
+        return await deliver(title: result.title, body: result.body, roundID: roundID)
     }
 
-    func post(_ notice: BackgroundRenewalSkippedNotice) async -> BackgroundRenewalNotificationDelivery {
-        await deliver(title: notice.title, body: notice.body)
+    func post(
+        _ notice: BackgroundRenewalSkippedNotice,
+        roundID: UUID? = nil
+    ) async -> BackgroundRenewalNotificationDelivery {
+        await deliver(title: notice.title, body: notice.body, roundID: roundID)
     }
 
-    private func deliver(title: String, body: String) async -> BackgroundRenewalNotificationDelivery {
+    private func deliver(
+        title: String,
+        body: String,
+        roundID: UUID?
+    ) async -> BackgroundRenewalNotificationDelivery {
         let settings = await center.notificationSettings()
         let authorization = settings.authorizationStatus
         guard authorization == .authorized
@@ -149,6 +191,9 @@ final class BackgroundRenewalNotifier {
         content.title = title
         content.body = body
         content.sound = .default
+        if let roundID {
+            content.userInfo[BackgroundRenewalNotificationRoute.roundIDUserInfoKey] = roundID.uuidString
+        }
 
         // `trigger: nil` = 立即投递。
         // identifier **固定**（不拼时间戳）：一轮只发一条；连续几轮触发时后一条覆盖
@@ -160,6 +205,9 @@ final class BackgroundRenewalNotifier {
             trigger: nil
         )
         do {
+            // Keep the delivered copy and its round ID in sync when the fixed notification is replaced.
+            center.removePendingNotificationRequests(withIdentifiers: [Self.identifier])
+            center.removeDeliveredNotifications(withIdentifiers: [Self.identifier])
             try await center.add(request)
             return .delivered
         } catch {

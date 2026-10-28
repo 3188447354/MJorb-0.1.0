@@ -323,8 +323,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
             && provisioningProfileExpirationDate != nil
     }
 
-    /// 批量续签纳入 Seal 安装标记或 Seal Team 映射身份可识别的应用。
-    /// 设备扫描恢复时用安装标记识别新版 Seal 安装；旧版没有标记的应用按 Seal 的 Team 映射 ID 识别。
+    /// 批量续签只纳入 Seal 的持久化签名记录或带独立安装标记的恢复记录。
     var isSealManagedRenewalCandidate: Bool {
         isSeal || hasPersistedSealSigningEvidence || hasRecoveredSealSigningEvidence
     }
@@ -335,11 +334,24 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
               importWarnings.contains(Self.deviceRecoveryWarning),
               let team = signingTeamID?.trimmingCharacters(in: .whitespacesAndNewlines),
               team.isEmpty == false,
-              let bundleIdentifier = mappedBundleIdentifier?.lowercased() else {
+              mappedBundleIdentifier?.isEmpty == false else {
             return false
         }
         return installedAppMarkerVersion == SealInstalledAppMarker.version
-            || bundleIdentifier.hasSuffix(".\(team.lowercased())")
+    }
+
+    /// 旧版设备扫描曾仅凭 Team/profile 建立记录。保留这些记录的数据，但在没有
+    /// Seal 安装标记或本地安装证据时，不把它们当作 Seal 管理的应用展示或续签。
+    private var isUnverifiedDeviceRecovery: Bool {
+        !isSeal
+            && state == .installed
+            && installedAppMarkerVersion != SealInstalledAppMarker.version
+            && lastInstalledAt == nil
+            && signedArtifactStatus != .installed
+            && hasPersistedSealSigningEvidence == false
+            && signedIPARelativePath == nil
+            && signedIPASHA256 == nil
+            && (needsIPAImport || importWarnings.contains(Self.deviceRecoveryWarning) || size == 0)
     }
 
     /// 已记录或用户明确选择的策略优先；默认共享，能力不兼容的扩展单独申请 profile。
@@ -416,6 +428,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var belongsInInstalledList: Bool {
+        guard isUnverifiedDeviceRecovery == false else { return false }
         // 待签名的 Seal 更新包在设备核验成功前始终不进已安装列表。签名阶段会把
         // state 从 .imported 改成 .preflightPassed / .signing 等；若只排除 .imported，
         // 新旧 Seal 会在这段事务窗口并列显示。replacesInstalledAppID 仅在原子接管
@@ -427,7 +440,8 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var belongsInSignedList: Bool {
-        guard belongsInInstalledList == false,
+        guard isUnverifiedDeviceRecovery == false,
+              belongsInInstalledList == false,
               hasSignedArtifact else {
             return false
         }
@@ -443,6 +457,7 @@ struct AppRecord: Codable, Equatable, Identifiable, Sendable {
     }
 
     var belongsInUnsignedList: Bool {
+        guard isUnverifiedDeviceRecovery == false else { return false }
         // 待签名的 Seal 更新包在整个签名/安装事务内都留在待签名列表；成功接管后
         // replacesInstalledAppID 才会清空并进入已安装列表。
         if isSeal, replacesInstalledAppID != nil {

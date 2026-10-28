@@ -323,15 +323,9 @@ actor RenewalCoordinator {
         let roundNumber = Self.nextRoundNumber()
 
         // ── 批量通道预检（2026-10-04 通道优化）──
-        // 整轮只做一次：通道不健康先自愈一次，仍不行整轮快速失败，
-        // 不让每个 App 各自付一遍诊断代价。
-        let channelReady = await signingCoordinator.ensureChannelReadyForBatch()
-        if channelReady == false {
-            throw Self.queuePersistenceFailure(
-                reason: "设备通道不可用，请检查 LocalDevVPN 是否开启、设备是否已配对后重试。",
-                code: "SEAL-RENEW-CHANNEL-001"
-            )
-        }
+        // 整轮只做一次。`start()` 自己会在冷启动失败时重置并再诊断一次；
+        // 失败后直接保留具体通道错误，不能再额外跑第二轮完整诊断，也不能误报队列/存储问题。
+        let batchDeviceIdentifier = try await signingCoordinator.ensureChannelReadyForBatch()
 
         // ── 并行续签（2026-10-04）──
         //
@@ -383,6 +377,7 @@ actor RenewalCoordinator {
                         offset: offset,
                         total: queue.count,
                         appsByID: appsByID,
+                        batchDeviceIdentifier: batchDeviceIdentifier,
                         progress: progress
                     )
                     return (offset, outcome, roundItem)
@@ -408,6 +403,7 @@ actor RenewalCoordinator {
                 offset: offset,
                 total: queue.count,
                 appsByID: appsByID,
+                batchDeviceIdentifier: batchDeviceIdentifier,
                 progress: progress
             )
             switch outcome {
@@ -482,6 +478,7 @@ actor RenewalCoordinator {
         offset: Int,
         total: Int,
         appsByID: [UUID: AppRecord],
+        batchDeviceIdentifier: String,
         progress: @escaping @Sendable (BatchRefreshEvent) async -> Void
     ) async throws -> (outcome: ProcessItemOutcome, roundItem: RenewalRoundItem) {
         guard item.isExecutable,
@@ -492,6 +489,7 @@ actor RenewalCoordinator {
                 offset: offset,
                 total: total,
                 appsByID: appsByID,
+                batchDeviceIdentifier: batchDeviceIdentifier,
                 progress: progress
             )
         }
@@ -508,6 +506,7 @@ actor RenewalCoordinator {
                 offset: offset,
                 total: total,
                 appsByID: appsByID,
+                batchDeviceIdentifier: batchDeviceIdentifier,
                 progress: progress
             )
             await operationCoordinator.end(lease)
@@ -523,6 +522,7 @@ actor RenewalCoordinator {
         offset: Int,
         total: Int,
         appsByID: [UUID: AppRecord],
+        batchDeviceIdentifier: String,
         progress: @escaping @Sendable (BatchRefreshEvent) async -> Void
     ) async throws -> (outcome: ProcessItemOutcome, roundItem: RenewalRoundItem) {
         try Task.checkCancellation()
@@ -604,6 +604,7 @@ actor RenewalCoordinator {
                     // （设备级跨 team）装 6 个应用的用户，批量续签时必须跳过本机预检，
                     // 交回 installd 裁决，否则全部被 SEAL-APPID-DEVICELIMIT 误拦。
                     bypassFreeAccountDeviceLimit: true,
+                    prevalidatedBatchDeviceIdentifier: batchDeviceIdentifier,
                     // ⚠️ 证书轮换子流程也会走这个回调，而它推进的是**另一个** App 的阶段。
                     // 批量链路**刻意仍用本项的 `latestApp` 当事件主体**：批量的
                     // 「Seal 自替换 ⇒ 回主屏」由队列自己的 Seal 项驱动（Seal 恒排最后），

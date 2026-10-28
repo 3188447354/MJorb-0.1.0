@@ -6,6 +6,7 @@ struct PreparedSigningWorkspace: Sendable {
     let appURL: URL
     let mappedMainBundleID: String
     let bundleIDMappings: [String: String]
+    let removedAppClip: Bool
 
     /// `prepare` 里**解压**那一段的耗时（秒，2026-09-18）。
     ///

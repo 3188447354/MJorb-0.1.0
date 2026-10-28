@@ -27,7 +27,7 @@ struct InstallWaitNote: View {
                 Text(message(at: context.date))
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Color.sealTextSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .singleLine()
                 Spacer(minLength: 0)
             }
         }
@@ -37,10 +37,10 @@ struct InstallWaitNote: View {
     /// 这条契约的载体，必须能被单测直接断言（2026-09-26）。
     func message(at now: Date) -> String {
         guard let startedAt else {
-            return "设备正在安装，此阶段没有进度回报，请保持 Seal 在前台"
+            return "安装中 · 此阶段暂无进度回报，请保持 Seal 打开"
         }
         let elapsed = max(0, Int(now.timeIntervalSince(startedAt)))
-        return "设备正在安装，此阶段没有进度回报 · 已等待 \(Self.elapsedText(elapsed))"
+        return "安装中 · 暂无进度回报 · 已等待 \(Self.elapsedText(elapsed))"
     }
 
     /// 秒数 → `m:ss`。超过一小时也只累加分钟（安装不会那么久，但格式化不该崩）。

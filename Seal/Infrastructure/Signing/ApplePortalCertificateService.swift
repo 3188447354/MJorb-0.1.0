@@ -236,10 +236,11 @@ actor ApplePortalCertificateService {
         secret: AccountSecret
     ) async throws -> (team: ALTTeam, session: ALTAppleAPISession) {
         let anisette = try await anisetteProvider.fetch()
-        let session = ALTAppleAPISession(
+        let session = AppleAuthenticationDiagnosis.makeAPISession(
             dsid: secret.dsid,
             authToken: secret.authToken,
             anisetteData: anisette,
+            usesCompatibleMacIdentity: secret.usesCompatibleMacIdentity,
             xcodeVersion: AppleAccountClient.xcodeVersion
         )
         let altAccount = ALTAccount()

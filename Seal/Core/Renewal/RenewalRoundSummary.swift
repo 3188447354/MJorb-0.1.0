@@ -247,13 +247,12 @@ struct RenewalRoundSummary: Codable, Equatable, Sendable {
         return f
     }()
 
-    /// 有效期格式（用户可见，精确到分钟：2026-10-05 21:08）。
-    /// 秒只留导出日志；日志行里的「有效期至」与 App 内其他到期时间同口径。
+    /// 续签结果与日志页里的有效期时间统一显示到秒。
     private static let expiryFormatter: DateFormatter = {
         let f = DateFormatter()
         f.timeZone = TimeZone(identifier: "Asia/Shanghai")
         f.locale = Locale(identifier: "zh_CN")
-        f.dateFormat = "yyyy-MM-dd HH:mm"
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return f
     }()
 

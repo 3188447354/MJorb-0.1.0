@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import AltSign
 
 /// 认证失败的**分类规则**，以及每条分类对应的用户提示 —— 判据与文案放在一起。
 ///
@@ -25,6 +26,49 @@ import Foundation
 ///
 /// 分类与文案都做成纯函数，是为了能单测 —— 这类错法的共同点是「只在真机上可见」。
 enum AppleAuthenticationDiagnosis {
+    /// 仅处理 Apple 明确返回的旧版 Mac 身份拒绝，避免改变正常账号的登录流程。
+    static func isLegacyMacRejected(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == ALTUnderlyingAppleAPIErrorDomain && error.code == -23782
+    }
+
+    /// 仅修改本次登录用的副本，保留设备标识及远程 ADI；验证码与团队查询沿用同一身份。
+    static func compatibleMacData(from source: ALTAnisetteData) -> ALTAnisetteData {
+        let data = source.copy() as! ALTAnisetteData
+        // 保持服务原声明的机型，使用与 macOS 13.6.7 配套的客户端信息。
+        // 该组合参考 iPASide 1.2.12；受影响账号的完整登录仍需真机验证。
+        data.deviceDescription = "<MacBookPro13,3> <macOS;13.6.7;22G720> <com.apple.AuthKit/1 (com.apple.akd/1.0)>"
+        data.userAgent = "akd/1.0 CFNetwork/1410.1 Darwin/22.6.0"
+        return data
+    }
+
+    /// 为已标记的账号生成门户请求身份；未标记账号完全沿用服务原始数据。
+    static func anisetteData(
+        from source: ALTAnisetteData,
+        usesCompatibleMacIdentity: Bool
+    ) -> ALTAnisetteData {
+        usesCompatibleMacIdentity ? compatibleMacData(from: source) : source
+    }
+
+    /// 构造与账号登录身份一致的 Apple 门户会话。
+    static func makeAPISession(
+        dsid: String,
+        authToken: String,
+        anisetteData: ALTAnisetteData,
+        usesCompatibleMacIdentity: Bool,
+        xcodeVersion: String
+    ) -> ALTAppleAPISession {
+        ALTAppleAPISession(
+            dsid: dsid,
+            authToken: authToken,
+            anisetteData: Self.anisetteData(
+                from: anisetteData,
+                usesCompatibleMacIdentity: usesCompatibleMacIdentity
+            ),
+            xcodeVersion: xcodeVersion
+        )
+    }
+
     /// Apple 在登录阶段要求双重认证时返回的错误码。
     ///
     /// 真机上与它同时出现的还有域 `AltStore.AppleDeveloperError`

@@ -287,6 +287,28 @@ public final class CodeSigner {
         var appExtensions: [URL] = []
     }
 
+    /// A system Watch placeholder is metadata, not a signable app bundle. Never classify a
+    /// placeholder with executable content, symlinks, or unreadable contents as metadata-only.
+    public static func isMetadataOnlyWatchPlaceholder(at url: URL) -> Bool {
+        guard url.lastPathComponent == "com.apple.WatchPlaceholder",
+              let root = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+              root.isDirectory == true, root.isSymbolicLink != true else { return false }
+        var failed = false
+        guard let enumerator = FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [],
+            errorHandler: { _, _ in failed = true; return false }
+        ) else { return false }
+        for case let child as URL in enumerator {
+            guard let values = try? child.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+                  values.isSymbolicLink != true else { return false }
+            if values.isRegularFile == true {
+                let ext = child.pathExtension.lowercased()
+                if ext == "dylib" || ext == "so" || MachOParser.isMachOBinary(at: child) { return false }
+            }
+        }
+        return !failed
+    }
+
     private static func collectEmbeddedItems(in appURL: URL) -> EmbeddedItems {
         var items = EmbeddedItems()
         let fileManager = FileManager.default
@@ -306,6 +328,11 @@ public final class CodeSigner {
                 }
 
                 let canonicalURL = fileURL.resolvingSymlinksInPath()
+                if canonicalURL == canonicalAppURL.appendingPathComponent("com.apple.WatchPlaceholder"),
+                   isMetadataOnlyWatchPlaceholder(at: fileURL) {
+                    enumerator.skipDescendants()
+                    continue
+                }
                 let path = canonicalURL.path
                 if path == canonicalAppURL.path || path == mainExecPath {
                     continue

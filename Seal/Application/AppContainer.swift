@@ -12,8 +12,6 @@ struct AppContainer {
     /// ⚠️ UI 测试与「存储初始化失败」两条分支传的是**不带日志**的实例：前者不该在测试里
     /// 真的放音频，后者连日志文件都没建起来。保活失败不影响续签本身（见该类的 `start()`）。
     let backgroundKeepAlive: BackgroundKeepAliveService
-    /// 后台保活第二路（后台定位），与 `backgroundKeepAlive` 形成双保险。启动点与它相同。
-    let locationKeepAlive: LocationKeepAliveService
     /// 迁移/启动类日志用。UI 测试与「存储初始化失败」两条分支为 `nil`（那时日志文件都没建起来）。
     let logStore: SealLogStore?
     /// 设备安装通道。`SealApp.init()` 用它做启动点火（SideStore 模型：通道开机
@@ -52,7 +50,6 @@ struct AppContainer {
                     signingPreferenceStore: SigningPreferenceStore()
                 ),
                 backgroundKeepAlive: BackgroundKeepAliveService(logStore: nil),
-                locationKeepAlive: LocationKeepAliveService(logStore: nil),
                 logStore: nil,
                 installChannel: nil
             )
@@ -136,7 +133,10 @@ struct AppContainer {
                 appStore: appStore,
                 // 兜底判据用：导入的 IPA 就是这个**正在运行**的 Seal 自己时，
                 // 必须按自更新处理（见 `ImportWorkflow.existingSealRecord`）。
-                runningSealBundleIdentifier: Bundle.main.bundleIdentifier
+                runningSealBundleIdentifier: Bundle.main.bundleIdentifier,
+                runningSealCanonicalBundleIdentifier: Bundle.main.object(
+                    forInfoDictionaryKey: "SealOriginalBundleIdentifier"
+                ) as? String ?? "com.mjorb.seal"
             )
             // 启动即创建/更新 Documents/Seal-log.txt，让文件 App 中的 Seal 目录始终可见。
             // flush 会先加载已有日志，不会因本次镜像而清空历史。
@@ -305,25 +305,7 @@ struct AppContainer {
                     certificateRecoveryJournal: certificateRecoveryJournal
                 ),
                 certificateExportHandler: certificateExportHandler,
-                backgroundKeepAlive: {
-                    let service = BackgroundKeepAliveService(logStore: logStore)
-                    // 续签完成后停止保活（省电）：快捷指令下次触发时会重新 start()
-                    Task { @MainActor in
-                        for await _ in NotificationCenter.default.notifications(named: .sealRenewalCompleted) {
-                            service.stop()
-                        }
-                    }
-                    return service
-                }(),
-                locationKeepAlive: {
-                    let service = LocationKeepAliveService(logStore: logStore)
-                    Task { @MainActor in
-                        for await _ in NotificationCenter.default.notifications(named: .sealRenewalCompleted) {
-                            service.stop()
-                        }
-                    }
-                    return service
-                }(),
+                backgroundKeepAlive: BackgroundKeepAliveService(logStore: logStore),
                 logStore: logStore,
                 installChannel: installChannel
             )
@@ -337,7 +319,6 @@ struct AppContainer {
                     signingPreferenceStore: SigningPreferenceStore()
                 ),
                 backgroundKeepAlive: BackgroundKeepAliveService(logStore: nil),
-                locationKeepAlive: LocationKeepAliveService(logStore: nil),
                 logStore: nil,
                 installChannel: nil
             )

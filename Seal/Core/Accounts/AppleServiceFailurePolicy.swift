@@ -227,8 +227,19 @@ enum AppleServiceFailurePolicy {
             "SEAL-AUTH-102d"
         ]
         if explicitCredentialRejectionCodes.contains(code) { return .credentialsRejected }
-        if code.hasPrefix("SEAL-AUTH-105") { return .localCredentialsMissing }
-        if code.hasPrefix("SEAL-AUTH-106") { return .localCredentialsMismatch }
+        // 不用整个号段推断账号状态：105 本身还表示“账号记录不存在”，105f 是
+        // Team 查询失败；未来新增的 105/106 子码也不能自动把其他账号锁成待验证。
+        let confirmedLocalCredentialMissingCodes: Set<String> = [
+            "SEAL-AUTH-105a",
+            "SEAL-AUTH-105b",
+            "SEAL-AUTH-105c",
+            "SEAL-AUTH-105d",
+            "SEAL-AUTH-105e",
+            "SEAL-AUTH-105g",
+            "SEAL-AUTH-105h"
+        ]
+        if confirmedLocalCredentialMissingCodes.contains(code) { return .localCredentialsMissing }
+        if code == "SEAL-AUTH-106" { return .localCredentialsMismatch }
         // SEAL-AUTH-107（会话过期）不标记 ID 失效：签名/续签在 LocalDevVPN 环境无法可靠自动重登，
         // 统一引导到「我的」页重新验证；网络/限流也不写账号状态。
         return nil

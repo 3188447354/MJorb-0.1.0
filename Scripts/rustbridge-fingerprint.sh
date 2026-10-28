@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # RustBridge 源码指纹：任何会改变 cargo 编译产物的输入变化都会改变该指纹。
-# 输入范围：RustBridge/src 下全部 .rs + Cargo.toml + Cargo.lock。
+# 输入范围：RustBridge/src 下全部 .rs + Cargo.toml + Cargo.lock + Makefile（目标切片矩阵）。
 # 输出：单行 sha256 hex（stdout）。跨 macOS/Linux、跨文件树顺序稳定。
 set -euo pipefail
 
@@ -31,10 +31,10 @@ sha256() {
     printf '%s  %s\n' "$hash" "$rel"
   done < <(find "$BRIDGE_DIR/src" -type f -name '*.rs' -print0 | LC_ALL=C sort -z)
 
-  for manifest in Cargo.toml Cargo.lock; do
-    if [[ -f "$BRIDGE_DIR/$manifest" ]]; then
-      hash="$(sha256 < "$BRIDGE_DIR/$manifest" | awk '{print $1}')"
-      printf '%s  %s\n' "$hash" "$manifest"
+  for input in Cargo.toml Cargo.lock Makefile; do
+    if [[ -f "$BRIDGE_DIR/$input" ]]; then
+      hash="$(sha256 < "$BRIDGE_DIR/$input" | awk '{print $1}')"
+      printf '%s  %s\n' "$hash" "$input"
     fi
   done
 } | sha256 | awk '{print $1}'

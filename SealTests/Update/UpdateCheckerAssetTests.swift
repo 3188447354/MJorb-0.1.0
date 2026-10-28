@@ -29,7 +29,7 @@ struct UpdateCheckerAssetTests {
     }
 
     @Test
-    func successfulLatestCheckIsReusedEvenForManualCheck() async {
+    func manualCheckRefreshesSuccessfulLatestResult() async {
         let cache = UpdateCheckCache()
         let counter = UpdateCheckLoadCounter()
 
@@ -39,11 +39,40 @@ struct UpdateCheckerAssetTests {
         }
         let second = await cache.result(force: true) {
             await counter.increment()
-            return .unavailable(.network)
+            return .available(UpdateNotice(
+                version: "0.1.64",
+                title: "Seal 0.1.64",
+                message: "",
+                downloadURL: nil,
+                ipaDownloadURL: nil,
+                sha256DownloadURL: nil,
+                ipaDownloadSize: nil
+            ))
         }
 
         if case .latest = first {} else { Issue.record("Expected first result to be latest") }
-        if case .latest = second {} else { Issue.record("Manual check should reuse a successful latest result") }
+        if case .available(let notice) = second {
+            #expect(notice.version == "0.1.64")
+        } else {
+            Issue.record("Manual check should load the new release")
+        }
+        #expect(await counter.value == 2)
+    }
+
+    @Test
+    func automaticCheckReusesSuccessfulResult() async {
+        let cache = UpdateCheckCache()
+        let counter = UpdateCheckLoadCounter()
+
+        _ = await cache.result(force: false) {
+            await counter.increment()
+            return .latest
+        }
+        _ = await cache.result(force: false) {
+            await counter.increment()
+            return .unavailable(.network)
+        }
+
         #expect(await counter.value == 1)
     }
 

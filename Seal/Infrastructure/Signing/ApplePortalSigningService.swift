@@ -381,8 +381,26 @@ func withAppleTimeout<T: Sendable>(
 }
 
 actor ApplePortalSigningService {
+    private struct SessionValidationKey: Hashable, Sendable {
+        let accountIdentifier: String
+        let teamIdentifier: String
+        let operation: String
+        let credentialFingerprint: String
+    }
+
+    private struct SessionValidationSnapshot: Sendable {
+        let dsid: String
+        let authToken: String
+        let usesCompatibleMacIdentity: Bool
+    }
+
+    private struct SessionValidationFlight {
+        let id: UUID
+        let task: Task<SessionValidationSnapshot, Error>
+    }
+
     private static let profileRequestClockTolerance: TimeInterval = 10 * 60
-    private static let minimumFreshProfileLifetime: TimeInterval = 7 * 24 * 3600 - profileRequestClockTolerance
+    private static let minimumFreshProfileValidityDuration: TimeInterval = 7 * 24 * 3600
     private let anisetteProvider: any AnisetteProvider
     private let signingWorkspace: SigningWorkspace
     private let accountClient: AppleAccountClient
@@ -415,6 +433,9 @@ actor ApplePortalSigningService {
     // 性能：证书列表也加批量缓存（2026-10-04）。profile-only 准入和完整重签每 App
     // 各拉一次，同一 Team 一轮批量里不变。写成功（addCertificate）即失效。
     private var cachedCertificatesByTeamIdentifier: [String: (certs: [ALTX509Certificate], fetchedAt: Date)] = [:]
+    // Only join the same session validation while it is actively running. The entry is
+    // removed before the task completes; no completed Apple session result is cached.
+    private var sessionValidationFlights: [SessionValidationKey: SessionValidationFlight] = [:]
 
     /// 缓存条目是否仍新鲜 —— **纯函数**，判据与三处调用点同源（可单测）。
     static func isPortalReadCacheFresh(
@@ -460,6 +481,20 @@ actor ApplePortalSigningService {
         try? await logStore?.append(category: .signing, level: level, message: message)
     }
 
+    /// 所有签名/续签门户请求统一按账号选择 Anisette 身份，避免登录成功后又切回旧身份。
+    private func makeSession(
+        for secret: AccountSecret,
+        anisetteData: ALTAnisetteData
+    ) -> ALTAppleAPISession {
+        return AppleAuthenticationDiagnosis.makeAPISession(
+            dsid: secret.dsid,
+            authToken: secret.authToken,
+            anisetteData: anisetteData,
+            usesCompatibleMacIdentity: secret.usesCompatibleMacIdentity,
+            xcodeVersion: AppleAccountClient.xcodeVersion
+        )
+    }
+
     /// Expired portal sessions are recovered before signing or renewal can perform writes.
     /// The Team lookup is read-only; only after its bounded 1100 retries fail do we use the
     /// password already stored in Keychain, then verify the same account and Team again.
@@ -468,17 +503,81 @@ actor ApplePortalSigningService {
         secret: AccountSecret,
         operation: FailureOperation = .sign
     ) async throws -> AccountSecret {
+        let key = SessionValidationKey(
+            accountIdentifier: secret.accountIdentifier,
+            teamIdentifier: account.teamID,
+            operation: operation.rawValue,
+            credentialFingerprint: secret.credentialFingerprint
+        )
+        let flight: SessionValidationFlight
+        if let existing = sessionValidationFlights[key] {
+            flight = existing
+            await diagnostic("加入同一账号正在进行的会话核验；不缓存核验结果")
+        } else {
+            let flightID = UUID()
+            let task = Task {
+                try await self.runSessionValidationFlight(
+                    id: flightID,
+                    key: key,
+                    account: account,
+                    secret: secret,
+                    operation: operation
+                )
+            }
+            flight = SessionValidationFlight(id: flightID, task: task)
+            sessionValidationFlights[key] = flight
+        }
+
+        let snapshot = try await flight.task.value
+        try Task.checkCancellation()
+        // Keep each caller's own AccountSecret, including its signing material.
+        return secret.withNewSession(
+            dsid: snapshot.dsid,
+            authToken: snapshot.authToken,
+            usesCompatibleMacIdentity: snapshot.usesCompatibleMacIdentity
+        )
+    }
+
+    private func runSessionValidationFlight(
+        id: UUID,
+        key: SessionValidationKey,
+        account: AppleAccountRecord,
+        secret: AccountSecret,
+        operation: FailureOperation
+    ) async throws -> SessionValidationSnapshot {
+        do {
+            let validatedSecret = try await validateCurrentSession(
+                account: account,
+                secret: secret,
+                operation: operation
+            )
+            if sessionValidationFlights[key]?.id == id {
+                sessionValidationFlights.removeValue(forKey: key)
+            }
+            return SessionValidationSnapshot(
+                dsid: validatedSecret.dsid,
+                authToken: validatedSecret.authToken,
+                usesCompatibleMacIdentity: validatedSecret.usesCompatibleMacIdentity
+            )
+        } catch {
+            if sessionValidationFlights[key]?.id == id {
+                sessionValidationFlights.removeValue(forKey: key)
+            }
+            throw error
+        }
+    }
+
+    private func validateCurrentSession(
+        account: AppleAccountRecord,
+        secret: AccountSecret,
+        operation: FailureOperation
+    ) async throws -> AccountSecret {
         let altAccount = ALTAccount()
         altAccount.appleID = secret.email
         altAccount.identifier = secret.accountIdentifier
 
         let initialAnisette = try await anisetteProvider.fetch()
-        let initialSession = ALTAppleAPISession(
-            dsid: secret.dsid,
-            authToken: secret.authToken,
-            anisetteData: initialAnisette,
-            xcodeVersion: AppleAccountClient.xcodeVersion
-        )
+        let initialSession = makeSession(for: secret, anisetteData: initialAnisette)
         do {
             let teams = try await withSessionRecovery("验证 Apple ID 会话", retriesOnTimeout: true) {
                 try await self.fetchTeams(
@@ -545,7 +644,8 @@ actor ApplePortalSigningService {
             }
             let refreshedSecret = secret.withNewSession(
                 dsid: authenticated.secret.dsid,
-                authToken: authenticated.secret.authToken
+                authToken: authenticated.secret.authToken,
+                usesCompatibleMacIdentity: authenticated.secret.usesCompatibleMacIdentity
             )
             await diagnostic("Apple ID 会话已自动恢复，原有本机签名证书材料已保留")
             return refreshedSecret
@@ -836,12 +936,7 @@ actor ApplePortalSigningService {
         // keychain 读 + 本地运算。快路径下三阶段间隔很短，复用同一份；
         // 慢路径（解压 30 秒+）仍在下方按需刷新（见 freshAnisette）。
         let anisette = try await anisetteProvider.fetch()
-        var session = ALTAppleAPISession(
-            dsid: secret.dsid,
-            authToken: secret.authToken,
-            anisetteData: anisette,
-            xcodeVersion: AppleAccountClient.xcodeVersion
-        )
+        var session = makeSession(for: secret, anisetteData: anisette)
         let altAccount = ALTAccount()
         altAccount.appleID = secret.email
         altAccount.identifier = secret.accountIdentifier
@@ -936,12 +1031,7 @@ actor ApplePortalSigningService {
         } else {
             freshAnisette = anisette
         }
-        session = ALTAppleAPISession(
-            dsid: secret.dsid,
-            authToken: secret.authToken,
-            anisetteData: freshAnisette,
-            xcodeVersion: AppleAccountClient.xcodeVersion
-        )
+        session = makeSession(for: secret, anisetteData: freshAnisette)
         await progress(.preparingCertificate)
         let resolvedSerial = try await existingProfileOnlyCertificate(
             expectedSerialNumber: certificateSerialNumber,
@@ -950,12 +1040,7 @@ actor ApplePortalSigningService {
         )
 
         let profileAnisette = freshAnisette
-        session = ALTAppleAPISession(
-            dsid: secret.dsid,
-            authToken: secret.authToken,
-            anisetteData: profileAnisette,
-            xcodeVersion: AppleAccountClient.xcodeVersion
-        )
+        session = makeSession(for: secret, anisetteData: profileAnisette)
         await progress(.preparingAppID)
         let requestedAt = Date()
         let preparation: ProfilePreparation
@@ -973,12 +1058,7 @@ actor ApplePortalSigningService {
             } catch let failure as ImportFailure where failure.code == "SEAL-PROFILE-337" {
                 let prepared = try prepareLayoutOnlyWorkspace()
                 let fallbackAnisette = try await anisetteProvider.fetch()
-                session = ALTAppleAPISession(
-                    dsid: secret.dsid,
-                    authToken: secret.authToken,
-                    anisetteData: fallbackAnisette,
-                    xcodeVersion: AppleAccountClient.xcodeVersion
-                )
+                session = makeSession(for: secret, anisetteData: fallbackAnisette)
                 preparation = try await provisioningProfiles(
                     mappings: prepared.bundleIDMappings,
                     originalMainBundleID: app.originalBundleIdentifier,
@@ -988,7 +1068,6 @@ actor ApplePortalSigningService {
                     appName: app.displayName,
                     appURL: prepared.appURL,
                     workspace: prepared,
-                    minimumProfileLifetime: 0,
                     team: team,
                     session: session,
                     progress: progress,
@@ -1005,7 +1084,6 @@ actor ApplePortalSigningService {
                 appName: app.displayName,
                 appURL: prepared.appURL,
                 workspace: prepared,
-                minimumProfileLifetime: 0,
                 team: team,
                 session: session,
                 progress: progress,
@@ -1029,8 +1107,12 @@ actor ApplePortalSigningService {
                 expectedCertificateSerialNumber: resolvedSerial,
                 expectedDeviceIdentifier: deviceIdentifier,
                 requestedAfter: requestedAt.addingTimeInterval(-Self.profileRequestClockTolerance),
-                minimumRemainingLifetime: 0
+                minimumValidityDuration: Self.minimumFreshProfileValidityDuration
             )
+            let previousTarget = app.signingTargets.first(where: {
+                $0.bundleIdentifier.caseInsensitiveCompare(binding.bundleIdentifier) == .orderedSame
+            })
+            try validateProfileIsNewerThanPrevious(binding, previous: previousTarget)
             guard binding.profileUUID?.isEmpty == false else {
                 throw Self.failure(
                     title: "描述文件身份缺失",
@@ -1145,12 +1227,7 @@ actor ApplePortalSigningService {
             )
             // ⚠️ `var` 而不是 `let`：`prepare` 之后**必须重建一次**（换新的 anisette），
             // 理由见下面重建处那段注释（2026-09-19 真机根因）。
-            var session = ALTAppleAPISession(
-                dsid: secret.dsid,
-                authToken: secret.authToken,
-                anisetteData: anisette,
-                xcodeVersion: AppleAccountClient.xcodeVersion
-            )
+            var session = makeSession(for: secret, anisetteData: anisette)
             let altAccount = ALTAccount()
             altAccount.appleID = secret.email
             altAccount.identifier = secret.accountIdentifier
@@ -1230,8 +1307,12 @@ actor ApplePortalSigningService {
                 teamID: team.identifier,
                 targetMainBundleID: targetBundleIdentifier,
                 preferredDisplayName: app.preferredDisplayName,
-                preferredIconData: preferredIconData
+                preferredIconData: preferredIconData,
+                removeUnsupportedAppClip: team.type == .free
             )
+            if prepared.removedAppClip {
+                await diagnostic("免费团队：当前不支持 App Clip 独立签名，已从签名副本移除；原始 IPA 保留。")
+            }
             // ⚠️ **文案不许声称它没做的事**（2026-09-18 修正）。`prepare(...)` 只做
             // 「读中央目录 + 解压 + 结构改写 + 瘦身 + 归一化 + 删旧签名」——
             // **重签与打包都在它之后、不在这个计时窗口里**。原来那句写「（解压/改写/重签/打包）」
@@ -1284,12 +1365,7 @@ actor ApplePortalSigningService {
             let freshSession = { (label: String) async -> ALTAppleAPISession? in
                 guard let freshAnisette = try? await self.anisetteProvider.fetch() else { return nil }
                 await self.diagnostic("签名：已重建 Apple 会话（换新的 anisette 一次性码；\(label)）")
-                return ALTAppleAPISession(
-                    dsid: secret.dsid,
-                    authToken: secret.authToken,
-                    anisetteData: freshAnisette,
-                    xcodeVersion: AppleAccountClient.xcodeVersion
-                )
+                return self.makeSession(for: secret, anisetteData: freshAnisette)
             }
             if let fresh = await freshSession("本地准备耗时 \(Int(prepareSeconds)) 秒") {
                 session = fresh
@@ -1364,6 +1440,7 @@ actor ApplePortalSigningService {
                 mainBundleID: prepared.mappedMainBundleID,
                 profiles: profilePreparation.profiles,
                 sharedProfileBundleIDs: sharedProfileBundleIDs,
+                removeAppClipAssociation: prepared.removedAppClip,
                 team: team
             )
             try Task.checkCancellation()
@@ -1389,6 +1466,7 @@ actor ApplePortalSigningService {
                 teamID: team.identifier,
                 certificateSerialNumber: identity.certificate.serialNumber,
                 deviceIdentifier: deviceIdentifier,
+                previousTargets: app.signingTargets,
                 requestedEntitlements: profilePreparation.requestedEntitlements,
                 extensionProfileStrategy: profilePreparation.extensionProfileStrategy,
                 independentExtensionBundleIdentifiers: profilePreparation.independentExtensionBundleIdentifiers,
@@ -2162,12 +2240,7 @@ actor ApplePortalSigningService {
 
         await anisetteProvider.resetProvisioning()
         guard let anisette = try? await anisetteProvider.fetch() else { return false }
-        let refreshedSession = ALTAppleAPISession(
-            dsid: secret.dsid,
-            authToken: secret.authToken,
-            anisetteData: anisette,
-            xcodeVersion: AppleAccountClient.xcodeVersion
-        )
+        let refreshedSession = makeSession(for: secret, anisetteData: anisette)
         guard let certificates = try? await fetchCertificates(
             team: team,
             session: refreshedSession
@@ -2357,7 +2430,7 @@ actor ApplePortalSigningService {
         appName: String,
         appURL: URL,
         workspace: PreparedSigningWorkspace,
-        minimumProfileLifetime: TimeInterval = ApplePortalSigningService.minimumFreshProfileLifetime,
+        minimumProfileValidityDuration: TimeInterval = ApplePortalSigningService.minimumFreshProfileValidityDuration,
         team: ALTTeam,
         session: ALTAppleAPISession,
         progress: @escaping @Sendable (SigningStage) async -> Void,
@@ -2417,7 +2490,9 @@ actor ApplePortalSigningService {
         var cachedEntitlementsByBundleID: [String: [ALTEntitlement: any Sendable]] = [:]
         for (bundleID, application) in applications {
             do {
-                cachedEntitlementsByBundleID[bundleID] = try application.readEntitlements()
+                cachedEntitlementsByBundleID[bundleID] = AppGroupOrderingPolicy.removingEmptyGroupDeclaration(
+                    from: try application.readEntitlements(), groupKey: .appGroups
+                )
             } catch {
                 throw Self.failure(
                     title: "无法读取应用权限",
@@ -2426,6 +2501,16 @@ actor ApplePortalSigningService {
                     code: "SEAL-ENTITLEMENT-404"
                 )
             }
+        }
+        if workspace.removedAppClip, var main = cachedEntitlementsByBundleID[mappedMainBundleID] {
+            main.removeValue(forKey: ALTEntitlement(rawValue: "com.apple.developer.associated-appclip-app-identifiers"))
+            let domainsKey = ALTEntitlement(rawValue: "com.apple.developer.associated-domains")
+            if let domains = main[domainsKey] as? [String] {
+                let retained = domains.filter { !$0.hasPrefix("appclips:") }
+                if retained.isEmpty { main.removeValue(forKey: domainsKey) }
+                else { main[domainsKey] = retained }
+            }
+            cachedEntitlementsByBundleID[mappedMainBundleID] = main
         }
         var existingGroupIdentifiers: [String] = []
         let hasAppGroupEntitlements = cachedEntitlementsByBundleID.values.contains { entitlements in
@@ -2850,7 +2935,7 @@ actor ApplePortalSigningService {
                     for: preparedAppID.appID,
                     team: team,
                     session: session,
-                    minimumRemainingLifetime: minimumProfileLifetime
+                    minimumValidityDuration: minimumProfileValidityDuration
                 )
                 profiles.append(profile)
                 // 真实信号：描述文件也是一份一份取的，分母是 Phase 1 已就绪的个数。
@@ -2982,7 +3067,7 @@ actor ApplePortalSigningService {
                 for: prepared.appID,
                 team: team,
                 session: session,
-                minimumRemainingLifetime: 0
+                minimumValidityDuration: Self.minimumFreshProfileValidityDuration
             )
             profiles.append(profile)
             await onWorkUnits(SigningWorkUnits(
@@ -3050,18 +3135,17 @@ actor ApplePortalSigningService {
         for appID: ALTAppID,
         team: ALTTeam,
         session: ALTAppleAPISession,
-        minimumRemainingLifetime: TimeInterval = ApplePortalSigningService.minimumFreshProfileLifetime
+        minimumValidityDuration: TimeInterval = ApplePortalSigningService.minimumFreshProfileValidityDuration
     ) async throws -> ALTProvisioningProfile {
-        // 对齐 AltStore 官方实现：先获取，再尝试删除旧描述文件，删除成功则重新获取生成新的。
-        // 免费账号从 2023-03-20 起无法删除描述文件，每次 fetch 会自动重新生成，
-        // 因此删除失败时直接返回已获取的描述文件即可。
+        // 对齐 AltStore 官方实现：每个目标都向 Apple 请求描述文件；付费账号尝试删除旧文件后再取一次。
+        // 免费账号不能删除旧文件，但首个 fetch 也必须通过本轮生成时间检查，不接受旧响应。
         // ⚠️ 申请描述文件内部会先 delete 再重建（写操作），退避重试**绝不开超时重试**（R33：超时重试会重复删/写）。
         return try await withSessionRecovery("申请描述文件 \(appID.bundleIdentifier)") {
             try await requestProvisioningProfile(
                 appID: appID,
                 team: team,
                 session: session,
-                minimumRemainingLifetime: minimumRemainingLifetime
+                minimumValidityDuration: minimumValidityDuration
             )
         }
     }
@@ -3070,7 +3154,7 @@ actor ApplePortalSigningService {
         appID: ALTAppID,
         team: ALTTeam,
         session: ALTAppleAPISession,
-        minimumRemainingLifetime: TimeInterval
+        minimumValidityDuration: TimeInterval
     ) async throws -> ALTProvisioningProfile {
         let requestStartedAt = Date()
         let requestedAfter = requestStartedAt.addingTimeInterval(-Self.profileRequestClockTolerance)
@@ -3090,70 +3174,65 @@ actor ApplePortalSigningService {
         }
         let profile = firstBox.value
 
-        // 性能：免费账号跳过删除（2026-10-04）。免费账号自 2023-03-20 起无法删除
-        // 描述文件，每次白跑 15 秒超时 + 1 次往返。直接用第一次 fetch 的结果。
+        let candidate: ALTProvisioningProfile
         if team.type == .free {
-            return profile
-        }
-
-        // 尝试删除旧描述文件（付费账号可删除，免费账号会失败）
-        let deleteSucceeded: Bool
-        do {
-            try await withAppleTimeout(15) {
-                try await withCheckedThrowingContinuation {
-                    (continuation: CheckedContinuation<Void, Error>) in
-                    let callback = ContinuationBox(continuation)
-                    ALTAppleAPI.shared.deleteProvisioningProfile(
-                        profile,
-                        for: team,
-                        session: session
-                    ) { success, error in
-                        if let error {
-                            callback.resume(throwing: error)
-                        } else if success {
-                            callback.resume()
-                        } else {
-                            callback.resume(throwing: ALTAppleAPIError.unknown())
+            // 免费账号无法删除旧描述文件：保留本次 fetch 候选，但不能因此跳过
+            // freshness 核验。若 Apple 返回旧文件，下方会明确拒绝并重新申请一次。
+            candidate = profile
+        } else {
+            // 付费账号尝试删除后重新获取；若删除被 Apple 拒绝，仍只接受本轮新鲜结果。
+            let deleteSucceeded: Bool
+            do {
+                try await withAppleTimeout(15) {
+                    try await withCheckedThrowingContinuation {
+                        (continuation: CheckedContinuation<Void, Error>) in
+                        let callback = ContinuationBox(continuation)
+                        ALTAppleAPI.shared.deleteProvisioningProfile(
+                            profile,
+                            for: team,
+                            session: session
+                        ) { success, error in
+                            if let error {
+                                callback.resume(throwing: error)
+                            } else if success {
+                                callback.resume()
+                            } else {
+                                callback.resume(throwing: ALTAppleAPIError.unknown())
+                            }
                         }
                     }
                 }
+                deleteSucceeded = true
+            } catch {
+                deleteSucceeded = false
             }
-            deleteSucceeded = true
-        } catch {
-            // 免费账号无法删除，直接返回已获取的描述文件
-            deleteSucceeded = false
-        }
 
-        let candidate: ALTProvisioningProfile
-        if deleteSucceeded == false {
-            // 免费账号无法删除描述文件（2023-03-20 起 Apple 限制），
-            // AltStore 上游确认每次 fetch 已经重新生成，直接校验第一次结果；若 Apple
-            // 实际返回旧日期，下面的 freshness 检查会在同一 session 再 fetch 一次。
-            candidate = profile
-        } else {
-            // 删除成功（付费账号），重新获取生成新的描述文件
-            let secondBox: LegacyBox<ALTProvisioningProfile> = try await withAppleTimeout(30) {
-                try await withCheckedThrowingContinuation {
-                    continuation in
-                    let callback = ContinuationBox(continuation)
-                    ALTAppleAPI.shared.fetchProvisioningProfile(
-                        for: appID,
-                        deviceType: .iphone,
-                        team: team,
-                        session: session
-                    ) { profile, error in
-                        Self.resume(callback, value: profile, error: error)
+            if deleteSucceeded {
+                let secondBox: LegacyBox<ALTProvisioningProfile> = try await withAppleTimeout(30) {
+                    try await withCheckedThrowingContinuation {
+                        continuation in
+                        let callback = ContinuationBox(continuation)
+                        ALTAppleAPI.shared.fetchProvisioningProfile(
+                            for: appID,
+                            deviceType: .iphone,
+                            team: team,
+                            session: session
+                        ) { profile, error in
+                            Self.resume(callback, value: profile, error: error)
+                        }
                     }
                 }
+                candidate = secondBox.value
+            } else {
+                candidate = profile
             }
-            candidate = secondBox.value
         }
 
         do {
             try validateFreshProfile(
                 candidate,
                 requestedAfter: requestedAfter,
-                minimumRemainingLifetime: minimumRemainingLifetime
+                minimumValidityDuration: minimumValidityDuration
             )
             return candidate
         } catch let failure as ImportFailure where [
@@ -3176,7 +3255,7 @@ actor ApplePortalSigningService {
             try validateFreshProfile(
                 retryBox.value,
                 requestedAfter: requestedAfter,
-                minimumRemainingLifetime: minimumRemainingLifetime
+                minimumValidityDuration: minimumValidityDuration
             )
             return retryBox.value
         }
@@ -3185,12 +3264,12 @@ actor ApplePortalSigningService {
     private func validateFreshProfile(
         _ profile: ALTProvisioningProfile,
         requestedAfter: Date,
-        minimumRemainingLifetime: TimeInterval
+        minimumValidityDuration: TimeInterval
     ) throws {
         let binding = try ProvisioningProfileReader().binding(from: profile.data)
         try binding.validateFreshness(
             requestedAfter: requestedAfter,
-            minimumRemainingLifetime: minimumRemainingLifetime
+            minimumValidityDuration: minimumValidityDuration
         )
     }
 
@@ -3318,6 +3397,7 @@ actor ApplePortalSigningService {
             // 能力做门户提交，其余 capability 直接跳过（签出的包由 SideSign 按描述文件裁剪，自洽）。
             guard ALTFeature(entitlement: entitlement) != nil else { continue }
             if entitlement == .appGroups, let groups = value as? [String] {
+                guard groups.isEmpty == false else { continue }
                 // 读取 IPA entitlement 后已按当前团队现有组或团队后缀映射；这里只统一顺序。
                 filtered[entitlement] = AppGroupOrderingPolicy.canonicalize(groups)
             } else {
@@ -3477,6 +3557,7 @@ actor ApplePortalSigningService {
         teamID: String,
         certificateSerialNumber: String,
         deviceIdentifier: String,
+        previousTargets: [SigningTargetRecord],
         requestedEntitlements: [String: [String: ProvisioningEntitlementValue]],
         extensionProfileStrategy: AppExtensionProfileStrategy,
         independentExtensionBundleIdentifiers: Set<String>,
@@ -3507,8 +3588,12 @@ actor ApplePortalSigningService {
                     expectedCertificateSerialNumber: certificateSerialNumber,
                     expectedDeviceIdentifier: deviceIdentifier,
                     requestedAfter: requestedAfter,
-                    minimumRemainingLifetime: Self.minimumFreshProfileLifetime
+                    minimumValidityDuration: Self.minimumFreshProfileValidityDuration
                 )
+            let previousTarget = previousTargets.first(where: {
+                $0.bundleIdentifier.caseInsensitiveCompare(binding.bundleIdentifier) == .orderedSame
+            })
+            try validateProfileIsNewerThanPrevious(binding, previous: previousTarget)
             try ProvisioningProfileBinding.validateEntitlements(
                 requested: requestedEntitlements[target.bundleIdentifier] ?? [:],
                 profile: binding.entitlements,
@@ -3519,12 +3604,41 @@ actor ApplePortalSigningService {
         return bindings
     }
 
+    /// A new network request alone is not proof that Apple returned a newly generated profile.
+    /// Compare against the last profile Seal recorded for this target and fail closed unless
+    /// the returned creation date is newer. Reusing an unchanged UUID/date is always rejected.
+    private func validateProfileIsNewerThanPrevious(
+        _ binding: ProvisioningProfileBinding,
+        previous: SigningTargetRecord?
+    ) throws {
+        guard let previous else { return }
+        let sameUUID = previous.profileUUID?.caseInsensitiveCompare(binding.profileUUID ?? "") == .orderedSame
+        if let previousCreationDate = previous.profileCreationDate {
+            guard let creationDate = binding.creationDate, creationDate > previousCreationDate else {
+                throw Self.failure(
+                    title: "Apple 没有更新描述文件",
+                    reason: "Apple 返回的描述文件生成时间没有晚于 Seal 记录的上一份，已停止续签，没有安装旧文件。",
+                    recovery: "稍后重新续签；如果持续出现，请导出日志",
+                    code: "SEAL-PROFILE-315a"
+                )
+            }
+        } else if sameUUID {
+            throw Self.failure(
+                title: "无法确认描述文件已更新",
+                reason: "Apple 返回了与 Seal 记录相同的描述文件 UUID，但缺少上一份的生成时间，无法证明它是新文件，已停止安装。",
+                recovery: "重新导入应用后再续签；如果持续出现，请导出日志",
+                code: "SEAL-PROFILE-315a"
+            )
+        }
+    }
+
     private func signApp(
         at appURL: URL,
         p12Data: Data?,
         mainBundleID: String,
         profiles: [ALTProvisioningProfile],
         sharedProfileBundleIDs: [String],
+        removeAppClipAssociation: Bool,
         // ★ **上游签名器需要团队信息**（2026-09-19，换 `SideSign` 后新增 ✓）。
         // `SideSign` 的 `Team(identifier:name:type:)` 要这三样 ✓：
         //   - `identifier` ⇒ `team.identifier` ✓
@@ -3763,6 +3877,7 @@ actor ApplePortalSigningService {
             //   （守卫 R48 只要求过滤规则本身还在 ✓）—— 将来若接上游 `progress:`，直接复用它 ✓。
             try await SideSignAppSigner.signAppBundle(
                 at: appURL,
+                removeAppClipAssociation: removeAppClipAssociation,
                 certificateData: certificateData,
                 privateKeyData: privateKeyData,
                 teamID: team.identifier,

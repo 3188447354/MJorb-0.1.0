@@ -29,6 +29,7 @@ struct SealApp: App {
     private let notificationPresenter: SealNotificationPresenter
 
     init() {
+        WiFiPathAvailability.shared.start()
         let notificationPresenter = SealNotificationPresenter()
         notificationPresenter.install()
         self.notificationPresenter = notificationPresenter
@@ -37,21 +38,10 @@ struct SealApp: App {
         // App Intent / 后台回调不在 SwiftUI 的视图树里、拿不到 environment
         // ⇒ 把这份容器接出去给它们用（只读，见 `SealAppEnvironment`）。
         SealAppEnvironment.install(container)
-        // 后台保活：快捷指令不打开 App 的续签里，只负责「点火」，真正让它跑完的是这个
-        // （静音音频无限循环 —— 否则后台窗口只有约 30 秒，大包续签必然半途而废）。
-        // 2026-10-05: 新增 stop() 机制，续签完成后通过 sealRenewalCompleted 通知停止，
-        // 不再无条件常驻。用户要省电，保活只在需要时运行。
-        // 幂等，重复调用无副作用。
+        // 后台保活：维持Seal进程运行，让VPN路由变化时可以自动重建设备会话，
+        // 也保证快捷指令续签在锁屏/后台期间能跑完。按用户要求持续保活，进程被系统
+        // 或用户强制结束后无法再由Seal自行恢复。后台静音音频会增加耗电。
         container.backgroundKeepAlive.start()
-        // 设备通道启动点火（对齐 SideStore `AppBootManager`）：进程一起来就在
-        // 后台把通道建好并常驻，用户点签名/续签时直接命中缓存，不再临场等
-        // 完整诊断；快捷指令冷启动同理 —— 点火与后续的门户侧准备并行进行。
-        // 尽力而为：未配对 / 隧道未连时通道侧自己跳过，失败也不留熔断。
-        if let installChannel = container.installChannel {
-            Task { await installChannel.prewarmAtLaunch() }
-        }
-        // 2026-10-07: 定位保活退役。续签已优化到 4-12 秒，静音音频足够，
-        // 定位只费电还挂箭头。LocationKeepAliveService 保留类定义以备后用。
         // 钥匙串可访问性迁移：**必须同步、且必须在任何钥匙串读取之前**。
         // 锁屏下的后台续签要现读账号密钥与 anisette，条目若还是 `WhenUnlocked` 就会失败
         // （真机表现：日志只剩一句 `Seal.KeychainError 1`）。见 `SealKeychainAccessibility`。

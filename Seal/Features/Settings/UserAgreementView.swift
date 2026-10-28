@@ -8,6 +8,7 @@ struct UserAgreementView: View {
                 Text("生效日期：2026 年 10 月 17 日")
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .padding(.top, 4)
 
                 policySection(
@@ -22,7 +23,7 @@ struct UserAgreementView: View {
 
                 policySection(
                     title: "二、使用许可",
-                    body: "在您遵守本协议和适用法律的前提下，开发者授予您一项可撤销、非独占、不可转让、不可再许可的个人使用许可，仅用于在您拥有或有权控制的设备上使用 Seal。除适用法律明确允许外，您不得复制、出售、出租、分发、修改、反编译或规避 Seal 的安全与使用限制，也不得删除版权或权利标识。\n\n未经开发者授权，您不得破解、注入 Seal，不得对 Seal 进行二次打包或以收费方式分发。Seal 免费提供，任何收费提供 Seal 的行为均未经官方授权。"
+                    body: "在您遵守本协议和适用法律的前提下，开发者授予您一项可撤销、非独占、不可转让、不可再许可的个人使用许可，仅用于在您拥有或有权控制的设备上使用 Seal。除适用法律明确允许外，您不得复制、出售、出租、分发、修改、反编译或规避 Seal 的安全与使用限制，也不得删除版权或权利标识。\n\n未经开发者授权，您不得破解、注入 Seal，不得对 Seal 进行二次打包或以收费方式分发。Seal 免费提供，任何收费提供 Seal 的行为均未经开发者授权。"
                 )
 
                 policySection(
@@ -32,7 +33,7 @@ struct UserAgreementView: View {
 
                 policySection(
                     title: "四、Apple 与第三方服务",
-                    body: "使用签名或续签功能时，Seal 会代表您与 Apple 服务及必要的第三方 Anisette 服务通信。您与 Apple、GitHub、Anisette 服务及其他第三方之间的关系分别受其自身规则约束。\n\nApple 可能变更认证、证书、设备注册、App ID、描述文件、开发者资格或安装限制。此类变化可能导致功能受限、签名失败、已安装应用不可用或需重新验证；Seal 不能保证可绕过或改变这些规则。"
+                    body: "使用签名或续签功能时，Seal 会代表您与 Apple 服务及必要的第三方 Anisette 服务通信。您与这些服务之间的关系分别受其自身规则约束。\n\nApple 可能变更认证、证书、设备注册、App ID、描述文件、开发者资格或安装限制。此类变化可能导致功能受限、签名失败、已安装应用不可用或需重新验证；Seal 不能保证可绕过或改变这些规则。"
                 )
 
                 policySection(
@@ -52,7 +53,7 @@ struct UserAgreementView: View {
 
                 policySection(
                     title: "八、知识产权与开源组件",
-                    body: "Seal 的软件代码、界面、图标、文案及其他受保护内容的权利归其权利人所有。Seal 使用的开源组件依其各自许可证提供，相关信息可在应用内“开源许可”查看。\n\nSeal 的官方渠道以应用内社群页“官方资源”为准，另包括 GitHub 官方 Release 与官网 ios.sealsign.eu.cc；通过其他渠道获得的版本与开发者无关，由此产生的问题开发者不承担责任。"
+                    body: "Seal 的软件代码、界面、图标、文案及其他受保护内容的权利归其权利人所有。Seal 使用的开源组件依其各自许可证提供，相关信息可在应用内“开源许可”查看。"
                 )
 
                 policySection(
@@ -89,8 +90,9 @@ struct UserAgreementView: View {
             VStack(spacing: 2) {
                 Text(title).font(.headline)
                 Text("v\(AgreementVersion.current) · \(effectiveDate) 生效")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
         }
     }

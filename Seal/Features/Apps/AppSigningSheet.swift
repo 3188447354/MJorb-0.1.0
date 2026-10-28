@@ -35,7 +35,7 @@ struct AppSigningSheet: View {
             }
         }
         .presentationDragIndicator(.hidden)
-        .interactiveDismissDisabled(isRunning)
+        .interactiveDismissDisabled(isRunning || isInstallingSignedArtifact)
         .task {
             await viewModel.load(force: true)
             await viewModel.refreshActiveAccountSelection()
@@ -108,7 +108,7 @@ struct AppSigningSheet: View {
                 onDelete?()
             }
         } message: {
-            Text("仅删除待安装的更新包，当前已安装的应用不受影响")
+            Text("只删待安装更新包，不影响已安装 App")
         }
     }
 
@@ -122,12 +122,22 @@ struct AppSigningSheet: View {
             .padding(.bottom, 12)
         } footer: {
             VStack(spacing: 10) {
-                Button(primaryActionTitle(for: presentation)) {
+                Button {
                     if isPendingInstall {
                         installSignedArtifact()
                     } else {
                         startSigning(completionMode: .signAndInstall)
                     }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isInstallingSignedArtifact {
+                            ProgressView()
+                                .tint(.white)
+                        }
+                        Text(primaryActionTitle(for: presentation))
+                            .singleLine()
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 .sealPrimaryAction(cornerRadius: 14)
                 .disabled(bundleIDValidationError != nil || isInstallingSignedArtifact || isWorkingRecordMissing)
@@ -201,8 +211,10 @@ struct AppSigningSheet: View {
         isInstallingSignedArtifact = true
         Task {
             let installed = await viewModel.installSignedArtifact(workingApp)
-            isInstallingSignedArtifact = false
-            guard installed else { return }
+            guard installed else {
+                isInstallingSignedArtifact = false
+                return
+            }
             onFinish(.signAndInstall)
             dismiss()
         }
@@ -242,7 +254,7 @@ struct AppSigningSheet: View {
                             Text(warning)
                                 .font(.caption)
                                 .foregroundStyle(Color.sealTextSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                                .singleLine()
                         }
                     }
                 }
@@ -272,6 +284,21 @@ struct AppSigningSheet: View {
                 .buttonStyle(.plain)
             } else {
                 bundleIDRow(title: "Bundle ID", value: displayBundleIdentifier)
+            }
+            if let bundleIDValidationHint {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption)
+                    Text(bundleIDValidationHint)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.sealDanger)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 96)
+                .padding(.bottom, 8)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("appSigning.bundleIDValidationHint")
             }
             Divider().padding(.leading, 14)
 
@@ -418,6 +445,14 @@ struct AppSigningSheet: View {
         guard isRenewal == false else { return nil }
         let trimmed = targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
         return BundleIDPolicy.validationError(for: trimmed)
+    }
+
+    private var bundleIDValidationHint: String? {
+        guard bundleIDValidationError != nil else { return nil }
+        let trimmed = targetBundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty
+            ? "Bundle ID 不能为空，点上方修改"
+            : "Apple 要求 Bundle ID 仅用英文字母、数字、连字符和句点。需要表情请修改 App 名称。"
     }
 
     private func resetBundleIDDraftIfNeeded() {
@@ -786,10 +821,10 @@ struct AppIconSelectionSheet: View {
 
     var body: some View {
         SealDrawer(title: "修改 App 图标") {
-            Text("选择新的主屏幕图标。修改会写入签名后的 IPA；选择原图会清除当前草稿图标。")
+            Text("选择新图标用于签名；选原图可清除草稿更改。")
                 .font(.subheadline)
                 .foregroundColor(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
                 .padding(.bottom, 10)
         } footer: {
             VStack(spacing: 10) {
@@ -889,6 +924,7 @@ struct AppNameEditorSheet: View {
                     Text("App 名称不能为空")
                         .font(.caption)
                         .foregroundStyle(Color.sealDanger)
+                        .singleLine()
                 }
             }
             .padding(.bottom, 12)

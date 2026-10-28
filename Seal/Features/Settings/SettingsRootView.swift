@@ -256,6 +256,7 @@ struct SettingsRootView: View {
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
                 .padding(.leading, 8)
             VStack(spacing: 0, content: content)
                 .padding(.horizontal, 16)
@@ -369,10 +370,12 @@ struct SettingsRootView: View {
     }
 }
 
+@MainActor
 private func sectionTitle(_ title: String) -> some View {
     Text(title)
         .font(.system(size: 13, weight: .semibold))
         .foregroundStyle(Color.sealTextSecondary)
+        .singleLine()
 }
 
 
@@ -523,6 +526,7 @@ struct AppearanceThemeSheet: View {
                     .frame(width: 18, height: 18)
                 Text("自定义颜色")
                     .font(.system(size: 15, weight: .semibold))
+                    .singleLine()
                 Spacer()
                 if accentRawValue == SealAccentTheme.custom.rawValue {
                     Image(systemName: "checkmark")
@@ -567,6 +571,7 @@ struct AppearanceThemeSheet: View {
         Text(title)
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(Color.sealTextSecondary)
+            .singleLine()
     }
 
     private func appearanceIcon(_ appearance: SealAppearance) -> String {

@@ -1,21 +1,42 @@
 import Foundation
 
 /// 启动更新通知检查器
-/// 从 GitHub Releases 公共页面读取最新版本，有更新时弹窗提示
-/// 弹窗标题和内容来自 Release 的 name 和 body，可在 GitHub 发版时自定义
+/// 只从自建 HTTPS 更新 API 读取版本清单。
 struct UpdateChecker {
     static let shared = UpdateChecker()
 
-    private let repo = "3188447354/MJorb-0.1.0"
+    private static let manifestURLString = "https://seal.mjorb.eu.cc/uploads.php?action=latest"
     private let lastNotifiedVersionKey = "update_notifier.last_presented_version.v2"
     private static let cache = UpdateCheckCache()
 
-    /// 成功结果在本次进程内复用；新启动重新检查。手动重试只重试失败请求，
-    /// 已是最新版或已有更新时不重复请求网络。
+    private struct UpdateManifest: Decodable {
+        let schemaVersion: Int
+        let available: Bool
+        let version: String?
+        let title: String?
+        let message: String?
+        let downloadURL: URL?
+        let sha256URL: URL?
+        let size: Int64?
+        let sha256: String?
+
+        enum CodingKeys: String, CodingKey {
+            case schemaVersion = "schema_version"
+            case available
+            case version
+            case title
+            case message
+            case downloadURL = "download_url"
+            case sha256URL = "sha256_url"
+            case size
+            case sha256
+        }
+    }
+
+    /// 自动检查复用本次进程的结果；手动检查始终重新请求服务器。
     func check(force: Bool = false) async -> UpdateCheckResult {
-        let repository = repo
         return await Self.cache.result(force: force) {
-            await Self.fetchLatest(repo: repository)
+            await Self.fetchLatest()
         }
     }
 
@@ -27,50 +48,66 @@ struct UpdateChecker {
         UserDefaults.standard.set(version, forKey: lastNotifiedVersionKey)
     }
 
-    private static func fetchLatest(repo: String) async -> UpdateCheckResult {
-        guard let url = URL(string: "https://github.com/\(repo)/releases.atom") else {
+    private static func fetchLatest() async -> UpdateCheckResult {
+        guard let url = URL(string: manifestURLString) else {
             return .unavailable(.configuration)
         }
-
         do {
-            let (data, http) = try await fetch(url, accept: "application/atom+xml")
-            if let statusResult = Self.result(forHTTPStatus: http.statusCode) {
-                return statusResult
+            let (data, response) = try await fetch(url, accept: "application/json")
+            guard response.statusCode == 200 else {
+                return .unavailable(failure(forHTTPStatus: response.statusCode))
             }
-
-            guard let releases = Self.releaseEntries(
-                from: data,
-                repo: repo
-            ) else {
+            guard response.url?.scheme?.lowercased() == "https",
+                  response.url?.host?.lowercased() == "seal.mjorb.eu.cc",
+                  let manifest = try? JSONDecoder().decode(UpdateManifest.self, from: data) else {
                 return .unavailable(.invalidRelease)
             }
-            // The feed is newest publication first. Select that release before comparing
-            // versions so an older historical tag with a numerically larger value cannot win.
-            guard let release = releases.first else { return .latest }
-            guard let versionComparison = Version.compareIfValid(release.tag, Version.current) else {
+            guard manifest.schemaVersion == 1 else {
                 return .unavailable(.invalidRelease)
             }
-            if versionComparison != .orderedDescending {
-                return .latest
+            guard manifest.available else { return .latest }
+            guard let version = manifest.version,
+                  isAppleReleaseVersion(version),
+                  let comparison = Version.compareIfValid(version, Version.current) else {
+                return .unavailable(.invalidRelease)
             }
+            guard comparison == .orderedDescending else { return .latest }
 
-            let (ipaDownloadURL, sha256DownloadURL, ipaDownloadSize) = await Self.releaseAssetURLs(
-                repo: repo,
-                tag: release.tag
-            )
+            guard let ipaURL = manifest.downloadURL,
+                  let checksumURL = manifest.sha256URL,
+                  let checksumText = manifest.sha256,
+                  let expectedSHA256 = UpdateChecker.expectedSHA256(from: checksumText),
+                  isTrustedUpdateAssetURL(ipaURL, fileExtension: "ipa"),
+                  isTrustedUpdateAssetURL(checksumURL, fileExtension: "sha256") else {
+                return .unavailable(.invalidRelease)
+            }
 
             return .available(UpdateNotice(
-                version: release.tag,
-                title: release.title,
-                message: release.message,
-                downloadURL: release.pageURL,
-                ipaDownloadURL: ipaDownloadURL,
-                sha256DownloadURL: sha256DownloadURL,
-                ipaDownloadSize: ipaDownloadSize
+                version: version,
+                title: (manifest.title?.isEmpty == false ? manifest.title : nil) ?? "发现新版本",
+                message: manifest.message ?? "",
+                downloadURL: nil,
+                ipaDownloadURL: ipaURL,
+                sha256DownloadURL: checksumURL,
+                ipaDownloadSize: manifest.size.flatMap { $0 > 0 ? $0 : nil },
+                expectedSHA256: expectedSHA256
             ))
         } catch {
             return .unavailable(.network)
         }
+    }
+
+    private static func isTrustedUpdateAssetURL(_ url: URL, fileExtension: String) -> Bool {
+        guard isTrustedDownloadURL(url),
+              url.host?.lowercased() == "seal.mjorb.eu.cc",
+              url.user == nil,
+              url.password == nil,
+              url.fragment == nil,
+              url.path.hasPrefix("/data/packages/"),
+              url.pathExtension.lowercased() == fileExtension else {
+            return false
+        }
+        return true
     }
 
     private static func fetch(_ url: URL, accept: String = "text/html") async throws -> (Data, HTTPURLResponse) {
@@ -151,47 +188,6 @@ struct UpdateChecker {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func releaseAssetURLs(repo: String, tag: String) async -> (URL?, URL?, Int64?) {
-        guard let encodedTag = tag.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
-              let apiURL = URL(string: "https://api.github.com/repos/\(repo)/releases/tags/\(encodedTag)") else {
-            return (nil, nil, nil)
-        }
-        do {
-            let (data, response) = try await fetch(apiURL, accept: "application/vnd.github+json")
-            if response.statusCode == 200 {
-                let assets = releaseAssets(fromGitHubAPI: data)
-                if let ipaURL = ipaDownloadURL(from: assets),
-                   let checksumURL = sha256DownloadURL(from: assets) {
-                    return (ipaURL, checksumURL, assetSize(for: ipaURL, in: assets))
-                }
-            }
-        } catch {
-            // The public API can be rate limited. Keep the existing page fallback below;
-            // download progress then uses the response Content-Length when available.
-        }
-
-        guard let pageURL = URL(string: "https://github.com/\(repo)/releases/expanded_assets/\(encodedTag)") else {
-            return (nil, nil, nil)
-        }
-        do {
-            let (data, response) = try await fetch(pageURL)
-            guard response.statusCode == 200,
-                  let baseURL = response.url,
-                  isTrustedDownloadURL(baseURL),
-                  let html = String(data: data, encoding: .utf8) else {
-                return (nil, nil, nil)
-            }
-            let assets = releaseAssets(from: html, relativeTo: baseURL)
-            guard let ipaURL = ipaDownloadURL(from: assets),
-                  let checksumURL = sha256DownloadURL(from: assets) else {
-                return (nil, nil, nil)
-            }
-            return (ipaURL, checksumURL, nil)
-        } catch {
-            return (nil, nil, nil)
-        }
-    }
-
     static func releaseAssets(fromGitHubAPI data: Data) -> [[String: Any]] {
         guard let release = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let assets = release["assets"] as? [[String: Any]] else { return [] }
@@ -253,7 +249,7 @@ struct UpdateChecker {
         Version.compareIfValid(advertised, ipaVersion) == .orderedSame
     }
 
-    /// Release 资产的下载直链必须来自 GitHub 官方域名，且必须是 HTTPS。
+    /// Release / 更新 API 资产直链必须来自 HTTPS 白名单域名。
     ///
     /// 下载链接来自 GitHub 附件页。仓库名虽然是硬编码的，但响应内容本身
     /// 是不可信输入：一旦它指向攻击者的域名，「应用内更新」就会变成远程代码投递通道。
@@ -267,6 +263,7 @@ struct UpdateChecker {
             || host == "objects.githubusercontent.com"
             || host.hasSuffix(".github.com")
             || host.hasSuffix(".githubusercontent.com")
+            || host == "seal.mjorb.eu.cc"
     }
 
     /// 确定性地挑出 IPA 直链。
@@ -390,6 +387,27 @@ struct UpdateNotice: Identifiable, Sendable {
     let ipaDownloadURL: URL?
     let sha256DownloadURL: URL?
     let ipaDownloadSize: Int64?
+    let expectedSHA256: String?
+
+    init(
+        version: String,
+        title: String,
+        message: String,
+        downloadURL: URL?,
+        ipaDownloadURL: URL?,
+        sha256DownloadURL: URL?,
+        ipaDownloadSize: Int64?,
+        expectedSHA256: String? = nil
+    ) {
+        self.version = version
+        self.title = title
+        self.message = message
+        self.downloadURL = downloadURL
+        self.ipaDownloadURL = ipaDownloadURL
+        self.sha256DownloadURL = sha256DownloadURL
+        self.ipaDownloadSize = ipaDownloadSize
+        self.expectedSHA256 = expectedSHA256
+    }
 }
 
 enum UpdateNoticeContentPolicy {
@@ -497,13 +515,8 @@ actor UpdateCheckCache {
         force: Bool,
         load: @escaping @Sendable () async -> UpdateCheckResult
     ) async -> UpdateCheckResult {
-        if let cachedResult {
-            if case .unavailable = cachedResult {
-                if force == false { return cachedResult }
-                self.cachedResult = nil
-            } else {
-                return cachedResult
-            }
+        if let cachedResult, force == false {
+            return cachedResult
         }
 
         let result: UpdateCheckResult

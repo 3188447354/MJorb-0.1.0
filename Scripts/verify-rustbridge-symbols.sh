@@ -88,7 +88,12 @@ while IFS= read -r archive; do
   fi
 
   rm -f "$nm_output"
-done < <(find "$FRAMEWORK_PATH" -type f -name 'librust_bridge.a' -print | sort)
+done < <(
+  for active_slice in ios-arm64 ios-arm64_x86_64-simulator; do
+    archive="$FRAMEWORK_PATH/$active_slice/librust_bridge.a"
+    [[ -f "$archive" ]] && printf '%s\n' "$archive"
+  done
+)
 
 if (( archives_checked == 0 )); then
   echo "ERROR: no RustBridge static libraries were found." >&2

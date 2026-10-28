@@ -184,25 +184,95 @@ actor AppFileStore {
         let fileExtension = sourceURL.pathExtension.lowercased()
 
         if fileExtension == "ipa" {
-            try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
+            try withCoordinatedRead(of: sourceURL) { coordinatedURL in
+                let sourceSizeBefore = try positiveFileSize(at: coordinatedURL)
+                try FileManager.default.copyItem(at: coordinatedURL, to: stagedURL)
+                let sourceSizeAfter = try positiveFileSize(at: coordinatedURL)
+                let stagedSize = try positiveFileSize(at: stagedURL)
+                guard sourceSizeBefore == sourceSizeAfter,
+                      sourceSizeAfter == stagedSize else {
+                    throw incompleteImportSourceFailure(sourceURL)
+                }
+            }
             return
         }
 
         if fileExtension == "zip" {
-            try copyOrExtractZIPImportSource(sourceURL, to: stagedURL)
+            try withCoordinatedRead(of: sourceURL) { coordinatedURL in
+                let sourceSizeBefore = try positiveFileSize(at: coordinatedURL)
+                try copyOrExtractZIPImportSource(coordinatedURL, to: stagedURL)
+                guard sourceSizeBefore == (try positiveFileSize(at: coordinatedURL)) else {
+                    throw incompleteImportSourceFailure(sourceURL)
+                }
+            }
             return
         }
 
-        if isReadableZIPArchive(sourceURL) {
-            try copyOrExtractZIPImportSource(sourceURL, to: stagedURL)
-            return
+        try withCoordinatedRead(of: sourceURL) { coordinatedURL in
+            guard isReadableZIPArchive(coordinatedURL) else {
+                throw ImportFailure(
+                    title: "无法导入 IPA",
+                    reason: "请选择 .ipa 文件，或包含单个 .ipa 的构建产物 zip。当前文件：\(sourceURL.lastPathComponent)",
+                    recovery: "重新选择文件",
+                    code: "SEAL-IPA-207",
+                    condition: .unexpected,
+                    action: .reimportIPA,
+                    retryDisposition: .manual,
+                    operation: .importIPA,
+                    origin: .fileStore
+                )
+            }
+            let sourceSizeBefore = try positiveFileSize(at: coordinatedURL)
+            try copyOrExtractZIPImportSource(coordinatedURL, to: stagedURL)
+            guard sourceSizeBefore == (try positiveFileSize(at: coordinatedURL)) else {
+                throw incompleteImportSourceFailure(sourceURL)
+            }
+        }
+    }
+
+    /// 文件 App 的 URL 可能来自 iCloud Drive 或其他文件提供方。协调读取会等待提供方交付
+    /// 稳定文件，再复制到 Seal 私有暂存区，避免把下载中的临时内容保存成原始 IPA。
+    private func withCoordinatedRead<T>(of sourceURL: URL, operation: (URL) throws -> T) throws -> T {
+        var coordinationError: NSError?
+        var operationResult: Result<T, Error>?
+        NSFileCoordinator(filePresenter: nil).coordinate(
+            readingItemAt: sourceURL,
+            options: [],
+            error: &coordinationError
+        ) { coordinatedURL in
+            operationResult = Result { try operation(coordinatedURL) }
         }
 
-        throw ImportFailure(
-            title: "无法导入 IPA",
-            reason: "请选择 .ipa 文件，或包含单个 .ipa 的 GitHub 构建产物 zip。当前文件：\(sourceURL.lastPathComponent)",
-            recovery: "重新选择文件",
-            code: "SEAL-IPA-207",
+        if let coordinationError {
+            throw incompleteImportSourceFailure(sourceURL, underlying: coordinationError)
+        }
+        guard let operationResult else {
+            throw incompleteImportSourceFailure(sourceURL)
+        }
+        return try operationResult.get()
+    }
+
+    private func positiveFileSize(at url: URL) throws -> UInt64 {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard let size = (attributes[.size] as? NSNumber)?.int64Value, size > 0 else {
+                throw incompleteImportSourceFailure(url)
+            }
+            return UInt64(size)
+        } catch let failure as ImportFailure {
+            throw failure
+        } catch {
+            throw incompleteImportSourceFailure(url, underlying: error)
+        }
+    }
+
+    private func incompleteImportSourceFailure(_ sourceURL: URL, underlying: Error? = nil) -> ImportFailure {
+        let detail = underlying.map { "（\($0.localizedDescription)）" } ?? ""
+        return ImportFailure(
+            title: "IPA 文件未完整读取",
+            reason: "Seal 无法确认 \(sourceURL.lastPathComponent) 已完整读取。\(detail)",
+            recovery: "先在“文件”App 中确认文件已下载完成，再重新导入。",
+            code: "SEAL-IPA-214",
             condition: .unexpected,
             action: .reimportIPA,
             retryDisposition: .manual,
@@ -215,7 +285,11 @@ actor AppFileStore {
         let archive = try openArchive(sourceURL)
 
         if archiveContainsPayloadApp(archive) {
+            let sourceSize = try positiveFileSize(at: sourceURL)
             try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
+            guard sourceSize == (try positiveFileSize(at: stagedURL)) else {
+                throw incompleteImportSourceFailure(sourceURL)
+            }
             return
         }
 

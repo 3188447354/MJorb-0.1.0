@@ -1,3 +1,30 @@
+# 2026-10-28 描述文件服务诊断与任务生命周期
+保持 SideStore 风格设备通道复用及独立 profile 安装验证；Seal 并行预热在 Portal 失败时取消等待，已经开始的非可取消设备调用仍持有互斥租约直至结束。新增预热和维护耗时日志，不改变超时与描述文件校验。
+
+# 2026-10-28 签名前证书预清理
+
+对照本项目与 SideStore 的先复用或申请证书、配额失败后处理顺序：不在正常签名前先扫描设备并撤销孤儿证书。原有活动证书核验、证书申请及失败回退不变；轮换风险和真机验收仍须单独确认。
+
+# 2026-10-28 手表占位资料标识
+
+对照 Apple 更换 Bundle ID 指引，WKCompanionAppBundleIdentifier 与 WKAppBundleIdentifier 随主应用身份同步；仅在已检查不含可执行代码的 WatchPlaceholder 处理，真实 Watch 仍维持现有保护。安装系统明确拒绝关联错误时不重传，避免丢失首因。
+
+# 2026-10-28 加密 Watch 配套组件
+
+Seal 的 SideSign 路径目前没有完整 Watch 描述文件和重签支持；不解除加密。按用户选择，仅完整签名的工作副本删除确认包含加密代码的 Watch 配套 app，未确认的 Watch 和 App Clip 继续拒绝，profile-only 续签不改目标集合。原始 IPA 不变。
+
+# 2026-10-28 空 App Groups 的权限校验
+
+实机日志中的 IPA 含 `com.apple.security.application-groups` 空数组，Apple 描述文件不含该键。SideSign 以描述文件的实授权限为签名权限起点；Seal 原先仍把 IPA 空数组视为需要授权的权限，造成 401。签名前在权限读取、门户过滤和签后检查均按空数组不申请组处理；签名器在 IPA 声明空组时也不继承描述文件中旧的组。非空组仍严格验证和映射。
+
+# 2026-10-28 登录兼容试验修订
+
+1.0.1 构建 32 的受影响账号日志显示 -23782 后兼容重试出现 503，无法仅凭此归因。对照 iPASide 1.2.12 源码，其保留 MacBookPro13,3 机型并成对使用 macOS 13.6.7/22G720 和 akd CFNetwork/1410.1 Darwin/22.6.0；Seal 构建 33 仅将特定错误后的兼容候选替换为此组合，并增加匿名尝试日志。上游未验证受影响账号完整登录，Seal 的登录、2FA 和后续签名效果同样待实机验证。
+
+# 2026-10-28 登录兼容补充
+
+Apple 返回 -23782 时，iPASide 1.2.12 对旧版 Mac 身份进行一次较新身份重试；其公开说明仅验证到初始请求，尚未验证受影响账号的完整登录。Seal 采用限定错误码的重试，不重置已有身份或改动正常账号；采用既有 SideStore 服务器声明的 macOS 13.1 身份与 User-Agent。后续门户和签名仍需真机验证。
+
 # 上游对齐（Seal 是二开，必须跟上游）
 
 - 建立：2026-09-19
@@ -67,6 +94,11 @@ Seal 的是**自己的 wrapper**（`struct AnisetteV3Client: AnisetteEnvironment
 
 | 日期 | 对照对象 | Seal 侧 | 上游做法 | 结论 |
 |---|---|---|---|---|
+| **2026-10-28** | **兼容登录身份在后续门户请求中的连续性** | `-23782` 后的兼容身份只存于登录局部变量；签名、续签、证书同步/管理各自刷新 Anisette 并重建会话，导致后续请求仍带旧身份并返回 1100。 | SideStore `AuthManager.getAuthenticatedSession()` 每次取新的 Anisette 数据并据此构建 API 会话；登录流程保存账号 token/密码。它没有 Seal 的多 Apple ID 独立凭据，也没有 `-23782` 兼容身份回退标记。 | **跟会话新鲜度，补 Seal 多账号身份状态**：按账号把兼容身份标志保存在加密凭据中，所有 Apple 会话统一走工厂；正常账号仍原样使用 provider 数据。自动重新登录返回的新标志随 token 一起保存，不触碰其他账号或证书。对照：`upstream/SideStore/SideStore/Core/Auth/AuthManager.swift` 的 `getAuthenticatedSession()`、`upstream/SideStore/SideStore/Core/Operations/StandaloneOperations/SignInOperation.swift` 的 `signIn()`。 |
+| **2026-10-27** | **Wi-Fi 与 LocalDevVPN 分开报错、恢复直达** | 过去缺少 Wi-Fi 专项路径状态；LocalDevVPN 故障按钮沿用 Seal 设置页路由，用户还要再点一次才能打开 VPN。 | SideStore 将 LocalDevVPN 作为本地设备通道前置条件；当前核对到的代码没有独立 Wi-Fi 路径分流，也没有 Seal 失败抽屉到 LocalDevVPN 的相同跳转流程。 | **按 Seal 场景补充分流**：`NWPathMonitor(requiredInterfaceType: .wifi)` 先确认 Wi-Fi；无 Wi-Fi 报 `SEAL-INSTALL-700`，不把它说成 VPN 故障；Wi-Fi 可用时再探 LocalDevVPN 通道。LocalDevVPN 故障按钮直接打开 `localdevvpn://enable?scheme=seal`，无应用时转到 App Store。通道失败在边界返回，避免重复冷握手拖长错误反馈。 |
+| **2026-10-27** | **首屏列表、通道阶段交接与续签通知回跳** | iPhone 14 Pro Max 真机日志来自 0.1.75（构建 24）：本地恢复记录可在 06:24:22 找回 LiveContainer 与 LiveContainer2；该版本没有首屏记录读取的开始/结束计时。07:11:42 批量通道检查为 0.0 秒，但 profile-only 每个目标仍有 2.4–2.9 秒本地前置检查；旧进度阶段只在门户阶段才切换。后台通知在 07:12:11 已发出、07:12:20 结果已从持久载荷恢复，但日志没有记录抽屉呈现。通知路由只由应用页观察，根 Tab 未在通知点击后切回应用页。 | SideStore `AppBootManager.performBootSequence()` 在启动时后台点火 Minimuxer，并在操作前确保就绪；操作流水线按实际工作阶段推进。它不替 Seal 提供本地应用记录的首屏发布策略或通知视图路由。 | **对齐但保留 Seal 的 RSD 活性核验**：本机持久列表先行发布，账号/钥匙串读取继续在后台；路由监听提前于异步点火；最终通道门禁通过后立即进入账号准备阶段；通知点击后先切回应用页，再由前台宿主稳定后呈现结果。并发启动检查仍单飞，死 RSD 会话仍须真实探测，不用“VPN 已连接”代替设备会话有效。安装推送/核验仍按各自真实完成状态报告。 |
+| **2026-10-26** | **批量续签提速与新描述文件保证** | 本次核查发现，批量首检只调用 `isReady()`，每个应用之后仍重复 `start()` 的 RSD 健康检查；同一账号并行续签还会重复做实时 `listTeams` 会话核验。更重要的是，免费账号首份 profile 结果曾提前返回，未经过本轮创建时间校验。 | SideStore `FetchProvisioningProfilesOperation` 为目标调用 `DeveloperPortalProxy.downloadProvisioningProfile`，并未把 profile 写操作当成可复用的读取缓存。 | **保留真实写入并收紧验收**：合并的仅是同一时刻、同一账号的只读会话核验；批次先取得并强校验设备 UDID。每个目标仍独立请求 Apple 新 profile；免费/付费结果都过生成时间和有效期检查；有效期按秒校验“生成至过期”至少 7 天，并按当前时间拒绝已过期文件，不把网络耗时误算成有效期缩短；旧文件最多重新请求一次，仍不新便拒绝；完整重签与 profile-only 都比较 Seal 已记录的上一份，只有创建时间严格更晚才接受；注入后仍按 UUID 读回。profile 与 Anisette 均不做跨目标缓存。SideStore 对照：`upstream/SideStore/SideStore/Core/Operations/PipelineOperations/FetchProvisioningProfilesOperation.swift`。 |
+| **2026-10-26** | **签名与批量续签结果抽屉退场** | Seal 在结果页点击完成时先清空会话，再让操作抽屉关闭；SwiftUI 因此先把内容切回签名配置页，造成结果抽屉与配置抽屉连续退场。批量结果也在外层动画完成前清空 | SideStore 的签名/续签采用 operation pipeline；检索其 SwiftUI 操作视图未发现与 Seal 同形态的「单张外层抽屉中切换签名结果内容，再由父层排队呈现其他抽屉」流程 | **不跟（无对应交接流程）⇒ 保留 Seal 的 SheetArbiter**：签名单项由外层 `onDismiss` 清理；批量结果等 `onDismiss` 后再清持久化载荷，防止动画中内容回切，并让待呈现操作仍通过既有仲裁串行交接。 |
 | **2026-10-24** | **设备通道连接生命周期（签名要连两次、耗时）** | Seal 此前没有启动点火：通道靠签名流程内的并行预热 `channelStart` 临场建连，缓存过期/会话死亡就在签名前或安装前整轮重跑完整诊断；签前还有两道重复门禁（`requireReadyForSigning()` ＋ `requireReadyInstallChannel(beforeSigning: true)` 各探一次）；profile-only 被拒原因除 `SEAL-PROFILE-365` 外全部静默（log-49 实证偶发完整重签无从归因）。 | SideStore `AppBootManager.performBootSequence()`（`upstream/SideStore/SideStore/AppBootManager.swift`，逐行核实）：App 启动即后台并发 `startMinimuxer` 点火并以 `fetchUDID(forceLive:)` 验证一次，muxer 进程内常驻；每个操作前只调 `ensureMinimuxerReady()`（`MinimuxerWrapper.swift:195-209`，一次 `core.isReady` 状态查询）；失败恢复是**操作级** `withRemotePairingRetry`——重发现 RemotePairing 端口后把**同一个操作**再跑一遍，不拆会话、不全量诊断。 | **跟（MJ 2026-10-24 拍板用 SideStore 模型，自研三步方案作废）**：① 新增 `InstallChannel.prewarmAtLaunch()`（协议要求＋默认空实现），`MinimuxerInstallChannel` 实现：未配对跳过、就绪判据明确报 VPN 未连跳过、否则 `start()` 点火常驻，失败清熔断不毒化用户首次操作；`SealApp.init` 在保活启动后同点点火（快捷指令冷启动同路）。② 签前门禁去重：删第二道 `requireReadyInstallChannel(beforeSigning: true)`，只保留「等预热 `start()` ＋ `requireReadyForSigning()`」一道；安装前 `beforeSigning: false` 那道保留作签名期间断开的兜底。③ 操作级重试 Seal 本已具备同形态（注入瞬时失败重建 RSD/misagent 会话后原地重试一次、安装 3 次尝试不拆会话），本轮核实保留不动。④ **不跟细节**：缓存会话复用前的 RSD 级活性探测保留——2026-09-27 真机实证 `ready()` 标志位会把死 RSD 会话报成就绪，SideStore 的 isReady 判据在 Seal 当前绑定下识不破死会话，删探测违反「不出问题」底线；真状态订阅需改 RustBridge（当前绑定只有同步轮询），另案。⑤ 顺带补齐原因码日志：profile-only 准入改逐项判据、全部拒绝原因落 `SEAL-PROFILE-367`（365 保持专管「更新源未安装」）。 |
 | **2026-10-22** | **门户 `listTeams` 重复调用与 2FA 中断后自动续跑** | 真机日志（构建 138）里一轮单 App 操作发 2–4 次 `listTeams`（每次 10–21 秒）：会话验证的 bypass 结果不回填私有缓存、主流程冷拉，证书/库存服务各自无缓存现拉。签名中途恢复登录撞 2FA（101a）时推送码随已中止的登录作废，账号页验证成功后原签名也不续跑。 | AltStore / SideStore 每次操作现拉团队列表、无跨服务缓存；2FA 中断后靠用户手动重来，无自动续跑机制。 | **不跟（上游没有）⇒ Seal 自研流程编排**：Team 列表缓存抽成跨服务共享的 `PortalTeamCache`（TTL 与新鲜度判据仍只有一份），验证的实时结果回填、证书/库存服务复用同一份；会话验证的 bypass 实时请求与撤销决策的最新证书清单**不省**。101a 按 A 方案处理：验证码入口仍只在账号验证页（沿 2026-10-20 条纪律），文案说清推送码已作废，失败页存下签名上下文，账号重新验证成功后自动续跑原签名（仅限当初签名的那个账号）。 |
 | **2026-10-22** | **登录身份策略：默认 anisette 服务器与 client_info 归一化存废** | Seal 停留在 2026-10-16 跟随当时 isideload 得出的结论：默认 `ani.jkcoxson.com`（Windows 身份）、`authenticationClientInfo` 把公共服务器的 Mac/Xcode/Android 声明归一化改写为 Windows iTunes 串、GSA 请求 User-Agent 写死 `akd/1.0 CFNetwork/808.1.4`。真机实测（Seal-log_45）：多个既有账号 SRP 全程成功后在 apptokens 步被回 `-80046 / hsc=400`，同号 iLoader 正常；且 mac-ani 的 `<MacBookPro13,3>` 身份正中归一化名单，手动换服务器也会被改写回 Windows。 | iLoader 2.4.0：默认 anisette 换成 Jkcoxson (Mac)（`mac-ani.jkcoxson.com`，作者称更稳定）并移除 legacy Windows 服务器；isideload 已删除 `client_info_to_use` 归一化——`remote_v3::get_client_info` 原样采用服务器 `/v3/client_info` 的 client_info 与 user_agent（注释：身份可以写死，但 Apple 近来变得太快，直接取服务器值更合理），`base_headers` 把两者成对发给 GSA。 | **跟**（且 MJ 定为长期规矩：登录/anisette/身份路线以后跟随 iLoader/isideload）：默认服务器改 `mac-ani.jkcoxson.com`，`jkcoxson`、`sidestore-win` 两台 Windows 服务器退出目录（已保存选择由一次性迁移清掉）；删除身份归一化、原样直传；`ALTAnisetteData` 新增 `userAgent` 字段穿线，GSA 的 SRP/complete 与 `/auth` 两处请求头改用服务器 UA（空值回退旧值）。代价与 iLoader 换身份时相同：存量 ADI 身份戳不匹配，首次登录重新 provisioning、可能再过一次 2FA。此条取代 2026-10-16「SideInstaller 当前 Anisette client_info 归一化」一行的结论。 |
@@ -264,6 +296,8 @@ gh api "repos/SideStore/SideStore/contents/<路径>" --jq '.content' | base64 -d
 [`docs/upstream/codesignkit-perf-1.3.23.md`](upstream/codesignkit-perf-1.3.23.md)** ✓，
 守卫 **R91** 钉住「不得静默回退」✓。
 
+2026-10-26 再增加：CodeDirectory 页哈希按有限线程并行；CodeResources 结果写入加锁，资源读取失败时停止签名，避免把空数据签进去。背景与边界见上述清单末尾。真机大包复测前不宣称具体提速倍数。
+
 ⚠️ **同步上游之前必须先读那份清单**：本仓不能 `git merge` / `git rebase` 上游
 （历史被重建过、没有共同祖先）⇒ 只能语义对照 ⇒ 一次「照抄上游」就会把这些优化全部回退 ✗。
 
@@ -435,3 +469,6 @@ on 4.5.2」✗。
 | 多 App 续签与单项操作 | `PipelineRunner` 用 `withThrowingTaskGroup` 并行执行各 App 的操作管线；后台批量刷新由 `AppManager.refresh(apps)` 统一提交，不以一把批次锁冻结其他页面操作。 | **跟**：批量和单项操作可并行；Seal 现有 `OperationCoordinator` 只协调同一 App 的签名、安装和续签。不同 App 不因另一个续签批次而被入口拒绝；共享的设备原生服务仍由其单飞路径处理。 |
 
 对照源码：`upstream/SideStore/SideStore/Core/Operations/PipelineRunner.swift` 与 `StandaloneOperations/BackgroundRefreshAppsOperation.swift`。
+# 2026-10-28 ZIP64 空目录与空 Watch 文件夹
+
+ZIPFoundation 0.9.20 将 ZIP64 扩展中有效的零长度当作缺失，又优先按 Unix 普通文件模式判断目录；某些打包器会对以斜杠结尾的空目录同时使用 ZIP64 零长度和普通文件模式。Seal 按上游库本身的 ZIP64、CRC 流式处理方式做最小修订：仅在标准 32 位字段为哨兵值时读取 ZIP64 值，允许真实零值；仅对内容长度为零的斜杠结尾普通文件条目识别为空目录。非空条目和真正的 CRC 错误继续保留。主项目与 Minimuxer 均指向同一份本地 0.9.20 源码，避免两份解压库行为不一致。空 Watch/AppClips 文件夹不再作为目标拦截；真实 Watch bundle 不改动且仍阻止未经完整支持的签名。

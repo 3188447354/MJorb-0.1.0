@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct AppsRootView: View {
@@ -14,9 +15,20 @@ struct AppsRootView: View {
     /// 全局抽屉仲裁器由 `RootTabView` 持有并注入：应用页抽屉与根层的
     /// 更新抽屉 / 外观抽屉共用同一个仲裁域（2026-10-23 统一）。
     @Binding var sheetArbiter: SheetArbiter
+    /// 续签结果抽屉只挂在应用页；通知回跳切 tab 完成前不能消费呈现请求。
+    let isActiveTab: Bool
+    /// 导入确认、账号选择等独立系统抽屉真正退场后，通知根层呈现暂缓的更新提示。
+    let onPageModalDismissed: () -> Void
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(BackgroundRenewalNotificationRoute.pendingTapKey)
+    private var hasPendingBackgroundRenewalNotificationTap = false
+    @AppStorage(BackgroundRenewalNotificationRoute.pendingTapRevisionKey)
+    private var backgroundRenewalNotificationTapRevision = 0
     @ScaledMetric(relativeTo: .largeTitle) private var sealTitleSize = 38
+    /// 每次打开先落在设备已安装列表；空列表也留在此处，由状态卡解释，不自动切到待安装。
     @State private var mode: ListMode = .installed
+    /// 首次读取本机记录后显示；只保留一秒过渡，不等待 Seal 自身签名资料对账。
+    @State private var hasCompletedInitialAppListReveal = false
     /// 分页连续进度只刷新标签，不让每一帧手势都重建两个应用列表。
     @State private var pagerProgress = CaterpillarTabsProgress(value: 1)
     @State private var detailApp: AppRecord?
@@ -25,11 +37,14 @@ struct AppsRootView: View {
     @State private var deleteSuccessTrigger = 0
     @State private var installedActionApp: AppRecord?
     @State private var operationAppID: UUID?
-    @State private var didResolveInitialMode = false
     /// 系统通知点进来时，SwiftUI 的 sheet host 可能尚未挂载。先等根视图出现，
     /// 再在下一次主循环请求结果抽屉，避免状态已锁住列表而系统 sheet 没有呈现。
     @State private var isResultPresentationHostReady = false
     @State private var hasPendingBackgroundResultPresentation = false
+    /// 启动、前台恢复、续签完成和通知点击可能在同一时间窗重复请求同一张结果抽屉。
+    /// 只允许一个排队请求和一次 flush 在途，避免并发写 sheet 状态触发 UIKit 崩溃。
+    @State private var isSchedulingBackgroundResultPresentation = false
+    @State private var isFlushingBackgroundResultPresentation = false
     /// 业务抽屉呈现仲裁：同一时刻只许一张在场，交接串行「关完再开」。
     /// 所有抽屉的呈现/关闭都先过它（判据本体在 `SheetArbiter`，可单测），
     /// 不再靠关后硬等延时或事后强清其他抽屉状态来防抢层。
@@ -58,10 +73,17 @@ struct AppsRootView: View {
                     // 不在这里切 tab：等 versionCheck 出来，已安装被拦截的不跳，
                     // 只有真正要导入的才切到待签名页（见 consumeWorkflowState）。
                     Task { await viewModel.importSelectedFile(url) }
-                case .failure(let error): viewModel.handleImporterFailure(error)
+                case .failure(let error):
+                    viewModel.handleImporterFailure(error)
+                    if (error as? CocoaError)?.code == .userCancelled {
+                        onPageModalDismissed()
+                    }
                 }
             }
-            .sheet(isPresented: $viewModel.isImportSheetPresented, onDismiss: cancelDraftIfNeeded) {
+            .sheet(isPresented: $viewModel.isImportSheetPresented, onDismiss: {
+                cancelDraftIfNeeded()
+                onPageModalDismissed()
+            }) {
                 if let draft = viewModel.sheetDraft {
                     ImportConfirmationView(
                         draft: draft,
@@ -135,7 +157,7 @@ struct AppsRootView: View {
                 .presentationContentInteraction(.scrolls)
                 .presentationDragIndicator(.hidden)
             }
-            .sheet(item: $viewModel.accountSelectionApp) { app in
+            .sheet(item: $viewModel.accountSelectionApp, onDismiss: onPageModalDismissed) { app in
                 AccountSelectionView(
                     app: app,
                     accounts: viewModel.availableAccounts,
@@ -147,6 +169,22 @@ struct AppsRootView: View {
             .sheet(item: batchRefreshSheet, onDismiss: batchSheetDismissed) { _ in
                 BatchRefreshView(viewModel: viewModel)
                     .presentationDetents([.height(620), .large])
+                    .onAppear {
+                        // 只在结果抽屉真正进入呈现树后消费通知路由。
+                        // 设置 isBatchRefreshSheetPresented 仅代表请求已提交，仲裁器仍可能
+                        // 正在等待另一张抽屉退场；若那时清标记，回跳意图就会丢失。
+                        guard BackgroundRenewalNotificationRoute.hasPendingTap,
+                              let resultRoundID = viewModel.batchRefreshSession?.id,
+                              BackgroundRenewalNotificationRoute.pendingRoundID == nil
+                                || BackgroundRenewalNotificationRoute.pendingRoundID == resultRoundID else {
+                            return
+                        }
+                        BackgroundRenewalNotificationRoute.clearPendingTap(matching: resultRoundID)
+                        hasPendingBackgroundRenewalNotificationTap = false
+                        viewModel.noteBackgroundRenewalResultPresentation(
+                            "后台续签结果抽屉已实际呈现，通知回跳标记已消费"
+                        )
+                    }
             }
             .sheet(item: $detailApp, onDismiss: {
                 _ = sheetArbiter.sheetDidDismiss(.detail)
@@ -176,13 +214,51 @@ struct AppsRootView: View {
                 standardAlert(failure)
             }
             .task {
+                let initialListLoadStartedAt = ProcessInfo.processInfo.systemUptime
+                // 先启动路由监听，避免冷启动建通道期间切换 Wi-Fi/VPN 时漏掉变化；监听和首屏读取互不等待。
+                viewModel.startDeviceChannelPathMonitoring()
                 // 启动时用设备隧道地址触发 LocalDevVPN 已配置的按需连接；探测独立运行，不阻塞首屏。
-                Task { _ = await LocalDevVPNOnDemandActivator().probeTunnel() }
+                Task {
+                    _ = await LocalDevVPNOnDemandActivator().probeTunnel()
+                    await viewModel.prewarmSigningChannelAtLaunch()
+                }
                 // 后台续签已经得到终态时，通知进入必须先展示结果；不能被启动维护、
                 // 设备核验或列表加载拖住，造成用户得点几次应用才看到抽屉。
                 requestSettledBackgroundBatchResultPresentation()
-                await viewModel.syncSelfRecordOnLaunch()
-                await viewModel.reloadSelfRecordSnapshot()
+
+                if hasCompletedInitialAppListReveal == false {
+                    // 本机应用列表读取与 Seal 自注册并行。自注册会等待当前包的签名/描述文件
+                    // 元数据；它不属于应用列表读取，不能挡住首屏。Seal 行的版本展示直接取
+                    // Bundle.main，故先展示本机记录也不会闪出旧版本号。
+                    let selfRecordSyncTask = Task {
+                        await viewModel.syncSelfRecordOnLaunch(postNotification: false)
+                    }
+                    let initialListLoadTask = Task {
+                        await viewModel.load(force: true)
+                    }
+
+                    // 读取提示只作为固定的一秒过渡；不等待自注册、账号、钥匙串或设备检查。
+                    let elapsed = ProcessInfo.processInfo.systemUptime - initialListLoadStartedAt
+                    let remaining = max(0, 1.0 - elapsed)
+                    if remaining > 0 {
+                        try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                    }
+                    hasCompletedInitialAppListReveal = true
+
+                    // 该读取会先发布本机记录，再在内部异步补齐账号、图标等状态。
+                    await initialListLoadTask.value
+                    // 注册结束后再把 Seal 的签名身份、有效期等字段同步回列表。
+                    // 该慢路径在后台收尾，不影响列表已经显示。
+                    Task { @MainActor in
+                        await selfRecordSyncTask.value
+                        await viewModel.reloadSelfRecordSnapshot()
+                        await viewModel.load(force: true)
+                    }
+                } else {
+                    await viewModel.syncSelfRecordOnLaunch(postNotification: false)
+                    await viewModel.reloadSelfRecordSnapshot()
+                    await viewModel.load(force: true)
+                }
                 await settingsViewModel.load()
                 // ── 启动关键路径（阻塞首屏，只做最少必要）──
                 // 记录恢复（设备扫描发现 App）是新安装时列表有数据的唯一来源，
@@ -195,7 +271,6 @@ struct AppsRootView: View {
                 // Seal 自替换会更新本机记录、证书身份和应用版本；启动时统一强制重载，
                 // 避免新进程先展示旧快照，等用户手动刷新才纠正。
                 await viewModel.load(force: true)
-                resolveInitialModeIfNeeded()
                 // ── 非关键路径（后台，不阻塞首屏）──
                 Task {
                     await viewModel.runDeferredMaintenanceIfIdle()
@@ -203,9 +278,14 @@ struct AppsRootView: View {
                 }
             }
             .onChange(of: scenePhase) { phase in
-                guard phase == .active else { return }
+                guard phase == .active, hasCompletedInitialAppListReveal else { return }
                 requestSettledBackgroundBatchResultPresentation()
                 Task {
+                    if await LocalDevVPNOnDemandActivator().probeTunnel() {
+                        await viewModel.prewarmSigningChannelAtLaunch()
+                    } else {
+                        viewModel.markSigningChannelUnavailableIfIdle()
+                    }
                     await viewModel.syncSelfRecordOnLaunch()
                     await viewModel.reloadSelfRecordSnapshot()
                     await viewModel.refreshInstalledApps(
@@ -219,12 +299,22 @@ struct AppsRootView: View {
             }
             .onChange(of: viewModel.isBatchRefreshSheetPresented) { isPresented in
                 guard isPresented else { return }
+                // 普通结果不打断更新提示；通知点击是明确的“打开这轮结果”请求，
+                // 由根层主动收起更新提示后再交接。
+                guard sheetArbiter.current != .appUpdate
+                        || BackgroundRenewalNotificationRoute.hasPendingTap else { return }
                 // 批量抽屉（进行中或结果）请求呈现：先过仲裁。台上无人直接上台；
                 // 有别的抽屉在场时只关那一张、登记待呈现，等它的关闭完成事件
                 // 再上台 —— 不再无条件强清全部抽屉状态（旧补丁会把无关状态一起清掉，
                 // 且关与开同帧发生仍可能抢层）。
                 if sheetArbiter.request(.batchResult) == .dismissCurrentThenPresentPending {
-                    dismissCurrentArbitratedSheet()
+                    switch sheetArbiter.current {
+                    case .operation, .appUpdate, .appearance:
+                        // 不取消正在运行的签名/续签；根层会处理更新和外观抽屉。
+                        break
+                    default:
+                        dismissCurrentArbitratedSheet()
+                    }
                 }
             }
             .onChange(of: viewModel.hasPendingBatchResultAwaitingPresentation) { isAwaiting in
@@ -244,6 +334,9 @@ struct AppsRootView: View {
                     sheetArbiter.cancelPending(.operation)
                     return
                 }
+                // 更新提示在前台时不在它后面排入操作抽屉；自动化结果仍由业务状态保存，
+                // 取消更新后不会出现第二张抽屉紧接着弹出的情况。
+                guard sheetArbiter.current != .appUpdate else { return }
                 if sheetArbiter.request(.operation) == .dismissCurrentThenPresentPending,
                    sheetArbiter.current != .batchResult {
                     dismissCurrentArbitratedSheet()
@@ -265,9 +358,30 @@ struct AppsRootView: View {
                     break
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: BackgroundRenewalNotificationRoute.opened)) { _ in
-                // 快捷指令成功通知的点击是一个明确的用户意图；不要只赌 scenePhase
-                // 变化（冷启动和从通知中心回到已在后台的进程时序不同）。
+            .onChange(of: hasPendingBackgroundRenewalNotificationTap) { hasPendingTap in
+                // 通知 delegate 只写持久化标记、不触碰 UIKit/SwiftUI；由前台场景观察
+                // 标记，再在 scenePhase 稳定后呈现结果，避免通知回调重入场景恢复事务。
+                guard hasPendingTap else { return }
+                requestSettledBackgroundBatchResultPresentation()
+            }
+            .onChange(of: backgroundRenewalNotificationTapRevision) { _, _ in
+                requestSettledBackgroundBatchResultPresentation()
+            }
+            .onChange(of: sheetArbiter.current) { current in
+                guard BackgroundRenewalNotificationRoute.hasPendingTap else { return }
+                if current == nil || current == .batchResult {
+                    requestSettledBackgroundBatchResultPresentation()
+                }
+            }
+            .onChange(of: isActiveTab) { _, isActive in
+                // 根层从“我的”切回“应用”后重试；前一次若在后台或 tab 不可见时到达，
+                // 通知标记仍保留，直到结果抽屉实际出现才清除。
+                guard isActive,
+                      BackgroundRenewalNotificationRoute.hasPendingTap else { return }
+                requestSettledBackgroundBatchResultPresentation()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                guard BackgroundRenewalNotificationRoute.hasPendingTap else { return }
                 requestSettledBackgroundBatchResultPresentation()
             }
             .onReceive(NotificationCenter.default.publisher(for: .sealRenewalCompleted)) { _ in
@@ -276,8 +390,20 @@ struct AppsRootView: View {
             // 真正要导入时才切到待签名页：
             // 2026-10-09 重设计：覆盖更新（含 Seal 自更新）也进待签名页，不再留在已安装页。
             .onChange(of: viewModel.isImportSheetPresented) { isPresented in
-                guard isPresented else { return }
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { mode = .unsigned }
+                if isPresented {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { mode = .unsigned }
+                } else {
+                    requestSettledBackgroundBatchResultPresentation()
+                }
+            }
+            .onChange(of: viewModel.isImporterPresented) { isPresented in
+                if isPresented == false { requestSettledBackgroundBatchResultPresentation() }
+            }
+            .onChange(of: viewModel.accountSelectionApp) { app in
+                if app == nil { requestSettledBackgroundBatchResultPresentation() }
+            }
+            .onChange(of: viewModel.alertFailure) { failure in
+                if failure == nil { requestSettledBackgroundBatchResultPresentation() }
             }
             .onChange(of: viewModel.importCompletionCount) { _ in
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
@@ -290,6 +416,8 @@ struct AppsRootView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .sealSelfRecordUpdated)) { _ in
                 // 自安装重启后，记录与证书派生状态必须同一轮发布。
+                // 首屏对账期间的通知由启动流程统一处理，避免并发 load 抢先展示旧记录。
+                guard hasCompletedInitialAppListReveal else { return }
                 Task {
                     await viewModel.reloadSelfRecordSnapshot()
                     await viewModel.load(force: true)
@@ -303,6 +431,7 @@ struct AppsRootView: View {
         HStack(alignment: .center) {
             Text("Seal")
                 .font(.system(size: sealTitleSize, weight: .bold))
+                .singleLine()
                 .accessibilityAddTraits(.isHeader)
 
             Spacer()
@@ -406,12 +535,37 @@ struct AppsRootView: View {
 
     @ViewBuilder
     private func appList(_ pageMode: ListMode, apps: [AppRecord]) -> some View {
-        if pageMode == .unsigned, viewModel.phase == .preparing || viewModel.phase == .committing {
+        if apps.isEmpty, viewModel.appListLoadState == .loading {
+            loadingAppListCard
+        } else if hasCompletedInitialAppListReveal == false {
+            loadingAppListCard
+        } else if apps.isEmpty, viewModel.appListLoadState == .failed {
+            VStack(spacing: 10) {
+                Label("无法读取应用列表", systemImage: "exclamationmark.triangle")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .singleLine()
+                Text(viewModel.canRetryAppListLoad ? "读取失败，可重新读取" : "请重新打开 Seal 后再试")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .singleLine()
+                if viewModel.canRetryAppListLoad {
+                    Button("重新读取") {
+                        Task { await viewModel.load(force: true) }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .tint(.sealAccent)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 160)
+            .sealListCard(cornerRadius: 20)
+        } else if pageMode == .unsigned, viewModel.phase == .preparing || viewModel.phase == .committing {
             HStack(spacing: 12) {
                 ProgressView()
                 Text("正在读取 IPA")
                     .font(.body)
                     .foregroundStyle(.secondary)
+                    .singleLine()
             }
             .frame(maxWidth: .infinity, minHeight: 116)
             .sealListCard(cornerRadius: 18)
@@ -459,12 +613,28 @@ struct AppsRootView: View {
         }
     }
 
+    private var loadingAppListCard: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+            Text("正在读取应用列表")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .singleLine()
+        }
+        .frame(maxWidth: .infinity, minHeight: 160)
+        .sealListCard(cornerRadius: 20)
+    }
+
     private func emptyState(_ pageMode: ListMode) -> some View {
         ContentUnavailableView {
             Label(emptyTitle(for: pageMode), systemImage: emptyIcon(for: pageMode))
         } description: {
             if pageMode == .unsigned {
                 Text("点击右上角 + 导入 IPA")
+                    .singleLine()
+            } else {
+                Text("安装完成后，应用会显示在这里")
+                    .singleLine()
             }
         }
         .frame(maxWidth: .infinity, minHeight: 160)
@@ -497,29 +667,82 @@ struct AppsRootView: View {
     }
 
     /// `task` 与通知 delegate 都可能早于 sheet presenter 建立，且通知唤醒会先经历
-    /// inactive。先记住用户的打开意图，直到根 host 已挂载且 App 回到 active，才把它
-    /// 转成唯一的业务抽屉状态；这样不会出现“列表被结果状态锁住，抽屉却没弹出来”。
+    /// inactive。先等 UIKit 完成场景恢复，再记住用户的打开意图；根 host 已挂载且 App
+    /// 回到 active 后才转成唯一的业务抽屉状态，避免状态恢复期间触发 UIKit 断言闪退。
     private func requestSettledBackgroundBatchResultPresentation() {
+        guard hasBackgroundBatchResultToPresent else { return }
         hasPendingBackgroundResultPresentation = true
-        flushSettledBackgroundBatchResultPresentationIfPossible()
+        guard !isSchedulingBackgroundResultPresentation,
+              !isFlushingBackgroundResultPresentation,
+              isActiveTab,
+              scenePhase == .active,
+              isResultPresentationHostReady else { return }
+        isSchedulingBackgroundResultPresentation = true
+        Task { @MainActor in
+            defer { isSchedulingBackgroundResultPresentation = false }
+            // Let SwiftUI finish the scene/tab restoration transaction. The result is
+            // then presented on its first safe update turn, with no fixed half-second wait.
+            await Task.yield()
+            flushSettledBackgroundBatchResultPresentationIfPossible()
+        }
+    }
+
+    private var hasBackgroundBatchResultToPresent: Bool {
+        BackgroundRenewalNotificationRoute.hasPendingTap
+            || viewModel.hasPendingBatchResultAwaitingPresentation
+            || viewModel.hasSettledBackgroundBatchResultReadyForPresentation()
     }
 
     private func flushSettledBackgroundBatchResultPresentationIfPossible() {
+        guard !isFlushingBackgroundResultPresentation else { return }
         guard BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
             hasPendingRequest: hasPendingBackgroundResultPresentation,
             isHostReady: isResultPresentationHostReady,
             isAppActive: scenePhase == .active
+        ), hasNoBlockingModalForBackgroundResult else { return }
+        let requestedRoundID = BackgroundRenewalNotificationRoute.hasPendingTap
+            ? BackgroundRenewalNotificationRoute.pendingRoundID
+            : nil
+        guard viewModel.hasSettledBackgroundBatchResultReadyForPresentation(
+            roundID: requestedRoundID
         ) else { return }
+        if sheetArbiter.current != .batchResult {
+            let action = sheetArbiter.request(.batchResult)
+            guard action == .present(.batchResult) else {
+                switch sheetArbiter.current {
+                case .operation, .appUpdate, .appearance:
+                    // Keep the result queued. Never cancel an operation to show it.
+                    break
+                default:
+                    dismissCurrentArbitratedSheet()
+                }
+                return
+            }
+        }
+        isFlushingBackgroundResultPresentation = true
         Task { @MainActor in
+            defer { isFlushingBackgroundResultPresentation = false }
             await Task.yield()
             guard BatchResultPresentationPolicy.shouldFlushPendingResultPresentation(
                 hasPendingRequest: hasPendingBackgroundResultPresentation,
                 isHostReady: isResultPresentationHostReady,
                 isAppActive: scenePhase == .active
+            ),
+                  sheetArbiter.current == .batchResult,
+                  hasNoBlockingModalForBackgroundResult else { return }
+            guard viewModel.presentSettledBackgroundBatchResultIfNeeded(
+                roundID: requestedRoundID
             ) else { return }
-            guard viewModel.presentSettledBackgroundBatchResultIfNeeded() else { return }
             hasPendingBackgroundResultPresentation = false
+            viewModel.noteBackgroundRenewalResultPresentation("后台续签结果抽屉呈现请求已提交")
         }
+    }
+
+    private var hasNoBlockingModalForBackgroundResult: Bool {
+        viewModel.isImporterPresented == false
+            && viewModel.isImportSheetPresented == false
+            && viewModel.accountSelectionApp == nil
+            && viewModel.alertFailure == nil
     }
 
     /// 批量结果（尤其是通知进入后的已结算结果）拥有抽屉优先级。
@@ -573,6 +796,8 @@ struct AppsRootView: View {
     /// 批量抽屉关闭完成：向仲裁报到。若有操作抽屉在待呈现，
     /// 仲裁已把它转正，`operationSheetItem` 绑定随状态变化自然呈现。
     private func batchSheetDismissed() {
+        // 结果数据保留到退场动画完成，避免 sheet 仍在场时内容先切成空态。
+        viewModel.finalizeBatchRefreshDismissal()
         _ = sheetArbiter.sheetDidDismiss(.batchResult)
         consumeDeferredRenewalIfArbitrationAllows()
     }
@@ -638,8 +863,9 @@ struct AppsRootView: View {
         // 交接纪律归仲裁：操作抽屉关闭完成后才向仲裁报到，待呈现的抽屉
         // （如批量结果）随之转正。不再在这里强清其他抽屉状态 —— 仲裁保证
         // 同一时刻只有一张在场，能被清的本来就不该同时存在。
-        _ = sheetArbiter.sheetDidDismiss(.operation)
+        // 先清理已经退场的操作会话，再释放台面；等待中的抽屉不会与旧操作状态同帧交接。
         viewModel.dismissOperation()
+        _ = sheetArbiter.sheetDidDismiss(.operation)
         consumeDeferredRenewalIfArbitrationAllows()
         guard let operationAppID else { return }
         self.operationAppID = nil
@@ -648,16 +874,6 @@ struct AppsRootView: View {
             if viewModel.installedApps.contains(where: { $0.id == operationAppID }) {
                 withAnimation { mode = .installed }
             }
-        }
-    }
-
-    private func resolveInitialModeIfNeeded() {
-        guard didResolveInitialMode == false else { return }
-        didResolveInitialMode = true
-        if viewModel.unsignedApps.isEmpty && viewModel.installedApps.isEmpty {
-            mode = .unsigned
-        } else {
-            mode = .installed
         }
     }
 
@@ -722,7 +938,7 @@ struct AppsRootView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                Text("续签全部")
+                Text("续签全部").singleLine()
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(Color.sealAccent)

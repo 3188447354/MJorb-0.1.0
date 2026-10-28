@@ -22,7 +22,8 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
         expectedDeviceIdentifier: String,
         now: Date = Date(),
         requestedAfter: Date? = nil,
-        minimumRemainingLifetime: TimeInterval? = nil
+        minimumRemainingLifetime: TimeInterval? = nil,
+        minimumValidityDuration: TimeInterval? = nil
     ) throws -> ProvisioningProfileBinding {
         guard teamIdentifier.caseInsensitiveCompare(expectedTeamID) == .orderedSame else {
             throw Self.failure(
@@ -42,11 +43,13 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
                 code: "SEAL-PROFILE-312"
             )
         }
-        if let requestedAfter, let minimumRemainingLifetime {
+        if let requestedAfter,
+           minimumRemainingLifetime != nil || minimumValidityDuration != nil {
             try validateFreshness(
                 now: now,
                 requestedAfter: requestedAfter,
-                minimumRemainingLifetime: minimumRemainingLifetime
+                minimumRemainingLifetime: minimumRemainingLifetime,
+                minimumValidityDuration: minimumValidityDuration
             )
         }
         let normalizedExpectedSerial = Self.normalizedSerial(expectedCertificateSerialNumber)
@@ -71,7 +74,8 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
     func validateFreshness(
         now: Date = Date(),
         requestedAfter: Date,
-        minimumRemainingLifetime: TimeInterval
+        minimumRemainingLifetime: TimeInterval? = nil,
+        minimumValidityDuration: TimeInterval? = nil
     ) throws {
         guard let creationDate else {
             throw Self.failure(
@@ -85,9 +89,23 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
                 code: "SEAL-PROFILE-315a"
             )
         }
-        guard expirationDate.timeIntervalSince(now) >= minimumRemainingLifetime else {
+        guard expirationDate > now else {
             throw Self.failure(
-                reason: "Apple 返回的描述文件剩余有效期不足完整 7 天窗口。",
+                reason: "Apple 返回的描述文件已经过期。",
+                code: "SEAL-PROFILE-312"
+            )
+        }
+        if let minimumRemainingLifetime,
+           expirationDate.timeIntervalSince(now) < minimumRemainingLifetime {
+            throw Self.failure(
+                reason: "Apple 返回的描述文件剩余有效期不足要求。",
+                code: "SEAL-PROFILE-316"
+            )
+        }
+        if let minimumValidityDuration,
+           expirationDate.timeIntervalSince(creationDate) < minimumValidityDuration {
+            throw Self.failure(
+                reason: "Apple 返回的描述文件从生成到过期不足完整 7 天，Seal 已停止使用。",
                 code: "SEAL-PROFILE-316"
             )
         }
@@ -98,6 +116,11 @@ struct ProvisioningProfileBinding: Codable, Equatable, Sendable {
         profile: [String: ProvisioningEntitlementValue],
         bundleIdentifier: String
     ) throws {
+        // An empty App Groups array contains no requested group. Apple may omit
+        // the entitlement entirely in that case; nonempty arrays stay enforced.
+        let requested = requested.filter { key, value in
+            !(key == "com.apple.security.application-groups" && value == .array([]))
+        }
         let valuesManagedBySigner: Set<String> = [
             "com.apple.developer.team-identifier",
             "application-identifier",

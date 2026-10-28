@@ -50,6 +50,14 @@ final class CertificateExportHandler {
         presentExportDialog(callbackTemplate: callbackTemplate, accountID: accountID)
     }
 
+    func certificateForFile(account: AppleAccountRecord, serialNumber: String) async throws -> Data {
+        guard let secret = try await keychain.load(accountID: account.id, accountIdentifier: account.accountIdentifier),
+              let p12 = secret.p12(for: serialNumber), !p12.isEmpty else {
+            throw ImportFailure(title: "无法导出证书", reason: "本机没有这张证书对应的私钥。", recovery: "请先使用本机证书完成签名", code: "SEAL-CERT-EXPORT-101")
+        }
+        return p12
+    }
+
     // MARK: - Private
 
     private func presentExportDialog(callbackTemplate: String, accountID: UUID? = nil) {

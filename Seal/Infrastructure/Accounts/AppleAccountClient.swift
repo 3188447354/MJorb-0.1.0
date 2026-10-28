@@ -8,6 +8,14 @@ enum AppleAuthenticationStage: Sendable {
 
 enum AppleAuthenticationFailure {
     static func make(stage: AppleAuthenticationStage, error: Error) -> ImportFailure {
+        if stage == .signIn && AppleAuthenticationDiagnosis.isLegacyMacRejected(error) {
+            return ImportFailure(
+                title: "无法添加账号",
+                reason: "Apple 暂时不接受当前登录环境。",
+                recovery: "稍后重试；如果仍然失败，请导出日志反馈",
+                code: "SEAL-AUTH-107a"
+            )
+        }
         // 双重认证要排在**最前**：它是最具体的诊断（Apple 已经接受了密码，只是要求第二步），
         // 而 3018 既不是限流也不是网络错误 ⇒ 放在后面只会被泛化文案吃掉，
         // 真机上就是这样把用户引去「核对 Apple ID 与密码」的。
@@ -118,16 +126,6 @@ final class AppleAccountClient {
     }
 
     /// 把错误压缩成一行，便于日志归因（脱敏由 SealLogStore 兜底）。
-    /// 排障日志用的 ISO8601 UTC 格式化器（只在 [SRP-INIT 诊断] 里使用）。
-    private static let iso8601: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss'Z'"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter
-    }()
-
     /// Apple 返回 503（服务暂时不可用）后的退避档位。
     ///
     /// 真机实测（2026-10-16）：只退避一次、5 秒**不够** —— 用户反馈「登上的概率很小」，
@@ -265,6 +263,9 @@ final class AppleAccountClient {
         var resyncCount = 0
         var adiResetCount = 0
         var serviceRetryCount = 0
+        var useCompatibleMacIdentity = false
+        let attemptGroup = String(UUID().uuidString.prefix(8))
+        var attemptNumber = 0
 
         while true {
             do {
@@ -279,27 +280,49 @@ final class AppleAccountClient {
                     pendingSIM = nil
                     await trace("SIM resync 完成，重发 SRP")
                 } else if anisetteData == nil {
-                    anisetteData = try await anisetteProvider.fetchForAuthentication()
+                    anisetteData = try await (useCompatibleMacIdentity
+                        ? anisetteProvider.fetchForCompatibilityRetry(expectedDeviceID: initialAnisetteData.deviceUniqueIdentifier)
+                        : anisetteProvider.fetchForAuthentication())
                     await trace("认证恢复后已重新取得 anisette 一次性凭据")
                 }
 
                 guard let anisetteData else {
                     throw AppleServiceFailurePolicy.rateLimitedFailure()
                 }
-                return try await authenticate(
+                let authenticationData = useCompatibleMacIdentity
+                    ? AppleAuthenticationDiagnosis.compatibleMacData(from: anisetteData)
+                    : anisetteData
+                attemptNumber += 1
+                await trace("登录批次 \(attemptGroup)，第 \(attemptNumber) 次认证，身份=\(useCompatibleMacIdentity ? "兼容" : "服务原始")")
+                let result = try await authenticate(
                     email: email,
                     password: password,
-                    anisetteData: anisetteData,
+                    anisetteData: authenticationData,
                     verificationCode: verificationCode
-                ).value
+                )
+                await trace("登录批次 \(attemptGroup)，第 \(attemptNumber) 次认证通过")
+                return AuthObjects(
+                    account: result.value.account,
+                    session: result.value.session,
+                    usesCompatibleMacIdentity: useCompatibleMacIdentity
+                )
             } catch {
-                if let sim = Self.resyncSIM(from: error), resyncCount == 0 {
+                await trace("登录批次 \(attemptGroup)，已发起 \(attemptNumber) 次认证，步骤失败：\(Self.describeError(error))", level: .warning)
+                if !useCompatibleMacIdentity,
+                   AppleAuthenticationDiagnosis.isLegacyMacRejected(error),
+                   anisetteData?.deviceDescription.contains("<Mac OS X;10.12.6;16G29>") == true {
+                    useCompatibleMacIdentity = true
+                    anisetteData = nil
+                    await trace("Apple 拒绝旧版 Mac 登录身份，使用兼容身份重试一次", level: .warning)
+                    continue
+                }
+                if !useCompatibleMacIdentity, let sim = Self.resyncSIM(from: error), resyncCount == 0 {
                     resyncCount += 1
                     pendingSIM = sim
                     await trace("SRP 要求 SIM 同步，安排一次 resync 后继续认证", level: .warning)
                     continue
                 }
-                if AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error), adiResetCount == 0 {
+                if !useCompatibleMacIdentity, AppleServiceFailurePolicy.isTemporaryAuthenticationRejection(error), adiResetCount == 0 {
                     adiResetCount += 1
                     shouldResetADI = true
                     await trace("SRP 收到 -80045；仅重建远程 ADI，不清除本地 identifier，然后继续有界认证", level: .warning)
@@ -335,32 +358,7 @@ final class AppleAccountClient {
             let anisetteData = try await anisetteProvider.fetchForAuthentication()
             await trace("anisette 就绪，声明身份=\(anisetteData.deviceDescription)")
 
-            // ── anisette 凭据转储（排障用）──────────────────────────────────────
-            //
-            // 为什么打这些：-80045 出现在 `o=init` 这个**第一个**请求上，而 init 的载荷
-            // 只有 A2k / cpd / ps / o / u —— **不含任何密码材料**（日志里从未走到
-            // `o=complete`）。所以 SRP 数学、PBKDF2、hex 编码、M1 全部与本案无关，
-            // 真正决定 init 被接受与否的是 cpd 里那三个**服务端生成的 anisette 凭据**：
-            // X-Apple-I-MD / X-Apple-I-MD-M / X-Mme-Device-Id。
-            //
-            // 在此之前只核对过"cpd 的字段名与 isideload 一致"，**从未核对过这几个值
-            // 本身是否有效**（它们由 anisette 服务器按 ADI 生成，可能过期、可能与该
-            // ADI 不匹配）。这一段就是为了拿到真实取值，与可用实现逐字节对比。
-            //
-            // X-Apple-I-MD 是一次性口令（服务端按时间派生），仅写入本机日志用于排障。
-            await trace("""
-                [SRP-INIT 诊断] 即将用于 o=init 的 anisette 凭据：
-                  X-Mme-Device-Id      = \(anisetteData.deviceUniqueIdentifier) (len=\(anisetteData.deviceUniqueIdentifier.count))
-                  X-Apple-I-MD-M       = \(anisetteData.machineID) (len=\(anisetteData.machineID.count))
-                  X-Apple-I-MD         = \(anisetteData.oneTimePassword) (len=\(anisetteData.oneTimePassword.count))
-                  X-Apple-I-MD-LU      = \(anisetteData.localUserID) (len=\(anisetteData.localUserID.count))
-                  X-Apple-I-MD-RINFO   = \(anisetteData.routingInfo)
-                  X-Apple-I-SRL-NO     = \(anisetteData.deviceSerialNumber)
-                  locale               = \(anisetteData.locale.identifier)
-                  timeZone             = \(anisetteData.timeZone.abbreviation() ?? "nil")
-                  date                 = \(Self.iso8601.string(from: anisetteData.date))
-                  deviceDescription    = \(anisetteData.deviceDescription)
-                """)
+            await trace("认证环境已就绪；设备身份信息已隐藏，不写入一次性凭据或设备标识")
             let auth = try await authenticateWithRecovery(
                 email: email,
                 password: password,
@@ -393,7 +391,7 @@ final class AppleAccountClient {
                 throw ImportFailure(
                     title: "未找到开发者团队",
                     reason: "这个 Apple ID 没有可用的开发者团队（免费账号也会自动创建免费团队）。",
-                    recovery: "确认该 Apple ID 已在 Apple 开发者网站同意协议，或更换其他 Apple ID",
+                    recovery: "确认该 Apple ID 已接受 Apple 开发者协议，或更换其他 Apple ID",
                     code: "SEAL-AUTH-103"
                 )
             }
@@ -403,7 +401,8 @@ final class AppleAccountClient {
                 accountIdentifier: auth.account.identifier,
                 dsid: auth.session.dsid,
                 authToken: auth.session.authToken,
-                password: password
+                password: password,
+                usesCompatibleMacIdentity: auth.usesCompatibleMacIdentity
             )
             return AuthenticatedAppleAccount(
                 maskedEmail: Self.mask(email),
@@ -431,7 +430,7 @@ final class AppleAccountClient {
             throw ImportFailure(
                 title: "无法添加账号",
                 reason: "Apple 拒绝了账号 \(Self.mask(email)) 的登录凭据（Apple ID 不存在或密码错误）。",
-                recovery: "核对 Apple ID 与密码后重试；忘记密码请先到 Apple 官网重置",
+                recovery: "核对 Apple ID 与密码后重试；忘记密码请先重置 Apple ID 密码",
                 code: "SEAL-AUTH-102a",
                 condition: .credentialsRejected,
                 action: .reauthenticateAccount,
@@ -493,10 +492,11 @@ final class AppleAccountClient {
         do {
             try Task.checkCancellation()
             let anisetteData = try await anisetteProvider.fetch()
-            let session = ALTAppleAPISession(
+            let session = AppleAuthenticationDiagnosis.makeAPISession(
                 dsid: secret.dsid,
                 authToken: secret.authToken,
                 anisetteData: anisetteData,
+                usesCompatibleMacIdentity: secret.usesCompatibleMacIdentity,
                 xcodeVersion: Self.xcodeVersion
             )
             let altAccount = ALTAccount()
@@ -733,7 +733,7 @@ final class AppleAccountClient {
                 if let account, let session {
                     callback.resume(
                         returning: LegacyBox(
-                            AuthObjects(account: account, session: session)
+                            AuthObjects(account: account, session: session, usesCompatibleMacIdentity: false)
                         )
                     )
                 } else {
@@ -902,6 +902,7 @@ final class AppleAccountClient {
 private struct AuthObjects {
     let account: ALTAccount
     let session: ALTAppleAPISession
+    let usesCompatibleMacIdentity: Bool
 }
 
 struct LegacyBox<Value>: @unchecked Sendable {

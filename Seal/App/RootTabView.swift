@@ -2,6 +2,7 @@ import SwiftUI
 // `NSUserActivityTypeLiveActivity` 由 WidgetKit 定义（不是 ActivityKit），
 // 只 import ActivityKit 会编译不过。
 import WidgetKit
+import UIKit
 
 struct RootTabView: View {
     @ObservedObject var appsViewModel: AppsViewModel
@@ -22,6 +23,8 @@ struct RootTabView: View {
     /// 外观抽屉已请求但还没拿到台面（被批量结果挡下或正等交接）时的意愿登记，
     /// 台面空出/转正时凭它补呈现，见 `claimRootSheet`。
     @State private var wantsAppearanceSheet = false
+    /// 更新提示遇到签名、续签、导入或其他抽屉时只暂缓，不打断当前操作。
+    @State private var wantsUpdateSheet = false
     @State private var launchCheckInProgress = false
     @State private var lastLaunchCheckAt: Date?
     @StateObject private var updateCoordinator = UpdatePresentationCoordinator()
@@ -31,44 +34,30 @@ struct RootTabView: View {
     @AppStorage("appearance.mode") private var appearanceRawValue = SealAppearance.system.rawValue
     @AppStorage("appearance.accent") private var accentRawValue = SealAccentTheme.system.rawValue
     @AppStorage(SealAccentTheme.customHexStorageKey) private var customAccentHex = SealAccentTheme.defaultCustomHex
+    @AppStorage(PairingCodeNotification.pendingOpenKey) private var hasPendingPairingNotificationTap = false
+    @AppStorage(BackgroundRenewalNotificationRoute.pendingTapKey)
+    private var hasPendingBackgroundRenewalNotificationTap = false
+    @AppStorage(BackgroundRenewalNotificationRoute.pendingTapRevisionKey)
+    private var backgroundRenewalNotificationTapRevision = 0
     @State private var pendingUpdateInstallURL: URL?
-    /// 官方渠道一次性告知（2026-10-25）：标记位与协议同意门控（`AgreementVersion`）完全分开；
-    /// 新用户首次进入主界面、老用户升级到含告知的新版后首次启动各弹一次，点“知道了”后不再弹。
-    /// 文案为源上线前版；软件源上线时正文换成源上线后版（见下方 alert 的注释）。
-    @AppStorage("officialChannelNoticePresented") private var officialChannelNoticePresented = false
-    @State private var isOfficialChannelNoticePresented = false
-    /// 自检告警（2026-10-25）：启动时跑一次，结果只在本进程内有效；
-    /// 警告是状态警告不是一次性告知——只要痕迹还在，每次启动都弹，不设持久标记。
+    /// 相同完整性问题组合只提示一次，正常更新后不重复弹窗。
+    @AppStorage("integrityWarningDismissedSignature") private var integrityWarningDismissedSignature = ""
+    /// 自检告警（2026-10-25）：启动时跑一次，只对尚未确认过的问题组合提示。
     @State private var tamperCheckDone = false
     @State private var tamperFindings: [AppIntegrityIssue] = []
     @State private var isTamperWarningPresented = false
 
     var body: some View {
-        TabView(selection: $selection) {
-            AppsRootView(
-                viewModel: appsViewModel,
-                settingsViewModel: settingsViewModel,
-                sheetArbiter: $sheetArbiter
-            )
-            .tabItem {
-                Label(AppSection.apps.title, systemImage: AppSection.apps.systemImage)
-                    .accessibilityIdentifier("root-tab-apps")
-            }
-            .tag(AppSection.apps)
+        let update = updatePresentation(mainTabs)
+        let lifecycle = lifecycleHandling(update)
+        let operationRouting = operationRouting(lifecycle)
+        let urls = urlHandling(operationRouting)
+        let appearance = appearancePresentation(urls)
+        return integrityPresentation(appearance)
+    }
 
-            SettingsRootView(
-                viewModel: settingsViewModel,
-                relatedApps: appsViewModel.apps,
-                certificateExportHandler: certificateExportHandler,
-                onAppearanceThemeRequested: { claimRootSheet(.appearance) },
-                updateCoordinator: updateCoordinator
-            )
-            .tabItem {
-                Label(AppSection.settings.title, systemImage: AppSection.settings.systemImage)
-                    .accessibilityIdentifier("root-tab-settings")
-            }
-            .tag(AppSection.settings)
-        }
+    private func updatePresentation<Content: View>(_ content: Content) -> some View {
+        content
         .tint(.sealAccent)
         .preferredColorScheme(SealAppearance(rawValue: appearanceRawValue)?.colorScheme)
         .toolbar(updateCoordinator.presentedNotice == nil ? .visible : .hidden, for: .tabBar)
@@ -91,21 +80,35 @@ struct RootTabView: View {
                     }
                 }
         }
+    }
+
+    private func lifecycleHandling<Content: View>(_ content: Content) -> some View {
+        content
         .onContinueUserActivity(NSUserActivityTypeLiveActivity) { _ in
             openPairingSettings()
         }
-        .onReceive(NotificationCenter.default.publisher(for: PairingCodeNotification.opened)) { _ in
-            guard PairingCodeNotification.consumePairingScreenRequest() else { return }
-            openPairingSettings()
+        .onChange(of: hasPendingPairingNotificationTap) { hasPendingTap in
+            guard hasPendingTap else { return }
+            schedulePendingPairingScreenRequest()
+        }
+        .onChange(of: backgroundRenewalNotificationTapRevision) { _, _ in
+            routeToAppsForPendingBackgroundRenewalResult()
         }
         .task {
             updateCoordinator.sceneDidChange(isActive: scenePhase == .active)
-            if PairingCodeNotification.consumePairingScreenRequest() {
-                openPairingSettings()
-            }
+            schedulePendingPairingScreenRequest()
+            routeToAppsForPendingBackgroundRenewalResult()
             await LocalNetworkPermissionPrimer.requestIfNeeded()
             await performLaunchCheck(force: true)
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            schedulePendingPairingScreenRequest()
+            routeToAppsForPendingBackgroundRenewalResult()
+        }
+    }
+
+    private func operationRouting<Content: View>(_ content: Content) -> some View {
+        content
         .onChange(of: appsViewModel.shouldOpenSettings) { shouldOpen in
             guard shouldOpen else { return }
             selection = .settings
@@ -125,19 +128,24 @@ struct RootTabView: View {
         .onChange(of: scenePhase) { phase in
             updateCoordinator.sceneDidChange(isActive: phase == .active)
             guard phase == .active else { return }
+            schedulePendingPairingScreenRequest()
+            routeToAppsForPendingBackgroundRenewalResult()
             // 只回收已过期的配对活动，不中断仍在系统设置中进行的配对。
             settingsViewModel.discardExpiredPairingPresentationIfNeeded()
             // 此刻设备必然已解锁 ⇒ 是补做钥匙串迁移最可靠的时机（锁屏冷启动那次会被系统拒绝）。
             migrateKeychainAccessibility()
             Task {
                 await performLaunchCheck()
+                presentDeferredUpdateIfPossible()
             }
         }
         .onChange(of: updateCoordinator.presentedNotice?.id) { _, noticeID in
-            // 更新抽屉不再靠「强清其他抽屉」抢层：向全局仲裁认领台面，
-            // 台上有人就登记待呈现，等对方关闭完成再上台（交接在
-            // claimRootSheet / 应用页的待呈现观察者 / 各 onDismiss 之间串行）。
-            guard noticeID != nil else { return }
+            guard noticeID != nil else {
+                wantsUpdateSheet = false
+                sheetArbiter.cancelPending(.appUpdate)
+                return
+            }
+            // 自动更新提示等待当前操作自然结束，不通过仲裁器关闭签名/续签抽屉。
             claimRootSheet(.appUpdate)
         }
         .onChange(of: sheetArbiter.current) { current in
@@ -149,11 +157,29 @@ struct RootTabView: View {
             // 台面空出来时补认领：认领时被批量结果挡下（不替用户消费未看过的
             // 结果）的根层抽屉，在结果抽屉关闭后于此重新认领。
             guard current == nil else { return }
-            if updateCoordinator.presentedNotice != nil {
-                claimRootSheet(.appUpdate)
+            if updateCoordinator.presentedNotice != nil || wantsUpdateSheet {
+                presentDeferredUpdateIfPossible()
             } else if wantsAppearanceSheet {
                 claimRootSheet(.appearance)
             }
+        }
+        .onChange(of: sheetArbiter.pending) { pending in
+            guard pending == .batchResult else { return }
+            if sheetArbiter.current == .appUpdate {
+                updateCoordinator.dismissNotice()
+            } else if sheetArbiter.current == .appearance {
+                wantsAppearanceSheet = false
+                dismissRootArbitratedSheet()
+            }
+        }
+        .onChange(of: appsViewModel.selectedOperationApp) { _, app in
+            if app == nil { presentDeferredUpdateIfPossible() }
+        }
+        .onChange(of: appsViewModel.phase) { _, phase in
+            if phase == .idle { presentDeferredUpdateIfPossible() }
+        }
+        .onChange(of: appsViewModel.isBatchRefreshSheetPresented) { _, isPresented in
+            if isPresented == false { presentDeferredUpdateIfPossible() }
         }
         .onChange(of: isCustomAccentColorPresented) { isPresented in
             // 自定义颜色浮层关闭且主题抽屉没有接续打开时，外观认领释放。
@@ -162,6 +188,10 @@ struct RootTabView: View {
                   sheetArbiter.current == .appearance else { return }
             _ = sheetArbiter.sheetDidDismiss(.appearance)
         }
+    }
+
+    private func urlHandling<Content: View>(_ content: Content) -> some View {
+        content
         .onOpenURL { url in
             if LocalDevVPNLink.isCallback(url) {
                 if appsViewModel.hasPendingVPNRecovery {
@@ -198,6 +228,10 @@ struct RootTabView: View {
             selection = .apps
             Task { await appsViewModel.importSelectedFile(url) }
         }
+    }
+
+    private func appearancePresentation<Content: View>(_ content: Content) -> some View {
+        content
         .sheet(isPresented: $isAppearanceThemePresented, onDismiss: {
             if shouldPresentCustomAccentColorAfterThemeDismiss {
                 // 接续打开自定义颜色浮层：同属外观认领，不释放台面，
@@ -237,40 +271,81 @@ struct RootTabView: View {
             }
         }
         .animation(.spring(response: 0.28, dampingFraction: 0.86), value: isCustomAccentColorPresented)
-        // 系统样式弹窗，不走抽屉仲裁（alert 与 sheet 不抢层）；按钮跟随主题色（根层已 `.tint(.sealAccent)`），深色跟随系统。
-        .alert("认准官方渠道", isPresented: $isOfficialChannelNoticePresented) {
-            Button("知道了") {
-                officialChannelNoticePresented = true
-                // 官方告知弹完再弹自检警告：两个 alert 绝不同时在场。
-                if !tamperFindings.isEmpty { isTamperWarningPresented = true }
+        // 自检警告：只提示、不锁死；同一版本的问题组合确认后不重复打断。
+    }
+
+    private func integrityPresentation<Content: View>(_ content: Content) -> some View {
+        content
+        .alert("检测到未知代码组件", isPresented: $isTamperWarningPresented) {
+            Button("知道了", role: .cancel) {
+                integrityWarningDismissedSignature = currentIntegrityWarningSignature
             }
         } message: {
-            // 源上线后版正文（软件源上线时替换上面这句）：
-            // “Seal 本体免费，凡是花钱买到的 Seal 都不是官方。官方渠道只在应用内社群页“官方资源”。软件源是独立服务，它的收费和 Seal 本体无关。”
-            Text("Seal 免费。凡是花钱买到的，都不是官方。官方渠道只在应用内社群页“官方资源”。")
-        }
-        // 自检警告：只警告、不锁死；不设持久标记，痕迹还在就每次启动都弹。
-        .alert("版本可能被修改", isPresented: $isTamperWarningPresented) {
-            Button("知道了", role: .cancel) {}
-        } message: {
-            Text("此版本可能被修改，非官方渠道，建议从官方渠道重新获取。")
+            Text(integrityWarningMessage)
         }
         .onAppear {
-            // 主界面出现时定两弹的顺序：协议门控已过，新用户与升级老用户都走这里。
-            // 告知没弹过 → 先弹告知，点“知道了”后再弹自检警告（见上方按钮）；
-            // 告知已弹过 → 自检警告直接上台；UI 测试时两个都不弹，避免挡住既有用例。
-            // 告知标记只在点“知道了”后才写，万一被更新抽屉等盖住没点到，下次启动会再弹，不丢。
+            // UI 测试期间不显示启动自检警告，避免挡住既有用例。
+            let isUITesting = ProcessInfo.processInfo.arguments.contains(uiTestingAgreementAcceptedArgument)
             if !tamperCheckDone {
                 tamperCheckDone = true
                 tamperFindings = AppIntegrityCheck.liveFindings()
+                if !isUITesting, tamperFindings.isEmpty == false {
+                    let paths = tamperFindings.map(\.imagePath)
+                    Task { await settingsViewModel.recordIntegrityFindingPaths(paths) }
+                }
             }
-            guard !ProcessInfo.processInfo.arguments.contains(uiTestingAgreementAcceptedArgument) else { return }
-            if officialChannelNoticePresented {
-                if !tamperFindings.isEmpty { isTamperWarningPresented = true }
-            } else {
-                isOfficialChannelNoticePresented = true
-            }
+            guard !isUITesting else { return }
+            if shouldPresentIntegrityWarning { isTamperWarningPresented = true }
         }
+    }
+
+
+    private var mainTabs: some View {
+        TabView(selection: $selection) {
+            AppsRootView(
+                viewModel: appsViewModel,
+                settingsViewModel: settingsViewModel,
+                sheetArbiter: $sheetArbiter,
+                isActiveTab: selection == .apps,
+                onPageModalDismissed: { presentDeferredUpdateIfPossible() }
+            )
+            .tabItem {
+                Label(AppSection.apps.title, systemImage: AppSection.apps.systemImage)
+                    .accessibilityIdentifier("root-tab-apps")
+            }
+            .tag(AppSection.apps)
+
+            SettingsRootView(
+                viewModel: settingsViewModel,
+                relatedApps: appsViewModel.apps,
+                certificateExportHandler: certificateExportHandler,
+                onAppearanceThemeRequested: { claimRootSheet(.appearance) },
+                updateCoordinator: updateCoordinator
+            )
+            .tabItem {
+                Label(AppSection.settings.title, systemImage: AppSection.settings.systemImage)
+                    .accessibilityIdentifier("root-tab-settings")
+            }
+            .tag(AppSection.settings)
+        }
+    }
+
+    private var currentIntegrityWarningSignature: String {
+        let identifiers = tamperFindings.map(\.warningIdentifier).sorted().joined(separator: ",")
+        return identifiers
+    }
+
+    private var integrityWarningMessage: String {
+        let components = Array(Set(tamperFindings.map(\.componentName))).sorted()
+        guard components.isEmpty == false else {
+            return "Seal 发现未识别的动态库正在运行。请检查来源，必要时导出日志反馈。"
+        }
+        return "Seal 发现未识别的动态库：\(components.joined(separator: "、"))。请检查来源，必要时导出日志反馈。"
+    }
+
+    private var shouldPresentIntegrityWarning: Bool {
+        currentIntegrityWarningSignature.isEmpty == false
+            && currentIntegrityWarningSignature != integrityWarningDismissedSignature
     }
 
     /// 从灵动岛 / 锁屏卡片跳回配对页。
@@ -283,6 +358,50 @@ struct RootTabView: View {
         settingsViewModel.requestedRoute = .pairing
         // 人已经回到 App：清掉通知回退；配对进行中保留码，成功或失败态立即收起。
         settingsViewModel.handlePairingPresentationOpen()
+    }
+
+    /// 通知点击回调可能赶在 UIKit 保存/恢复场景快照期间执行。
+    /// 等应用稳定处于前台后再消费持久化路由，避免在状态恢复事务中改 SwiftUI 状态。
+    private func schedulePendingPairingScreenRequest() {
+        guard PairingCodeNotification.hasPendingPairingScreenRequest else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard scenePhase == .active,
+                  PairingCodeNotification.consumePairingScreenRequest() else { return }
+            openPairingSettings()
+        }
+    }
+
+    /// 后台续签通知由应用页承接结果抽屉。通知可能从任意已选标签页打开 Seal，
+    /// 因此在场景进入前台后先切回应用页，再由 AppsRootView 等宿主稳定后呈现结果。
+    private func routeToAppsForPendingBackgroundRenewalResult() {
+        guard scenePhase == .active,
+              hasPendingBackgroundRenewalNotificationTap,
+              BackgroundRenewalNotificationRoute.hasPendingTap else { return }
+        // Do not mutate tab or sheet state from the notification delegate callback or
+        // inside UIKit's scene-restoration transaction. The request is already durable;
+        // one main-actor turn lets the restored scene settle without adding a timed delay.
+        Task { @MainActor in
+            await Task.yield()
+            guard scenePhase == .active,
+                  hasPendingBackgroundRenewalNotificationTap,
+                  BackgroundRenewalNotificationRoute.hasPendingTap else { return }
+            if selection != .apps {
+                selection = .apps
+                appsViewModel.noteBackgroundRenewalResultPresentation(
+                    "续签通知点击后已切换到应用页，等待结果抽屉呈现"
+                )
+            }
+
+            // A notification tap is an explicit request to see its result. Dismiss
+            // passive root sheets; active signing / renewal work remains untouched.
+            if sheetArbiter.current == .appUpdate {
+                updateCoordinator.dismissNotice()
+            } else if sheetArbiter.current == .appearance {
+                wantsAppearanceSheet = false
+                dismissRootArbitratedSheet()
+            }
+        }
     }
 
     private func installSelfUpdate(_ localURL: URL) {
@@ -299,15 +418,22 @@ struct RootTabView: View {
     }
 
     private func installPendingUpdateIfNeeded() {
-        // 更新抽屉关闭完成：向全局仲裁报到，待呈现的抽屉随之转正。
-        _ = sheetArbiter.sheetDidDismiss(.appUpdate)
+        // 取消/关闭更新抽屉后不立刻抬出排队中的第二张抽屉。
+        // 已完成的批量结果仍保存在本机，用户后续进入应用页时可再次打开。
+        wantsUpdateSheet = false
+        let shouldPromoteTappedResult = BackgroundRenewalNotificationRoute.hasPendingTap
+            && sheetArbiter.pending == .batchResult
+        _ = sheetArbiter.sheetDidDismiss(
+            .appUpdate,
+            promotingPending: shouldPromoteTappedResult
+        )
         guard let localURL = pendingUpdateInstallURL else { return }
         pendingUpdateInstallURL = nil
         installSelfUpdate(localURL)
     }
 
     /// 更新抽屉的呈现绑定：协调器持有「有更新可提示」，仲裁决定「现在能不能上台」。
-    /// 台面被占时返回 nil（不抢层）；仲裁转正后随状态变化自然呈现。
+    /// 呈现前会先等业务抽屉和应用页系统呈现层结束，避免更新提示打断用户操作。
     private var updateNoticeItem: Binding<UpdateNotice?> {
         Binding(
             get: {
@@ -330,6 +456,13 @@ struct RootTabView: View {
     /// 后由 `sheetArbiter.current` 的 onChange 补认领。更新抽屉的排队凭
     /// `presentedNotice` 还在，外观的排队凭 `wantsAppearanceSheet`。
     private func claimRootSheet(_ sheet: ArbitratedSheet) {
+        if sheet == .appUpdate {
+            wantsUpdateSheet = true
+            // 当前有抽屉或应用页自己的系统呈现层时，只记住提示意图。
+            // 尤其不能为了更新提示关闭正在进行的签名/续签操作。
+            guard sheetArbiter.current == nil,
+                  canPresentDeferredUpdate else { return }
+        }
         if sheetArbiter.current == .batchResult {
             if sheet == .appearance { wantsAppearanceSheet = true }
             return
@@ -340,12 +473,32 @@ struct RootTabView: View {
             if claimed == .appearance {
                 wantsAppearanceSheet = false
                 isAppearanceThemePresented = true
+            } else if claimed == .appUpdate {
+                wantsUpdateSheet = false
             }
         case .dismissCurrentThenPresentPending:
             dismissRootArbitratedSheet()
         case .none:
             break
         }
+    }
+
+    private var canPresentDeferredUpdate: Bool {
+        !appsViewModel.isImporterPresented
+            && !appsViewModel.isImportSheetPresented
+            && appsViewModel.accountSelectionApp == nil
+            && appsViewModel.selectedOperationApp == nil
+            && appsViewModel.alreadyInstalledDraft == nil
+            && appsViewModel.alertFailure == nil
+            && appsViewModel.phase == .idle
+            && !appsViewModel.isBatchRefreshSheetPresented
+    }
+
+    private func presentDeferredUpdateIfPossible() {
+        guard wantsUpdateSheet || updateCoordinator.presentedNotice != nil,
+              sheetArbiter.current == nil,
+              canPresentDeferredUpdate else { return }
+        claimRootSheet(.appUpdate)
     }
 
     /// 按仲裁裁决关掉根层自己在场的那张抽屉。应用页的抽屉由应用页的

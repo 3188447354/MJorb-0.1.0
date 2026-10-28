@@ -136,6 +136,36 @@ struct AnisetteV3Client: AnisetteEnvironmentManaging {
         return try await fetch()
     }
 
+    func fetchForCompatibilityRetry(expectedDeviceID: String) async throws -> ALTAnisetteData {
+        // 兼容尝试不得创建、删除或改写共享 identifier/ADI，也不触发服务器选择迁移。
+        guard let encoded = try await identityStore.loadIdentifier(),
+              let bytes = Data(base64Encoded: encoded),
+              let state = try await remoteStore.load() else {
+            throw AnisetteV3Error.staleProvisioning
+        }
+        let identity = try AnisetteV3Identity(bytes: bytes)
+        guard identity.deviceIdentifier.caseInsensitiveCompare(expectedDeviceID) == .orderedSame,
+              state.identifier == identity.encodedIdentifier else {
+            throw AnisetteV3Error.staleProvisioning
+        }
+        var lastError: Error?
+        let deadline = Date().addingTimeInterval(Self.remoteFallbackBudgetSeconds)
+        for server in servers where server.url.scheme == "https" {
+            try Task.checkCancellation()
+            if Date() > deadline { break }
+            do {
+                let clientInfo = try await fetchClientInfo(from: server.url)
+                guard state.matches(clientInfo: clientInfo.clientInfo) else { continue }
+                return try await fetchHeaders(from: server.url, state: state, clientInfo: clientInfo, identity: identity)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                lastError = error
+            }
+        }
+        throw Self.allServersFailure(lastError: lastError)
+    }
+
     func resetProvisioning() async {
         // 只重置远程 v3 provisioning 状态；稳定 identifier 和旧本机 ADI 都不删除。
         await trace("resetProvisioning：作废远程 ADI（identifier 保留）", level: .warning)

@@ -81,6 +81,7 @@ enum SideSignAppSigner {
     ///   - mainBundleID: 主 App 改写后的 Bundle ID（用于校验主 profile 存在 ✓）
     static func signAppBundle(
         at appURL: URL,
+        removeAppClipAssociation: Bool = false,
         certificateData: Data,
         privateKeyData: Data,
         teamID: String,
@@ -125,7 +126,7 @@ enum SideSignAppSigner {
 
         // ④ 交给上游 —— **签名逻辑一行都不自己写** ✓
         do {
-            try await AppBundleSigner(team: team, keyStore: keyStore)
+            try await AppBundleSigner(team: team, keyStore: keyStore, removeAppClipAssociation: removeAppClipAssociation)
                 .signApp(at: appURL, provisioningProfiles: provisioningProfiles, progress: nil)
         } catch {
             throw SignError.signFailed(error.localizedDescription)

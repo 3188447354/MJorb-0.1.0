@@ -70,6 +70,13 @@ enum ProfileOnlyInjectionProgress: Sendable {
     case retryingConnection
 }
 
+enum ProfileServicePrewarmOutcome: Sendable {
+    case ready
+    /// A different native device operation owns the shared profile-service gate.
+    case busy
+    case failed(ImportFailure)
+}
+
 /// Serializes profile injection for the entire process. `misagent` uses a
 /// process-wide device transport, so two app renewals must never install a
 /// profile concurrently.
@@ -79,6 +86,99 @@ actor ProfileOnlyProvisioningProfileInstaller {
     private var isBusy = false
     private var taint = ProfileOnlyTaintGate()
     private var operationLease = ProfileOnlyOperationLease()
+    private var profileServiceWarmUntilUptime: TimeInterval?
+
+    private static let profileServiceWarmLeaseSeconds: TimeInterval = 20
+
+    /// Establishes a short-lived `misagent` health lease. The caller starts this
+    /// alongside Apple Portal preparation so a cold RSD service is recovered before
+    /// profile injection begins. A timeout keeps the native-call lease and marks the
+    /// existing taint gate; no overlapping `misagent` request is issued.
+    func prewarmMisagentService(
+        channel: any InstallChannel,
+        operationCoordinator: OperationCoordinator? = nil,
+        onTaintHealed: @Sendable () async -> Void = {}
+    ) async -> ProfileServicePrewarmOutcome {
+        #if targetEnvironment(simulator)
+        return .ready
+        #else
+        while isBusy {
+            guard Task.isCancelled == false else { return .busy }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard Task.isCancelled == false else { return .busy }
+        if let profileServiceWarmUntilUptime,
+           profileServiceWarmUntilUptime > ProcessInfo.processInfo.systemUptime {
+            return .ready
+        }
+
+        isBusy = true
+        defer {
+            if operationLease.holdBusyUntilCompletion == false { isBusy = false }
+        }
+        if taint.consume() {
+            profileServiceWarmUntilUptime = nil
+            await channel.reset()
+            do {
+                _ = try await channel.start()
+                await onTaintHealed()
+            } catch {
+                return .failed(Self.prewarmFailure(
+                    reason: "重建设备连接后，描述文件服务仍未就绪：\(error)",
+                    code: "SEAL-PROFILE-356"
+                ))
+            }
+        }
+
+        for attempt in 0...1 {
+            operationLease.beginNativeOperation()
+            let outcome = await DeviceProfileInspector.prewarmMisagentService(
+                using: operationCoordinator,
+                onNativeCompletion: { [weak self] in
+                    await self?.nativeProfileOperationDidComplete()
+                }
+            )
+            switch outcome {
+            case .completed(.success):
+                releaseBusyAfterNativeCompletionIfNeeded()
+                profileServiceWarmUntilUptime = ProcessInfo.processInfo.systemUptime
+                    + Self.profileServiceWarmLeaseSeconds
+                return .ready
+            case .completed(.failure(let error)):
+                releaseBusyAfterNativeCompletionIfNeeded()
+                profileServiceWarmUntilUptime = nil
+                guard attempt == 0 else {
+                    return .failed(Self.prewarmFailure(
+                        reason: "重建连接后描述文件服务探测仍失败：\(error)",
+                        code: "SEAL-PROFILE-356"
+                    ))
+                }
+                await channel.invalidateProfileServiceConnection()
+                do {
+                    _ = try await channel.start()
+                } catch {
+                    return .failed(Self.prewarmFailure(
+                        reason: "描述文件服务探测失败，重建设备连接也未成功：\(error)",
+                        code: "SEAL-PROFILE-356"
+                    ))
+                }
+            case .nativeCallMayStillBeRunning:
+                _ = operationLease.timedOut()
+                taint.markTainted()
+                profileServiceWarmUntilUptime = nil
+                return .failed(Self.prewarmFailure(
+                    reason: "设备端描述文件服务探测超过 8 秒，未继续并发调用；原生调用结束后会自动恢复连接。",
+                    code: "SEAL-PROFILE-355t"
+                ))
+            case .unavailable:
+                releaseBusyAfterNativeCompletionIfNeeded()
+                return .busy
+            }
+        }
+        return .busy
+        #endif
+    }
+
     func installAndVerify(
         _ materials: [ProfileOnlyProfileMaterial],
         certificateSerialNumber: String,
@@ -111,6 +211,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
         // 在这里消费 + 重置通道，注入继续，不丢一轮。
         if taint.consume() {
             await onProgress(.healingTaint)
+            profileServiceWarmUntilUptime = nil
             await channel.reset()
             _ = try await channel.start()
             await onTaintHealed()
@@ -174,6 +275,8 @@ actor ProfileOnlyProvisioningProfileInstaller {
                 )
             }
         }
+        profileServiceWarmUntilUptime = ProcessInfo.processInfo.systemUptime
+            + Self.profileServiceWarmLeaseSeconds
     }
 
     /// 注入所用的 misagent 服务可能在健康探测与真正写入之间瞬时掉线。
@@ -214,6 +317,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
             case .nativeCallMayStillBeRunning:
                 _ = operationLease.timedOut()
                 taint.markTainted()
+                profileServiceWarmUntilUptime = nil
                 throw failure(
                     reason: "注入 \(material.binding.bundleIdentifier) 的描述文件超过 30 秒未返回。",
                     code: "SEAL-PROFILE-352"
@@ -230,6 +334,7 @@ actor ProfileOnlyProvisioningProfileInstaller {
                 }
                 recoveredConnection = true
                 await onProgress(.retryingConnection)
+                profileServiceWarmUntilUptime = nil
                 await channel.invalidateProfileServiceConnection()
                 _ = try await channel.start()
             }
@@ -257,6 +362,15 @@ actor ProfileOnlyProvisioningProfileInstaller {
             title: "描述文件续签未确认",
             reason: reason,
             recovery: recovery,
+            code: code
+        )
+    }
+
+    private static func prewarmFailure(reason: String, code: String) -> ImportFailure {
+        ImportFailure(
+            title: "描述文件通道暂不可用",
+            reason: reason,
+            recovery: "确认 LocalDevVPN 与配对设备连接正常后重新续签。",
             code: code
         )
     }

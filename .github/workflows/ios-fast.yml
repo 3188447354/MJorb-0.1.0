@@ -67,7 +67,7 @@ jobs:
         with:
           path: build/DerivedData
           # 同上：Swift 源码变化时刷新缓存，让 Xcode 跨运行增量编译
-          key: deriveddata-${{ runner.os }}-${{ hashFiles('project.yml', 'Seal/**/*.swift', 'Vendor/Minimuxer/Sources/**/*.swift', 'Vendor/Minimuxer/RustBridge/MinimuxerBridge*.swift') }}
+          key: deriveddata-${{ runner.os }}-${{ hashFiles('project.yml', 'Seal/**/*.swift', 'Vendor/ZIPFoundation/Package*.swift', 'Vendor/ZIPFoundation/Sources/**/*.swift', 'Vendor/Minimuxer/Package.swift', 'Vendor/Minimuxer/Sources/**/*.swift', 'Vendor/Minimuxer/RustBridge/MinimuxerBridge*.swift') }}
           restore-keys: |
             deriveddata-${{ runner.os }}-
 

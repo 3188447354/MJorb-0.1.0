@@ -14,6 +14,7 @@ struct AccountSelectionView: View {
                 Text(app.displayName)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .singleLine()
                 VStack(spacing: 0) {
                     ForEach(Array(accounts.enumerated()), id: \.element.id) { index, account in
                         Button { selection = account.id } label: {
@@ -26,7 +27,7 @@ struct AccountSelectionView: View {
                                     Text("\(TeamNameDisplayFormatter.string(from: account.teamName)) · \(account.teamID)")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
-                                        .lineLimit(2)
+                                        .singleLine()
                                 }
                                 Spacer()
                                 Image(systemName: selection == account.id ? "checkmark.circle.fill" : "circle")

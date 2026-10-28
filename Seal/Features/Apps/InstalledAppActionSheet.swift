@@ -14,9 +14,10 @@ struct InstalledAppActionSheet: View {
                 appHeader
                 signingSummaryCard
                 if app.needsIPAImport {
-                    Text("本机没有保存原始 IPA。需要重新签名时，请先导入该应用的 IPA。")
+                    Text("本机无原始 IPA；完整重签前需重新导入。")
                         .font(.footnote)
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 4)
                 }
@@ -30,6 +31,7 @@ struct InstalledAppActionSheet: View {
                         Text(note)
                             .font(.footnote)
                             .foregroundStyle(Color.sealTextSecondary)
+                            .singleLine()
                     }
                     .padding(.horizontal, 4)
                 }
@@ -200,7 +202,7 @@ struct InstalledAppActionSheet: View {
 
     private var expirySummary: String {
         guard let date = AppSigningPresentationHelpers.profileExpirationDate(for: app) else { return "未记录" }
-        return SealSettingsDateFormatter.stringWithoutSeconds(from: date)
+        return SealSettingsDateFormatter.string(from: date)
     }
 
     private var expiryColor: Color {

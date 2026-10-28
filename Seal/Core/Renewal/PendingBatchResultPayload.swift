@@ -53,6 +53,25 @@ enum PendingBatchResultPayload {
         static let items = "items"
         static let id = "id"
         static let state = "state"
+        static let roundID = "roundID"
+        static let failure = "failure"
+    }
+
+    static func roundID(in payload: [String: Any]) -> UUID? {
+        guard let value = payload[Key.roundID] as? String else { return nil }
+        return UUID(uuidString: value)
+    }
+
+    static func failure(from payload: [String: Any]) -> ImportFailure? {
+        guard let values = payload[Key.failure] as? [String: Any],
+              let title = values["title"] as? String,
+              let reason = values["reason"] as? String else { return nil }
+        return ImportFailure(
+            title: title,
+            reason: reason,
+            recovery: values["recovery"] as? String ?? "稍后重试。",
+            code: values["code"] as? String ?? "SEAL-RENEW-500"
+        )
     }
 
     /// 取出载荷里**已经有结论**的项（appID → 队列状态）。
@@ -109,6 +128,10 @@ enum PendingBatchResultPayload {
     /// Seal 自替换留下的 `awaitingSealConfirmation` 仍要等新进程读取真实运行
     /// 身份后结算；提前展示为成功会把「安装已提交」误报成「Seal 已更新」。
     static func isReadyForImmediatePresentation(_ payload: [String: Any]) -> Bool {
+        // A round-level failure has no per-app queue, but it is still a settled outcome
+        // and must be recoverable from the notification after a cold launch.
+        if failure(from: payload) != nil { return true }
+
         guard let items = payload[Key.items] as? [[String: Any]],
               items.isEmpty == false,
               (payload["total"] as? Int ?? items.count) == items.count else {
@@ -116,6 +139,9 @@ enum PendingBatchResultPayload {
         }
 
         return items.allSatisfy { item in
+            // `needsAction` is a settled result entry: the app was intentionally
+            // skipped, even though the restored UI represents it as `.waiting`.
+            if item[Key.state] as? String == "needsAction" { return true }
             switch BatchRefreshSession.Item.State(storageValue: item[Key.state] as? String) {
             case .completed, .failed:
                 return true

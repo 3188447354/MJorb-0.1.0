@@ -6,7 +6,7 @@ import Testing
 ///
 /// 背景（2026-09-25 用户反馈）：「只卸载了 Seal，其他 Seal 签名的 App 没卸载，
 /// 重装 Seal 后它们进不了已安装列表」。记录（`Seal.sqlite`）随 Seal 一起没了，
-/// 唯一痕迹是设备端的描述文件。
+/// 新版 Seal 签名应用可由设备上的逐应用安装标记识别。
 ///
 /// 这条链路会**写记录**，而它的错法**不崩、不编译失败，只在真机上多造或少造记录** ——
 /// 多造 = 列表里出现点开就报错的僵尸；少造 = 用户的应用永远回不来。
@@ -73,14 +73,15 @@ struct InstalledRecordRecoveryPolicyTests {
     // MARK: - 候选筛选
 
     @Test
-    func restoresOnlyValidatedDeviceAppsAndKeepsTheirActualIdentity() throws {
+    func restoresMarkedDeviceAppsAndKeepsTheirActualIdentity() throws {
         let context = makeContext(teams: [])
         let app = DeviceInstalledApplicationSummary(
             bundleIdentifier: "com.example.demo.TEAM123456",
             displayName: "示例应用",
             shortVersion: "2.4.1",
             buildNumber: "241",
-            profileValidated: true
+            profileValidated: true,
+            sealManagedMarkerVersion: SealInstalledAppMarker.version
         )
         let drafts = InstalledRecordRecoveryPolicy.drafts(
             installedApplications: [app],
@@ -120,7 +121,7 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
-    func recoversKnownTeamMappedAppFromLocalInventoryWithoutProfileFlag() throws {
+    func recoversMarkedAppFromLocalInventoryWithoutProfileFlag() throws {
         let bundleIdentifier = "com.example.demo.TEAM123456"
         let drafts = InstalledRecordRecoveryPolicy.drafts(
             installedApplications: [makeInstalledApp(bundleIdentifier, validated: false)],
@@ -163,7 +164,7 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
-    func localSigningTeamRecoversArbitraryBundleIdentifierWithoutProfileDump() throws {
+    func localSigningTeamResolvesMarkedAppWithoutProfileDump() throws {
         let bundleIdentifier = "org.example.folia"
         let application = DeviceInstalledApplicationSummary(
             bundleIdentifier: bundleIdentifier,
@@ -171,7 +172,8 @@ struct InstalledRecordRecoveryPolicyTests {
             shortVersion: "2.0",
             buildNumber: "20",
             profileValidated: nil,
-            teamIdentifier: "TEAM123456"
+            teamIdentifier: "TEAM123456",
+            sealManagedMarkerVersion: SealInstalledAppMarker.version
         )
         let draft = try #require(InstalledRecordRecoveryPolicy.drafts(
             installedApplications: [application],
@@ -306,7 +308,7 @@ struct InstalledRecordRecoveryPolicyTests {
             teams: []
         )
         let apps = [
-            makeInstalledApp("com.example.store", validated: false),
+            makeInstalledApp("com.example.store", validated: false, marked: false),
             makeInstalledApp("com.example.known"),
             makeInstalledApp("com.example.dismissed"),
             makeInstalledApp("com.mjorb.seal")
@@ -320,7 +322,7 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
-    func trustedMatchingProfileRecoversAppWithoutProfileValidatedFlag() throws {
+    func markedAppCanUseTrustedProfileWithoutProfileValidatedFlag() throws {
         let bundleIdentifier = "com.example.demo.TEAM123456"
         let drafts = InstalledRecordRecoveryPolicy.drafts(
             installedApplications: [makeInstalledApp(bundleIdentifier, validated: false)],
@@ -337,9 +339,32 @@ struct InstalledRecordRecoveryPolicyTests {
     func unvalidatedAppWithForeignProfileIsNotRecovered() {
         let bundleIdentifier = "com.example.demo.OTHER12345"
         let drafts = InstalledRecordRecoveryPolicy.drafts(
-            installedApplications: [makeInstalledApp(bundleIdentifier, validated: false)],
+            installedApplications: [makeInstalledApp(bundleIdentifier, validated: false, marked: false)],
             profiles: [makeProfile(bundleID: bundleIdentifier, team: "OTHER12345")],
             context: makeContext(teams: ["TEAM123456"])
+        )
+
+        #expect(drafts.isEmpty)
+    }
+
+    @Test
+    func sameTeamOrValidatedProfileDoesNotAdmitAnUnmarkedApp() {
+        let team = "TEAM123456"
+        let apps = [
+            makeInstalledApp("com.example.testflight", marked: false),
+            DeviceInstalledApplicationSummary(
+                bundleIdentifier: "com.example.other.\(team)",
+                displayName: "Other Installer",
+                shortVersion: "1.0",
+                buildNumber: "1",
+                profileValidated: false,
+                teamIdentifier: team
+            )
+        ]
+        let drafts = InstalledRecordRecoveryPolicy.drafts(
+            installedApplications: apps,
+            profiles: apps.map { makeProfile(bundleID: $0.bundleIdentifier, team: team) },
+            context: makeContext(teams: [team])
         )
 
         #expect(drafts.isEmpty)
@@ -418,14 +443,16 @@ struct InstalledRecordRecoveryPolicyTests {
 
     private func makeInstalledApp(
         _ bundleID: String,
-        validated: Bool = true
+        validated: Bool = true,
+        marked: Bool = true
     ) -> DeviceInstalledApplicationSummary {
         DeviceInstalledApplicationSummary(
             bundleIdentifier: bundleID,
             displayName: bundleID,
             shortVersion: "1.0",
             buildNumber: "1",
-            profileValidated: validated
+            profileValidated: validated,
+            sealManagedMarkerVersion: marked ? SealInstalledAppMarker.version : nil
         )
     }
 
@@ -634,7 +661,7 @@ struct InstalledRecordRecoveryPolicyTests {
     }
 
     @Test
-    func recoveredRecordLandsInInstalledListWithTheDeviceIdentity() {
+    func profileOnlyRecoveryRetainsIdentityWithoutClaimingSealManagement() {
         let draft = makeDraft()
         let accountID = UUID()
         let record = InstalledRecordRecoveryPolicy.makeRecord(
@@ -645,7 +672,8 @@ struct InstalledRecordRecoveryPolicyTests {
         #expect(record != nil)
         guard let record else { return }
         #expect(record.state == .installed)
-        #expect(record.belongsInInstalledList)
+        #expect(record.belongsInInstalledList == false)
+        #expect(record.belongsInUnsignedList == false)
         #expect(record.isSeal == false)
         // 设备上**实际**的 Bundle ID 必须填：缺了它点续签会抛 `SEAL-BUNDLE-002`。
         #expect(record.mappedBundleIdentifier == draft.bundleIdentifier)

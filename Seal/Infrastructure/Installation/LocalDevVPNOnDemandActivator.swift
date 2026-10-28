@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Minimuxer
 
 protocol VPNOnDemandActivating: Sendable {
     func probeTunnel() async -> Bool
@@ -18,11 +19,14 @@ struct LocalDevVPNOnDemandActivator: VPNOnDemandActivating {
 
     func probeTunnel() async -> Bool {
         // A short TCP probe nudges iOS to bring up LocalDevVPN on demand. 62078
-        // covers lockdown; 49152 covers RSD on newer device/tunnel paths.
-        for endpoint in [
-            ProbeEndpoint(host: "10.7.0.1", port: 62078),
-            ProbeEndpoint(host: "10.7.0.1", port: 49152)
-        ] {
+        // covers lockdown; the persisted Bonjour port covers RSD, whose port may change.
+        let discoveredPort = Minimuxer.remotePairingPort
+        var ports = [Minimuxer.isRemotePairing ? discoveredPort : UInt16(62078)]
+        for port in [UInt16(62078), discoveredPort, UInt16(49152)] where !ports.contains(port) {
+            ports.append(port)
+        }
+        for port in ports {
+            let endpoint = ProbeEndpoint(host: "10.7.0.1", port: port)
             if await probe(endpoint, timeoutMilliseconds: 900) { return true }
         }
         return false

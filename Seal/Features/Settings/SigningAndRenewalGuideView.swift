@@ -107,11 +107,11 @@ private enum SigningGuideSection: String, CaseIterable, Identifiable {
             ]
         case .automaticRenewal:
             return [
-                "在“快捷指令”中添加群内提供的“Seal 自动续签”指令文件",
-                "创建个人自动化并设置执行时间",
-                "执行前保持 Wi-Fi 与 LocalDevVPN 可用",
-                "续签成功时会有系统通知",
-                "续签失败时打开 Seal 查看原因"
+                "添加“Seal 自动续签”快捷指令",
+                "打开快捷指令并编辑，删除“未知操作”卡片",
+                "搜索“续签全部应用”，添加到原位置并关闭“运行时显示”",
+                "在这个快捷指令顶部第一个位置，设置需要的自动化时间",
+                "保存并开启自动化；如出现运行确认选项，选择“立即运行”"
             ]
         }
     }
@@ -121,6 +121,11 @@ private struct SigningGuideAccordionCard: View {
     let section: SigningGuideSection
     let isExpanded: Bool
     let onTap: () -> Void
+    @Environment(\.openURL) private var openURL
+
+    private let automaticRenewalShortcutURL = URL(
+        string: "https://www.icloud.com/shortcuts/eddb09dc4eb04f6392684e7295bde91c"
+    )!
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -134,7 +139,23 @@ private struct SigningGuideAccordionCard: View {
                     Divider()
                         .padding(.leading, 44)
                     ForEach(Array(section.steps.enumerated()), id: \.offset) { index, step in
-                        SigningGuideStepRow(index: index, text: step)
+                        if section == .automaticRenewal, index == 0 {
+                            SigningGuideShortcutLinkRow(index: index, title: step) {
+                                openURL(automaticRenewalShortcutURL)
+                            }
+                        } else {
+                            SigningGuideStepRow(index: index, text: step)
+                        }
+                    }
+                    if section == .automaticRenewal {
+                        Text("自动运行时保持 Wi-Fi 与 LocalDevVPN 可用；完成后会发送通知。")
+                            .font(.footnote)
+                            .foregroundStyle(Color.sealTextSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.78)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 4)
+                            .padding(.bottom, 14)
                     }
                 }
                 .transition(.opacity)
@@ -152,6 +173,41 @@ private struct SigningGuideAccordionCard: View {
     private var cardBorder: some View {
         RoundedRectangle(cornerRadius: 20, style: .continuous)
             .stroke(isExpanded ? Color.sealAccent.opacity(0.24) : Color.sealHairline.opacity(0.58), lineWidth: 0.8)
+    }
+}
+
+private struct SigningGuideShortcutLinkRow: View {
+    let index: Int
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Text("\(index + 1)")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.sealAccent)
+                    .frame(width: 24, height: 24)
+                    .background(Color.sealAccent.opacity(0.12), in: Circle())
+
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.sealAccent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.sealTextSecondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("添加 Seal 自动续签快捷指令")
+        .accessibilityHint("打开 iCloud 快捷指令并添加")
     }
 }
 

@@ -4,6 +4,52 @@ import Testing
 
 struct AnisetteV3ClientTests {
     @Test
+    func compatibilityRetryFailsClosedWithoutChangingSharedEnvironment() async throws {
+        let store = TestAnisetteProvisioningStore()
+        let identity = try AnisetteV3Identity(bytes: Data((0..<16).map(UInt8.init)))
+        let state = try #require(AnisetteProvisioningState(identifier: identity.encodedIdentifier, adiPB: "existing", clientInfo: "existing-identity"))
+        try await store.saveIdentifier(identity.encodedIdentifier)
+        try await store.save(state)
+        let writesBefore = await store.mutationCount()
+        let client = AnisetteV3Client(servers: [], store: store, identityStore: store)
+
+        do {
+            _ = try await client.fetchForCompatibilityRetry(expectedDeviceID: "different-device")
+            Issue.record("不同设备身份必须安全失败")
+        } catch {
+            #expect(error as? AnisetteV3Error == .staleProvisioning)
+        }
+        do {
+            _ = try await client.fetchForCompatibilityRetry(expectedDeviceID: identity.deviceIdentifier)
+            Issue.record("没有匹配服务时必须安全失败")
+        } catch {
+            #expect(error as? AnisetteV3Error == .unavailable)
+        }
+        let writesAfter = await store.mutationCount()
+        let identifierAfter = try await store.loadIdentifier()
+        let stateAfter = try await store.load()
+        #expect(writesAfter == writesBefore)
+        #expect(identifierAfter == identity.encodedIdentifier)
+        #expect(stateAfter == state)
+    }
+
+    @Test
+    func compatibilityRetryNeverCreatesMissingSharedIdentity() async throws {
+        let store = TestAnisetteProvisioningStore()
+        let client = AnisetteV3Client(servers: [], store: store, identityStore: store)
+        do {
+            _ = try await client.fetchForCompatibilityRetry(expectedDeviceID: "missing")
+            Issue.record("缺失身份时必须安全失败")
+        } catch {
+            #expect(error as? AnisetteV3Error == .staleProvisioning)
+        }
+        let writes = await store.mutationCount()
+        let identifier = try await store.loadIdentifier()
+        #expect(writes == 0)
+        #expect(identifier == nil)
+    }
+
+    @Test
     func officialServersPutSelectedServerFirstWithoutDuplicates() throws {
         let selected = try #require(AnisetteServerCatalog.official.first)
         let servers = AnisetteServerCatalog.prioritized(selectedID: selected.id)
@@ -205,24 +251,31 @@ struct AnisetteV3ClientTests {
 private actor TestAnisetteProvisioningStore: AnisetteProvisioningStore {
     private var identifier: String?
     private var state: AnisetteProvisioningState?
+    private var writes = 0
+
+    func mutationCount() -> Int { writes }
 
     func loadIdentifier() async throws -> String? { identifier }
 
     func saveIdentifier(_ identifier: String) async throws {
+        writes += 1
         self.identifier = identifier
     }
 
     func removeIdentifier() async throws {
+        writes += 1
         identifier = nil
     }
 
     func load() async throws -> AnisetteProvisioningState? { state }
 
     func save(_ state: AnisetteProvisioningState) async throws {
+        writes += 1
         self.state = state
     }
 
     func remove() async throws {
+        writes += 1
         state = nil
     }
 }

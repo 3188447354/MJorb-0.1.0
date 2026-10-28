@@ -29,6 +29,27 @@ struct ImportDraft: Equatable, Identifiable, Sendable {
     let stagedIPA: StagedIPA
     /// 版本检查结果（prepare 阶段计算，UI 用来决定是否弹框）
     let versionCheck: VersionCheckResult
+    /// 由应用内更新器发起的 Seal 自更新。此标记必须贯穿导入到提交，不能因
+    /// IPA Bundle ID 未匹配普通记录而退化成一个普通的新应用。
+    let isSelfUpdate: Bool
+    /// 准备阶段确认的当前 Seal 记录；提交时按 ID 再次核验，防止确认期间目标变化。
+    let selfUpdateTargetRecordID: UUID?
+
+    init(
+        appID: UUID,
+        parsedIPA: ParsedIPA,
+        stagedIPA: StagedIPA,
+        versionCheck: VersionCheckResult,
+        isSelfUpdate: Bool = false,
+        selfUpdateTargetRecordID: UUID? = nil
+    ) {
+        self.appID = appID
+        self.parsedIPA = parsedIPA
+        self.stagedIPA = stagedIPA
+        self.versionCheck = versionCheck
+        self.isSelfUpdate = isSelfUpdate
+        self.selfUpdateTargetRecordID = selfUpdateTargetRecordID
+    }
 
     var id: UUID { appID }
 }

@@ -9,6 +9,9 @@ struct AccountSecret: Codable, Equatable, Sendable {
     /// Apple ID 密码，用于 authToken 失效（1100）时自动重新登录
     /// 保存在钥匙串加密的 AccountSecret 中，参照 SideStore 官方做法
     let password: String?
+    /// 该账号登录时 Apple 拒绝了旧版 Mac 身份，后续门户请求需继续用兼容身份。
+    /// 按账号保存，不能用全局开关影响其他 Apple ID。
+    let usesCompatibleMacIdentity: Bool
 
     /// 向后兼容字段：当前选中的签名身份。
     /// 新版本同时把每一张曾经自动创建过的证书的 P12 按 Serial 保存在
@@ -29,6 +32,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
         dsid: String,
         authToken: String,
         password: String?,
+        usesCompatibleMacIdentity: Bool = false,
         certificateP12: Data? = nil,
         certificateSerialNumber: String? = nil,
         certificateMachineIdentifier: String? = nil,
@@ -40,6 +44,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
         self.dsid = dsid
         self.authToken = authToken
         self.password = password
+        self.usesCompatibleMacIdentity = usesCompatibleMacIdentity
         self.certificateP12 = certificateP12
         self.certificateSerialNumber = certificateSerialNumber
         self.certificateMachineIdentifier = certificateMachineIdentifier
@@ -49,7 +54,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
 
     /// Codable 迁移：旧 Keychain JSON 没有两个 map 时按空字典处理。
     enum CodingKeys: String, CodingKey {
-        case email, accountIdentifier, dsid, authToken, password
+        case email, accountIdentifier, dsid, authToken, password, usesCompatibleMacIdentity
         case certificateP12, certificateSerialNumber, certificateMachineIdentifier
         case certificateP12BySerial, certificateMachineIdentifierBySerial
     }
@@ -61,6 +66,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
         dsid = try container.decode(String.self, forKey: .dsid)
         authToken = try container.decode(String.self, forKey: .authToken)
         password = try container.decodeIfPresent(String.self, forKey: .password)
+        usesCompatibleMacIdentity = try container.decodeIfPresent(Bool.self, forKey: .usesCompatibleMacIdentity) ?? false
         certificateP12 = try container.decodeIfPresent(Data.self, forKey: .certificateP12)
         certificateSerialNumber = try container.decodeIfPresent(String.self, forKey: .certificateSerialNumber)
         certificateMachineIdentifier = try container.decodeIfPresent(String.self, forKey: .certificateMachineIdentifier)
@@ -81,6 +87,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
         try container.encode(dsid, forKey: .dsid)
         try container.encode(authToken, forKey: .authToken)
         try container.encodeIfPresent(password, forKey: .password)
+        try container.encode(usesCompatibleMacIdentity, forKey: .usesCompatibleMacIdentity)
         try container.encodeIfPresent(certificateP12, forKey: .certificateP12)
         try container.encodeIfPresent(certificateSerialNumber, forKey: .certificateSerialNumber)
         try container.encodeIfPresent(certificateMachineIdentifier, forKey: .certificateMachineIdentifier)
@@ -111,6 +118,7 @@ struct AccountSecret: Codable, Equatable, Sendable {
         feed(dsid)
         feed(authToken)
         feed(password ?? "")
+        feed(usesCompatibleMacIdentity ? "compatible-mac-identity" : "service-mac-identity")
         feed(certificateSerialNumber ?? "")
         feed(certificateMachineIdentifier ?? "")
         feedData(certificateP12)
@@ -140,13 +148,18 @@ struct AccountSecret: Codable, Equatable, Sendable {
     }
 
     /// 用新会话凭据创建副本；保留已保存密码与全部本机签名材料。
-    func withNewSession(dsid: String, authToken: String) -> AccountSecret {
+    func withNewSession(
+        dsid: String,
+        authToken: String,
+        usesCompatibleMacIdentity: Bool? = nil
+    ) -> AccountSecret {
         AccountSecret(
             email: email,
             accountIdentifier: accountIdentifier,
             dsid: dsid,
             authToken: authToken,
             password: password,
+            usesCompatibleMacIdentity: usesCompatibleMacIdentity ?? self.usesCompatibleMacIdentity,
             certificateP12: certificateP12,
             certificateSerialNumber: certificateSerialNumber,
             certificateMachineIdentifier: certificateMachineIdentifier,

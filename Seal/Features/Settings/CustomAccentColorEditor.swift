@@ -43,6 +43,7 @@ struct CustomAccentColorEditor: View {
             HStack {
                 Text("自定义颜色")
                     .font(.system(size: 20, weight: .bold))
+                .singleLine()
                 Spacer()
                 Circle()
                     .fill(color.swiftUIColor)
@@ -148,6 +149,7 @@ struct CustomAccentColorEditor: View {
             Text("HEX")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
             TextField("#1677FF", text: $hexInput)
                 .font(.system(.body, design: .monospaced).weight(.semibold))
                 .textInputAutocapitalization(.characters)

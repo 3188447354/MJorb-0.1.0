@@ -22,8 +22,8 @@
 # （iPad 第 6/7 代、iPad Pro 10.5"/12.9" 2017）⇒ 库的指令集基线就必须钉在 A10。
 #
 # ── 做法 ──────────────────────────────────────────────────────────────────────
-# 从 pinned commit 拉 Unicorn 源码，用 **`-mcpu=apple-a10`** 构建两个切片
-# （ios device + ios simulator），再用 `Scripts/verify-no-lse.py` **当场量** LSE=0 与 minOS，
+# 从 pinned commit 拉 Unicorn 源码，用 **`-mcpu=apple-a10`** 构建 arm64 真机与模拟器切片，
+# 并另外构建 x86_64 Intel 模拟器切片，再用 `Scripts/verify-no-lse.py` **当场量** LSE=0 与 minOS，
 # 通过后才写指纹。指纹不符 / 缺件 ⇒ 重编（fail-safe：改了源码或参数却忘了回传产物，
 # 永远不会让 CI/打包用到过期或带 LSE 的库）。
 #
@@ -49,9 +49,8 @@ UNICORN_REF="${UNICORN_REF:-62d0155ffd4c886d14cf7aa26b7f3ed759617c71}"
 UNICORN_TARGET_CPU="${UNICORN_TARGET_CPU:-apple-a10}"
 IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-17.4}"
 UNICORN_LOGGING="${UNICORN_LOGGING:-ON}"
-# ⚠️ 只出两个 arm64 单架构切片：`-mcpu=apple-a10` 对 x86_64 切片无意义（会直接报错），
-#    而本仓 CI 固定跑在 macos-26（Apple Silicon）+ Xcode 26.5 ⇒ 模拟器只需 arm64。
-BUILD_VERSION="3"
+# arm64 切片用 A10 指令基线；x86_64 切片不传 ARM 专用 -mcpu 参数。
+BUILD_VERSION="5"
 
 if command -v shasum >/dev/null 2>&1; then
   hash_stdin() { shasum -a 256 | cut -d' ' -f1; }
@@ -80,7 +79,7 @@ if [[ -f "$FINGERPRINT_FILE" ]]; then
 fi
 
 slices_present=true
-for slice in ios-arm64 ios-arm64-simulator; do
+for slice in ios-arm64 ios-arm64_x86_64-simulator; do
   [[ -f "$XCFRAMEWORK/$slice/libunicorn.a" ]] || slices_present=false
 done
 
@@ -104,6 +103,19 @@ fi
 for tool in cmake xcrun xcodebuild git; do
   command -v "$tool" >/dev/null 2>&1 || { echo "$tool is required to rebuild Unicorn" >&2; exit 2; }
 done
+
+# qemu/configure requires pkg-config to exist, but the iOS build has no external
+# pkg-config dependencies. If absent, expose an empty-package shim so optional
+# host packages stay disabled rather than blocking the cross-build.
+if ! command -v pkg-config >/dev/null 2>&1; then
+  PKG_CONFIG="$WORK_ROOT/pkg-config-no-packages"
+  cat > "$PKG_CONFIG" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+  chmod +x "$PKG_CONFIG"
+  export PKG_CONFIG
+fi
 
 # ── 1. 取源码（pinned commit）──────────────────────────────────────────────────
 if [[ ! -d "$SRC_DIR/.git" ]]; then
@@ -133,7 +145,7 @@ patch_config_host() {
 }
 
 build_slice() {
-  local slice="$1" sysroot="$2" extra="$3"
+  local slice="$1" sysroot="$2" architecture="$3" target_cpu="$4"
   local build_dir="$WORK_ROOT/build_${slice//-/_}"
   local out_dir="$WORK_ROOT/out/$slice"
 
@@ -143,6 +155,10 @@ build_slice() {
 
   local cc
   cc="$(xcrun -sdk "$sysroot" -find clang)"
+  local cflags=""
+  if [[ -n "$target_cpu" ]]; then
+    cflags="-mcpu=$target_cpu"
+  fi
 
   # 参数与上游 build_xcframework.sh 对齐，只改两处（就是修复本体）：
   #   ① 显式部署目标（否则 clang 按 SDK 默认版本选 apple-a12）
@@ -156,9 +172,9 @@ build_slice() {
     -DUNICORN_ENABLE_TCI=ON \
     -DCMAKE_C_COMPILER="$cc" \
     -DCMAKE_OSX_SYSROOT="$sysroot" \
-    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DCMAKE_OSX_ARCHITECTURES="$architecture" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$IPHONEOS_DEPLOYMENT_TARGET" \
-    -DCMAKE_C_FLAGS="-mcpu=$UNICORN_TARGET_CPU" \
+    -DCMAKE_C_FLAGS="$cflags" \
     -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY
 
   patch_config_host "$build_dir"
@@ -168,15 +184,24 @@ build_slice() {
   echo "    ${slice} done: $(du -h "$out_dir/libunicorn.a" | cut -f1)"
 }
 
-build_slice ios-arm64           iphoneos          ""
-build_slice ios-arm64-simulator iphonesimulator   ""
+build_slice ios-arm64              iphoneos        arm64   "$UNICORN_TARGET_CPU"
+build_slice ios-arm64-simulator    iphonesimulator arm64   "$UNICORN_TARGET_CPU"
+build_slice ios-x86_64-simulator  iphonesimulator x86_64  ""
+
+# XCFramework allows one simulator entry per platform variant. Combine both
+# simulator architectures into a universal static library before packaging.
+mkdir -p "$WORK_ROOT/out/ios-arm64_x86_64-simulator"
+xcrun lipo -create \
+  "$WORK_ROOT/out/ios-arm64-simulator/libunicorn.a" \
+  "$WORK_ROOT/out/ios-x86_64-simulator/libunicorn.a" \
+  -output "$WORK_ROOT/out/ios-arm64_x86_64-simulator/libunicorn.a"
 
 # ── 3. 组装 XCFramework ───────────────────────────────────────────────────────
 echo "==> creating Unicorn.xcframework"
 rm -rf "$XCFRAMEWORK"
 xcodebuild -create-xcframework \
   -library "$WORK_ROOT/out/ios-arm64/libunicorn.a" -headers "$SRC_DIR/include" \
-  -library "$WORK_ROOT/out/ios-arm64-simulator/libunicorn.a" -headers "$SRC_DIR/include" \
+  -library "$WORK_ROOT/out/ios-arm64_x86_64-simulator/libunicorn.a" -headers "$SRC_DIR/include" \
   -output "$XCFRAMEWORK"
 
 # ── 4. 质量门：指令集基线（LSE=0）+ minOS ─────────────────────────────────────

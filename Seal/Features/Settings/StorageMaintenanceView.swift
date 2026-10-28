@@ -83,6 +83,7 @@ struct StorageMaintenanceView: View {
             Text("Seal 当前占用")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
         }
         .frame(maxWidth: .infinity)
         .padding(28)
@@ -162,9 +163,10 @@ struct StorageMaintenanceView: View {
     }
 
     private var dangerNote: some View {
-        Text(viewModel.storageMaintenanceSummary ?? "临时缓存、多余文件和签名包可按需清理；账号密码、证书和设备配对信息不会在这里清理。")
+        Text(viewModel.storageMaintenanceSummary ?? "缓存和签名包可清理；账号、证书与配对信息会保留。")
             .font(.footnote)
             .foregroundStyle(Color.sealTextSecondary)
+            .singleLine()
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .sealContentCard(.compact)
@@ -176,6 +178,7 @@ struct StorageMaintenanceView: View {
             Spacer()
             Text(value.sealFormattedByteCount)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
         }
         .frame(minHeight: 54)
     }

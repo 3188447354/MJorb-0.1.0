@@ -24,6 +24,9 @@ actor ImportWorkflow {
     /// 「自更新」处理（否则会新建一条 `isSeal == false` 的普通记录落到「待签名」页，
     /// 签名时又与已安装的 Seal 争同一个 Bundle ID 被 `SEAL-BUNDLE-004` 拦下）。
     private let runningSealBundleIdentifier: String?
+    /// IPA 源包里的规范 Seal Bundle ID。Release 安装后实际 Bundle ID 可能带 Team 后缀，
+    /// 更新器下发的源包仍可能使用此规范 ID。
+    private let runningSealCanonicalBundleIdentifier: String
     private var retryDraft: ImportDraft?
     /// 重试时必须沿用**同一个**提交目标：用户已经确认过「覆盖更新」，
     /// 重试却悄悄变回「新建」会让两条记录争同一个签名身份。
@@ -35,6 +38,7 @@ actor ImportWorkflow {
         fileStore: AppFileStore,
         appStore: any AppStore,
         runningSealBundleIdentifier: String? = nil,
+        runningSealCanonicalBundleIdentifier: String = "com.mjorb.seal",
         now: @escaping @Sendable () -> Date = Date.init,
         makeID: @escaping @Sendable () -> UUID = UUID.init
     ) {
@@ -42,11 +46,12 @@ actor ImportWorkflow {
         self.fileStore = fileStore
         self.appStore = appStore
         self.runningSealBundleIdentifier = runningSealBundleIdentifier
+        self.runningSealCanonicalBundleIdentifier = runningSealCanonicalBundleIdentifier
         self.now = now
         self.makeID = makeID
     }
 
-    func prepare(sourceURL: URL) async {
+    func prepare(sourceURL: URL, isSelfUpdate: Bool = false) async {
         guard canPrepare else { return }
         await discardRetryDraft()
         if let cleanupFailure = lastCleanupFailure {
@@ -61,13 +66,35 @@ actor ImportWorkflow {
             stagedIPA = staged
             try Task.checkCancellation()
             let parsed = try parser.parse(url: staged.url)
+            let selfUpdateTarget: AppRecord?
+            if isSelfUpdate {
+                let records: [AppRecord]
+                do {
+                    records = try await appStore.fetchAll()
+                } catch {
+                    throw Self.selfUpdateIdentityFailure(
+                        reason: "无法读取当前 Seal 的本机记录，已停止更新以保护 Apple ID 和本机数据。"
+                    )
+                }
+                selfUpdateTarget = try requireSelfUpdateTarget(
+                    parsed: parsed,
+                    records: records
+                )
+            } else {
+                selfUpdateTarget = nil
+            }
             // 版本检查：找同 Bundle ID 的已存在记录，比较版本
-            let versionCheck = await checkVersion(parsed: parsed)
+            let versionCheck = try await checkVersion(
+                parsed: parsed,
+                selfUpdateTarget: selfUpdateTarget
+            )
             let draft = ImportDraft(
                 appID: makeID(),
                 parsedIPA: parsed,
                 stagedIPA: staged,
-                versionCheck: versionCheck
+                versionCheck: versionCheck,
+                isSelfUpdate: isSelfUpdate,
+                selfUpdateTargetRecordID: selfUpdateTarget?.id
             )
             state = .awaitingConfirmation(draft)
         } catch is CancellationError {
@@ -91,16 +118,28 @@ actor ImportWorkflow {
     /// - 同版本不同构建号 → .buildUpgrade / .buildDowngrade（按构建号比）
     /// - 同版本同构建号 → .alreadyLatest（构建号不变的包不作为更新）
     /// - 低版本 → .downgrade（需二次确认）
-    private func checkVersion(parsed: ParsedIPA) async -> VersionCheckResult {
-        guard let records = try? await appStore.fetchAll() else {
+    private func checkVersion(
+        parsed: ParsedIPA,
+        selfUpdateTarget: AppRecord?
+    ) async throws -> VersionCheckResult {
+        let records: [AppRecord]
+        do {
+            records = try await appStore.fetchAll()
+        } catch {
+            // 普通 IPA 可继续按新应用导入；明确的 Seal 自更新不能 fail-open。
+            if selfUpdateTarget != nil {
+                throw Self.selfUpdateIdentityFailure(
+                    reason: "无法读取 Seal 更新目标，已停止更新以保护 Apple ID 和本机数据。"
+                )
+            }
             return .newApp
         }
         // 找同 Bundle ID 的已存在记录（包括 Seal 自更新）
-        let existingSeal = Self.existingSealRecord(
-            for: parsed,
-            in: records,
-            runningSealBundleIdentifier: runningSealBundleIdentifier
-        )
+        let existingSeal = selfUpdateTarget ?? Self.existingSealRecord(
+                for: parsed,
+                in: records,
+                runningSealBundleIdentifier: runningSealBundleIdentifier
+            )
         let existing = existingSeal ?? ImportReplacementPolicy.installedReplacementCandidate(
             for: parsed,
             in: records
@@ -254,6 +293,22 @@ actor ImportWorkflow {
                 in: records,
                 runningSealBundleIdentifier: runningSealBundleIdentifier
             )
+            let resolvedExistingSeal: AppRecord?
+            if draft.isSelfUpdate {
+                guard let expectedID = draft.selfUpdateTargetRecordID,
+                      let target = try? requireSelfUpdateTarget(
+                        parsed: draft.parsedIPA,
+                        records: records,
+                        expectedRecordID: expectedID
+                      ) else {
+                    throw Self.selfUpdateIdentityFailure(
+                        reason: "当前 Seal 更新目标已变化或身份不一致。为避免更新后 Apple ID 和本机数据不可见，本次更新已停止。"
+                    )
+                }
+                resolvedExistingSeal = target
+            } else {
+                resolvedExistingSeal = existingSeal
+            }
             // 覆盖更新的目标**当场复核**：用户在导入确认页停留期间记录可能已被删除、
             // 或已不再是已安装状态。明确选择过“覆盖”的请求不能静默退化为新建，
             // 否则会制造用户未要求的同身份副本；需要用户重新选择目标或改选新建副本。
@@ -266,7 +321,7 @@ actor ImportWorkflow {
                 // 应用的 replacement policy：该 policy 刻意排除 `isSeal`，以免把
                 // 自更新误当作普通应用覆盖。只接受本次解析出的当前 Seal 记录本身，
                 // 其余目标仍走普通应用的严格复核，避免确认页停留期间覆盖错记录。
-                if existingSeal?.id == appID {
+                if resolvedExistingSeal?.id == appID {
                     existing = nil
                     break
                 }
@@ -299,12 +354,12 @@ actor ImportWorkflow {
             // 两者不一致时签名阶段会去一个不存在的目录取包。
             // 2026-10-09 重设计：覆盖更新创建**新记录**（新 ID），不再复用 existing.id。
             // 文件目录用新 ID，记录也用新 ID，两者一致。
-            let isPendingUpdate = existingSeal != nil || (existing?.belongsInInstalledList == true)
+            let isPendingUpdate = resolvedExistingSeal != nil || (existing?.belongsInInstalledList == true)
             let newRecordID = UUID()
             let commitAppID = isPendingUpdate ? newRecordID : (existing?.id ?? draft.appID)
             let preferredIconData: Data?
-            if let path = existingSeal?.preferredIconRelativePath
-                ?? existingSeal?.iconRelativePath
+            if let path = resolvedExistingSeal?.preferredIconRelativePath
+                ?? resolvedExistingSeal?.iconRelativePath
                 ?? existing?.preferredIconRelativePath
                 ?? existing?.iconRelativePath
                 ?? preferenceSource?.preferredIconRelativePath {
@@ -333,7 +388,7 @@ actor ImportWorkflow {
             // （2026-10-02 CI 实测 `importingSealIPAWithSameVersionRecordsSourceFingerprint` 失败）。
             // 流式哈希，不整包进内存；失败不阻断导入（回落为纯版本比较）。
             let pendingUpdateSourceFingerprint: String?
-            if let existing = existingSeal {
+            if let existing = resolvedExistingSeal {
                 let newFingerprint = try? AppFileStore.streamingSHA256(url: draft.stagedIPA.url)
                 // 与已装包指纹一致 ⇒ 同一个包，不标为待更新
                 if let newFP = newFingerprint,
@@ -372,7 +427,7 @@ actor ImportWorkflow {
                 files: transaction.storedFiles,
                 importedAt: now(),
                 replacing: existing,
-                existingSeal: existingSeal,
+                existingSeal: resolvedExistingSeal,
                 preferenceSource: preferenceSource,
                 pendingUpdateSourceFingerprint: pendingUpdateSourceFingerprint,
                 recordID: newRecordID
@@ -380,7 +435,7 @@ actor ImportWorkflow {
             record.pendingFileTransactionID = transaction.id
             // 被替换的记录必须逐条记下来，回滚时按 id 恢复：
             // 自更新替换的是 Seal 自己的记录，覆盖更新替换的是那条已安装记录。
-            databaseReplacedRecords = [existingSeal, existing].compactMap { $0 }
+            databaseReplacedRecords = [resolvedExistingSeal, existing].compactMap { $0 }
             try await appStore.save(record)
             databaseRecord = record
 
@@ -712,6 +767,62 @@ actor ImportWorkflow {
         else { return nil }
         return records.first { $0.isSeal && $0.belongsInInstalledList }
             ?? records.first { $0.isSeal }
+    }
+
+    /// 应用内更新器明确发起的 Seal 更新必须绑定到当前运行中的那条 Seal 记录。
+    /// IPA 即使使用规范 Bundle ID 或当前实际 Bundle ID，也不能因普通匹配失败而
+    /// 被当作新应用。目标缺失、目标不再已安装、或包身份不属于当前 Seal 时一律停止。
+    private func requireSelfUpdateTarget(
+        parsed: ParsedIPA,
+        records: [AppRecord],
+        expectedRecordID: UUID? = nil
+    ) throws -> AppRecord {
+        guard let runningSealBundleIdentifier,
+              let target = SelfAppRecordSelection.preferredExistingSealRecord(
+                in: records,
+                currentBundleIdentifier: runningSealBundleIdentifier
+              ),
+              target.belongsInInstalledList,
+              expectedRecordID == nil || target.id == expectedRecordID else {
+            throw Self.selfUpdateIdentityFailure(
+                reason: "找不到与当前 Seal 身份对应的已安装记录。为保护 Apple ID 和本机数据，本次更新已停止。"
+            )
+        }
+
+        let acceptedIdentifiers = [
+            runningSealBundleIdentifier,
+            runningSealCanonicalBundleIdentifier,
+            target.originalBundleIdentifier,
+            target.mappedBundleIdentifier,
+            target.preferredBundleIdentifier
+        ].compactMap { value -> String? in
+            guard let value else { return nil }
+            let normalized = ImportReplacementPolicy.normalizedBundleIdentifier(value)
+            return normalized.isEmpty ? nil : normalized
+        }
+        let importedIdentifier = ImportReplacementPolicy.normalizedBundleIdentifier(
+            parsed.bundleIdentifier
+        )
+        guard acceptedIdentifiers.contains(importedIdentifier) else {
+            throw Self.selfUpdateIdentityFailure(
+                reason: "更新包 Bundle ID（\(parsed.bundleIdentifier)）与当前 Seal 身份不一致。为避免安装成另一款 App 并丢失本机 Apple ID 数据，本次更新已停止。"
+            )
+        }
+        return target
+    }
+
+    private static func selfUpdateIdentityFailure(reason: String) -> ImportFailure {
+        ImportFailure(
+            title: "Seal 更新身份不一致",
+            reason: reason,
+            recovery: "重新获取当前 Seal 的更新包后重试",
+            code: "SEAL-SELF-117",
+            condition: .signedArtifactInvalid,
+            action: .reimportIPA,
+            retryDisposition: .manual,
+            operation: .importIPA,
+            origin: .fileStore
+        )
     }
 
     private static func preferenceSource(

@@ -75,7 +75,7 @@ struct RefreshPlannerTests {
     }
 
     @Test
-    func deviceRecoveredNonSealSignedAppRemainsInstalledButIsExcludedFromRenewal() {
+    func unverifiedDeviceRecoveryIsExcludedFromInstalledListAndRenewal() {
         var app = app(name: "Recovered", expiry: nil, accountID: UUID())
         app.needsIPAImport = true
         app.certificateSerialNumber = nil
@@ -83,7 +83,7 @@ struct RefreshPlannerTests {
 
         let queue = RefreshPlanner().makeQueue(apps: [app])
 
-        #expect(app.belongsInInstalledList)
+        #expect(app.belongsInInstalledList == false)
         #expect(queue.isEmpty)
     }
 
@@ -98,6 +98,7 @@ struct RefreshPlannerTests {
         recovered.provisioningProfileExpirationDate = nil
         recovered.signingTargets = []
         recovered.importWarnings = [AppRecord.deviceRecoveryWarning]
+        recovered.installedAppMarkerVersion = SealInstalledAppMarker.version
         let account = AppleAccountRecord(
             id: accountID,
             maskedEmail: "a***",

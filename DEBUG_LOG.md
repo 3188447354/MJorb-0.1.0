@@ -1,4 +1,367 @@
-# 2026-10-25 — 防篡改运行时自检层（待推；MJ 确认示意图后动手）
+# 2026-10-28 — 钥匙串读取不完整时误把 Apple ID 标成待验证
+
+- **源码根因**：`KeychainVault.load(accountID:accountIdentifier:)` 在主键和账号 UUID 关联均未命中后，会按登录标识扫描所有钥匙串凭据与加密保险库。原逻辑把钥匙串枚举错误、保险库扫描错误吞成空结果；通用钥匙串扫描还会静默跳过无法解码的条目。上层只要收到 `nil` 就会写入 `localCredentialsMissing` 并阻止该账号参与签名/库存同步；因此“扫描没完成”可能伪装成“凭据不存在”。此外，账号状态策略按 `SEAL-AUTH-105` / `106` 前缀分类，可能把同号段的其他错误误当成本机凭据问题。
+- **修复**：账号查找改为严格扫描；遇到 Keychain、保险库读取错误或无法解码条目时抛出读取失败，不返回 `nil`。只有所有可用凭据源均完整读完且没有匹配项时才确认本机凭据确实缺失。Apple ID 状态判断改为明确错误码白名单，`SEAL-AUTH-105`（账号记录缺失）、105f（Team 查询失败）和未知新子码不会误标失效；登录 ID 全量查找同样保留保险库读取错误。
+- **影响范围**：只改凭据定位和状态分类，不改 Bundle ID、Team ID、证书撤销、其他 Apple ID 或版本号。正常应用更新须继续保持 Seal 的 Bundle ID 与签名团队一致；密码被更改、Apple 锁定/撤销账号或 Apple 明确拒绝凭据时，仍需按 Apple 要求重新验证，源码无法保证 Apple 授权永久有效。
+- **验证状态**：源码调用链复核、差异空白检查通过；iOS Release 设备目标构建成功（`CODE_SIGNING_ALLOWED=NO`，未跑模拟器）；未运行测试、未安装手机、未发布更新。仍需真机用原账号覆盖更新并验证账号列表、签名及 LocalDevVPN；如果存储读取失败，应显示读取错误且账号仍保留，不应变成“凭据待恢复”。
+- **涉及文件**：`Seal/Infrastructure/Security/KeychainVault.swift`、`Seal/Core/Accounts/AppleServiceFailurePolicy.swift`。
+
+# 2026-10-28 — Seal 自更新身份失配时可能退化成新应用
+
+- **源码根因**：`AppsViewModel.importSelfUpdateFile` 之前只传入“导入后自动打开签名”的标记，没有把“这是 Seal 自更新”传给 `ImportWorkflow`。当更新 IPA 的 Bundle ID 与本机记录写法不完全相同时，`ImportWorkflow.checkVersion` 会返回 `.newApp`；`consumeWorkflowState` 随即自动按普通应用提交，绕过 Seal 覆盖更新记录中的账号、签名团队和 Bundle ID 绑定。若之后按另一应用身份签名安装，iOS 会使用另一份 App 容器/钥匙串访问组，旧账号数据可能仍在原身份下但新 Seal 看不到。
+- **修复**：自更新意图从下载导入入口贯穿 `ImportDraft`、版本检查和提交；更新开始时必须找到与当前运行 Bundle ID 对应的已安装 Seal 记录，并确认 IPA Bundle ID 属于当前或规范 Seal 身份。提交时再次按记录 ID 核验，失败即停止，不允许落入普通新应用自动导入分支。正常匹配时沿用原 Seal 记录的账号、签名 Team 与 Bundle ID；普通 IPA 和其他账号的记录不变。
+- **与 Apple ID 登录错误的区分**：旧 1.0.1 日志中的 `CryptoKitError 3` 是另一条本机凭据副本读写故障。`KeychainVault` 当前已将钥匙串作为主存，并将加密副本损坏/重建失败降为本机警告；这不表示 Apple 已拒绝账号，也不需要撤销证书。最新 `Seal-log(6).txt` 未出现该错误，且显示当前 Seal Bundle ID 与本机应用记录仍可读；日志不足以证明所有账号数量都一致。
+- **版本与验证**：未改版本号，未安装手机，未发布更新。iOS Release 设备目标构建成功（`CODE_SIGNING_ALLOWED=NO`）；未运行单元测试。仍需在真机用原有已登录多账号覆盖更新复验：所有账号应留在同一 Seal 身份中可读。
+- **涉及文件**：`Seal/Core/Import/ImportDraft.swift`、`Seal/Core/Import/ImportWorkflow.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Application/AppContainer.swift`。
+
+# 2026-10-28 — 加密凭据副本故障误报 Apple ID 登录失败
+
+- **日志证据**：旧版 1.0.1 添加账号记录中，Apple `fetchTeams` 已成功返回团队，随后在本机凭据持久化阶段出现 `CryptoKitError 3`，外层却将其归为 Apple ID 验证失败。最新 `Seal-log(6).txt`（1.0.1 构建 46）未再出现此错误；它记录自更新前后 Seal Bundle ID 保持一致，且本机应用记录仍正常读出。该日志不包含完整 Apple ID 数量，不能据此断言所有用户的账号列表均未受影响。
+- **根因**：`KeychainVault.save` 在钥匙串主存成功后，同步写入并回读 AES-GCM 加密的第二份凭据文件；若文件对应的加密钥匙变化或密文无法校验，异常会冒泡到登录流程，掩盖已经成功的 Apple 团队认证。读取路径遇到同一副本异常时，也可能在扫描钥匙串主存前提前退出。
+- **修复**：钥匙串设为凭据主存。无法读取加密副本时，读取路径继续查钥匙串；写入路径仅将不可读旧文件改名保留，再从全部可读钥匙串条目重建副本，并合并同一登录 ID 下已有签名材料。无法重建时保留旧文件并继续使用已验证的钥匙串主存，不再报成 Apple 登录失败。只记录不含账号或秘密的本机警告；不清除或撤销账号、证书、设备标识或其他账号数据。
+- **验证**：iOS Release 设备目标构建成功（未签名、未运行模拟器）；未运行单测。此次构建不代表真机 Apple 登录已复测；账号是否恢复仍需安装此修复版后在真机核对。未改版本号、未安装手机、未发布更新。
+
+## 2026-10-28 回退 build 44 通道诊断调整
+
+- 用户反馈 build 44 续签体验变差，按要求仅回退该次预热诊断、任务取消与清理计时，恢复 build 43 的行为；其余 IPA 签名兼容及安全校验保留。
+- 用户日志显示同一轮还有 Apple 会话过期长时间退避和设备操作争用，不能断定回退能消除全部慢问题；需真机比较。
+
+## 2026-10-28 描述文件服务预热诊断与取消
+
+- 真机日志：批量续签预热超过 8 秒后重建连接并成功重试；不能仅凭现有时间线认定清理造成超时。
+- 处理：记录预热排队、缓存复用、探测开始与结果耗时及设备服务占用，记录空闲清理起止与耗时；Portal 准备失败或取消时取消并行预热任务，底层原生调用如已启动仍保留设备租约直至完成。
+- 安全边界：没有移除启动预热、8 秒超时、互斥、描述文件真实性和注入读回核验。真实超时原因与改善幅度需真机验证。
+
+## 2026-10-28 未签名包包含开发团队后缀
+
+- 用户反馈 iLoader 自动追加团队后缀；build 42 未签名包包含本机开发团队后缀，可能导致重复追加和额外 App ID 占用。
+- 打包阶段仅在暂存副本将主应用和 Live Activity 标识恢复成无团队后缀的基础标识，拒绝异常身份；不改变 Xcode 真机开发配置。实际 iLoader 重签及 App ID 复用需用户确认。
+
+## 2026-10-28 测试构建产物混入 IPA
+
+- 现象：build 41 经第三方工具签名时提示 SealTests 不是主应用扩展。
+- 根因：build-for-testing 将测试 bundle 和符号目录留在共享 Debug app 中，后续 build 复用该产物，打包时误带入测试目录。
+- 修复：打包阶段只从暂存副本移除 xctest 测试产物，拒绝意外 PlugIns 并全树检查测试包残留；主程序和 Live Activity 保留。
+
+## 2026-10-28 签名前证书预清理延迟
+
+- 现象：真机签名前账号阶段出现十几至二十多秒等待，设备证书引用核验不可用；该阶段此前无论证书是否可复用都执行设备扫描及证书预清理。
+- 修改：移除完整签名前主动执行的清理，保留原有本机私钥与证书有效期、Apple 活动证书校验，证书申请与既有配额/身份失败回退不变；profile-only 续签路径不变。
+- 边界：既有证书配额失败后的轮换流程原样保留，可能涉及撤销证书及恢复应用，不能声称此次修改已经改变该风险。各场景需真机验证。
+
+## 2026-10-28 彩云天气手表占位标识导致安装失败
+
+- 真机日志：首次安装明确返回 InvalidCompanionAppBundleIdentifier；错误未被归为不可重试，第二次重传返回 NoDevice，掩盖了真实失败原因。桌面图标不证明安装成功。
+- 修复：仅对已确认不含执行代码的 com.apple.WatchPlaceholder，重写 Info.plist 中主应用及手表 bundle 关联，保留其他资源和原始 IPA；系统明确拒绝手表关联标识时停止重传并显示明确原因。
+- 测试：新增嵌套占位信息映射及确定性安装错误测试；需要用户真机重新签名安装彩云天气验证。未改真实 Watch 或 App Clip 的支持边界。
+
+## 2026-10-28 安装完成后验证等待优化
+
+- 证据：微信安装调用返回后到旧描述文件清理结束约 15 秒；清理遇到设备查询闸门忙。原先安装验证成功和记录保存后仍同步等待清理。
+- 调整：保留现有安装验证、记录保存及新描述文件校验；安装事务不再直接调用旧描述文件清理，交给已有的下次启动空闲维护，维护重新读取记录、取得设备维护租约，忙时跳过。增加安装核验独立耗时日志，不将旧文件作为新描述文件使用。
+- 真机验证仍需确认签名、完整安装、续签与空闲维护行为；此处没有承诺清理会在本次运行立即执行。
+
+## 2026-10-28 免费团队 App Clip 签名兼容
+
+- Seal 当前不支持 App Clip 独立签名。按用户要求，免费团队完整重签时仅从工作副本移除 AppClips，原 IPA 不变；其他团队和 profile-only 续签仍保守拒绝。
+- 同时从主应用的描述文件请求及签名权限移除 App Clip 关联和 appclips 域名，保留其他关联域名；具体账号的签名、安装和运行需真机验证。
+
+## 2026-10-28 加密 Watch 组件阻止手机端签名
+
+- 现象：微信 IPA 的 Watch 扩展有加密架构，旧流程遇到 Watch 即停止。
+- 处理：完整签名时仅在解压副本中移除包含确认加密 Mach-O 的 Watch 配套 app；原 IPA 保留，其他扩展不移除。仅描述文件续签仍保守拒绝，避免已有安装目标与描述文件集合不一致。
+- 验证：真实样本中 Watch 主程序未加密、扩展加密；多架构逐一读取后能识别。手机签名和安装仍需真机验证。
+
+# 2026-10-28 — Apple ID 登录身份在签名请求中丢失
+
+- **证据与根因**：受影响账号先遇到旧 Mac 身份 `-23782`，兼容身份登录成功后，后续 Apple 门户请求仍返回 `1100 session has expired`。兼容身份此前只存于登录函数的局部变量；签名、证书同步和证书管理重新取 Anisette 时没有沿用它，Apple 收到的登录身份与后续请求身份不一致。
+- **修复**：在加密的 `AccountSecret` 中按账号保存兼容身份标记；旧钥匙串记录缺字段时默认为普通身份。新增统一 Apple API 会话构造方法，签名/续签、会话校验、证书同步及证书管理都按该账号标记构造请求；自动重新登录后保留并保存新身份，同时继续保留原签名证书材料。其他账号默认值不变，不清除或重建共享 ADI、不撤证、不切换 Team。认证日志不再输出一次性 Anisette 凭据和设备标识。
+- **上游对照**：SideStore 的 `AuthManager.getAuthenticatedSession()` 每次从 AnisetteProvider 取一次性数据并创建对应会话；Seal 保留同一“新数据构建请求会话”的方式，并额外按账号记住所需的兼容身份，因为 Seal 会在独立门户服务中重建会话。
+- **验证状态**：iOS 真机目标 Debug 编译成功（`CODE_SIGNING_ALLOWED=NO`，退出码 0）；`git diff --check` 通过。未运行测试、模拟器、手机安装或发布更新；受影响 Apple ID 的真实登录、签名和续签仍需真机确认。
+
+# 2026-10-28 — 空 App Groups 导致 SEAL-ENTITLEMENT-401
+
+- **证据**：1.0.0 构建 31 的日志中，彩云天气 Pro 的原始 Mach-O entitlement 为 `com.apple.security.application-groups` 空数组；签名前应用组数为 0，Apple 返回的描述文件没有该键，签后校验仍将空数组当成必须授权的权限，导致 401。此日志不能证明所有失败 IPA 都有相同原因。
+- **修复**：在读取每个签名目标权限后，仅移除空字符串数组的 App Groups 声明；门户能力过滤和签后校验同样处理空数组；签名器也不把已有描述文件中的组写进声明为空的目标。非空应用组、其他权限和非数组类型依旧按原规则校验，不删除扩展、不伪造描述文件。
+- **证书记录**：日志 09:03 出现证书轮换后 Seal 自动恢复未完成，用户确认目前 Seal 可以打开；其他受影响应用的状态未由该日志确认。
+- **验证状态**：1.0.1（构建 35）iOS 设备 Release 编译及 IPA 结构、版本检查通过；macOS 本机检查覆盖空数组、非空组缺失及不匹配、正确授权、非组权限、扩展拓扑和签名器对空组的输出处理。需受影响 IPA 在真机完整签名、安装和运行验证。未发布更新、未运行模拟器。
+
+# 2026-10-28 — 兼容登录保护其他账号
+
+- **发现**：构建 33 的 -23782 重试本身只改认证数据副本，但重新获取凭据时可能进入共享 ADI 重建路径；之后遇到 -80045 或 SIM 同步也可能触发共享环境恢复，不能保证其他账号不受牵连。
+- **调整**：兼容重试仅从已存在且与本次设备一致的共享环境读取认证数据；禁止本分支创建、移除或重写 identifier / ADI，禁用自动 ADI 重建和 SIM 同步；无法安全取得数据时直接结束该次尝试。正常账号的原流程保留。
+- **验证状态**：1.0.1（构建 34）设备版 Release 编译及 IPA 结构检查通过；macOS 模拟网络检查验证成功取数据、设备不匹配与缺失环境均不写共享数据；基于实际恢复函数的模拟检查验证兼容分支遇到 -80045 / SIM 时不重置或同步，正常分支仍按原逻辑处理。原有的普通登录路径、Apple 服务端行为和后续签名/续签仍需真机验证，不能承诺其他账号绝不会受到外部服务影响。未发布更新、未运行模拟器。
+
+# 2026-10-28 — -23782 兼容登录实机反馈
+
+- **证据**：1.0.1（构建 32）日志显示旧身份被 Apple 返回 -23782，兼容重试后出现 HTML 503；另有验证码通过记录，日志末尾未记录账号添加成功。日志存在去重，不能仅凭相邻记录判断全部尝试属于同一轮。
+- **对照**：iPASide 1.2.12 对该错误使用原 MacBookPro13,3 机型和 macOS 13.6.7 对应的 User-Agent；其作者只验证初始请求，未验证受影响账号完整登录。Seal 测试版先前使用 MacBookPro13,2、macOS 13.1 与旧 User-Agent。
+- **调整**：仅在原有 -23782 兼容重试中采用上述成对身份；加入匿名登录批次、尝试次数、身份类型及错误域和错误码日志，不记录账号、密码或验证码。正常账号仍使用原身份。
+- **验证状态**：1.0.1（构建 33）iOS 设备 Release 编译和 IPA 结构、主应用与扩展版本检查通过；macOS 原生规则检查验证错误域、错误码、兼容身份配对和副本不改变原数据。兼容重试、验证码、团队查询及后续签名续签仍需受影响账号实机确认。未运行模拟器、安装手机或发布更新。
+
+# 2026-10-28 — Apple ID 登录 -23782 兼容处理
+
+- **现象**：添加账号时 Apple 返回 `Apple.APIError -23782`，提示 macOS 10.13 或更高版本。默认远程服务声明的客户端版本为 10.12.6；其他工具也报告相同错误，不能仅凭截图确认后续认证必定成功。
+- **调整**：只有 Apple 明确返回该错误且当前声明为旧版 10.12.6 时，以现有机器凭据生成新的一次性数据，使用已知的 macOS 13.1 身份和相应 User-Agent 重新尝试一次；本次认证、验证码和团队查询使用相同身份，不清除已有账号或设备标识。失败时展示中文说明。
+- **验证**：1.0.1（构建 32）iOS 设备 Release 编译及未签名 IPA 结构、主应用与扩展版本检查通过；macOS 原生检查验证了错误码与域匹配，以及兼容身份副本不改动原数据。新增 iOS 定向测试未运行。完整登录、双重认证、后续签名和续签仍需受影响账号在真机验证。未启动模拟器、安装手机或发布更新。
+
+# 2026-10-27 — Seal 1.0.0 设备版构建
+
+- **改动**：启动后约 1 秒显示本机已保存的应用记录，Seal 自身证书与有效期信息转到后台同步；QQ 图标在深色模式使用一致圆角；输入框的复制、粘贴、剪切、全选等系统编辑菜单由主应用声明简体中文开发语言和本地化；Bundle ID 错误提示说明 Apple 字符规则，并指明表情应填写在 App 名称中。
+- **版本**：主应用与 Live Activity 均为 1.0.0（构建 31）。
+- **构建与校验**：iOS 设备 Release 构建成功；IPA 结构检查通过，扩展仅包含预期的 SealLiveActivity；主应用及扩展版本号、构建号一致；主应用 Info.plist 的开发语言和支持语言均为 zh-Hans；固定更新包的 IPA、SHA-256 和 latest.json 大小、摘要、下载文件名相符；`git diff --check` 通过。
+- **交付与发布**：`build/Seal 更新包/` 只保留 1.0.0 IPA、对应 SHA-256 文件和 `latest.json`；移除了本地旧版 0.1.80 更新包及中间生成的 0.1.81 IPA。已发布至更新服务器；latest 返回 1.0.0，SHA-256 与本地一致，IPA 下载地址返回 HTTP 200。未运行模拟器、未安装手机。
+
+# 2026-10-27 — 0.1.80 已发布
+
+- **版本**：0.1.80（构建 29）。
+- **内容**：启动时先校准本机 Seal 版本记录，应用列表读取态至少显示 1 秒；签名、续签和批量续签分别检查 Wi-Fi 与 LocalDevVPN，通道失败时停止无期限等待；网络路由变化后复核通道并复用已就绪状态；社群页“关注公众号”改为打开用户提供的公众号文章。
+- **构建与核验**：Release 编译成功；RustBridge 最低系统版本与导出符号检查通过；Unicorn 指令集及最低系统版本检查通过；IPA 完整，主应用和 Live Activity 版本一致。服务器 latest 接口返回 0.1.80，下载包与本地 IPA 字节完全一致。
+- **交付**：`build/Seal 更新包/` 仅保留 `Seal-0.1.80-2a9ff2c777d9.ipa`、对应 `.ipa.sha256` 和 `latest.json`。旧版与重复 IPA 已从本地构建目录清理。未安装手机。
+
+# 2026-10-27 — 更新后首屏版本校准与公众号文章入口
+
+- **现象**：Seal 更新后重新打开，应用列表的异步本地读取可能先于 Seal 自身记录校准完成，首屏短暂显示旧版本；社群页关注公众号卡片仍打开二维码抽屉，无法直接查看用户给出的关注文章。
+- **根因**：启动 `.task` 并行启动列表读取和 `SelfAppRegistrar` 自身登记；通知回调或首次前台恢复也可触发额外列表读取，任何一路先完成都会发布旧快照。
+- **调整**：启动时先等待 Seal 自身记录按当前运行包版本完成校准，加载提示至少显示 1 秒，再读取本机保存的应用记录；首屏期间暂缓通知与前台恢复触发的并行刷新。社群页公众号卡片改为打开 `https://mp.weixin.qq.com/s/q30q8SpERv2yg_vqSU_G_Q`。
+- **验证状态**：RustBridge 三个架构切片重建并通过 3,806 个对象的最低系统版本检查与导出符号核验；Unicorn 的 A10 指令集与 iOS 17.4 最低版本核验通过；Release 编译成功。IPA 压缩完整，主应用与 Live Activity 均为 0.1.80（构建 29），服务器清单 SHA-256 与下载文件逐字节一致。未安装真机。
+
+# 2026-10-27 — 签名通道区分 Wi-Fi / LocalDevVPN 并快速给出可操作反馈
+
+- **现象**：签名、续签或批量续签遇到 Wi-Fi / LocalDevVPN 断开时，可能一直显示正在连接；LocalDevVPN 恢复按钮还会先进入 Seal 的设备页，用户需要再点一次。
+- **调整**：应用启动时开启 Wi-Fi 路径监控；通道门禁先判断 iPhone 的 Wi-Fi 路径，无可用 Wi-Fi 时给出单独的“未连接 Wi-Fi”失败，不冒称 LocalDevVPN 故障。Wi-Fi 正常后再探测 LocalDevVPN；明确不可达时直接停止重复完整诊断。失败抽屉中的“打开 LocalDevVPN”现在直接调用该应用的启用深链，未安装时转到 App Store。
+- **错误码**：新增 `SEAL-INSTALL-700` 表示 Wi-Fi 路径未就绪；仅凭该码不推断 LocalDevVPN 状态。详情已录入错误目录与上游对齐记录。
+- **公众号主页链接**：从用户提供的文章链接读取公众号 `__biz` 标识，可生成微信内主页链接；微信未提供可核验的官方跨应用主页跳转 API，暂保留二维码关注入口，避免依赖未经确认的私有 URL scheme。
+- **涉及文件**：`WiFiPathAvailability.swift`、`SealApp.swift`、`LocalDevVPNOnDemandActivator.swift`、`MinimuxerInstallChannel.swift`、`LocalDevVPNLink.swift`、`SigningProgressView.swift`、`AppsViewModel.swift`、`BatchRefreshView.swift`、安装错误目录与上游对齐文档。
+- **验证状态**：未运行测试、未编译、未安装手机、未发布更新源；改动待 iOS 构建及真机分别关闭 Wi-Fi / LocalDevVPN 后确认错误分类和直达跳转。
+
+# 2026-10-27 — 社群页 QQ 与 Telegram 图标边缘
+
+- **原因**：QQ 素材自带圆角底板和细边，Telegram 素材自带白色圆角大底板、描边与阴影；卡片又对两张图重复套圆角裁切，因此边缘显得叠层、不齐。
+- **调整**：Telegram 素材整理为透明底的蓝色圆形标志；QQ 保留原图，不再叠加第二次圆角裁切。卡片布局和其他社群图标不变。
+- **涉及文件**：`Seal/Features/Settings/SealCommunityView.swift`、`Seal/Resources/Assets.xcassets/BrandTelegram.imageset/icon@3x.png`。
+- **验证状态**：Telegram 图片为 138×138、带透明通道；`git diff --check` 通过。未编译、未发布更新源。
+
+# 2026-10-27 — 0.1.78 发布
+
+- **内容**：设备页配对完成状态保持稳定，LocalDevVPN 检查状态与按钮反馈更清楚；社群页新增 Telegram 交流群与发布频道入口。
+- **版本**：0.1.78（构建 27），Release IPA 构建成功；主应用和 Live Activity 版本一致，IPA 结构与 SHA-256 校验通过。服务器更新接口已发布 0.1.78；服务器清单、SHA-256 文件和 IPA 地址返回的大小信息一致。
+- **文件**：`build/Seal 更新包/` 已替换为本次 IPA、SHA-256 和 `latest.json` 三个文件。未安装到手机。
+
+# 2026-10-27 — 社群页添加 Telegram 文件夹入口
+
+- **需求**：用户提供 Telegram 图标与文件夹邀请链接，群组和发布频道共用一个文件夹入口。
+- **调整**：社群页“加入交流”下新增“加入 Telegram”卡片，副标题“交流群 · 发布频道”；点击打开 `https://t.me/addlist/vQ5-N-_q0qYzNWNl`。图标使用用户提供的图片，卡片沿用当前社群入口样式。
+- **涉及文件**：`Seal/Features/Settings/SealCommunityView.swift`、`Seal/Resources/Assets.xcassets/BrandTelegram.imageset/Contents.json`、`Seal/Resources/Assets.xcassets/BrandTelegram.imageset/icon@3x.png`。
+- **验证状态**：iPhone 17 Pro 模拟器 Debug 编译通过，Xcode 正常识别新增图标资源；`git diff --check` 通过。未运行测试、未安装真机、未发布更新源。
+
+# 2026-10-27 — 设备页配对检查状态与按钮文案
+
+- **需求**：打开设备页自动检查；保留手动复查入口；配对完成横幅不随 LocalDevVPN 检查结果变化；让已验证、检查中和失败状态与按钮含义一致。
+- **调整**：配对完成副标题简化为“设备配对已完成，连接状态见下方。”；检查时按钮显示“正在检查连接…”并禁用；通过后保留按钮但降为次要样式、显示“重新检查连接”；未检查显示“检查连接”，失败显示“重试检查”。LocalDevVPN 明细行分别显示“待验证／验证中／已验证／验证失败”。“重新配对”改成“重新配对设备”。
+- **涉及文件**：`Seal/Features/Settings/PairingSettingsView.swift`、`Seal/Features/Settings/SettingsViewModel.swift`。
+- **验证状态**：iPhone 17 Pro 模拟器 Debug 编译通过；`git diff --check` 通过。编译输出有仓库其他源码既有警告；本次配对页状态代码无编译错误。未运行测试、未安装真机、未发布更新源。
+
+# 2026-10-27 — 快捷指令通知点击优先显示续签结果并防止场景恢复闪退
+
+- **目标**：无论 Seal 在后台、冷启动或从锁屏通知进入，点续签通知后都先看到对应结果；不能因弹层竞争或 UIKit 场景恢复崩溃。
+- **根因**：通知路由只保存一个布尔值，无法确认通知对应哪一轮；结果展示靠固定 500 毫秒延时，既会额外等待，也不能保证 UIKit 恢复事务已经结束。整轮异常/被占用通知还没有可恢复的结果载荷。
+- **调整**：通知和本机结果现在共享 `roundID`；通知回调只持久化点击请求并递增路由版本，不执行 UI 操作。进入前台、切到应用页、宿主就绪且没有正在进行的签名操作后，通过主线程后续更新显示结果，移除固定等待。点通知时结果抽屉可收起更新/外观提示，但不取消正在进行的签名或续签；导入/账号等系统弹层结束后继续呈现。只有对应轮次的结果抽屉实际出现后才消费点击请求。未执行项目也会作为已结算状态恢复，避免结果抽屉等待。
+- **失败文案与配对状态**：已安装应用名额提示不显示底层错误详情，说明设备上保留的过期自签 App 也占名额。签名失败与批量续签失败说明改为多行自然换行，不缩小字号。配对记录成功后，成功横幅和进度不随 VPN 探测改变；“待验证／验证中／已验证”只显示在 LocalDevVPN 详情行。
+- **失败结果**：整轮失败和通道被占用时也保存可恢复的失败内容；通知点击可打开失败结果抽屉，恢复说明使用本次失败的具体建议。
+- **涉及文件**：`Seal/Infrastructure/Notifications/BackgroundRenewalNotifier.swift`、`Seal/Infrastructure/Notifications/SealNotificationPresenter.swift`、`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、`Seal/App/RootTabView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`Seal/Features/Apps/BatchRefreshView.swift`、`Seal/Features/Settings/PairingSettingsView.swift`、`Seal/Core/Renewal/BatchRefreshSession.swift`、`Seal/Core/Renewal/PendingBatchResultPayload.swift`。
+- **验证状态**：`git diff --check`、iOS Simulator Debug 编译和 0.1.77 Release 未签名 IPA 构建通过；IPA 压缩结构有效，主程序与 Live Activity 均为 0.1.77（构建 26），Anisette 运行库齐全。未运行测试（按仓库要求），也未在真机执行后台、锁屏和冷启动通知点击回归。
+- **发布结果**：固定目录“Seal 更新包”已从 0.1.76 替换为 0.1.77 的 IPA、SHA-256、`latest.json` 三个文件。用现有上传脚本发布成功；重新读取服务器清单与 SHA-256 一致，IPA 下载地址返回 HTTP 200，大小 26,772,459 bytes。未安装到手机。
+
+# 2026-10-27 — 0.1.76 真机续签结果与通知回跳、首屏及通道交接
+
+- **真机日志**：用户提供的 iPhone 14 Pro Max / Seal 0.1.75（构建 24）日志显示三项续签全部成功；新描述文件逐项由设备读回确认。点击通知后，持久化续签结果已恢复，但旧日志没有记录结果抽屉确实进入呈现树。该版本的通知观察者只在 `AppsRootView`，通知根层不会把仍停在“我的”页的应用切回“应用”页。
+- **通知回跳修复**：根层现在在应用恢复到前台后切到“应用”页；应用页只有在自己是当前 tab 且结果宿主可用时才发起呈现。通知路由标记不再在设置结果状态时提前清除，而是等 `BatchRefreshView.onAppear`（结果抽屉真正出现）后再消费。仲裁器若还在等其他抽屉退场，通知意图继续保留。新增 `SEAL-RENEW-032` 记录切页、恢复和实际呈现阶段，便于下一份真机日志核对。
+- **首屏与通道**：启动立即发布本机应用记录，账号/钥匙串与证书读取留在后台；设备路径监控先启动，再并行探测和预热。最终通道核验通过后立即把进度切到真实的账号准备阶段，避免继续显示“通道已就绪”却让连接轨道等待。
+- **描述文件证据**：这轮日志里 Seal、LiveContainer、LiveContainer2 的 profile-only 更新均通过设备端读回验证，没有旧描述文件复用的证据。单轮续签 3 项约 10.1 秒；本地 profile 前置检查约 2.4–2.9 秒/项，这部分不是 LocalDevVPN 连接等待。
+- **涉及文件**：`Seal/App/RootTabView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`docs/qa/log-code-index.md`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **版本与验证**：0.1.76（构建 25）先因磁盘空间不足失败；清理后 Release 构建成功。IPA 压缩完整性和 SHA-256 校验通过，主应用与 Live Activity 扩展版本/构建号一致，Anisette 运行库齐全。固定目录已替换为 0.1.76 的 IPA、SHA-256 和 `latest.json`。新增 `Scripts/upload-seal-update.sh`：从更新说明读取版本与文案，使用现有 PHP 接口一键上传；脚本语法检查和 `git diff --check` 通过。未运行测试、未安装到手机、未上传服务器。
+
+# 2026-10-27 — 0.1.74 真机通知点击再次触发 UIKit 场景恢复崩溃
+
+- **真机证据**：iPhone 14 Pro Max 上的 Seal 0.1.74（构建 23）生成 `Seal-2026-10-26-221900.ips`；`SIGABRT` 发生在通知响应回调，栈包含 `UIApplication._updateStateRestorationArchiveForBackgroundEvent`、`_updateSnapshotAndStateRestorationWithAction` 和 `SealNotificationPresenter.userNotificationCenter(_:didReceive:)`。报告没有记录 Objective-C 异常原因，因此根因限定为通知回调关联的 UIKit 场景恢复重入，不把缺失的异常描述猜成具体断言。
+- **根因**：0.1.74 虽将路由推迟 800 毫秒，但仍在 `didReceive` 所派生的任务中读取 `UIApplication.applicationState` 并发布 `NotificationCenter` 事件；通知/场景恢复事务的完成时间没有 800 毫秒保证。通知点击、前台恢复与抽屉呈现也可能并发。
+- **修复**：通知 delegate 现在只写入一次性 `UserDefaults` 路由标记并立即返回，不创建延迟任务、不读取 UIApplication、不发布 UI 事件。`AppsRootView` 和 `RootTabView` 通过 `@AppStorage` 观察待处理标记，结合 `scenePhase == .active` 与现有延迟/单飞呈现闸门再消费；快捷指令续签结果与配对通知都走同一边界。
+- **本轮日志结论**：最后一次批量续签在北京时间 02:05:42–02:05:50 成功完成 3/3，用时 7.8 秒；Seal、LiveContainer、LiveContainer2 的新描述文件均由设备逐项读回确认。02:09:03 通道预热成功。此前抖音安装被免费开发者描述文件的设备安装数量上限拒绝，底层等待 207.6 秒、UI 总计 5 分 44.5 秒；该错误是 Apple 安装上限，不是网络故障。
+- **涉及文件**：`Seal/Infrastructure/Notifications/SealNotificationPresenter.swift`、`Seal/Infrastructure/Notifications/BackgroundRenewalNotifier.swift`、`Seal/Infrastructure/Pairing/PairingCodeNotification.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/App/RootTabView.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **版本与验证**：推进至 0.1.75（构建 24）；Release 编译成功，IPA 结构校验通过，主程序版本与构建号正确，扩展白名单正确；ZIP 完整性和 SHA-256 校验通过。固定上传目录只含 IPA、SHA-256、`latest.json` 三个文件。未安装到手机、未上传更新源；通知点击仍需用户在手机更新后真机确认。
+
+# 2026-10-26 — 更新抽屉取消连弹与通道进度状态
+
+- **现象**：更新提示出现时会关闭正在操作的抽屉；取消更新后，仲裁器 `sheetDidDismiss` 自动把已排队的抽屉抬上来。签名/续签的 LocalDevVPN 轨道格又按 1 秒时间预算填充，即使通道启动预热已经完成也会从空格爬满。
+- **修复**：更新提示只在抽屉台面空闲且无导入/账号/批量结果等页面呈现时出现，不抢占当前流程。更新提示关闭时使用不提升待呈现请求的仲裁结算；更新在场时，后台批量结果保留持久化载荷，不与更新抽屉叠弹。启动预热回传真实成功状态给 `AppsViewModel`；`SigningProgressBudget` 在 `waitingForChannel` 阶段仅于通道核验就绪时立即满格，未就绪仍按等待状态呈现，批量和单签文案同步。
+- **后台常驻通道**：用户确认要加后，移除了续签完成即停止静音保活的通知监听；Seal 进程运行期间持续保活，并启动 `NWPathMonitor`。VPN 路由发生变化时先探测设备隧道，恢复可达后预热 Minimuxer 会话；掉线时将界面 ready 标记降为 idle，避免显示陈旧的已连接状态。保活能延长后台运行，但 iOS 或用户强制结束 Seal 后，Seal 无法自行重启；外部 LocalDevVPN 的开关仍由它自己的应用和配置管理。持续静音音频会增加耗电。
+- **涉及文件**：`Seal/Core/Renewal/SheetArbitration.swift`、`Seal/App/RootTabView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Core/Installation/InstallChannel.swift`、`Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift`、`Seal/Application/AppContainer.swift`、`Seal/App/SealApp.swift`、`Seal/Infrastructure/Background/BackgroundKeepAliveService.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Signing/SigningProgressBudget.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`Seal/Features/Apps/BatchRefreshView.swift`、对应单测、`project.yml`、`RELEASE_NOTES.md`。
+- **版本**：0.1.74（构建 23）。
+- **验证状态**：抽屉仲裁 10 项、进度预算 14 项单测通过；`xcodegen generate`、`git diff --check`、Release 构建及 IPA 结构校验通过。固定目录仅含 0.1.74 IPA、SHA-256 和 `latest.json` 三个文件，版本、构建号、文件大小与摘要一致。未安装到手机，未上传更新源。
+
+# 2026-10-26 — 切网下载、完整性路径、续签通知、证书页与未知错误指引
+
+- **需求**：切换网络后下载到 100% 仍报文件不完整；正常签名分享的 Seal 不应提示未知代码组件，只有额外注入的动态代码才应触发；快捷指令无后台续签结束后点通知仍闪退；证书页本机应用漏掉 Seal；签名/续签未知错误需提示检查 Wi-Fi 和 LocalDevVPN。
+- **下载修复**：传输遇到可恢复网络错误时，最多按 1/2/4/8/15 秒退避自动续传或重试；若恢复数据不可用则从头重下。下载任务结束前进度上限为 99%，只有收到完整文件并通过清单 SHA256 校验后才进入完成态。
+- **完整性判定**：检查仍只以运行时额外动态代码为线索，不比较 Bundle ID / Team ID。补齐 iOS OS Cryptex 系统库路径，并对路径做符号链接解析与目录边界匹配，避免系统库路径别名或相似前缀被误报；应用自身的主程序及包内 OpenSSL 仍按实际可执行文件路径精确匹配。提醒中的组件名只用于定位，不作为判断依据；若仍有可疑项，会将完整已加载路径写入诊断日志供定位。
+- **通知呈现修复**：排查发现通知点入、应用回到前台、续签完成、视图启动恢复会在同一时间窗多次请求同一结果抽屉；当前只延迟而未对在途请求去重。新增延迟调度与抽屉 flush 的单飞闸门，让这些入口合并为一次呈现。收到的这次复现没有新崩溃栈，因此这是基于当前控制流的修复，不能冒称已拿到新的真机崩溃根因。
+- **证书页修复**：系统安装清单回退路径为了标记扫描只收普通 Seal 管理应用，候选中过滤了 `isSeal`，因此返回的已安装 Bundle ID 集不含当前运行的 Seal。只在本地已有匹配的 Seal 记录时，将 `Bundle.main.bundleIdentifier` 作为阳性对照补入集合；不放宽其他应用的安装认定。
+- **未知错误指引**：仅当签名、单项续签或批量续签最终被归为 `.unexpected` 时，恢复说明新增同一 Wi-Fi / LocalDevVPN 检查；批量续签整轮异常出口也改走统一分类并写入诊断日志；账号、证书、网络等已有具体分类不改。
+- **首次续签提速**：批量预检过去在 `start()` 失败后再 `reset()` 并完整调用一次 `start()`；而 `start()` 本身已执行双轮诊断与一次重置自愈，实际可能把冷启动诊断翻倍。现在保留单次 `start()` 的内置恢复并直接传递真实失败，日志记录检查耗时与底层错误；成功时把已核验 UDID复用于整批。另修正 profile-only 计时日志的字符串插值，确保耗时和应用名真正写入日志。
+- **验证边界**：本地 0.1.72 IPA 清单只有 Seal 主程序及预期的 OpenSSL.framework，未发现额外嵌入 dylib。手机 0.1.72 运行时触发的具体镜像路径无法从当前静止进程回溯，因此 0.1.73 的设备端误报消除仍需用户通过应用内更新后确认；若仍触发，下一轮日志会给出具体镜像路径再针对性修正。该检查检测动态库注入，不能证明任意主程序机器码补丁未发生。
+- **版本**：0.1.73（构建 22）；更新说明为六项用户可见改动，版本号不计入功能条目。
+- **涉及文件**：`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Features/UpdateNoticeView.swift`、`Seal/Core/Diagnostics/AppIntegrityCheck.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Infrastructure/Notifications/SealNotificationPresenter.swift`、`Seal/Features/Settings/SettingsViewModel.swift`、`Seal/Core/Import/FailureClassifier.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：0.1.73（构建 22）iOS Release 构建成功，未签名 IPA 结构校验通过；iPhone 17 Pro（iOS 26.3）模拟器 Debug 构建成功并已启动。固定上传文件夹中的 IPA、SHA-256 与 `latest.json` 版本、大小和摘要一致；`git diff --check` 通过。未运行测试、未安装到手机、未上传更新源。
+
+# 2026-10-26 — 自动续签指南与 iCloud 快捷指令入口
+
+- **需求**：使用指南中提供“Seal 自动续签”快捷指令的直达入口，优化自动化设置步骤。
+- **调整**：自动续签区第一步改为可点击按钮，打开用户提供的 iCloud 快捷指令链接。步骤改成五步：添加快捷指令；删除“未知操作”；把“续签全部应用”放到原位置并关闭“运行时显示”；在快捷指令顶部第一个位置设置自动化时间；保存并开启自动化，若系统提供运行确认选项则选“立即运行”。补充运行时 Wi-Fi / LocalDevVPN 条件与通知说明。
+- **版本**：0.1.72（构建 21）；更新说明按距离 0.1.70 的四项用户可见改动编写，版本号不单独计项。
+- **涉及文件**：`Seal/Features/Settings/SigningAndRenewalGuideView.swift`、`project.yml`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+- **验证状态**：0.1.72（构建 21）iOS Release 构建成功，IPA 结构校验通过；iPhone 17 Pro 模拟器构建成功并已启动。未运行测试、未安装到手机。
+
+# 2026-10-26 — 有效期秒数、分享版误报与续签通知闪退
+
+- **需求**：有效期全显示到秒；个人重签/分享安装不误报“非官方版”；点击快捷指令续签成功通知不能闪退；更新抽屉列出本次实际改动。
+- **崩溃根因**：从已配对 iPhone 14 Pro Max 读取到两份 Seal 0.1.69（构建 18）的崩溃报告（16:31、16:48）。崩溃栈落在 `SealNotificationPresenter.userNotificationCenter(_:didReceive:)`：通知回调中的主队列闭包赶在 UIKit 保存/恢复场景快照时触发 `UIApplication._performBlockAfterCATransactionCommitSynchronizes` 断言，最终 `SIGABRT`。因此单纯 `DispatchQueue.main.async` 仍不安全。
+- **通知修复**：通知回调只把一次性跳转意图写入本机；延迟后确认应用已在前台才发路由事件。结果抽屉和配对页再等 UIKit 恢复阶段结束后处理该意图，成功呈现后清除记录。配对通知原先也在回调里直接发 UI 通知，已一并改为同样的延迟路由。
+- **有效期与误报修复**：多个页面共用的格式器隐藏秒，续签结果日志和到期通知也只显示到分钟；全部改为秒级。完整性检查原先把 Bundle ID 不同、调试器状态当成篡改证据；Seal 个人签名会加 Team ID 后缀，故正常重签反复误报。现不再按身份字段或调试器判断，只提示未知动态库，并按问题跨版本去重。
+- **防护边界**：未知动态库仍会触发提醒，可发现常见注入式插件。单纯改写主程序机器码后再重签，当前没有独立发布者签名清单，无法可靠区分正常 Apple 重签与代码补丁；要检测这一层，需要离线发布私钥签发的完整性清单。
+- **更新抽屉**：0.1.71 更新说明按三项实际功能改动编号：有效期秒数、完整性误报、通知点击闪退；版本号/构建号不计入更新内容条目。
+- **涉及文件**：`Seal/Features/Settings/SettingsFormatters.swift`、有效期 UI 调用点、`Seal/Core/Renewal/RenewalRoundSummary.swift`、`Seal/Infrastructure/Notifications/ExpiryNotificationScheduler.swift`、`Seal/Core/Diagnostics/AppIntegrityCheck.swift`、`Seal/Infrastructure/Notifications/SealNotificationPresenter.swift`、`Seal/Infrastructure/Notifications/BackgroundRenewalNotifier.swift`、`Seal/Infrastructure/Pairing/PairingCodeNotification.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/App/RootTabView.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：0.1.71（构建 20）iOS Release 编译成功，IPA 结构检查通过；主程序和 Live Activity 扩展版本一致。iPhone 17 Pro / iOS 26.3 模拟器 Debug 编译成功并已启动应用。未运行测试、未安装到手机；快捷指令通知点击和手机端完整性提醒仍需发布后真机确认。
+
+# 2026-10-26 — 描述文件有效期按秒核验
+
+- **需求**：有效期校验精确到秒，同时不能因请求/下载耗时把刚生成的 Apple 描述文件误判成不足 7 天。
+- **调整**：分离本机与 Apple 服务器的创建时间容差、描述文件本身的有效期。创建时间仍保留 10 分钟时钟偏差；有效期改为比较 `expirationDate - creationDate >= 604800 秒`，并单独按当前时间精确拒绝已过期文件。完整签名与两条续签路径都使用完整 7 天门槛；不再用下载后的剩余时间减去 10 分钟。
+- **保留**：生成时间必须晚于 Seal 上次记录，且 Apple 返回旧文件仍在设备写入前拒绝；注入后 UUID 读回不变。
+- **涉及文件**：`Seal/Core/Signing/ProvisioningProfileBinding.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`。
+- **验证状态**：Xcode 26.3 iOS Release（0.1.70，构建 19）编译成功；`Scripts/verify-ipa.sh` 结构校验通过；R33b 新增静态守卫通过，脚本语法与差异空白检查通过。未运行测试，真实 Apple 账号续签仍待设备日志确认。
+
+# 2026-10-26 — 批量续签提速且拒绝旧描述文件
+
+- **现象**：3 个应用以前约 2–3 秒完成续签，现在约 8–15 秒；需要优化，但不能复用旧描述文件。
+- **核查**：现有 profile-only 主体是 Apple Portal 新请求 + 设备注入 + UUID 读回；每个目标独立调用 `fetchProvisioningProfile`。批量启动只测 `isReady()`，随后每个应用仍重复 `start()` 的 RSD 强健康检查。账号会话验证也允许并发重入，同一批次可重复进行完全相同的 Anisette 与 `listTeams` 核验。另发现免费账号首个 profile 请求后提前返回，绕过了已有的本轮生成时间校验。
+- **修复**：免费与付费账号的候选描述文件统一经过新鲜度检查；结果缺创建时间、早于本轮请求或有效期不足时拒收，并只重新申请一次，仍不符合便停止。profile-only 和完整重签都会把 Apple 返回文件与 Seal 上次记录比较：生成时间必须严格晚于上次记录；相同或更早的文件在安装前拒收。批量开始时获取并强校验设备 UDID，传给本轮每个应用；各应用仍保留签名前就绪检查和 profile-only 最终注入读回。完全相同的账号会话核验只合并正在运行的那一次，完成后立即移除，不缓存任何完成结果。新增前置检查计时日志。
+- **刻意保留**：不缓存/不合并 `fetchProvisioningProfile`，不复用旧 profile、不复用跨请求 Anisette；每个目标都真实向 Apple 请求。设备注入依旧逐份写入并逐 UUID 读回。
+- **上游对照**：SideStore `FetchProvisioningProfilesOperation` 对目标调用 Apple profile download；批量签名不能把写操作改成读取缓存，见 `docs/upstream-alignment.md`。
+- **涉及文件**：`Seal/Core/Signing/SigningCoordinator.swift`、`Seal/Core/Renewal/RenewalCoordinator.swift`、`Seal/Infrastructure/Signing/ApplePortalSigningService.swift`、`Scripts/verify-release-safety.py`、`docs/upstream-alignment.md`、`RELEASE_NOTES.md`。
+- **验证状态**：iOS Release（0.1.69，构建 18）编译成功；IPA 结构核验通过；静态源码基线 893 项中，本次新增的 profile 检查通过，另有既存 R47 文案守卫不匹配。完整变异守卫运行超过 17 分钟后中止；未运行测试。旧描述文件拒收路径仍待真机日志实测。
+
+# 2026-10-26 — 清理已停用的定位权限声明
+
+- **现象**：隐私政策仍写 Seal 会在后台续签时使用定位，但当前续签流程已经不再启动定位服务。
+- **根因**：定位保活功能此前只停用了启动调用，定位服务类、App 容器注入、系统权限说明、后台模式和对应日志索引仍保留。
+- **修复**：删除定位保活服务及测试、容器注入、系统定位权限和后台定位模式；隐私政策不再提及定位；更新源码守卫以阻止权限或调用被重新加入。后台续签仍使用静音音频保活。
+- **涉及文件**：`Seal/Features/Settings/PrivacyNoticeView.swift`、`Seal/Resources/Info.plist`、`project.yml`、`Seal/App/SealApp.swift`、`Seal/Application/AppContainer.swift`、`Seal/Features/Intents/SealRenewalIntent.swift`、`Seal/Infrastructure/Background/LocationKeepAliveService.swift`、相关测试、`Scripts/verify-release-safety.py`、日志索引。
+- **验证状态**：Info.plist 校验、源码守卫脚本语法和差异空白检查通过；未编译、未运行测试。待后续构建确认生成的应用包不含定位权限和后台定位模式。
+
+# 2026-10-26 — 更新下载、签名结果退场与安装反馈
+
+- **现象**：更新下载切换网络后进度到 100% 仍提示不完整；签名或续签点完成时配置抽屉闪回并连续退场；已签名 IPA 点击安装缺少进行中提示。
+- **根因**：下载结束后还会额外请求 SHA256 文件，切网发生在这个请求时完整 IPA 会被报错；自动回退完整下载时界面用 `max` 保留旧的 100%；续签结果在系统抽屉动画开始前被清空，父视图随即切回配置页。安装按钮只有文字状态，没有明确的动态提示。
+- **修复**：SHA256 改从 HTTPS 更新清单读取，下载后本地流式验证；允许有效续传的 HTTP 206，使用系统恢复偏移计算进度，回退完整下载时把显示进度归零，并对已缓存包按当前摘要重验。签名结果由外层抽屉 `onDismiss` 清理；批量续签结果也保留到退场完成。已签名 IPA 安装按钮显示旋转指示和“正在安装”。账号说明更新为“用于个人IPA 签名，密码只保存本机”。
+- **涉及文件**：`Seal/Infrastructure/UpdateChecker.swift`、`Seal/Infrastructure/UpdateIPADownloader.swift`、`Seal/Features/UpdateNoticeView.swift`、`Seal/Features/Apps/SigningProgressView.swift`、`Seal/Features/Apps/BatchRefreshView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Features/Apps/AppSigningSheet.swift`、`Seal/Features/Settings/AddAccountView.swift`、`Scripts/verify-release-safety.py`、`RELEASE_NOTES.md`。
+- **验证状态**：未编译、未运行测试；依用户要求暂缓编译。
+
+# 2026-10-26 — Bundle ID 无效时签名按钮禁用但缺少提示
+
+- **现象**：签名抽屉里的 Bundle ID 含不支持字符时，签名按钮会禁用；用户只有再打开 Bundle ID 编辑抽屉，才能看到校验原因。
+- **根因**：签名按钮已读取 `BundleIDPolicy.validationError`，但错误文案只在编辑子抽屉内呈现。
+- **修复**：在签名抽屉原有 Bundle ID 行下方，仅于值为空或含不支持字符时显示一条单行提示，引导用户点击该行修改；不改变校验规则、签名逻辑或现有布局结构。
+- **涉及文件**：`Seal/Features/Apps/AppSigningSheet.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`SealUITests/ImportFlowUITests.swift`。
+- **验证状态**：iPhone 17 Pro（iOS 26.3.1）定向 UI 检查通过；模拟器中已确认提示可见且主操作按钮禁用。模拟器保留在本地调试用途，未上传更新源。
+
+# 2026-10-26 — 大 IPA 签名打包耗时过长
+
+- **现象**：真机大包日志显示打包阶段约 681 秒；解包约 20 秒、重签约 87 秒。
+- **根因**：签名完成后仍通过 ZIPFoundation `Archive.addEntry` 逐条追加；每次都要重写已增长的中央目录，文件数越多重复 I/O 越多。
+- **修复**：常规 IPA 改走 SideSign 单遍归档写入器，中央目录最后写一次；大于 64 MB 的文件以 64 KB 缓冲区流式压缩/写入并增量算 CRC，避免整文件驻留内存；保留逐条目压缩策略、目录时间/权限和符号链接；超过经典 ZIP 上限时仍回到 ZIPFoundation ZIP64 路径。更新 R91⑧b 静态守卫，确保普通包继续走单遍写入。
+- **涉及文件**：`Seal/Infrastructure/Signing/SigningWorkspace.swift`、`Vendor/SideSign/Sources/Archiver/Archive.swift`、`Scripts/verify-release-safety.py`。
+- **构建与发布**：Xcode 26.3 / iPhone 17 Pro（iOS 26.3）模拟器构建通过；iOS Release 未签名 IPA 构建及 `Scripts/verify-ipa.sh` 结构检查通过。版本升至 `0.1.67 (16)`，已发布到自建更新源 `seal.mjorb.eu.cc`，未发布到 GitHub。线上 latest 接口返回 `0.1.67`；重新下载的 IPA 为 26,659,957 字节，SHA-256 与版本清单和 `.sha256` sidecar 一致。旧 `latest.json` 备份为 `latest-0.1.66-backup.json`，旧 IPA 保留。
+- **构建检查修正**：RustBridge minOS 校验器现在能直接检查已经是目标架构的 thin archive，避免对单架构静态库错误调用 `lipo -thin`；3,806 个对象文件校验通过，符号检查 0 失败。Unicorn 146 个 arm64 Mach-O 的 no-LSE / minOS 检查通过。
+- **其他验证**：`git diff --check` 与静态守卫脚本语法检查通过。尚未用同一个大 IPA 在真机前后计时，因此具体提速幅度仍待真机量测。
+
+# 2026-10-25 — 手动检查更新被本次启动的旧结果挡住
+
+- **现象**：服务器发布新版本后，手机仍显示“已是最新版本”；同一进程内手动点击检查也不会读取新清单。
+- **根因**：`UpdateCheckCache.result(force:)` 对成功结果无条件复用，忽略了手动检查传入的 `force: true`。另手机当前安装和线上发布均为 0.1.63，发布前本就没有更高版本可检测。
+- **修复**：自动检查仍复用结果；手动检查跳过成功缓存并请求服务器。主 App 与 Live Activity 同步升至 0.1.64（13），以便发布后高于手机已装版本。
+- **涉及文件**：`Seal/Infrastructure/UpdateChecker.swift`、`SealTests/Update/UpdateCheckerAssetTests.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：Xcode 26.3 / iPhone 16e 模拟器更新相关 28 项测试通过；iPhoneOS Release 构建与 IPA 结构检查通过，主应用和扩展均为 `0.1.64 (13)`。已上传至自建更新 API，线上 JSON、IPA 和 SHA-256 文件重新下载后一致；手机从 `0.1.63` 自更新安装的操作结果仍待真机确认。
+
+# 2026-10-25 — 已安装列表过滤非 Seal 签名应用
+
+- **现象**：设备扫描把 TestFlight 等其他来源的应用恢复进「已安装」，缺少原始 IPA 的记录还会提示导入。
+- **根因**：安装清单恢复把相同 Team ID、有效描述文件或 `ProfileValidated` 当作入列证据；这些信息只能说明签名身份，不能证明应用由 Seal 安装。旧扫描记录一旦保存为 `.installed`，列表会直接接纳。
+- **修复**：新恢复记录必须有 Seal 的逐应用安装标记；旧扫描记录若缺少标记及本地安装证据，则从应用列表与续签队列过滤，数据仍保留。真正由 Seal 安装、后来丢失原始 IPA 的记录继续显示。没有修改 UI。
+- **涉及文件**：`Seal/Core/Recovery/InstalledRecordRecoveryPolicy.swift`、`Seal/Core/Recovery/AppRecordRecovery.swift`、`Seal/Core/Apps/AppRecord.swift`，以及对应的恢复、列表与续签测试。
+- **验证状态**：Xcode 26.3 / iPhone 16e 模拟器相关 82 项测试通过；真机应用清单与历史无标记应用仍待设备验证。旧版应用若 Seal 本地记录已丢失且没有逐应用标记，无法可靠判断来源，不会自动加回。
+
+# 2026-10-25 — 组件与许可页调整范围更正
+
+- **更正**：用户要求清理「组件与许可」页面条目，并未要求移除实际源码或替换 SRP。已恢复 AltSign 原有 CoreCryptoBridge、SRP 实现和依赖文件；页面仅隐藏 Apple corecrypto 组件行与 Seal 自身的仓库入口。随包第三方声明保留 Apple corecrypto 条款，以反映实际依赖。
+- **版本**：升至 `0.1.63 (12)`，用于覆盖已装到手机的错误实现。
+- **验证**：已按更正后的源码重新构建并安装；真机 Apple ID 登录尚待用户确认。
+
+# 2026-10-25 — 模拟器系统动态库被完整性自检误报
+
+- **现象**：模拟器重启后弹出「版本可能被修改」；真机系统库路径以 `/System`、`/usr/lib` 开头，iOS 模拟器则从 CoreSimulator 挂载的 `RuntimeRoot` 加载，导致数百个 Apple 系统框架被当作未知库。
+- **修复**：仅在模拟器构建中放行 CoreSimulator 已安装运行时下 `RuntimeRoot/System` 与 `RuntimeRoot/usr/lib`；应用容器外的其他动态库仍继续告警。升至 `0.1.62 (10)`。
+- **涉及文件**：`Seal/Core/Diagnostics/AppIntegrityCheck.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：iPhone 16e / iOS 26.3 模拟器构建、安装、重启通过；完整性提示不再出现，AX 与截图均确认落在「应用 → 已安装」，列表显示 Seal（0.1.62）。iPhone 真机签名构建、签名核验、安装并启动 0.1.62（10）成功。未运行测试。
+
+# 2026-10-25 — 默认落在已安装页并区分列表加载状态
+
+- **现象**：首次启动在本机没有已安装和待安装应用时，启动解析会自动跳到「待安装」；列表加载期间又会先显示空状态，容易误以为设备列表为空。
+- **修复**：移除根据列表是否为空自动切页的启动逻辑；每次打开应用页都默认显示「已安装」。首次加载显示轻量进度卡，加载失败显示重试卡，确认无已安装应用后显示单行说明。已有列表强制刷新失败时保留旧列表。
+- **涉及文件**：`Seal/App/RootTabView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：iPhone 16e / iOS 26.3 模拟器构建、安装与启动成功；首次启动停在协议同意页，列表状态需用户同意后查看。未运行测试。
+
+# 2026-10-25 — 锁屏快捷续签的 profile 服务冷启动与通知点击闪退
+
+- **现象**：快捷指令在锁屏/后台续签时，设备通道日志已报就绪，但描述文件注入仍反复约 30 秒超时并退避；点击续签通知进入 Seal 后偶发闪退。
+- **证据与根因**：真机日志显示一次前台续签 3 个 App 约 10 秒成功；后台轮虽记 `SEAL-BACKGROUND-008`“通道就绪”，仍连续出现 `MinimuxerError 1`、`SEAL-PROFILE-355a` 和 8/16 秒重试。`start()` 只证明 RSD/UDID 通道可用，并不代表 misagent 描述文件服务已经热好。五份真机崩溃报告的共同栈落在 `UIApplication` 状态恢复 / CATransaction 同步期间，并指向 `SealNotificationPresenter.userNotificationCenter(_:didReceive:)`；回调内同步 `MainActor.run` 发 `NotificationCenter` 会当场驱动 SwiftUI 改状态。
+- **修复**：① 通知点击路由改为投递到主队列下一轮，配对通知与续签通知都不再在系统回调里同步改界面状态；根视图继续等 scene active、host 挂载后显示。② profile-only 续签在 Apple Portal 准备阶段并行只读预热 misagent，并用 20 秒健康租约复用；普通探测失败只重建 RSD/profile 服务一次，8 秒超时沿用原生调用租约和污染闸门，绝不并发发第二个 misagent 请求。失败在应用准备阶段快速可见，不再每个 App 都先等 30 秒注入超时。③ 保留快捷指令先启动音频保活、整轮结算后停止的生命周期。
+- **涉及文件**：`Seal/Infrastructure/Notifications/SealNotificationPresenter.swift`、`Seal/Infrastructure/Installation/DeviceProfileInspector.swift`、`Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`docs/qa/generated/error-code-inventory.json`。
+- **验证状态**：Xcode 26.3 本地通用及签名真机 Debug 编译通过；`0.1.60 (8)` 已安装并成功启动。错误码清单已再生为 434 个标识 / 893 处引用；未运行测试。锁屏重试耗时、保活跨锁屏持续性和点击通知不闪退仍待真机操作验证。
+
+# 2026-10-25 — 手动检查更新在已是最新版时没有明显反馈
+
+- **现象**：在「关于 Seal」点击检查更新，当前已是最新版时看起来没有反应。
+- **根因**：`AboutView.checkUpdate()` 对 `.latest` 只依赖右侧状态文字，没有成功结果提示；用户在检查前后不易察觉状态变化。
+- **修复**：检查完成且已是最新版时弹出包含当前版本号的提示；有新版时沿用更新抽屉，明确显示当前与新版版本号。升至 `0.1.58 (6)`，主 App 与 Live Activity 同步。
+- **涉及文件**：`Seal/Features/Settings/AboutView.swift`、`project.yml`、`RELEASE_NOTES.md`。
+- **验证状态**：真机 Debug 编译、安装并启动 `0.1.58 (6)` 成功；iOS 26.3 模拟器也已编译运行，手动点「检查更新」后实际显示「已是最新版本 / 当前版本 0.1.58 已是最新版本」。更新可用时继续由现有抽屉显示新版号。未运行测试。
+
+# 2026-10-25 — 全页面手机单行文案审查与 Seal 重签回到旧包
+
+- **现象**：日志页顶部辅助说明在手机上过小；用户反馈刚安装的新 Seal 在后续续签/重签后又变成旧版。
+- **根因**：源码版本与已装包均为 `0.1.56 (4)`，但本轮代码不同。`SelfAppRegistrar` 在版本、构建号相同且本机 IPA 存在时会跳过重建；后续完整重签可继续使用那份较旧的缓存 IPA。
+- **修复**：新迭代升至 `0.1.57 (5)`（主 App 与 Live Activity 同步），使启动对账识别版本变化并从当前运行包原子重建续签源。短标题与辅助说明单行适配并提升可读字号；法律正文和需完整理解的确认说明保留折行。
+- **涉及文件**：`project.yml`、`RELEASE_NOTES.md`、`Seal/DesignSystem/InstallWaitNote.swift`、`Seal/Features/Settings/` 与 `Seal/Features/Apps/` 下相关 SwiftUI 页面。
+- **验证状态**：iPhone 覆盖安装并启动 `0.1.57 (5)` 成功；安装前目录恰有 1 个 `Original.ipa`，包内为 `0.1.56 (4)`，安装启动后仍为 1 个包且已刷新为 `0.1.57 (5)`；LiveContainer 与 LiveContainer2 仍在。真机和 iOS 26.3 模拟器构建通过；模拟器日志页截图确认说明为单行且空状态说明也保持单行。未运行测试。
+
+# 2026-10-25 — Apple ID 重新登录后已安装应用仍未扫回
+
+- **现象**：iPhone 上已安装的 LiveContainer（`com.kdt.livecontainer.32746RUBTT`）和 LiveContainer2（`com.kdt.LiveContainer2.32746RUBTT`）没有出现在 Seal 的已安装列表；Seal 另有另一 Team（`3432ZHJUF9`）下失败安装的 LiveContainer 记录，二者不是同一个安装项。
+- **证据与根因**：手机脱敏日志显示 B Apple ID 是“重新绑定到现有账号记录”，Team ID 未变；此前监听 Team 集合因此不会触发。进一步追踪发现，本机 LaunchServices 清单不可用时调度器直接结束，没有继续扫描已配对设备的 InstallationProxy 清单。
+- **修复**：账号重新验证会安排恢复；本机清单不可用时继续走配对设备与描述文件扫描，并为这次明确触发的重扫记录空结果诊断。前台刷新或操作期间会保留强制设备扫描标记，空闲后再跑。
+- **涉及文件**：`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Maintenance/AppMaintenanceJob.swift`、`project.yml`、`DEBUG_LOG.md`。
+- **验证状态**：此前手机数据库只有 Seal 记录；本次 iOS 通用真机 Debug 编译/链接（关闭签名）成功。连接的 iPhone 当前不可用，尚未安装改动包，也未确认两个 LiveContainer 记录已写入数据库。未运行测试。
+
+# 2026-10-25 — 完整性警告误报 OpenSSL 并每次启动重复提示
+
+- **现象**：用户每次打开 Seal 都看到“版本可能被修改／非官方渠道”提示。
+- **证据与根因**：对本地 Debug 产品的 `otool -L` 与嵌入框架清单核对后，确认主程序合法动态链接了随包提供的 `OpenSSL.framework`（Bundle ID `com.github.krzyzanowskim.OpenSSL`）。`liveFindings()` 把主程序和系统库之外的每个动态库一律报作篡改；根视图又明确设计为“只要有发现，每次启动都弹”。Xcode 调试器在 Debug 下也会正常置位 `P_TRACED`。
+- **修复**：只对白名单 Bundle ID 且位于本应用 `Frameworks` 目录的 OpenSSL 可执行文件放行；Debug 下忽略预期的调试器状态。其余发现按版本和稳定问题标识生成签名，用户确认后同一组合不再重复弹；新增不同发现或版本升级仍会提示。
+- **二级文案**：列表副标题、状态徽标、错误摘要和两种渠道弹窗正文统一单行缩放；协议、更新说明、操作指南等正文保留自然换行。
+- **验证状态**：iOS 通用真机 Debug 编译/链接（关闭签名）成功；连接的 iPhone 当前不可用，尚未安装验收。iOS 模拟器构建因两个 XCFramework 均缺 x86_64 模拟器切片而在链接阶段失败。未运行测试。
+
+# 2026-10-25 — 防篡改运行时自检层（历史记录，已由本页顶部修复条目补充）
 - 背景：MJ 10-25 确认自检告警示意图与文案，动手写第三层。范围：只警告、不锁死；不能按签名者认官方，只能认被改痕迹。
 - 判据（`Seal/Core/Diagnostics/AppIntegrityCheck.swift`，纯函数 `findings`＋live 包装 `liveFindings`，判据可单测）：① Bundle ID 与工程固定值 com.mjorb.seal 不一致；② Info.plist 缺键／字段为空／CFBundleExecutable 与实际可执行名对不上／SealOriginalBundleIdentifier 与当前 Bundle ID 对不上；③ 主包内必然存在的文件缺失（Info.plist、Assets.car）；④ 加载了系统与主程序之外的动态库（RustBridge 是静态链接，正常构建的主进程不加载任何第三方 Framework，越狱注入与重打包捆入都落在这里）；⑤ 调试器挂接（sysctl 查 P_TRACED，探测失败按无调试器计，不弹假警告）。
 - 呈现（`Seal/App/RootTabView.swift`）：启动时跑一次；标题“版本可能被修改”，正文“此版本可能被修改，非官方渠道，建议从官方渠道重新获取。”，按钮“知道了”。两弹顺序：告知没弹过先弹告知、点“知道了”后再弹自检警告；告知已弹过则自检警告直接上台；两个 alert 绝不同时在场；UI 测试时两个都不弹。自检警告不设持久标记——痕迹还在就每次启动都弹（状态警告，不是你一次性的告知）。
@@ -8443,3 +8806,37 @@ CMake Error at CMakeLists.txt:394 (message):
 - **修复**：在 `ProfileOnlyRenewalPolicy.swift` 显式绑定非空证书序列号；在 `verify-release-safety.py` 将扩展共享检查限定到 IPA 拓扑解析段，更新导入策略锚点与 R82/R84 预期文案前缀。应用签名和续签行为没有改变。版本推进到 `0.1.32`。
 - **验证**：仅运行本次修改相关的 Swift 源码/守卫锚点定向检查，全部通过；`python -m py_compile Scripts/verify-release-safety.py` 和 `git diff --check` 通过。Windows 无 Xcode/iOS SDK，Swift 编译由下一次 macOS CI 验证。
 - **修改路径**：`Seal/Core/Renewal/ProfileOnlyRenewalPolicy.swift`、`Scripts/verify-release-safety.py`、`project.yml`、`RELEASE_NOTES.md`、`DEBUG_LOG.md`。
+# 2026-10-27 — iPhone 14 Pro Max 真机日志：首屏、LocalDevVPN 与续签阶段
+
+- **日志来源**：用户提供的 `Seal-log(1).txt`，日志标记 Seal 0.1.75（构建 24），保留最近 3000 条；另读取连接中 iPhone 的 Console 记录。日志含 Apple 账号请求/描述文件信息，分析时不复述凭据和设备令牌。
+- **首屏列表**：0.1.75 日志没有“首屏应用记录读取开始/完成”计时，不能仅凭该旧包断定读取卡在哪个函数。可见设备记录恢复在 06:24:22 找回并补回 2 个已安装应用（LiveContainer、LiveContainer2），06:24:37 后续扫描候选为 0。源码链路显示首屏被启动期的 Seal 登记、钥匙串/证书快照和维护工作拖后；0.1.76 已把本机记录读取与这些后台工作并行，并新增首屏计时日志。证书页本身没有负责首屏列表加载。
+- **LocalDevVPN/设备通道**：07:11:42 真机批量通道检查耗时 0.0 秒，日志记为 LocalDevVPN 正常；最近手动续签在 07:13:16 开始，10.1 秒完成 3/3。06:55:46 一条 557 秒的缓存 RSD 会话在 5 秒内无响应后被判死并重建；06:30 另有 Minimuxer/描述文件服务短暂失败并触发重试，随后恢复。Console 在 07:01:35 记录网络变化、重置 VPN On Demand 与 `Found 0 registrations`；这是系统 NetworkExtension 管理器在路由变化时的瞬间记录，与 07:11 的 Seal 通道就绪日志并不矛盾，也不能单独证明隧道持续断开。
+- **续签真实性与速度**：07:13 这轮三个应用均通过 profile-only 续签；每个目标均有新创建时间和到期时间。Portal 准备分别约 1.0–1.4 秒，设备注入约 0.1 秒，且 Seal、LiveContainer、LiveContainer2 的目标 Bundle ID/扩展都由设备逐份读回确认。没有复用旧描述文件的迹象。每个应用另有 2.4–2.9 秒的本地续签前置核对；批次通道已在 0 秒完成，因此若界面仍停在“LocalDevVPN 已就绪”，原因是阶段切换信号来得太晚，不是又等待一次 VPN 连接。
+- **其他可区分的旧失败**：06:26 一次 LiveContainer 重签被 Apple 以 Bundle ID 已由其他开发者注册拒绝；证书轮换期间另有 LiveContainer2 打包恢复失败。它们不是最新 07:13 续签的结果；最新一轮仍是 3/3 成功。06:30 的设备清单读取失败共出现 23 次，之后记录为通道服务恢复。批量结果恢复出现“会话/结果抽屉仍打开，跳过重复呈现”的保护日志，属于去重而非续签失败。
+- **通知回跳根因与修复**：07:12:11 通知已发出，07:12:20 结果载荷也已恢复；但日志没有结果抽屉呈现记录。代码中只有 `AppsRootView` 观察通知点击标记，而它不能保证是当前选中的 Tab。用户如果从“我的”等其他页点通知，结果会恢复到 ViewModel，却没有切到负责呈现抽屉的应用页。现在 `RootTabView` 在前台发现待处理点击标记后先切到应用页；呈现成功后记录阶段日志，点击意图仍由应用页在实际提交抽屉后清除。
+- **本次修复**：启动路由监听提前到通道点火之前；最终设备通道检查通过后立即发出 `.preparingAccount` 状态，随后保留原有账户、身份、证书和描述文件真实核对；续签通知点击后自动切回应用页；未移除 RSD 活性检查、Profile 注入或设备逐份读回。
+- **涉及文件**：`Seal/App/RootTabView.swift`、`Seal/Features/Apps/AppsRootView.swift`、`Seal/Features/Apps/AppsViewModel.swift`、`Seal/Core/Signing/SigningCoordinator.swift`、`RELEASE_NOTES.md`、`docs/upstream-alignment.md`。
+- **验证状态**：日志取证与代码审查完成；编译待本轮修改后执行。未运行测试，未安装到手机，未上传更新源。
+
+# 2026-10-27 — 设备页只在 LocalDevVPN 异常时显示重新检查
+
+- **现象**：已配对设备每次打开设备页都会跑完整安装通道诊断；健康状态也显示检查按钮，且用户切换到 LocalDevVPN 再返回 Seal 时没有自动恢复反馈。
+- **修复**：已配对设备页改为轻量 TCP 探测；首次失败时让 iOS 按需连接有短暂启动时间并再探一次。正常时显示“已验证”，不显示重新检查；自动恢复期间只更新 LocalDevVPN 状态行，“配对完成”说明保持不变；两次探测都失败才显示“重新检查”。手动重试失败时提示确认 Wi-Fi 与 LocalDevVPN。切回 Seal 前台时自动再探一次。首配和导入后验证也复用一次自动恢复探测。
+- **性能边界**：设备页不再为已配对且通道可达的情况运行完整 Minimuxer 诊断；用户手动重试或首次配对仍保留真实设备验证。
+- **修改路径**：`Seal/Features/Settings/PairingSettingsView.swift`、`Seal/Features/Settings/SettingsViewModel.swift`。
+- **验证状态**：`git diff --check`、两份 Swift 文件语法解析和 0.1.79 Release 构建通过；IPA 完整性、应用与扩展版本号、服务端 SHA-256 均已核对。未运行测试，未安装到手机。
+
+
+# 2026-10-27 — 0.1.79 已发布
+
+- **版本**：0.1.79（构建 28）。
+- **设备页优化**：已配对且通道正常时自动轻量检查并显示已验证，不再显示重复检查按钮；通道异常时先自动恢复，恢复失败后才显示“重新检查”，手动检查失败会提示检查 Wi-Fi 和 LocalDevVPN。恢复过程中“配对完成”说明保持稳定。
+- **社群图标**：修正 QQ 与 Telegram 图标在卡片里的边缘留白/裁切显示。
+- **发布验证**：Release IPA 构建成功；服务端版本、文件大小和 SHA-256 与本地产物一致。更新源已发布至 `https://seal.mjorb.eu.cc/uploads.php?action=latest`。
+- **交付文件**：`build/Seal 更新包/` 仅保留 `Seal-0.1.79-67953f6cffd9.ipa`、对应 `.ipa.sha256` 和 `latest.json`。未安装到手机。
+# 2026-10-28 — ZIP64 IPA 误报损坏与空 Watch 目录误拦截
+
+- **证据**：用户提供的微信 IPA 经独立 ZIP 校验通过；Seal 使用的 ZIPFoundation 0.9.20 将其中以斜杠结尾、Unix 模式标为普通文件的空 ZIP64 目录按 4,294,967,295 字节处理，随后在错误偏移读取描述符，造成 CRC 误报及空间高估。修正前同一份包解压总量约 5.29 GB，修正后约 996 MB。彩云天气有空 Watch 文件夹但没有 Watch 应用；飓风相机无 Watch 目录。
+- **修复**：将 ZIPFoundation 0.9.20 本地化，修正有效 ZIP64 零长度和空目录类型判断；Seal 与 Minimuxer 使用同一来源。真正损坏的 CRC 仍拒绝。仅空 Watch/AppClips 文件夹不阻止签名；有实际内容时仍保留并阻止不完整签名。导入文件继续协调文件提供方读取并比对复制大小。
+- **REA 与验证**：REA 静态检查三份 IPA 与主 Mach-O；Mac 上修订后的库在区分大小写的临时 APFS 卷对三份原始 IPA 全部通过 CRC 和完整解包。三项 ZIP64、非空伪目录、真实 CRC 损坏回归检查通过；iOS 设备 Debug 构建成功。该验证不等于 Apple 门户签名、安装和应用运行成功。
+- **未完成**：微信包含实际 Watch App 和嵌套扩展；当前 SideSign/CodeSignKit 仅以主应用及 PlugIns 扩展准备描述文件，不能简单移除拦截。需实现 Watch 目标标识、伴随关系、独立描述文件和嵌套签名，并在真机验证。彩云天气及飓风相机的本次签名失败日志尚未提供，不能认定其全部障碍已解决。未安装到手机或发布更新。

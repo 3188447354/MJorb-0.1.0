@@ -197,9 +197,9 @@ enum BackgroundKeepAliveError: LocalizedError {
 ///   · 以及「保活被停掉后 `start()` 再也不重试」—— 见 `isRunning` 与 `isEnabled` 的区别。
 /// 这三条不补，用户报的正是「锁屏 / 看电视 / 听歌时续签不成功」这种查不出原因的形态。
 ///
-/// ⚠️ 本类**只有 `start()`、没有 `stop()`**：保活一旦启动就持续（对齐上游）。
-/// 有意不加自动停止 —— 「什么时候可以安全地让进程被挂起」这个问题现在没有答案，
-/// 猜错的代价是续签半途而废，而半途而废在后台是**看不见**的。
+/// Seal 启动时调用 `start()`，设备网络变化后重试预热通道。应用不会在续签完成时自动停保活，
+/// 这样退到后台后仍能接收 VPN 路由变化；`stop()` 留给明确的生命周期收尾使用。
+/// 持续播放会比按需保活耗电更多，进程被用户或系统强制结束后无法继续监听。
 @MainActor
 final class BackgroundKeepAliveService {
     private let logStore: SealLogStore?
@@ -219,7 +219,7 @@ final class BackgroundKeepAliveService {
     /// （`BackgroundAudioService.swift:15-17`：`player?.isPlaying ?? false`）。
     var isRunning: Bool { player?.isPlaying == true }
 
-    /// 保活是否**被请求过**（一旦置位不再复位 —— 本类没有 `stop()`）。
+    /// 保活是否**被请求过且尚未显式停止**。
     ///
     /// 与 `isRunning` 的区别是「意图」与「事实」：通知回调必须用**意图**判据
     /// （音频已经停了才需要恢复，此时 `isRunning` 已是 false），

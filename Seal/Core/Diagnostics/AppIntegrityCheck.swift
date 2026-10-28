@@ -1,114 +1,71 @@
 import Foundation
 import MachO
 
-/// 启动自检发现的改动痕迹。只用于弹警告，不锁死、不拦截功能。
+/// 启动时发现的未知动态代码，只提示、不拦截功能。
 ///
-/// 约束（2026-10-24 防篡改设计定稿）：
-/// - 不能按签名者认官方：每个用户重签后的签名者本来就不同，只能认“被改过的痕迹”。
-/// - 越狱设备上注入基本防不住，这里只做到“露馅”，不承诺拦住。
-/// - 误报纪律：下面每个判据的合法锚点都必须是正常构建必然成立的事实
-///   （固定 Bundle ID、Info.plist 必备键、Assets.car、静态链接的 RustBridge），
-///   否则宁可不查，不给正常用户弹假警告。
+/// Apple ID 重签会改变 Team ID 和 Seal 当前使用的 Bundle ID 后缀；这些身份字段不能证明代码被改。
+/// 只有加载到 Apple 系统目录、Seal 主程序和已知 OpenSSL 之外的动态代码才作为注入线索。
 enum AppIntegrityIssue: Equatable {
-    /// Bundle ID 与工程固定值不一致（被改包换 ID）。
-    case bundleIdentifierChanged
-    /// 主包内必然存在的文件缺失。
-    case requiredResourceMissing(String)
-    /// Info.plist 缺键、字段为空、可执行名对不上、或与内置原始 Bundle ID 对不上。
-    case infoPlistInvalid
-    /// 加载了系统与主程序之外的动态库（注入、重打包时捆入的第三方 dylib）。
     case unexpectedDynamicLibrary(String)
-    /// 调试器挂接。
-    case debuggerAttached
-}
 
-/// 启动时轻量自检（防篡改第三层，2026-10-25）。
-///
-/// 判据函数 `findings` 是纯函数：全部输入外置，可单测，不读 Bundle、不碰 dyld、不调 sysctl；
-/// `liveFindings` 只是把真实环境读出来喂给它。
-enum AppIntegrityCheck {
-    /// 工程固定值（project.yml 主 target 的 PRODUCT_BUNDLE_IDENTIFIER）。
-    static let expectedBundleIdentifier = "com.mjorb.seal"
-
-    /// 主包内必然存在的文件：Info.plist 与编译后的资源目录。
-    static let requiredResourceNames = ["Info.plist", "Assets.car"]
-
-    static func findings(
-        bundleIdentifier: String?,
-        executableFileName: String?,
-        infoDictionary: [String: Any]?,
-        presentResourceNames: Set<String>,
-        loadedImagePaths: [String],
-        executablePath: String?,
-        debuggerAttached: Bool
-    ) -> [AppIntegrityIssue] {
-        var issues: [AppIntegrityIssue] = []
-
-        if bundleIdentifier != expectedBundleIdentifier {
-            issues.append(.bundleIdentifierChanged)
+    /// 稳定标识只保留库名，不包含每次安装都会变化的容器路径。
+    var warningIdentifier: String {
+        switch self {
+        case .unexpectedDynamicLibrary(let path):
+            return "unexpected-library-\(URL(fileURLWithPath: path).lastPathComponent)"
         }
-
-        if let info = infoDictionary {
-            let requiredKeys = [
-                "CFBundleIdentifier",
-                "CFBundleShortVersionString",
-                "CFBundleVersion",
-                "CFBundleExecutable",
-                "SealOriginalBundleIdentifier",
-            ]
-            var infoOK = true
-            for key in requiredKeys {
-                guard let value = info[key] as? String, !value.isEmpty else {
-                    infoOK = false
-                    break
-                }
-            }
-            if infoOK {
-                if let executableInPlist = info["CFBundleExecutable"] as? String,
-                   executableInPlist != executableFileName {
-                    infoOK = false
-                }
-                if let originalID = info["SealOriginalBundleIdentifier"] as? String,
-                   originalID != bundleIdentifier {
-                    infoOK = false
-                }
-            }
-            if !infoOK {
-                issues.append(.infoPlistInvalid)
-            }
-        } else {
-            issues.append(.infoPlistInvalid)
-        }
-
-        for name in requiredResourceNames where !presentResourceNames.contains(name) {
-            issues.append(.requiredResourceMissing(name))
-        }
-
-        for path in loadedImagePaths {
-            if path == executablePath { continue }
-            // 系统库与主程序之外的一切动态库都算痕迹：RustBridge 是静态链接，
-            // 正常构建的主进程不加载任何第三方 Framework，越狱注入与重打包捆入都落在这里。
-            if path.hasPrefix("/System/") || path.hasPrefix("/usr/lib") { continue }
-            issues.append(.unexpectedDynamicLibrary(path))
-        }
-
-        if debuggerAttached {
-            issues.append(.debuggerAttached)
-        }
-
-        return issues
     }
 
-    /// 从真实环境读取并判一次。只在启动时跑一次，代价是枚举已加载镜像与几次文件存在性检查。
+    var componentName: String {
+        switch self {
+        case .unexpectedDynamicLibrary(let path):
+            return URL(fileURLWithPath: path).lastPathComponent
+        }
+    }
+
+    var imagePath: String {
+        switch self {
+        case .unexpectedDynamicLibrary(let path): path
+        }
+    }
+}
+
+/// 启动时枚举已加载代码。合法的个人重签和不同 Team ID 不会触发提醒。
+enum AppIntegrityCheck {
+    static func findings(
+        loadedImagePaths: [String],
+        executablePath: String?,
+        expectedEmbeddedDynamicLibraryPaths: Set<String> = []
+    ) -> [AppIntegrityIssue] {
+        let normalizedExecutablePath = executablePath.map(normalizedFilePath)
+        let normalizedEmbeddedPaths = Set(expectedEmbeddedDynamicLibraryPaths.map(normalizedFilePath))
+        return loadedImagePaths.compactMap { path in
+            let normalizedPath = normalizedFilePath(path)
+            if normalizedPath == normalizedExecutablePath,
+               normalizedExecutablePath != nil {
+                return nil
+            }
+            if normalizedEmbeddedPaths.contains(normalizedPath) {
+                return nil
+            }
+            // Keep recognizing Apple's sealed system roots even if their spelling resolves through a symlink.
+            if isSystemImagePath(path) || isSystemImagePath(normalizedPath) {
+                return nil
+            }
+            return .unexpectedDynamicLibrary(path)
+        }
+    }
+
+    private static func normalizedFilePath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+            .path
+    }
+
+    /// 从真实环境读取并判一次。只在启动时枚举已加载镜像。
     static func liveFindings() -> [AppIntegrityIssue] {
         let bundle = Bundle.main
-        var present: Set<String> = []
-        let fileManager = FileManager.default
-        for name in requiredResourceNames {
-            if fileManager.fileExists(atPath: bundle.bundlePath + "/" + name) {
-                present.insert(name)
-            }
-        }
         var imagePaths: [String] = []
         let imageCount = _dyld_image_count()
         for index in 0..<imageCount {
@@ -117,26 +74,64 @@ enum AppIntegrityCheck {
             }
         }
         return findings(
-            bundleIdentifier: bundle.bundleIdentifier,
-            executableFileName: bundle.executableURL?.lastPathComponent,
-            infoDictionary: bundle.infoDictionary,
-            presentResourceNames: present,
             loadedImagePaths: imagePaths,
             executablePath: bundle.executablePath,
-            debuggerAttached: isDebuggerAttached()
+            expectedEmbeddedDynamicLibraryPaths: trustedEmbeddedDynamicLibraryPaths(in: bundle)
         )
     }
 
-    /// sysctl 查 P_TRACED：调试器挂接即为真。失败（取不到进程信息）按“无调试器”计，
-    /// 不因一次探测失败就弹警告。
-    private static func isDebuggerAttached() -> Bool {
-        var info = kinfo_proc()
-        var infoSize = MemoryLayout<kinfo_proc>.stride
-        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
-        let result = mib.withUnsafeMutableBufferPointer { mibPointer in
-            sysctl(mibPointer.baseAddress, 4, &info, &infoSize, nil, 0)
+    /// iOS system libraries can be reported from the normal roots or from the OS
+    /// cryptex mount. The simulator reports its host-mounted runtime under RuntimeRoot.
+    /// Use path-component boundaries so similarly prefixed third-party paths do not pass.
+    private static func isSystemImagePath(_ path: String) -> Bool {
+        let systemRoots = [
+            "/System",
+            "/usr/lib",
+            "/private/preboot/Cryptexes/OS/System",
+            "/private/preboot/Cryptexes/OS/usr/lib",
+        ]
+        if systemRoots.contains(where: { isPath(path, inside: $0) }) {
+            return true
         }
-        guard result == 0 else { return false }
-        return (info.kp_proc.p_flag & P_TRACED) != 0
+        #if targetEnvironment(simulator)
+        guard path.hasPrefix("/Library/Developer/CoreSimulator/Volumes/"),
+              let runtimeRoot = path.range(of: "/RuntimeRoot/") else {
+            return false
+        }
+        let runtimePath = path[runtimeRoot.upperBound...]
+        return runtimePath == "System"
+            || runtimePath.hasPrefix("System/")
+            || runtimePath == "usr/lib"
+            || runtimePath.hasPrefix("usr/lib/")
+        #else
+        return false
+        #endif
+    }
+
+    private static func isPath(_ path: String, inside root: String) -> Bool {
+        path == root || path.hasPrefix(root + "/")
+    }
+
+    /// Seal 当前唯一的嵌入式动态依赖。只信任 Frameworks 目录下 Bundle ID 匹配的 OpenSSL；
+    /// 其他随包加载的动态库仍会触发提醒。
+    private static func trustedEmbeddedDynamicLibraryPaths(in bundle: Bundle) -> Set<String> {
+        let expectedBundleIdentifiers: Set<String> = ["com.github.krzyzanowskim.OpenSSL"]
+        let frameworksURL = bundle.bundleURL.appendingPathComponent("Frameworks", isDirectory: true)
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: frameworksURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+        return Set(urls.compactMap { url in
+            guard let framework = Bundle(url: url),
+                  let identifier = framework.bundleIdentifier,
+                  expectedBundleIdentifiers.contains(identifier),
+                  let executableURL = framework.executableURL else {
+                return nil
+            }
+            return normalizedFilePath(executableURL.path)
+        })
     }
 }

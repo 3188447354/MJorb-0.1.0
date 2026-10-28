@@ -96,12 +96,8 @@ enum BundleIDPolicy {
             // ⚠️ 文案要说清**为什么**（2026-09-19 用户问「Bundle ID 能不能带符号/表情」）：
             // 这不是 Seal 的限制 ✗，而是 **Apple 的硬性规定** —— 带空格 / 中文 / 表情 / 符号的
             // Bundle ID 会被 Apple 直接拒绝，签名根本走不到底 ✗。
-            // 而「桌面显示的名字」是**另一回事**：它写在 `CFBundleDisplayName`，
-            // **可以带表情** ✓（见签名面板的「App 名称」）。
-            // 把这两件事在文案里分开说，用户才不会以为「Seal 不支持表情」✗。
             throw failure(
-                reason: "只能包含 A-Z、a-z、0-9、- 和 .（Apple 规定，空格、中文、表情、其它符号都不行）。"
-                    + "想改桌面显示的名字（那个可以带表情）请用「App 名称」"
+                reason: "Apple 规定 Bundle ID 只能包含英文字母、数字、连字符和句点；空格、中文、表情及其它符号都不允许。需要表情请修改 App 名称。"
             )
         }
         return identifier

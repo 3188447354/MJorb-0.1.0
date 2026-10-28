@@ -786,7 +786,9 @@ def violations(load=read):
     # 2026-09-23：Seal 自替换结算会让同一份持久化载荷从「等待核验」更新为
     # 「已完成」。此时若重建一个 UUID，`.sheet(item:)` 会先撤掉旧抽屉、再呈现新抽屉，
     # 真机表现为等待抽屉闪一下后又弹一次结果。更新内容必须保留既有 sheet 身份。
-    check("BatchRefreshSession(id: batchRefreshSession?.id ?? UUID())" in restore_body,
+    check("PendingBatchResultPayload.roundID(in: payload)" in restore_body
+          and "?? batchRefreshSession?.id" in restore_body
+          and "?? UUID()" in restore_body,
           "R12: a settled pending result must preserve the visible batch sheet identity — "
           "a new UUID makes SwiftUI dismiss and present a second drawer")
 
@@ -1731,6 +1733,19 @@ def violations(load=read):
           "R59: 「加入 QQ 群」必须保留**两条路径**（`mqqapi` 主路径 ＋ 短链兜底）✗ —— "
           "删掉任一条：**没装 QQ 的用户点进去没有任何反应** ✗")
 
+    # 系统编辑菜单（复制、粘贴、全选）跟随 App 的首选本地化；未声明中文时会
+    # 按开发语言回退到英文。QQ PNG 自带浅色不透明底，必须裁成圆角才能适配深色背景。
+    app_info_plist = load("Seal/Resources/Info.plist")
+    localization_project = load("project.yml")
+    check("<key>CFBundleDevelopmentRegion</key>\n\t<string>zh-Hans</string>" in app_info_plist
+          and "<key>CFBundleLocalizations</key>\n\t<array>\n\t\t<string>zh-Hans</string>" in app_info_plist,
+          "Localization: app bundle must declare Simplified Chinese so native edit menus use Chinese")
+    check("developmentLanguage: zh-Hans" in localization_project,
+          "Localization: Xcode project development language must remain Simplified Chinese")
+    check('if imageName == "BrandTelegram" {' in community_source
+          and "image.clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))" in community_source,
+          "Community: opaque QQ icon must be clipped to rounded corners while Telegram stays circular")
+
     # R60: 发布正文必须**只取「第一个版本」那一节**（2026-09-20 修）✗
     #
     # 原来是 `NOTES="$(cat RELEASE_NOTES.md)"` ✗ ⇒ **更新弹窗把所有历史版本全列出来**
@@ -2145,6 +2160,58 @@ def violations(load=read):
                         'withSessionRecovery("分配 App Group \\(mappedBundleID)", retriesOnTimeout'):
         check(write_label not in portal_source,
               "R33: **写操作绝不允许重试超时**（会多占证书名额 / 重复写）：" + write_label)
+
+    # R33b: 每个续签目标都必须真发 profile 请求；免费账号不能绕过本轮新鲜度校验。
+    renewal_profiles = squash(section_or_empty(
+        portal_source,
+        "private func renewalProvisioningProfiles(",
+        "private func fetchAppIDs("
+    ))
+    check("for prepared in preparedAppIDs" in renewal_profiles
+          and "fetchProvisioningProfile(" in renewal_profiles
+          and "profiles.append(profile)" in renewal_profiles,
+          "R33b: 每个续签目标都必须单独向 Apple 请求描述文件，不能复用 profile 缓存")
+    profile_request = squash(section_or_empty(
+        portal_source,
+        "private func requestProvisioningProfile(",
+        "private func updateFeatures("
+    ))
+    check("if team.type == .free { candidate = profile }" in profile_request
+          and "validateFreshProfile( candidate, requestedAfter: requestedAfter" in profile_request
+          and "validateFreshProfile( retryBox.value, requestedAfter: requestedAfter" in profile_request
+          and "return profile" not in profile_request,
+          "R33b: 免费与付费 profile 都必须通过本轮新鲜度校验；旧响应拒绝后只能重新申请一次")
+    profile_only_result = squash(section_or_empty(
+        portal_source,
+        "var materials: [ProfileOnlyProfileMaterial] = []",
+        "let bindings = Dictionary(uniqueKeysWithValues: materials.map"
+    ))
+    check("validateProfileIsNewerThanPrevious(binding, previous: previousTarget" in profile_only_result,
+          "R33b: profile-only 续签必须拒绝生成时间未晚于设备现有版本的描述文件")
+    full_profile_validation = squash(section_or_empty(
+        portal_source,
+        "private func validateEmbeddedProfiles(",
+        "private func signApp("
+    ))
+    profile_freshness_comparison = squash(section_or_empty(
+        portal_source,
+        "private func validateProfileIsNewerThanPrevious(",
+        "private func signApp("
+    ))
+    profile_binding_source = load("Seal/Core/Signing/ProvisioningProfileBinding.swift")
+    profile_binding_freshness = squash(section_or_empty(
+        profile_binding_source,
+        "func validateFreshness(",
+        "static func validateEntitlements("
+    ))
+    check("previousTargets: app.signingTargets" in portal_source
+          and "validateProfileIsNewerThanPrevious(binding, previous: previousTarget" in full_profile_validation
+          and "creationDate > previousCreationDate" in profile_freshness_comparison
+          and "minimumFreshProfileValidityDuration: TimeInterval = 7 * 24 * 3600" in portal_source
+          and "expirationDate.timeIntervalSince(creationDate) < minimumValidityDuration" in profile_binding_freshness
+          and "guard expirationDate > now" in profile_binding_freshness
+          and 'code: "SEAL-PROFILE-315a"' in profile_freshness_comparison,
+          "R33b: 续签须拒绝旧文件，并按秒核验有效期覆盖完整 7 天")
 
     # R34: 取证点 —— `fetchAppIDs` 是否回填 `features`（2026-09-18）。
     #
@@ -3207,9 +3274,19 @@ def violations(load=read):
 
     root_view = load("Seal/Features/Apps/AppsRootView.swift")
     maintenance_at = root_view.find("runEssentialMaintenanceIfIdle()")
-    first_load_at = root_view.find("await viewModel.load(")
-    check(maintenance_at != -1 and first_load_at != -1 and maintenance_at < first_load_at,
-          "C: maintenance must run before the first read so recovered records are visible")
+    initial_list_task = section_or_empty(
+        root_view,
+        "let initialListLoadTask = Task {",
+        "// 读取提示只作为固定的一秒过渡",
+    )
+    initial_load_at = root_view.find("let initialListLoadTask = Task {")
+    recovery_at = root_view.find("await viewModel.recoverInterruptedQueueIfNeeded()")
+    final_load_at = root_view.find("await viewModel.load(force: true)", recovery_at)
+    check("await viewModel.load(force: true)" in initial_list_task
+          and initial_load_at != -1 and maintenance_at != -1 and recovery_at != -1
+          and final_load_at != -1
+          and initial_load_at < maintenance_at < recovery_at < final_load_at,
+          "C: show local records first, then recover, then refresh reconciled records")
 
     # ── D 包（R07 自续签确认）──────────────────────────────────────────────
     # 同版本续签会换掉 profile（新 UUID、新有效期）但版本号不变 ⇒ 结算必须按 profile 身份，
@@ -3703,7 +3780,7 @@ def violations(load=read):
     #
     # 内建更新是一条**远程代码投递通道**：装进设备的 IPA 完全由 Release 响应决定。
     # 版本串校验只能挡住「换成旧包」，挡不住「同版本内容被替换」—— 同一合法域名下的
-    # 资产仍可能被调包。必须与 Release 附带的 `.sha256` 逐字节比对，且缺校验和 / 对不上都
+    # 资产仍可能被调包。必须与 HTTPS 更新清单里的 SHA256 逐字节比对，且缺校验和 / 对不上都
     # fail closed（中止安装）。这是**安全**不变量，退化后编译照过、其余检查照绿。
     update_checker = load("Seal/Infrastructure/UpdateChecker.swift")
     check("static func sha256DownloadURL(from assets: [[String: Any]]) -> URL?" in update_checker
@@ -3711,20 +3788,24 @@ def violations(load=read):
           and "static func expectedSHA256(from content: String) -> String?" in update_checker
           and "hash.count == 64" in update_checker
           and "static func hashMatches(expected: String, actual: String) -> Bool" in update_checker
+          and "let sha256: String?" in update_checker
+          and "case sha256" in update_checker
+          and "let expectedSHA256 = UpdateChecker.expectedSHA256(from: checksumText)" in update_checker
           and "let sha256DownloadURL: URL?" in update_checker,
-          "R107①: 更新检查器必须提供 `.sha256` 直链挑选 + 64 位哈希解析 + 大小写无关比对 ✗ —— "
+          "R107①: 更新检查器必须提供校验值解析 + 64 位哈希检查 + 大小写无关比对 ✗ —— "
           "内建更新是一条远程代码投递通道，缺任何一环都无法逐字节校验下载包")
     update_view = load("Seal/Features/UpdateNoticeView.swift")
-    # 0.1.52 起校验下沉到下载器（落盘后、返回前完成，见 R138④）：钉子随之改钉
-    # 下载器内的抓取/计算/比对与 View 侧的资产传递＋nil fail closed，不变量不变。
+    # 校验在下载前从 HTTPS 清单读取，在下载器落盘后流式比对（见 R138④）；
+    # 断网不能再让一个已完成的 IPA 因为二次请求校验文件失败而被判为不完整。
     update_downloader_r107 = load("Seal/Infrastructure/UpdateIPADownloader.swift")
     check("actual = try AppFileStore.streamingSHA256(url: fileURL)" in update_downloader_r107
-          and "UpdateChecker.expectedSHA256(from: text)" in update_downloader_r107
+          and "UpdateChecker.expectedSHA256(from: expectedSHA256)" in update_downloader_r107
+          and "expectedChecksumText: expectedSHA256" in update_downloader_r107
           and "UpdateChecker.hashMatches(expected: expected, actual: actualSHA256)" in update_downloader_r107
-          and "checksumURL: notice.sha256DownloadURL," in update_view
-          and "notice.sha256DownloadURL != nil else {" in update_view
+          and "expectedSHA256: expectedSHA256," in update_view
+          and "guard let expectedSHA256 = notice.expectedSHA256 else {" in update_view
           and "phase = .failed(.verification)" in update_view,
-          "R107②: 更新下载流程必须下载校验和、算本地哈希并比对，缺失/不符都 fail closed ✗ —— "
+          "R107②: 更新下载流程必须使用清单校验值、算本地哈希并比对，缺失/不符都 fail closed ✗ —— "
           "否则「同一合法域名下资产被调包」无法察觉")
     file_store = load("Seal/Infrastructure/Storage/AppFileStore.swift")
     check("static func streamingSHA256(url: URL) throws -> String" in file_store,
@@ -3762,40 +3843,32 @@ def violations(load=read):
           "R109: RemotePairing 端口必须持久化（冷启动恢复 / 采纳写回 / 换设备清除 / 冷启动同步 Rust）✗ —— "
           "只在内存记端口会让每次冷启动从 49152 撞一遍再 Bonjour 重查；只恢复 Swift 内存不写 Rust 会全程 ConnectionRefused")
 
-    # ── R110：后台保活 —— 定位保活已退役（2026-10-07）──
-    #
-    # 2026-10-07 退役原因：续签已优化到 4-12 秒，静音音频足够；定位只费电还挂箭头。
-    # LocationKeepAliveService 类保留以备后用，但不再启动。
-    # 守卫保留 ①②⑤⑥（类定义完整性），③④ 改为确认**不**启动（防有人顺手加回来）。
-    r110_yml = load("project.yml")
-    r110_service = load("Seal/Infrastructure/Background/LocationKeepAliveService.swift")
+    # ── R110：定位保活与权限已彻底移除 ──
+    # 后台续签只使用静音音频；权限说明、定位后台模式和死代码都不得重新进入正式 App。
+    r110_yml = strip_yaml_comments(load("project.yml"))
+    r110_plist = load("Seal/Resources/Info.plist")
+    r110_privacy = load("Seal/Features/Settings/PrivacyNoticeView.swift")
     r110_app = load("Seal/App/SealApp.swift")
     r110_intent = load("Seal/Features/Intents/SealRenewalIntent.swift")
     r110_container = load("Seal/Application/AppContainer.swift")
-    r110_index = load("docs/qa/log-code-index.md")
-    check("- location" in r110_yml
-          and "NSLocationWhenInUseUsageDescription" in r110_yml
-          and "NSLocationAlwaysAndWhenInUseUsageDescription" in r110_yml,
-          "R110①: `project.yml` 必须声明 `UIBackgroundModes: location` + 两项定位权限描述 ✗ —— "
-          "类定义保留，后台模式声明也保留（以备后用）；缺 `AlwaysAndWhenInUse` 描述则 "
-          "`requestAlwaysAuthorization()` 会因缺失权限描述被 iOS 强制终止")
-    check("manager.pausesLocationUpdatesAutomatically = false" in r110_service
-          and "manager.allowsBackgroundLocationUpdates = true" in r110_service,
-          "R110②: 定位保活两个关键开关必须同时成立 ✗ —— "
-          "缺 `allowsBackgroundLocationUpdates` 切后台定位立刻停；"
-          "`pausesLocationUpdatesAutomatically` 默认 true，不显式置 false 会被系统在定位静止时"
-          "静默暂停（正是「已启用了却没用」的形态）")
-    check("container.locationKeepAlive.start()" not in r110_app,
-          "R110③: `SealApp.init()` 不得启动定位保活 ✗ —— 2026-10-07 已退役，只用静音音频")
-    check("container.locationKeepAlive.start()" not in r110_intent,
-          "R110④: 快捷指令后台唤起不得启动定位保活 ✗ —— 2026-10-07 已退役，只用静音音频")
-    check("locationKeepAlive: LocationKeepAliveService" in r110_container
-          and "LocationKeepAliveService(logStore:" in r110_container,
-          "R110⑤: `AppContainer` 必须注入 `LocationKeepAliveService` ✗ —— 不注入则类定义残缺")
-    check("`SEAL-BACKGROUND-017`" in r110_index
-          and "`SEAL-BACKGROUND-018`" in r110_index,
-          "R110⑥: 定位保活两个日志码必须登记进 `docs/qa/log-code-index.md` ✗ —— "
-          "「保活到底起没起 / 为什么只有音频一路」全靠这两条码判读")
+    check("\n        UIBackgroundModes:\n          - audio\n" in r110_yml
+          and "- location" not in r110_yml
+          and "NSLocation" not in r110_yml
+          and "NSLocation" not in r110_plist
+          and "<string>location</string>" not in r110_plist,
+          "R110①: Seal 只能声明音频后台模式，不能残留定位后台模式或定位权限文案")
+    check("定位" not in r110_privacy and "地理位置" not in r110_privacy,
+          "R110②: 隐私政策不得披露当前已移除的定位功能")
+    check("locationKeepAlive" not in r110_container
+          and "LocationKeepAliveService" not in r110_container
+          and not (ROOT / "Seal/Infrastructure/Background/LocationKeepAliveService.swift").exists()
+          and not (ROOT / "SealTests/Background/LocationKeepAliveTests.swift").exists(),
+          "R110③: AppContainer、服务源码和对应测试不得保留已删除的定位保活")
+    check("locationKeepAlive" not in r110_app
+          and "LocationKeepAliveService" not in r110_app
+          and "locationKeepAlive" not in r110_intent
+          and "LocationKeepAliveService" not in r110_intent,
+          "R110④: App 启动与快捷指令续签不得重新接入定位保活")
 
     # Fast IPA 的产物由 build-unsigned-ipa.sh 按版本命名为 Seal_<version>.ipa。
     # 验证/上传若退回旧的 Seal.ipa 固定名，会在编译成功后误报文件不存在。
@@ -3910,6 +3983,12 @@ def violations(load=read):
     check("Task.detached(priority: .utility)" in local_p12_inventory
           and "ALTCertificate(p12Data: p12, password: nil)" in local_p12_inventory,
           "Cleanup: P12 inventory parsing must not block the shared Apple Portal actor")
+
+    # 正常签名不做预清理；清理只能留在首次签名失败后的回退中。
+    sign_coordinator = load("Seal/Core/Signing/SigningCoordinator.swift")
+    normal_sign_entry = section(sign_coordinator, "let preferredIconData: Data?", "let portalResult: PortalSigningResult")
+    check("autoCleanOrphanCertificatesIfPossible(" not in normal_sign_entry,
+          "Certificate cleanup must not block normal signing before portal.sign")
 
     # 签名/续签中的孤儿证书自动清理：撤销不可逆，约束必须硬守护。
     coord = load("Seal/Core/Signing/SigningCoordinator.swift")
@@ -4790,7 +4869,7 @@ def violations(load=read):
     # ④ 界面口径必须与门槛一致。旧文案承诺「iOS 17.0–17.3.1 会改用本机配对」，
     #    而新门槛下这些机器**根本装不上** ⇒ 属于「显示与行为相反」（与 R68⑦ 同一类毛病）。
     check('infoRow("最低支持", "iOS 17.4")' in r69_about
-          and "Seal 最低支持 iOS 17.4" in r69_pairing_view
+          and "Seal 仅支持 iOS 17.4 及以上。" in r69_pairing_view
           and "iOS 17.0–17.3.1 会改用" not in r69_pairing_view,
           "R69④: 界面必须说清「最低支持 iOS 17.4」—— 旧文案承诺「17.0–17.3.1 改用本机配对」，"
           "但新门槛下那些机器连装都装不上，用户会照着一句做不到的承诺去折腾")
@@ -4948,7 +5027,7 @@ def violations(load=read):
     check("URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)" in update_downloader
           and "func urlSession(" in update_downloader
           and "didWriteData bytesWritten:" in update_downloader
-          and "UpdateDownloadProgress.fraction(received: received, total: total)" in update_notice_view
+          and "UpdateDownloadProgress.inFlightFraction(received: received, total: total)" in update_notice_view
           and "下载进度 \\(progress.sealPercentText)" in update_notice_view
           and "\"\\(Int(self * 100))%\"" in seal_text_helpers
           and "downloadProgressIsDeterminateWhenTheResponseHasAContentLength()" in update_notice_tests,
@@ -5374,12 +5453,33 @@ def violations(load=read):
           "Tombstone/coverage: 墓碑必须覆盖主 App 与扩展的全部生效 Bundle ID —— "
           "扫回是按设备端 profile 的 Bundle ID **逐个**判定的")
 
-    # ── R80b：有效期精确到秒（2026-09-25 用户需求 B）─────────────────────────
-    # 免费账号只有 7 天寿命，**分钟**粒度下同一分钟内续签两次完全同形 ——
-    # 而「这次拿到的确实是本轮新生成的那份描述文件」正是续签后唯一要核验的事。
-    check('        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"'
-          in load("Seal/Features/Settings/SettingsFormatters.swift"),
-          "SecondLevel/format: 有效期必须精确到秒（分钟粒度无法证伪「profile 是本轮新生成的」）")
+    # ── R80b：所有用户可见有效期与证书到期时刻都精确到秒 ──
+    # 续签结果、日志页和到期提醒也必须使用完整时间精度。
+    r80_formatters = load("Seal/Features/Settings/SettingsFormatters.swift")
+    r80_round_summary = load("Seal/Core/Renewal/RenewalRoundSummary.swift")
+    r80_expiry_notification = load("Seal/Infrastructure/Notifications/ExpiryNotificationScheduler.swift")
+    r80_integrity = load("Seal/Core/Diagnostics/AppIntegrityCheck.swift")
+    r80_root = load("Seal/App/RootTabView.swift")
+    expiry_ui_sources = [
+        load(path) for path in (
+            "Seal/Features/Apps/InstalledAppActionSheet.swift",
+            "Seal/Features/Apps/SigningProgressView.swift",
+            "Seal/Features/Apps/CertificateSacrificePickerView.swift",
+            "Seal/Features/Apps/AppDetailView.swift",
+            "Seal/Features/Settings/AppleAccountDetailView.swift",
+            "Seal/Features/Settings/SigningCertificateSettingsView.swift",
+        )
+    ]
+    check('formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"' in r80_formatters
+          and "stringWithoutSeconds" not in r80_formatters
+          and all("SealSettingsDateFormatter.string(from:" in source for source in expiry_ui_sources)
+          and 'f.dateFormat = "yyyy-MM-dd HH:mm:ss"' in r80_round_summary
+          and 'formatter.dateFormat = "HH:mm:ss"' in r80_expiry_notification
+          and "unexpectedDynamicLibrary" in r80_integrity
+          and "bundleIdentifierChanged" not in r80_integrity
+          and "debuggerAttached" not in r80_integrity
+          and "return identifiers" in r80_root,
+          "SecondLevel/format: 所有有效期时间必须显示到秒；完整性提醒只基于未知动态库且跨版本去重")
     # 2026-10-04 死代码清理：AppSigningSheet 里的同格式 dateFormatter 零调用已删除，
     # 不再需要"两处一起改"的约束（只剩 SettingsFormatters.swift 一处真相源）。
     check('private static let dateFormatter: DateFormatter' not in load("Seal/Features/Apps/AppSigningSheet.swift"),
@@ -5538,7 +5638,8 @@ def violations(load=read):
           "它原先只认 `SEAL-PAIR-` 前缀，于是这两条会落到 `isInstallChannelFailure`，"
           "把「重新配对设备」按钮换成「重新安装」")
 
-    check("付费账号的 Seal 会自动拉起内置隧道" not in r83_channel,
+    check("付费账号的 Seal 会自动拉起内置隧道" not in r83_channel
+          and "Seal 依赖外部 LocalDevVPN 软件提供本地隧道" in r83_channel,
           "R83⑧: 文案不得再提「付费账号会自动拉起内置隧道」—— 内置 SealTunnel 已被移除，"
           "`LocalDevVPNOnDemandActivator` 与 `MinimuxerInstallChannel` 的注释都明说"
           "「不再自动拉起内置隧道」。留着这句会让用户按一条不存在的路径排查")
@@ -6361,14 +6462,19 @@ def violations(load=read):
           "自己再抄一份 `zipItem` 会让「按类型选压缩方法」这条规则出现两份实现"
           "（改了一处、另一处照旧），这正是本项要修的病根")
 
-    # 2026-10-04: writeIPA 改用 SideStore Archive.Writer（libdeflate）。
-    check("try archive.addEntry(" in r91_ws_code
+    # 2026-10-26: signing IPA uses the single-pass SideSign writer to avoid
+    # quadratic central-directory rewrites; ZIPFoundation remains for ZIP64.
+    check("if canUseStreamingWriter(payloadRoot: payloadURL, subPaths: subPaths) {\n"
+          "            do {\n"
+          "                try writeIPAUsingStreamingWriter(" in r91_ws_code
+          and "try archive.addEntry(" in r91_ws_code
           and "compressionMethod: compressionMethod(forRelativePath: entryPath)" in r91_ws_code
           and "static let alreadyCompressedExtensions: Set<String>" in r91_ws_code,
-          "R91⑧b: 打包必须**逐条目**选压缩方法 ✗ —— "
+          "R91⑧b: 常规 IPA 必须走单遍写入以避免重复重写中央目录，并保留逐条目压缩策略 ✗ —— "
           "`FileManager.zipItem` 把同一个 `compressionMethod` 透传给每个条目、"
-          "且 `Archive.addEntry` 没有「压完更大就退回 store」的自动回退，"
-          "对已压过的载荷（png / jpg / mp4 / `Assets.car`）再 deflate 一遍是纯浪费 CPU")
+          "ZIPFoundation `Archive.addEntry` 会反复改写不断增长的中央目录；"
+          "对已压过的载荷（png / jpg / mp4 / `Assets.car`）再 deflate 一遍是纯浪费 CPU。"
+          "超出经典 ZIP 字段范围时仍由 ZIPFoundation 提供 ZIP64 兼容回退")
 
     check("if purpose == .signing {\n"
           "                try stripArm64eArchitecture(in: appURL)\n"
@@ -6443,7 +6549,7 @@ def violations(load=read):
     r112_coordinator_code = strip_comments(load("Seal/Core/Renewal/RenewalCoordinator.swift"))
     r112_vm_code = strip_comments(load("Seal/Features/Apps/AppsViewModel.swift"))
 
-    check("FastSHA256.hashPage(page)" in r91_cdb_code
+    check(r91_cdb_code.count("FastSHA256.hashPage(page)") >= 2
           and "let sha256 = FastSHA256.hash(data: fileData)" in r112_crbuilder_code,
           "R112①: 页哈希与资源哈希必须走 `FastSHA256` ✗ —— "
           "退回裸 `Crypto.SHA256` 等于丢掉 Apple 平台的 ARM SHA 硬件加速，"
@@ -6758,23 +6864,27 @@ def violations(load=read):
           and "task?.cancel(byProducingResumeData: { _ in })" in r138_dl_code
           and "UpdateDownloadResumePolicy.startDecision(hasStoredResumeData: resumeData != nil)" in r138_dl_code
           and "UpdateDownloadResumePolicy.failurePlan(" in r138_dl_code
+          and "state.attemptKind == .resumed && http.statusCode == 206" in r138_dl_code
+          and "didResumeAtOffset fileOffset: Int64" in r138_dl_code
+          and "state.receivedBytesAfterResume += max(0, bytesWritten)" in r138_dl_code
           and r138_dl_code.count("case .discardResumeDataAndRetryFresh:") == 2,
           "R138②: 断点续传必须真走策略纯函数（起点决策＋失败四路矩阵）✗ —— "
           "失败/取消不落 resumeData 就是删档重来；续传失效不回退全新一次会死循环或永败")
 
     check("UpdateDownloadProgressPolicy.shouldEmit(" in r138_dl_code
           and "func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {" in r138_dl_code
-          and "let box = ContinuationBox<URL>(continuation)" in r138_dl_code,
+          and "let box = ContinuationBox<URL>(continuation)" in r138_dl_code
+          and "let displayedBytes = received < previousBytes" in r138_view_code,
           "R138③: 进度必须经节流判据、后台完成事件必须有转发点、delegate 桥必须复用既有 ContinuationBox ✗ —— "
           "每块数据起一个 Task 会把 UI 回调洪泛；新造第 6 份并发盒违反仓库上限")
 
     check('static let failureCode = "SEAL-UPDATE-DL-506"' in r138_dl_code
           and "actual = try AppFileStore.streamingSHA256(url: fileURL)" in r138_dl_code
-          and "checksumURL: notice.sha256DownloadURL," in r138_view_code
+          and "expectedSHA256: expectedSHA256," in r138_view_code
           and "failure.code == UpdateDownloadChecksumPolicy.failureCode" in r138_view_code
-          and "notice.sha256DownloadURL != nil else {" in r138_view_code,
+          and "guard let expectedSHA256 = notice.expectedSHA256 else {" in r138_view_code,
           "R138④: sha256 校验必须下沉在下载器内落盘后流式完成、失败 fail closed ✗ —— "
-          "校验只在 View 层时换个调用方就裸奔；校验资产缺失时放行等于不校验")
+          "校验只在 View 层时换个调用方就裸奔；清单校验值缺失时放行等于不校验")
 
     # ── R139：2026-10-22 SEAL-SIGN-404 记录就绪门（0.1.52 第 2 项）──
     #
@@ -6838,7 +6948,10 @@ def violations(load=read):
         load("Seal/Features/Apps/AppsViewModel.swift"))
 
     check("struct SheetArbiter: Equatable, Sendable" in r141_arb_code
-          and "mutating func sheetDidDismiss(_ sheet: ArbitratedSheet) -> SheetArbitrationAction" in r141_arb_code
+          and "mutating func sheetDidDismiss(" in r141_arb_code
+          and "_ sheet: ArbitratedSheet," in r141_arb_code
+          and "promotingPending: Bool = true" in r141_arb_code
+          and "-> SheetArbitrationAction" in r141_arb_code
           and "enum BatchResultRestorePolicy" in r141_arb_code
           and "sheetArbiter.request(.batchResult)" in r141_root_code
           and r141_root_code.count("sheetArbiter.request(.operation)") == 3,
@@ -7476,6 +7589,7 @@ def violations(load=read):
     r93_heal_block = (
         "if taint.consume() {\n"
         "            await onProgress(.healingTaint)\n"
+        "            profileServiceWarmUntilUptime = nil\n"
         "            await channel.reset()\n"
         "            _ = try await channel.start()\n"
         "            await onTaintHealed()\n"
@@ -7984,9 +8098,14 @@ def violations(load=read):
           "上游 `2.1.4-multiarch` 与 `2.1.4-xcf-a53ddc9` **两个官方包都含 93 条 LSE**，"
           "换版本解决不了；把 checksum 写死在 `Package.swift` 会让人误以为「已经钉住了」")
 
+    r118_recipe_squashed = squash(r118_recipe)
     check('UNICORN_TARGET_CPU="${UNICORN_TARGET_CPU:-apple-a10}"' in r118_recipe
-          and "-mcpu=$UNICORN_TARGET_CPU" in r118_recipe
-          and "--max-ios-version" in r118_recipe,
+          and 'cflags="-mcpu=$target_cpu"' in r118_recipe
+          and 'build_slice ios-arm64 iphoneos arm64 "$UNICORN_TARGET_CPU"' in r118_recipe_squashed
+          and 'build_slice ios-arm64-simulator iphonesimulator arm64 "$UNICORN_TARGET_CPU"' in r118_recipe_squashed
+          and "--max-ios-version \"$IPHONEOS_DEPLOYMENT_TARGET\"" in r118_recipe
+          and r118_recipe.rfind('--max-ios-version "$IPHONEOS_DEPLOYMENT_TARGET"')
+              < r118_recipe.find('printf \'%s\\n\' "$current" > "$FINGERPRINT_FILE"'),
           "R118④: `Scripts/ensure-unicorn.sh` 必须把目标 CPU 钉成 `apple-a10`（`-mcpu=`）"
           "**并在写指纹前**量产物的 LSE 与 minOS ✗ —— 只声明 "
           "`CMAKE_OSX_DEPLOYMENT_TARGET` 不够，必须验**产物机器码**；"
@@ -8094,9 +8213,11 @@ def main():
          "                    guard true else { return false }",
          "C: background state writes must check the load generation atomically"),
         ("Seal/Features/Apps/AppsRootView.swift",
-         "await viewModel.runEssentialMaintenanceIfIdle()",
-         "",
-         "C: maintenance must run before the first read"),
+         "let initialListLoadTask = Task {\n"
+         "                        await viewModel.load(force: true)\n"
+         "                    }",
+         "let initialListLoadTask = Task { }",
+         "C: show local records first, then recover"),
         ("Seal/Core/Renewal/SelfAppMetadata.swift",
          "let profileDetails = (try? Data(contentsOf: profileURL, options: .mappedIfSafe))\n"
          "                .flatMap { try? ProvisioningProfileReader().details(from: $0) }",
@@ -9931,7 +10052,7 @@ def main():
          "R69④: 界面必须说清"),
         # ④b 文案退回「17.0–17.3.1 改用本机配对」的旧承诺 ✓ 报红。
         ("Seal/Features/Settings/PairingSettingsView.swift",
-         "Seal 最低支持 iOS 17.4",
+         "Seal 仅支持 iOS 17.4 及以上。",
          "iOS 17.0–17.3.1 会改用「本机配对」",
          "R69④: 界面必须说清"),
         # ⑤ 把 Lockdown 分流改成「一律远程配对」= 变相删掉 Lockdown 通道 ✓ 报红。
@@ -10423,7 +10544,7 @@ def main():
          "R83⑦: `SigningProgressView.isPairingFailure` 必须把 703 / 707 一并认成配对失败"),
         # ⑦ 把过时文案写回去（「付费账号会自动拉起内置隧道」）⇒ R83⑧ 报红。
         ("Seal/Infrastructure/Installation/MinimuxerInstallChannel.swift",
-         "Seal 不内置隧道（内置隧道已移除），一律依赖外部 LocalDevVPN 软件把流量真正转发到设备",
+         "Seal 依赖外部 LocalDevVPN 软件提供本地隧道",
          "付费账号的 Seal 会自动拉起内置隧道",
          "R83⑧: 文案不得再提"),
         # ⑧ 把「免费账号」口径写回去 ⇒ R83⑨ 报红。
@@ -10470,10 +10591,10 @@ def main():
         # ④ 把设备端旧 profile 前置枚举加回 profile-only 分支 ⇒ R84④ 报红。
         ("Seal/Core/Signing/SigningCoordinator.swift",
          "            if useProfileOnlyRenewal {\n"
-         "                // 设备端不做旧 profile 前置枚举；",
+         "                if let channelStart {",
          "            if useProfileOnlyRenewal {\n"
          "                _ = DeviceProfileInspector.containsProfile(\n"
-         "                // 设备端不做旧 profile 前置枚举；",
+         "                if let channelStart {",
          "R84④:"),
         # ④b 把只在 Apple 明确拒绝当前证书时才完整重签的条件改宽 ⇒ R84④ 报红。
         ("Seal/Core/Signing/SigningCoordinator.swift",
@@ -10901,9 +11022,9 @@ def main():
          "R91②:"),
         # ③ 页哈希退回 `subdata` 复制 ⇒ R91③ 报红。
         ("Vendor/CodeSignKit/Sources/CodeDirectoryBuilder.swift",
-         "            let pageHash: Data = binaryData.withUnsafeBytes { raw -> Data in",
+         "                let page = UnsafeRawBufferPointer(rebasing: raw[pageStart..<pageEnd])",
          "            let pageData = binaryData.subdata(in: pageStart..<pageEnd)\n"
-         "            let pageHash: Data = { () -> Data in",
+         "                let page = UnsafeRawBufferPointer(rebasing: raw[pageStart..<pageEnd])",
          "R91③:"),
         # ④ 签名输入退回整块读（mmap 被撤销）⇒ R91④ 报红。
         ("Vendor/CodeSignKit/Sources/CodeSigner.swift",
@@ -10945,6 +11066,10 @@ def main():
         ("Seal/Infrastructure/Signing/SigningWorkspace.swift",
          "                compressionMethod: compressionMethod(forRelativePath: entryPath)",
          "                compressionMethod: .deflate",
+         "R91⑧b:"),
+        ("Seal/Infrastructure/Signing/SigningWorkspace.swift",
+         "                try writeIPAUsingStreamingWriter(\n                    payloadRoot: payloadURL,",
+         "                try writeIPAUsingZIPFoundation(\n                    payloadRoot: payloadURL,",
          "R91⑧b:"),
         # ⑨a `layoutOnly` 不再跳过瘦身（开关失效，白花 30–35 秒）⇒ R91⑨a 报红。
         ("Seal/Infrastructure/Signing/SigningWorkspace.swift",
@@ -11464,8 +11589,8 @@ def main():
          "R93①:"),
         # ②a actor 内不再消费污染标记（一次超时毒掉后续全部续签）⇒ R93② 报红。
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
-         "        if taint.consume() {\n            await onProgress(.healingTaint)\n            await channel.reset()",
-         "        if false {\n            await onProgress(.healingTaint)\n            await channel.reset()",
+         "        if taint.consume() {\n            await onProgress(.healingTaint)\n            profileServiceWarmUntilUptime = nil\n            await channel.reset()",
+         "        if false {\n            await onProgress(.healingTaint)\n            profileServiceWarmUntilUptime = nil\n            await channel.reset()",
          "R93②:"),
         # ②b `reset()` 之后不再重新 `start()`（传输退回 Lockdown、自愈后第一次注入必失败）⇒ R93② 报红。
         ("Seal/Infrastructure/Renewal/ProfileOnlyProvisioningProfileInstaller.swift",
@@ -11788,26 +11913,34 @@ def main():
          "RustIdevice.setRemotePairingPort(port)\n        return port",
          "return port",
          "R109:"),
-        # ── R110：后台保活双保险 —— 后台定位保活 ──
-        # ① 后台模式从 location 退成 fetch（切后台定位立刻停）⇒ R110① 报红。
+        # ── R110：定位保活与权限不得复活 ──
+        # ① 重新声明定位后台模式 ⇒ R110① 报红。
         ("project.yml",
-         "- location",
-         "- fetch",
+         "        UIBackgroundModes:\n          - audio\n",
+         "        UIBackgroundModes:\n          - audio\n          - location\n",
          "R110①:"),
-        # ② 允许系统自动暂停（定位静止就被暂停，保活静默失效）⇒ R110② 报红。
-        ("Seal/Infrastructure/Background/LocationKeepAliveService.swift",
-         "manager.pausesLocationUpdatesAutomatically = false",
-         "manager.pausesLocationUpdatesAutomatically = true",
+        ("Seal/Resources/Info.plist",
+         "<key>NSLocalNetworkUsageDescription</key>\n\t<string>Seal 使用本地网络发布设备配对服务，并连接此设备安装应用。</string>\n",
+         "<key>NSLocalNetworkUsageDescription</key>\n\t<string>Seal 使用本地网络发布设备配对服务，并连接此设备安装应用。</string>\n"
+         "\t<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>Seal 定位权限。</string>\n",
+         "R110①:"),
+        # ② 隐私政策重新声称收集定位信息 ⇒ R110② 报红。
+        ("Seal/Features/Settings/PrivacyNoticeView.swift",
+         "通知：仅在您允许后，用于应用到期提醒",
+         "定位：仅当您启用后台自动续签并授予权限时使用。\n\n通知：仅在您允许后，用于应用到期提醒",
          "R110②:"),
-        # ③ 定位保活被「复活」（`SealApp.init()` 又起第二路）⇒ R110③ 报红。
-        #    ⚠️ 2026-10-08：定位保活 2026-10-07 已退役 ⇒ 旧锚点（那一行本身）在文件里
-        #    已不存在、变异空转。改成「在音频那行后面插一路定位」——这正是要防的退化。
+        # ③ 容器重新持有定位保活服务 ⇒ R110③ 报红。
+        ("Seal/Application/AppContainer.swift",
+         "    let backgroundKeepAlive: BackgroundKeepAliveService\n",
+         "    let backgroundKeepAlive: BackgroundKeepAliveService\n"
+         "    let locationKeepAlive: LocationKeepAliveService\n",
+         "R110③:"),
+        # ④ 启动或快捷指令路径重新调用定位保活 ⇒ R110④ 报红。
         ("Seal/App/SealApp.swift",
          "        container.backgroundKeepAlive.start()\n",
          "        container.backgroundKeepAlive.start()\n"
          "        container.locationKeepAlive.start()\n",
-         "R110③:"),
-        # ④ 快捷指令后台唤起里定位保活被「复活」⇒ R110④ 报红（同上）。
+         "R110④:"),
         ("Seal/Features/Intents/SealRenewalIntent.swift",
          "            container.backgroundKeepAlive.start()\n",
          "            container.backgroundKeepAlive.start()\n"
@@ -12031,7 +12164,17 @@ def main():
     # 本仓在 OneDrive 同步目录里，单次读延迟不稳定 —— 实测同一份代码整轮耗时在
     # 61–117 秒之间波动，已经贴到命令默认 120 秒超时（超时会被 SIGTERM，且**没有任何
     # 输出**，很容易误判成脚本崩了）。`base_read` 就是上面那个按路径缓存的读取器。
-    for path, old, new, expected in mutations:
+    total_mutations = len(mutations)
+    mutation_start = int(os.environ.get("SEAL_GUARD_MUTATION_START", "1"))
+    mutation_end = int(os.environ.get("SEAL_GUARD_MUTATION_END", str(total_mutations)))
+    if not (1 <= mutation_start <= mutation_end <= total_mutations):
+        print("Invalid mutation range: " + str(mutation_start) + "-" + str(mutation_end)
+              + " (total " + str(total_mutations) + ")")
+        return 2
+    selected_mutations = list(enumerate(mutations, start=1))[mutation_start - 1:mutation_end]
+    for mutation_index, (path, old, new, expected) in selected_mutations:
+        if mutation_index == mutation_start or mutation_index % 10 == 0 or mutation_index == mutation_end:
+            print("Guard mutation checks: " + str(mutation_index) + "/" + str(total_mutations), flush=True)
         original = base_read(path)
         if old not in original:
             # ⚠️ 报错必须带**锚点文本**：只说文件名的话，一个文件里有十几个变异时
@@ -12060,7 +12203,8 @@ def main():
                 + " anchor=" + repr(old[:160])
             )
     print("Source regression checks: " + str(count))
-    print("Guard mutation checks: " + str(len(mutations)))
+    print("Guard mutation checks: " + str(len(selected_mutations))
+          + " of " + str(total_mutations))
     if failures:
         for failure in failures:
             print("FAIL: " + failure)

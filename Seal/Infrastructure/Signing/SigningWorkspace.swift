@@ -1,5 +1,7 @@
 import Foundation
 import UIKit
+import SideSign
+import CodeSignKit
 import ZIPFoundation
 
 struct SigningWorkspace: Sendable {
@@ -50,7 +52,8 @@ struct SigningWorkspace: Sendable {
         targetMainBundleID: String? = nil,
         preferredDisplayName: String? = nil,
         preferredIconData: Data? = nil,
-        purpose: PreparePurpose = .signing
+        purpose: PreparePurpose = .signing,
+        removeUnsupportedAppClip: Bool = false
     ) throws -> PreparedSigningWorkspace {
         // 大 IPA 优化：用系统 unzipItem 流式解压（ZIPFoundation extract 对 500MB+ 文件
         // 可能因内存/写入失败报 DataError）。仍用 ZIPFoundation Archive 只读条目元数据做安全验证。
@@ -92,11 +95,23 @@ struct SigningWorkspace: Sendable {
         let unzipStartedAt = Date()
         do {
             // 系统 API 流式解压，不加载大文件到内存
-            try fileManager.unzipItem(
-                at: ipaURL,
-                to: workspaceRoot,
-                pathEncoding: pathEncoding.foundationEncoding
-            )
+            do {
+                try fileManager.unzipItem(
+                    at: ipaURL,
+                    to: workspaceRoot,
+                    pathEncoding: pathEncoding.foundationEncoding
+                )
+            } catch let archiveError as ZIPFoundation.Archive.ArchiveError {
+                if case .invalidCRC32 = archiveError {
+                    throw ImportFailure(
+                        title: "IPA 校验失败",
+                        reason: "IPA 内部数据校验未通过，文件可能不完整或已损坏。Seal 尚未生成签名包。",
+                        recovery: "从原来源重新完整获取 IPA 后再导入；签名前确保剩余空间满足提示。",
+                        code: "SEAL-SIGN-407"
+                    )
+                }
+                throw archiveError
+            }
             try Task.checkCancellation()
             let unzipSeconds = Date().timeIntervalSince(unzipStartedAt)
 
@@ -138,7 +153,22 @@ struct SigningWorkspace: Sendable {
                 try replacePrimaryAppIcon(at: appURL, imageData: preferredIconData)
             }
 
+            var removedAppClip = false
+            if purpose == .signing {
+                try removeEncryptedWatchCompanions(in: appURL)
+                if removeUnsupportedAppClip {
+                    let clipURL = appURL.appendingPathComponent("AppClips", isDirectory: true)
+                    if fileManager.fileExists(atPath: clipURL.path) {
+                        let contents = try fileManager.contentsOfDirectory(atPath: clipURL.path)
+                        if !contents.isEmpty {
+                            try fileManager.removeItem(at: clipURL)
+                            removedAppClip = true
+                        }
+                    }
+                }
+            }
             try rejectUnsupportedBundles(in: appURL)
+            try rewriteWatchPlaceholderIdentifiers(in: appURL, originalMain: originalBundleID, mappedMain: mappedMain)
 
             // 清理 ESign 等其它签名工具留下的注入脚本/标记残留（容错，不阻断签名）。
             removeThirdPartyInjectionArtifacts(in: appURL)
@@ -214,6 +244,7 @@ struct SigningWorkspace: Sendable {
                 appURL: appURL,
                 mappedMainBundleID: mappedMain,
                 bundleIDMappings: mappings,
+                removedAppClip: removedAppClip,
                 unzipSeconds: unzipSeconds,
                 rewriteSeconds: rewriteSeconds,
                 stripSeconds: stripSeconds,
@@ -225,25 +256,24 @@ struct SigningWorkspace: Sendable {
         }
     }
 
-    /// 打包：**逐条目**选择压缩方法（2026-09-26）。
+    /// 打包：逐条目选择压缩方法，并用单遍归档写入（2026-10-26）。
     ///
     /// 🔴 为什么不再直接用 `FileManager.zipItem(compressionMethod:)`：
     /// ZIPFoundation 0.9.20 把**同一个** `compressionMethod` 透传给循环里的每个条目
     ///（`FileManager+ZIP.swift` 的 `zipItem` 是常量参数），
-    /// 且 `Archive.addEntry` **没有**「压完更大就退回 store」的自动回退 ✗
+    /// 而逐个 `Archive.addEntry` 会在每次追加时复制并重写不断增长的中央目录，
+    /// 5000 多个文件会造成二次增长的目录写入量 ✗
     /// ⇒ 对**已经压过**的载荷（png / jpg / mp4 / `Assets.car` / 各种归档）再 deflate 一遍
     /// 是纯浪费 CPU（几乎压不动体积，却要付一整遍压缩的时间）✗。
     ///
-    /// ⇒ 这里**逐字照抄** `zipItem` 的枚举方式（`subpathsOfDirectory` ＋
-    /// `directoryPrefix` / `finalBaseURL` ＋ `shouldKeepParent` 时补一条根目录条目），
-    /// **只把 `compressionMethod` 换成按扩展名算出来的值** ✓ ——
-    /// 目录结构、条目顺序、根目录条目与原来**完全一致**。
+    /// ⇒ 默认使用 SideSign 单遍写入器：逐个流式写文件，最后只写一次中央目录。
+    /// 超过经典 ZIP 容量限制时回退到 ZIPFoundation 的 ZIP64 兼容路径。
     ///
     /// ⚠️ 仍然坚持「未压缩类型必须显式 deflate」这条既有结论：`zipItem` 的**默认**是
     /// `.none`（store 不压缩），而 iOS installd / CoreDevice 对 store-mode ZIP 兼容性差，
     /// 大文件/非标准结构 IPA 会在定位/解压阶段失败并误报 `MissingPackagePath`。
     /// 真机可用的 jas 与爱思/AltStore/SideStore 标准 IPA 也都以 deflate 为主。
-    /// ⇒ 本函数只是把**已经压过的那部分**改成 store，**不是**放宽「必须压缩」这条 ✓。
+    /// ⇒ 已压缩类型继续 store，其余继续 deflate；单遍写入不会改变这条兼容策略 ✓。
     func package(
         _ workspace: PreparedSigningWorkspace,
         outputURL: URL
@@ -259,14 +289,123 @@ struct SigningWorkspace: Sendable {
     static func writeIPA(from payloadURL: URL, to outputURL: URL) throws {
         let fileManager = FileManager.default
         try? fileManager.removeItem(at: outputURL)
-
-        let archive = try Archive(url: outputURL, accessMode: .create)
         var subPaths = try fileManager.subpathsOfDirectory(atPath: payloadURL.path)
         // 与 `zipItem` 一致：为根目录本身补一条条目（保留它的文件属性）✓
         subPaths.append("")
 
-        let directoryPrefix = payloadURL.lastPathComponent
-        let finalBaseURL = payloadURL.deletingLastPathComponent()
+        if canUseStreamingWriter(payloadRoot: payloadURL, subPaths: subPaths) {
+            do {
+                try writeIPAUsingStreamingWriter(
+                    payloadRoot: payloadURL,
+                    subPaths: subPaths,
+                    to: outputURL
+                )
+                return
+            } catch {
+                try? fileManager.removeItem(at: outputURL)
+                throw error
+            }
+        }
+
+        // SideSign's single-pass writer currently uses classic ZIP fields. Keep ZIPFoundation
+        // as the compatibility path for archives that need ZIP64; normal iOS app bundles stay
+        // on the streaming path above.
+        try writeIPAUsingZIPFoundation(
+            payloadRoot: payloadURL,
+            subPaths: subPaths,
+            to: outputURL
+        )
+    }
+
+    private static func writeIPAUsingStreamingWriter(
+        payloadRoot: URL,
+        subPaths: [String],
+        to outputURL: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let writer = try SideSign.Archive.Writer.create(at: outputURL)
+        let rootAttributes = try fileManager.attributesOfItem(atPath: payloadRoot.path)
+        let rootPermissions = (rootAttributes[.posixPermissions] as? NSNumber)?.uint32Value ?? 0o755
+        let rootModificationDate = (rootAttributes[.modificationDate] as? Date) ?? Date()
+        try writer.writeFile(
+            path: "Payload/",
+            data: nil,
+            permissions: rootPermissions,
+            modificationDate: rootModificationDate
+        )
+
+        for entryPath in subPaths where !entryPath.isEmpty {
+            let fileURL = payloadRoot.appendingPathComponent(entryPath)
+            let attributes = try fileManager.attributesOfItem(atPath: fileURL.path)
+            let itemType = attributes[.type] as? FileAttributeType
+            let permissions = (attributes[.posixPermissions] as? NSNumber)?.uint32Value
+                ?? (itemType == .typeDirectory ? 0o755 : 0o644)
+            let modificationDate = (attributes[.modificationDate] as? Date) ?? Date()
+            var archivePath = "Payload/" + entryPath
+
+            if itemType == .typeSymbolicLink {
+                try writer.addSymbolicLink(at: fileURL, pathInZip: archivePath)
+            } else if itemType == .typeDirectory {
+                if !archivePath.hasSuffix("/") { archivePath += "/" }
+                try writer.writeFile(
+                    path: archivePath,
+                    data: nil,
+                    permissions: permissions,
+                    modificationDate: modificationDate
+                )
+            } else {
+                writer.setCompressLevel(
+                    compressionMethod(forRelativePath: entryPath) == .deflate ? 1 : 0
+                )
+                try writer.addFile(at: fileURL, pathInZip: archivePath)
+            }
+        }
+
+        try writer.close()
+    }
+
+    private static func canUseStreamingWriter(payloadRoot: URL, subPaths: [String]) -> Bool {
+        // The writer uses classic ZIP's 16/32-bit directory fields. Reserve margin for DEFLATE
+        // expansion and ZIP headers so an archive that needs ZIP64 follows the old compatible path.
+        guard subPaths.count < Int(UInt16.max) - 1 else { return false }
+        let fileManager = FileManager.default
+        var estimatedArchiveSize: UInt64 = 16 * 1_024 * 1_024
+
+        for entryPath in subPaths {
+            let archivePath = entryPath.isEmpty ? "Payload/" : "Payload/" + entryPath
+            guard archivePath.utf8.count <= Int(UInt16.max) else { return false }
+            if entryPath.isEmpty { continue }
+
+            let fileURL = payloadRoot.appendingPathComponent(entryPath)
+            guard let attributes = try? fileManager.attributesOfItem(atPath: fileURL.path) else {
+                return false
+            }
+            let itemType = attributes[.type] as? FileAttributeType
+            let fileSize = itemType == .typeDirectory
+                ? 0
+                : max(0, (attributes[.size] as? NSNumber)?.int64Value ?? 0)
+            let pathBytes = UInt64(archivePath.utf8.count + (itemType == .typeDirectory ? 1 : 0))
+            let (entrySize, entryOverflow) = UInt64(fileSize)
+                .addingReportingOverflow(pathBytes * 2 + 76)
+            let (updatedSize, totalOverflow) = estimatedArchiveSize.addingReportingOverflow(entrySize)
+            guard !entryOverflow, !totalOverflow, updatedSize < UInt64(UInt32.max) else {
+                return false
+            }
+            estimatedArchiveSize = updatedSize
+        }
+
+        return true
+    }
+
+    private static func writeIPAUsingZIPFoundation(
+        payloadRoot: URL,
+        subPaths: [String],
+        to outputURL: URL
+    ) throws {
+        let archive = try Archive(url: outputURL, accessMode: .create)
+
+        let directoryPrefix = payloadRoot.lastPathComponent
+        let finalBaseURL = payloadRoot.deletingLastPathComponent()
         for entryPath in subPaths {
             try archive.addEntry(
                 with: directoryPrefix + "/" + entryPath,
@@ -454,6 +593,11 @@ struct SigningWorkspace: Sendable {
 
         var values: [URL] = []
         for case let url as URL in enumerator {
+            if url.standardizedFileURL == appURL.appendingPathComponent("com.apple.WatchPlaceholder").standardizedFileURL,
+               CodeSigner.isMetadataOnlyWatchPlaceholder(at: url) {
+                enumerator.skipDescendants()
+                continue
+            }
             let resourceValues = try url.resourceValues(forKeys: Set(keys))
             if resourceValues.isSymbolicLink == true {
                 enumerator.skipDescendants()
@@ -716,6 +860,126 @@ struct SigningWorkspace: Sendable {
         }
     }
 
+    /// Only remove an entire Watch companion when at least one executable inside it is
+    /// confirmed encrypted. Work on the extracted copy; keep unknown layouts fail-closed.
+    private func removeEncryptedWatchCompanions(in appURL: URL) throws {
+        let fm = FileManager.default
+        let watch = appURL.appendingPathComponent("Watch", isDirectory: true)
+        guard fm.fileExists(atPath: watch.path) else { return }
+        let companions = try fm.contentsOfDirectory(at: watch, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        for companion in companions where companion.pathExtension.lowercased() == "app" {
+            let values = try companion.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else { continue }
+            var traversalFailed = false
+            guard let enumerator = fm.enumerator(at: companion, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey], options: [], errorHandler: { _, _ in
+                traversalFailed = true
+                return false
+            }) else { continue }
+            var encrypted = false
+            for case let file as URL in enumerator {
+                let item = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                if item.isSymbolicLink == true { continue }
+                guard item.isRegularFile == true, MachOParser.isMachOBinary(at: file) else { continue }
+                if try Self.containsEncryptedMachOSlice(at: file) { encrypted = true; break }
+            }
+            if encrypted && !traversalFailed { try fm.removeItem(at: companion) }
+        }
+    }
+
+    /// Read only Mach-O headers, including every FAT architecture; never load a large binary.
+    static func containsEncryptedMachOSlice(at url: URL) throws -> Bool {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        func read(_ offset: UInt64, _ count: Int) throws -> Data {
+            try handle.seek(toOffset: offset)
+            return try handle.read(upToCount: count) ?? Data()
+        }
+        func word(_ data: Data, _ offset: Int, big: Bool) -> UInt32 {
+            let v = data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: offset, as: UInt32.self) }
+            return big ? UInt32(bigEndian: v) : UInt32(littleEndian: v)
+        }
+        func thin(_ offset: UInt64) throws -> Bool {
+            let header = try read(offset, 32)
+            guard header.count >= 28 else { return false }
+            let magic = word(header, 0, big: false)
+            let big = magic == 0xcefaedfe || magic == 0xcffaedfe
+            let is64 = magic == 0xfeedfacf || magic == 0xcffaedfe
+            guard is64 || magic == 0xfeedface || magic == 0xcefaedfe else { return false }
+            let size = Int(word(header, 20, big: big))
+            guard size <= 16 * 1024 * 1024 else { return false }
+            let commands = try read(offset + UInt64(is64 ? 32 : 28), size)
+            guard commands.count == size else { return false }
+            var cursor = 0
+            while cursor + 8 <= commands.count {
+                let cmd = word(commands, cursor, big: big)
+                let length = Int(word(commands, cursor + 4, big: big))
+                guard length >= 8, length <= commands.count - cursor else { return false }
+                if (cmd == 0x21 || cmd == 0x2c), length >= 20, word(commands, cursor + 16, big: big) != 0 { return true }
+                cursor += length
+            }
+            return false
+        }
+        let header = try read(0, 8)
+        guard header.count == 8 else { return false }
+        let magic = word(header, 0, big: true)
+        let isFat64 = magic == 0xcafebabf || magic == 0xbfbafeca
+        let isFat = isFat64 || magic == 0xcafebabe || magic == 0xbebafeca
+        guard isFat else { return try thin(0) }
+        let big = magic == 0xcafebabe || magic == 0xcafebabf
+        let count = Int(word(header, 4, big: big))
+        guard count > 0, count <= 128 else { return false }
+        let stride = isFat64 ? 32 : 20
+        let table = try read(8, count * stride)
+        guard table.count == count * stride else { return false }
+        for index in 0..<count {
+            let entry = index * stride
+            let offset: UInt64
+            if isFat64 {
+                let raw = table.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: entry + 8, as: UInt64.self) }
+                offset = big ? UInt64(bigEndian: raw) : UInt64(littleEndian: raw)
+            } else { offset = UInt64(word(table, entry + 8, big: big)) }
+            if try thin(offset) { return true }
+        }
+        return false
+    }
+
+    /// Metadata-only Watch placeholders are retained as resources, but installd still
+    /// validates their companion and nested bundle identifiers against the new parent.
+    private func rewriteWatchPlaceholderIdentifiers(in appURL: URL, originalMain: String, mappedMain: String) throws {
+        let root = appURL.appendingPathComponent("com.apple.WatchPlaceholder", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.path), CodeSigner.isMetadataOnlyWatchPlaceholder(at: root) else { return }
+        func mapped(_ value: String) -> String {
+            if value == originalMain { return mappedMain }
+            guard value.hasPrefix(originalMain + ".") else { return value }
+            return mappedMain + value.dropFirst(originalMain.count)
+        }
+        func rewrite(_ object: Any) -> Any {
+            if let dictionary = object as? [String: Any] {
+                var result: [String: Any] = [:]
+                for (key, value) in dictionary {
+                    if ["CFBundleIdentifier", "WKCompanionAppBundleIdentifier", "WKAppBundleIdentifier"].contains(key), let text = value as? String {
+                        result[key] = mapped(text)
+                    } else { result[key] = rewrite(value) }
+                }
+                return result
+            }
+            if let values = object as? [Any] { return values.map(rewrite) }
+            return object
+        }
+        var failed = false
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [], errorHandler: { _, _ in failed = true; return false }) else {
+            throw Self.signingFailure(reason: "无法读取手表占位资料。", code: "SEAL-SIGN-401")
+        }
+        for case let url as URL in enumerator where url.lastPathComponent == "Info.plist" {
+            let data = try Data(contentsOf: url)
+            var format = PropertyListSerialization.PropertyListFormat.binary
+            let value = try PropertyListSerialization.propertyList(from: data, options: [], format: &format)
+            let output = try PropertyListSerialization.data(fromPropertyList: rewrite(value), format: format, options: 0)
+            try output.write(to: url, options: .atomic)
+        }
+        if failed { throw Self.signingFailure(reason: "无法完整读取手表占位资料。", code: "SEAL-SIGN-401") }
+    }
+
     /// 不静默删除签名器不支持的子目标，防止产出功能不完整的 IPA。
     private func rejectUnsupportedBundles(in appURL: URL) throws {
         let fileManager = FileManager.default
@@ -723,9 +987,18 @@ struct SigningWorkspace: Sendable {
 
         for directory in ["Watch", "AppClips"] {
             let targetURL = appURL.appendingPathComponent(directory)
-            if fileManager.fileExists(atPath: targetURL.path) {
-                unsupportedTargets.append(directory)
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: targetURL.path, isDirectory: &isDirectory) else { continue }
+            if isDirectory.boolValue, try fileManager.contentsOfDirectory(atPath: targetURL.path).isEmpty {
+                continue
             }
+            unsupportedTargets.append(directory)
+        }
+
+        let watchPlaceholder = appURL.appendingPathComponent("com.apple.WatchPlaceholder")
+        if fileManager.fileExists(atPath: watchPlaceholder.path),
+           !CodeSigner.isMetadataOnlyWatchPlaceholder(at: watchPlaceholder) {
+            unsupportedTargets.append("Watch")
         }
 
         let plugInsURL = appURL.appendingPathComponent("PlugIns")

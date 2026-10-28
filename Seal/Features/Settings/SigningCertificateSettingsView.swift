@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// 签名证书页「本机已安装 App」区域的纯判定：序列号取源与展示列表回落。
 ///
@@ -87,8 +88,59 @@ struct SigningCertificateSettingsView: View {
     @State private var localInstalledIconData: [String: Data] = [:]
     @State private var isRefreshingInstalledBundleIdentifiers = false
     @State private var installedBundleIdentifierRetryRequested = false
+    @State private var certificateExportAccount: AppleAccountRecord?
+    @State private var certificateExportDocument: CertificateExportDocument?
+    @State private var isCertificateFileExporterPresented = false
+    @State private var certificateExportSucceeded = false
 
     var body: some View {
+        certificatePage
+        .fileExporter(
+            isPresented: $isCertificateFileExporterPresented,
+            document: certificateExportDocument,
+            contentType: CertificateExportDocument.contentType,
+            defaultFilename: "Seal-证书.p12"
+        ) { result in
+            certificateExportDocument = nil
+            switch result {
+            case .success:
+                certificateExportSucceeded = true
+            case .failure(let error):
+                if (error as NSError).code != NSUserCancelledError {
+                    viewModel.alertFailure = ImportFailure(title: "无法导出证书", reason: "证书没有保存成功。", recovery: "请更换保存位置后重试", code: "SEAL-CERT-EXPORT-102")
+                }
+            }
+        }
+        .alert("证书已保存", isPresented: $certificateExportSucceeded) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text("可在需要的签名工具中导入。")
+        }
+        .confirmationDialog("导出证书到文件？", isPresented: Binding(
+            get: { certificateExportAccount != nil },
+            set: { if !$0 { certificateExportAccount = nil } }
+        ), titleVisibility: .visible, presenting: certificateExportAccount) { account in
+            Button("导出证书") {
+                let serial = effectiveCertificateSerialNumber(for: account)
+                Task {
+                    do {
+                        let data = try await certificateExportHandler.certificateForFile(account: account, serialNumber: serial)
+                        certificateExportDocument = CertificateExportDocument(data: data)
+                        isCertificateFileExporterPresented = true
+                    } catch let failure as ImportFailure {
+                        viewModel.alertFailure = failure
+                    } catch {
+                        viewModel.alertFailure = ImportFailure(title: "无法导出证书", reason: "无法读取本机证书。", recovery: "请重试", code: "SEAL-CERT-EXPORT-103")
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        } message: { _ in
+            Text("证书包含私钥，请妥善保管。此证书没有设置密码。")
+        }
+    }
+
+    private var certificatePage: some View {
         ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 18) {
                 accountCard
@@ -100,6 +152,7 @@ struct SigningCertificateSettingsView: View {
                 Text("签名证书")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .padding(.leading, 8)
 
                 certificateContent
@@ -262,6 +315,7 @@ struct SigningCertificateSettingsView: View {
             if selectableAccounts.isEmpty {
                 Text("请先添加并验证 Apple ID")
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 16)
             } else {
@@ -285,6 +339,7 @@ struct SigningCertificateSettingsView: View {
                     HStack {
                         Text("Apple ID")
                             .foregroundStyle(.primary)
+                            .singleLine()
                         Spacer()
                         if let account = activeAccount {
                             Text(viewModel.fullEmail(for: account))
@@ -296,6 +351,7 @@ struct SigningCertificateSettingsView: View {
                         } else {
                             Text("请选择")
                                 .foregroundStyle(Color.sealTextSecondary)
+                                .singleLine()
                         }
                     }
                     .padding(.vertical, 14)
@@ -337,10 +393,11 @@ struct SigningCertificateSettingsView: View {
             Text("证书同步失败")
                 .font(.headline)
                 .foregroundStyle(Color.sealDanger)
+                .singleLine()
             Text(failure.userMessage)
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
             Button("重新同步") {
                 Task { await viewModel.refreshCertificateInventory(for: account, force: true) }
             }
@@ -384,6 +441,7 @@ struct SigningCertificateSettingsView: View {
                         Text("检查安装结果")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.sealAccent)
+                            .singleLine()
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(Color.sealAccent.opacity(0.12), in: Capsule())
@@ -395,12 +453,14 @@ struct SigningCertificateSettingsView: View {
                 Text(presentation.detail)
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
             if presentation.state != .externalBootstrap {
                 HStack(spacing: 8) {
                     Text("当前实际签名者")
                         .font(.caption)
                         .foregroundStyle(Color.sealTextSecondary)
+                        .singleLine()
                     Spacer(minLength: 8)
                     Text(viewModel.sealActualSignerSerialNumber.map(fullSerialText) ?? "读取失败")
                         .font(.system(.caption, design: .monospaced))
@@ -411,9 +471,10 @@ struct SigningCertificateSettingsView: View {
                 .sealCopyableIdentifier(viewModel.sealActualSignerSerialNumber ?? "")
             }
             if presentation.showsComputerRecovery {
-                Text("不要卸载 Seal。请用电脑按相同的包名（含扩展部分）和团队覆盖安装。")
+                Text("请勿卸载 Seal；用电脑按相同包名和团队覆盖安装。")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(Color.sealDanger)
+                    .singleLine()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -464,6 +525,7 @@ struct SigningCertificateSettingsView: View {
                 Text(certificateSummary(health))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(certificateSummaryColor(health))
+                    .singleLine()
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(
@@ -476,6 +538,7 @@ struct SigningCertificateSettingsView: View {
             Text(fullSerialText(effectiveCertificateSerialNumber(for: account)))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
                 .padding(.bottom, 14)
 
             Divider()
@@ -494,16 +557,16 @@ struct SigningCertificateSettingsView: View {
                 )
                 Divider()
                 installedAppsSection(account: account)
-                if LiveContainerCertificateExportPolicy.isEligible(accountID: account.id, apps: relatedApps) {
-                    Divider()
+                Divider()
                     Button {
-                        certificateExportHandler.exportToLiveContainer(accountID: account.id)
+                        certificateExportAccount = account
                     } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "square.and.arrow.up")
                             .font(.subheadline.weight(.semibold))
-                        Text("导出证书给 LiveContainer")
+                        Text("导出证书到文件")
                             .font(.subheadline.weight(.semibold))
+                            .singleLine()
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.caption)
@@ -512,7 +575,6 @@ struct SigningCertificateSettingsView: View {
                     .foregroundStyle(Color.sealAccent)
                     .padding(.vertical, 12)
                     }
-                }
             }
         }
     }
@@ -521,9 +583,11 @@ struct SigningCertificateSettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("当前没有本机可用证书")
                 .font(.headline)
+                .singleLine()
             Text("首次签名时将自动创建。")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
         }
         .padding(.bottom, 6)
     }
@@ -539,6 +603,7 @@ struct SigningCertificateSettingsView: View {
             Text("账号下的其他证书")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
                 .padding(.bottom, 6)
             ForEach(Array(certificates.enumerated()), id: \.element.id) { index, certificate in
                 if index > 0 { Divider() }
@@ -612,8 +677,9 @@ struct SigningCertificateSettingsView: View {
                 HStack(spacing: 6) {
                     ForEach(labels, id: \.title) { label in
                         Text(label.title)
-                            .font(.caption2.weight(.medium))
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(label == .currentSealSigner ? Color.sealDanger : Color.sealTextSecondary)
+                            .singleLine()
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
                             .background(
@@ -625,9 +691,11 @@ struct SigningCertificateSettingsView: View {
                 Text(fullSerialText(certificate.serialNumber))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                 Text(expirationLine(certificate))
                     .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
             Spacer(minLength: 8)
             if revocationAllowed {
@@ -638,6 +706,7 @@ struct SigningCertificateSettingsView: View {
                         Text("撤销证书")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.sealDanger)
+                            .singleLine()
                             .padding(.horizontal, 12)
                             .padding(.vertical, 7)
                             .background(Color.sealDanger.opacity(0.12), in: Capsule())
@@ -666,6 +735,7 @@ struct SigningCertificateSettingsView: View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(title)
                 .foregroundStyle(Color.sealTextSecondary)
+                .singleLine()
             Spacer(minLength: 12)
             HStack(spacing: 7) {
                 if let state {
@@ -721,7 +791,7 @@ struct SigningCertificateSettingsView: View {
         guard let health else { return "检查中" }
         if health.portalPresence == .invalid { return "已撤销或不存在" }
         guard let expirationDate = health.expirationDate else { return "无法确认" }
-        return SealSettingsDateFormatter.stringWithoutSeconds(from: expirationDate)
+        return SealSettingsDateFormatter.string(from: expirationDate)
     }
 
     private func localPrivateKeyText(_ health: CertificateHealthStatus?) -> String {
@@ -741,7 +811,7 @@ struct SigningCertificateSettingsView: View {
         guard let expirationDate = certificate.expirationDate else {
             return "有效期：无法确认"
         }
-        return "有效期至 \(SealSettingsDateFormatter.stringWithoutSeconds(from: expirationDate))"
+        return "有效期至 \(SealSettingsDateFormatter.string(from: expirationDate))"
     }
 
     private func deduplicatedCertificates(
@@ -820,10 +890,12 @@ struct SigningCertificateSettingsView: View {
                 Text(localInstalledApps != nil || installedBundleIdentifiers != nil ? "本机已安装 App" : "签名记录")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
                 Spacer(minLength: 8)
                 Text(localInstalledApps != nil ? "证书记录 / 同团队" : "由该证书签名")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
+                    .singleLine()
             }
             if display == .localApps {
                 localInstalledAppRows(locallyVisibleApps, certificateBundleIdentifiers: certificateBundleIdentifiers)
@@ -862,9 +934,9 @@ struct SigningCertificateSettingsView: View {
                 }
                 Spacer(minLength: 6)
                 Text(certificateBundleIdentifiers.contains(bundleIdentifier) ? "证书记录" : "同团队")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(Color.sealTextSecondary)
-                    .fixedSize()
+                        .singleLine()
             }
         }
     }
@@ -934,10 +1006,12 @@ struct SigningCertificateSettingsView: View {
                 .foregroundStyle(Color.sealWarning)
             Text("未选择 Apple ID")
                 .font(.headline)
-            Text("返回 Apple ID 页面，选择一个已验证账号。")
+                .singleLine()
+            Text("请先添加并验证 Apple ID。")
                 .font(.subheadline)
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.center)
+                .singleLine()
         }
         .frame(maxWidth: .infinity)
         .padding(24)
@@ -952,8 +1026,23 @@ struct SigningCertificateSettingsView: View {
             Text(value)
                 .foregroundStyle(Color.sealTextSecondary)
                 .multilineTextAlignment(.trailing)
-                .fixedSize(horizontal: false, vertical: true)
+                .singleLine()
         }
         .padding(.vertical, 15)
+    }
+}
+
+private struct CertificateExportDocument: FileDocument {
+    static let contentType = UTType(filenameExtension: "p12") ?? .data
+    static var readableContentTypes: [UTType] { [contentType] }
+    let data: Data
+
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        self.data = data
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: data)
     }
 }

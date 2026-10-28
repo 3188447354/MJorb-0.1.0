@@ -91,6 +91,60 @@ struct AppRecordTests {
     }
 
     @Test
+    func unmarkedDeviceRecoveryStaysOutOfAllAppLists() {
+        var record = AppRecord(
+            originalBundleIdentifier: "com.example.other",
+            mappedBundleIdentifier: "com.example.other.TEAM123456",
+            name: "Other App",
+            version: "1.0",
+            buildNumber: "1",
+            size: 0,
+            state: .installed,
+            signingTeamID: "TEAM123456",
+            ipaRelativePath: "Apps/other/Original.ipa",
+            needsIPAImport: true,
+            importedAt: Date(),
+            importWarnings: [AppRecord.deviceRecoveryWarning]
+        )
+
+        #expect(record.belongsInInstalledList == false)
+        #expect(record.belongsInSignedList == false)
+        #expect(record.belongsInUnsignedList == false)
+        #expect(record.isSealManagedRenewalCandidate == false)
+
+        record.needsIPAImport = false
+        record.importWarnings = []
+        #expect(record.belongsInInstalledList == false)
+
+        record.needsIPAImport = true
+        record.importWarnings = [AppRecord.deviceRecoveryWarning]
+        record.installedAppMarkerVersion = SealInstalledAppMarker.version
+        #expect(record.belongsInInstalledList)
+        #expect(record.isSealManagedRenewalCandidate)
+    }
+
+    @Test
+    func originalIPAMissingFromSealInstallDoesNotHideItsRecord() {
+        let record = AppRecord(
+            originalBundleIdentifier: "com.example.managed",
+            mappedBundleIdentifier: "com.example.managed.TEAM123456",
+            name: "Managed App",
+            version: "1.0",
+            buildNumber: "1",
+            size: 0,
+            state: .installed,
+            signingTeamID: "TEAM123456",
+            lastInstalledAt: Date(),
+            ipaRelativePath: "Apps/managed/Original.ipa",
+            needsIPAImport: true,
+            importedAt: Date(),
+            importWarnings: [AppRecord.deviceRecoveryWarning]
+        )
+
+        #expect(record.belongsInInstalledList)
+    }
+
+    @Test
     func signedButNeverInstalledRemainsInPendingListUntilInstalled() {
         let record = AppRecord(
             originalBundleIdentifier: "com.example.pending",

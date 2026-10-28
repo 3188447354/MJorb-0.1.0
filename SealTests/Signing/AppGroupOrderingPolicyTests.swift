@@ -3,6 +3,27 @@ import Testing
 
 struct AppGroupOrderingPolicyTests {
     @Test
+    func emptyAppGroupDeclarationDoesNotEraseRealOrMalformedGroups() {
+        #expect(AppGroupOrderingPolicy.isEmptyGroupDeclaration([String]()))
+        #expect(!AppGroupOrderingPolicy.isEmptyGroupDeclaration(["group.example.shared"]))
+        #expect(!AppGroupOrderingPolicy.isEmptyGroupDeclaration("invalid"))
+        #expect(!AppGroupOrderingPolicy.isEmptyGroupDeclaration([42]))
+    }
+
+    @Test
+    func normalizationRemovesOnlyAnEmptyAppGroupDeclaration() {
+        let empty: [String: any Sendable] = ["groups": [String](), "other": true]
+        let result = AppGroupOrderingPolicy.removingEmptyGroupDeclaration(from: empty, groupKey: "groups")
+        #expect(result["groups"] == nil)
+        #expect(result["other"] as? Bool == true)
+
+        let valid: [String: any Sendable] = ["groups": ["group.example.shared"]]
+        let malformed: [String: any Sendable] = ["groups": "invalid"]
+        #expect(AppGroupOrderingPolicy.removingEmptyGroupDeclaration(from: valid, groupKey: "groups")["groups"] as? [String] == ["group.example.shared"])
+        #expect(AppGroupOrderingPolicy.removingEmptyGroupDeclaration(from: malformed, groupKey: "groups")["groups"] as? String == "invalid")
+    }
+
+    @Test
     func canonicalizesEquivalentAppGroupSetsForEveryPortalBoundary() {
         let mainBundleOrder = [
             "group.com.SideStore.SideStore.seal.CT8QZ7352B",

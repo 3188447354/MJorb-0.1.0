@@ -18,17 +18,20 @@ enum PairingCodeNotification {
 
     /// 同一条通知反复替换，避免码变了在通知中心堆一列。
     static let identifier = "seal.pairing.code"
-    static let opened = Notification.Name("sealPairingCodeNotificationOpened")
-    private static let pendingOpenKey = "seal.pairing.notification.pendingOpen"
+    static let pendingOpenKey = "seal.pairing.notification.pendingOpen"
 
     static func shouldOpenPairing(requestIdentifier: String) -> Bool {
         requestIdentifier == identifier
     }
 
-    /// 保存一次性路由，兼容点击通知时主界面尚未挂载监听器的冷启动时序。
-    static func requestPairingScreen() {
+    /// 只保存一次性路由。通知 delegate 可能仍处在 UIKit 场景恢复事务中，
+    /// 因此由前台视图稍后消费，不能在 delegate 回调里直接发 UI 通知。
+    static func recordPairingScreenTap() {
         UserDefaults.standard.set(true, forKey: pendingOpenKey)
-        NotificationCenter.default.post(name: opened, object: nil)
+    }
+
+    static var hasPendingPairingScreenRequest: Bool {
+        UserDefaults.standard.bool(forKey: pendingOpenKey)
     }
 
     static func consumePairingScreenRequest() -> Bool {

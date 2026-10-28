@@ -78,7 +78,7 @@ final class AppMaintenanceJob {
     /// 标签会一直挂着。之前这段逻辑藏在 `run()` 里，而 `run()` 被
     /// `runMaintenanceIfIdle()` 的空闲检查挡掉，导致标签不消失，必须手动
     /// 切页才刷掉。现在摘出来单独跑，幂等且快（无变化时直接返回）。
-    func syncSelfRecord() async {
+    func syncSelfRecord(postNotification: Bool = true) async {
         guard let selfAppRegistrar = await selfAppRegistrarTask?.value else { return }
         // 注意：此方法在启动时无条件调用，不经过 MaintenanceGate。
         // 守卫脚本要求文件内有 4 处 "gate.shouldAbort(token)"（每阶段一个 abort 检查点），
@@ -86,7 +86,9 @@ final class AppMaintenanceJob {
         // gate.shouldAbort(token)
         do {
             try await selfAppRegistrar.ensureRegistered()
-            NotificationCenter.default.post(name: .sealSelfRecordUpdated, object: nil)
+            if postNotification {
+                NotificationCenter.default.post(name: .sealSelfRecordUpdated, object: nil)
+            }
         } catch {
             try? await logStore?.append(
                 category: .system,
@@ -157,11 +159,14 @@ final class AppMaintenanceJob {
 
     /// Device inventory recovery is independent of local imports and account work. The scanner
     /// itself defers only when an active operation owns the same device service.
-    func restoreInstalledApps() async -> RecordRecoveryAttempt {
-        await restoreInstalledApps(localInventoryOnly: false)
+    func restoreInstalledApps(logEmptyResult: Bool = false) async -> RecordRecoveryAttempt {
+        await restoreInstalledApps(localInventoryOnly: false, logEmptyResult: logEmptyResult)
     }
 
-    private func restoreInstalledApps(localInventoryOnly: Bool) async -> RecordRecoveryAttempt {
+    private func restoreInstalledApps(
+        localInventoryOnly: Bool,
+        logEmptyResult: Bool = false
+    ) async -> RecordRecoveryAttempt {
         guard hasActiveWork == false else { return .skipped }
         hasActiveWork = true
         defer {
@@ -170,7 +175,7 @@ final class AppMaintenanceJob {
         }
         guard let recovery else { return .completed(changed: false) }
         let summary = await recovery.restoreInstalledApps(localInventoryOnly: localInventoryOnly)
-        if summary.shouldLog {
+        if summary.shouldLog || logEmptyResult {
             try? await logStore?.append(
                 category: .system,
                 level: summary.stage.hasPrefix("failed") ? .warning : .info,

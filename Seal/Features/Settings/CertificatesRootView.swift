@@ -165,7 +165,9 @@ struct CertificatesRootView: View {
         ContentUnavailableView {
             Label("还没有 Apple ID", systemImage: "person.crop.circle.badge.plus")
         } description: {
-            Text("添加并验证后，可用于签名、续签和查看 Apple 账号状态。")
+            Text("添加并验证 Apple ID 后即可签名、续签。")
+                .font(.subheadline)
+                .singleLine()
         }
         .frame(maxWidth: .infinity)
         .padding(28)

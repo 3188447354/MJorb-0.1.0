@@ -62,10 +62,10 @@ struct LogViewerView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                Text("页面只显示最新 20 条结果；完整日志最多保留 1000 条，超出后优先移除较早的诊断记录。无法解决时，可点邮件按钮发送日志至 mjorb520@gmail.com。")
+                Text("最近 20 条操作结果 · 可邮件发送诊断日志")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .singleLine()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 12)
 
@@ -103,6 +103,8 @@ struct LogViewerView: View {
                         Text(entries.isEmpty
                             ? "签名、续签与安装的结果会出现在这里。"
                             : "换个筛选条件试试。")
+                            .font(.subheadline)
+                            .singleLine()
                     }
                     .padding(.top, 24)
                 } else {
@@ -141,7 +143,7 @@ struct LogViewerView: View {
                     }
                     .buttonStyle(.plain)
                     Button(action: emailLogs) {
-                        Image(systemName: "paperplane")
+                        Image(systemName: "square.and.pencil")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.accentColor)
                             .frame(width: 36, height: 36)
@@ -268,7 +270,7 @@ private struct LogEntryRow: View {
                         .singleLine()
                     Spacer(minLength: 2)
                     Text(statusTitle(summary))
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(statusColor(summary))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)

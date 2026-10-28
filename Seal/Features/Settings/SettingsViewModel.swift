@@ -129,6 +129,14 @@ final class SettingsViewModel: ObservableObject {
         case failed(ImportFailure)
     }
 
+    enum PhoneTunnelStatus: Equatable {
+        case unchecked
+        case checking
+        case recovering
+        case ready
+        case unavailable
+    }
+
     enum PhonePairingState: Equatable {
         case idle
         case requestingLocalNetwork
@@ -148,6 +156,7 @@ final class SettingsViewModel: ObservableObject {
     @Published private(set) var accountPhase: AccountPhase = .idle
     @Published private(set) var diagnosticState: DiagnosticState = .idle
     @Published private(set) var phonePairingState: PhonePairingState = .idle
+    @Published private(set) var phoneTunnelStatus: PhoneTunnelStatus = .unchecked
     @Published private(set) var isCancellingPhonePairing = false
     @Published private(set) var installDiagnostics: InstallChannelDiagnostics = .empty
     @Published private(set) var logs: [SealLogEntry] = []
@@ -207,6 +216,7 @@ final class SettingsViewModel: ObservableObject {
     /// 本轮是否走通知回退；仅当预创建失败或活动在出码前被系统回收时切换。
     private var pairingUsesNotifications = false
     private var isPhonePairingAutomaticCheckRunning = false
+    private var isPhoneTunnelCheckRunning = false
     private var certificateInventoryRefreshGate = ApplePortalInventoryRefreshGate()
     private var hasLoaded = false
     private var lastSelfManagementDiagnostic: String?
@@ -339,16 +349,32 @@ final class SettingsViewModel: ObservableObject {
 
     func scanInstalledAppBundleIdentifiers(for candidates: [AppRecord]) async -> Set<String>? {
         let potentialInstalledApps = candidates.filter { $0.belongsInInstalledList && $0.isSeal == false }
+        let runningSealBundleIdentifier: String? = Bundle.main.bundleIdentifier.flatMap { bundleIdentifier -> String? in
+            guard let normalized = InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(bundleIdentifier) else {
+                return nil
+            }
+            let hasMatchingSealRecord = candidates.contains { app in
+                guard app.isSeal else { return false }
+                return [app.mappedBundleIdentifier, app.preferredBundleIdentifier, app.originalBundleIdentifier]
+                    .compactMap(InstalledAppRefreshProbePolicy.normalizedBundleIdentifier)
+                    .contains(normalized)
+            }
+            return hasMatchingSealRecord ? normalized : nil
+        }
         if potentialInstalledApps.allSatisfy({
             $0.installedAppMarkerVersion == SealInstalledAppMarker.version
         }) {
-            return Set(potentialInstalledApps.compactMap { app in
+            var installedBundleIdentifiers: Set<String> = Set<String>(potentialInstalledApps.compactMap { app -> String? in
                 let bundleIdentifier = app.mappedBundleIdentifier
                     ?? app.preferredBundleIdentifier
                     ?? app.originalBundleIdentifier
                 guard SealInstalledAppMarker.isDeclared(for: bundleIdentifier) else { return nil }
                 return InstalledAppRefreshProbePolicy.normalizedBundleIdentifier(bundleIdentifier)
             })
+            if let runningSealBundleIdentifier {
+                installedBundleIdentifiers.insert(runningSealBundleIdentifier)
+            }
+            return installedBundleIdentifiers
         }
 
         if let installedAppScanner,
@@ -361,10 +387,26 @@ final class SettingsViewModel: ObservableObject {
                 controlBundleIdentifier: controlBundleIdentifier,
                 installedBundleIdentifiers: Array(bundleIdentifiers)
             ) {
-                return bundleIdentifiers
+                var confirmedBundleIdentifiers = bundleIdentifiers
+                if let runningSealBundleIdentifier {
+                    confirmedBundleIdentifiers.insert(runningSealBundleIdentifier)
+                }
+                return confirmedBundleIdentifiers
             }
         }
         return nil
+    }
+
+    func recordIntegrityFindingPaths(_ paths: [String]) async {
+        let uniquePaths = Array(Set(paths)).sorted()
+        guard uniquePaths.isEmpty == false else { return }
+        try? await logStore?.append(
+            category: .system,
+            level: .warning,
+            message: "启动完整性检查发现未知动态代码，已加载路径：\(uniquePaths.joined(separator: "；"))",
+            code: "SEAL-INTEGRITY-001"
+        )
+        await logStore?.forceMirrorToDocuments()
     }
 
     func load(force: Bool = false) async {
@@ -500,14 +542,26 @@ final class SettingsViewModel: ObservableObject {
         await refreshPhonePairingStatus()
     }
 
-    /// 在启动和 iOS 27 设备页打开时自动复核当前通道；已验证的配对凭据不会因瞬时不可达被降级。
+    /// iOS 27 已配对设备页只轻量探测 LocalDevVPN；首次探测失败时再触发一次按需连接。
+    /// 不对健康通道重复跑完整安装诊断，避免设备页打开后出现多余等待。
     func refreshPhonePairingStatus() async {
-        guard isPhonePairingAutomaticCheckRunning == false else { return }
+        guard isPhonePairingAutomaticCheckRunning == false,
+              isPhoneTunnelCheckRunning == false else { return }
         isPhonePairingAutomaticCheckRunning = true
         defer { isPhonePairingAutomaticCheckRunning = false }
 
-        await load(force: true)
+        await load()
         guard pairingRecord != nil, diagnosticState != .running else { return }
+
+        if pairingRecord?.isPaired == true,
+           PhonePairingPresentationPolicy(
+               majorOSVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+            ).usesPhonePairing {
+            await checkPairedPhoneTunnel(showFailureAlert: false)
+            return
+        }
+
+        phoneTunnelStatus = .unchecked
         phonePairingState = .validating
         await validateImportedPairingWhenTunnelAvailable(
             successMessage: "LocalDevVPN 正常",
@@ -519,12 +573,7 @@ final class SettingsViewModel: ObservableObject {
         )
     }
 
-    /// 自动检查后的配对页主状态映射。
-    /// 已验证的配对记录即永久配对完成：自动检查（启动/回前台/进页/VPN 回调）
-    /// 不得再把页面打回 waitingForLocalDevVPN 或 failed；通道结果只落
-    /// diagnosticState，由配对页的 LocalDevVPN 明细行单独呈现。
-    /// 通道已就绪时仍进 completed；否则回到 idle，配对页按已配对分支展示
-    /// （主按钮「验证 LocalDevVPN」＋次按钮「重新配对」）。
+    /// 已验证的配对关系不会被临时 VPN 故障降级；通道状态由 PhoneTunnelStatus 单独呈现。
     static func phonePairingStateAfterAutomaticCheck(
         diagnosticState: DiagnosticState,
         isPaired: Bool
@@ -2433,6 +2482,13 @@ final class SettingsViewModel: ObservableObject {
         }
         let mergedSecret = authenticated.secret.preservingSigningMaterial(from: previousSecret)
         try await keychain.save(mergedSecret, for: record.id)
+        if let warning = await keychain.consumeCredentialVaultWarning() {
+            try? await logStore?.append(
+                category: .account,
+                level: .warning,
+                message: warning
+            )
+        }
         do {
             try await accountRepository.save(record)
         } catch {
@@ -2491,7 +2547,9 @@ final class SettingsViewModel: ObservableObject {
             secret: secret,
             operation: operation
         )
-        if refreshed.authToken != secret.authToken || refreshed.dsid != secret.dsid {
+        if refreshed.authToken != secret.authToken
+            || refreshed.dsid != secret.dsid
+            || refreshed.usesCompatibleMacIdentity != secret.usesCompatibleMacIdentity {
             guard let keychain else { return refreshed }
             try await keychain.save(refreshed, for: account.id)
             try? await logStore?.append(
@@ -2723,12 +2781,69 @@ final class SettingsViewModel: ObservableObject {
             await startPhonePairing()
             return
         }
+
+        if pairingRecord?.isPaired == true {
+            guard isPhoneTunnelCheckRunning == false,
+                  isPhonePairingAutomaticCheckRunning == false else { return }
+            isPhoneTunnelCheckRunning = true
+            defer { isPhoneTunnelCheckRunning = false }
+            await checkPairedPhoneTunnel(showFailureAlert: true)
+            return
+        }
+
         phonePairingState = .validating
+        guard await probePhoneTunnelWithAutomaticRecovery() else {
+            phoneTunnelStatus = .unavailable
+            phonePairingState = .waitingForLocalDevVPN
+            alertFailure = Self.localDevVPNUnavailableFailure
+            return
+        }
         await testPairingConnection()
+        if case .ready = diagnosticState {
+            phoneTunnelStatus = .ready
+        } else {
+            phoneTunnelStatus = .unavailable
+            alertFailure = Self.localDevVPNUnavailableFailure
+        }
         phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
             diagnosticState: diagnosticState,
             isPaired: pairingRecord?.isPaired == true
         )
+    }
+
+    /// 已配对设备的轻量自动恢复：TCP 探测会触发 iOS 已配置的 LocalDevVPN 按需连接。
+    /// 设备页只确认隧道是否可达，不重复跑耗时的 Minimuxer 诊断。
+    private func checkPairedPhoneTunnel(
+        showFailureAlert: Bool
+    ) async {
+        guard await probePhoneTunnelWithAutomaticRecovery() else {
+            phoneTunnelStatus = .unavailable
+            if showFailureAlert {
+                alertFailure = Self.localDevVPNUnavailableFailure
+            }
+            try? await logStore?.append(
+                category: .pairing,
+                level: .warning,
+                message: "LocalDevVPN 自动恢复未成功；等待用户重新检查"
+            )
+            return
+        }
+
+        phoneTunnelStatus = .ready
+    }
+
+    private func probePhoneTunnelWithAutomaticRecovery() async -> Bool {
+        if phoneTunnelStatus != .ready {
+            phoneTunnelStatus = .checking
+        }
+        if await pairingTunnelProbe.probeTunnel() {
+            return true
+        }
+
+        phoneTunnelStatus = .recovering
+        // 第一次探测负责唤起 VPN On Demand；短暂让系统应用配置后再探一次。
+        try? await Task.sleep(for: .milliseconds(350))
+        return await pairingTunnelProbe.probeTunnel()
     }
 
     private func handlePhonePairingEvent(_ event: PhonePairingHost.Event) {
@@ -2877,8 +2992,9 @@ final class SettingsViewModel: ObservableObject {
             logs = (try? await logStore?.entries()) ?? logs
             await refreshLogExportText()
 
-            guard await pairingTunnelProbe.probeTunnel() else {
+            guard await probePhoneTunnelWithAutomaticRecovery() else {
                 diagnosticState = .idle
+                phoneTunnelStatus = .unavailable
                 phonePairingState = .waitingForLocalDevVPN
                 try? await logStore?.append(
                     category: .pairing,
@@ -2890,6 +3006,11 @@ final class SettingsViewModel: ObservableObject {
             }
 
             await runInstallChannelCheck(successMessage: "设备配对和 LocalDevVPN 验证完成")
+            if case .ready = diagnosticState {
+                phoneTunnelStatus = .ready
+            } else {
+                phoneTunnelStatus = .unavailable
+            }
             phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
                 diagnosticState: diagnosticState,
                 isPaired: pairingRecord?.isPaired == true
@@ -3219,6 +3340,11 @@ final class SettingsViewModel: ObservableObject {
         if PhonePairingPresentationPolicy(
             majorOSVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion
         ).usesPhonePairing {
+            if case .ready = diagnosticState {
+                phoneTunnelStatus = .ready
+            } else {
+                phoneTunnelStatus = .unavailable
+            }
             phonePairingState = Self.phonePairingStateAfterAutomaticCheck(
                 diagnosticState: diagnosticState,
                 isPaired: pairingRecord?.isPaired == true
@@ -3230,18 +3356,25 @@ final class SettingsViewModel: ObservableObject {
         successMessage: String,
         waitingMessage: String
     ) async {
-        let tunnelReachable = await pairingTunnelProbe.probeTunnel()
+        let tunnelReachable = await probePhoneTunnelWithAutomaticRecovery()
         guard PairingValidationStartPolicy.shouldStartAutomatically(
             tunnelReachable: tunnelReachable
         ) else {
             diagnosticState = .idle
+            phoneTunnelStatus = .unavailable
             installDiagnostics = .empty
             try? await logStore?.append(category: .pairing, message: waitingMessage)
             logs = (try? await logStore?.entries()) ?? logs
             await refreshLogExportText()
             return
         }
+        phoneTunnelStatus = .checking
         await runInstallChannelCheck(successMessage: successMessage)
+        if case .ready = diagnosticState {
+            phoneTunnelStatus = .ready
+        } else {
+            phoneTunnelStatus = .unavailable
+        }
     }
 
     private func runInstallChannelCheck(successMessage: String) async {
@@ -3803,8 +3936,8 @@ final class SettingsViewModel: ObservableObject {
     }
 
     private static let localDevVPNUnavailableFailure = ImportFailure(
-        title: "LocalDevVPN 未就绪",
-        reason: "LocalDevVPN 未就绪。请先连接 Wi-Fi 并确认 LocalDevVPN 已连接。",
+        title: "连接仍未就绪",
+        reason: "请确认 iPhone 已连接 Wi-Fi，并打开 LocalDevVPN，确保 VPN 显示为已连接。连接恢复后，返回设备页重试。",
         recovery: "知道了",
         code: "SEAL-INSTALL-706a"
     )

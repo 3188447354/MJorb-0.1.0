@@ -349,6 +349,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6.0.2
 
+      - name: Verify IPA ZIP64 compatibility
+        run: swift test --package-path Vendor/ZIPFoundation --filter SealZIPCompatibilityTests
+
       - name: Fetch pinned local AltSign dependencies
         run: |
           git clone --depth 1 https://github.com/SideStore/ldid.git upstream/AltSign/Dependencies/ldid
