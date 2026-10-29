@@ -53,7 +53,7 @@ let package = Package(
 
     targets: [
         .systemLibrary(
-            name: "zlib",
+            name: "CZlib",
             path: "Sources/CZlib",
             providers: [
                 .apt(["zlib1g-dev"]),
@@ -65,7 +65,7 @@ let package = Package(
             dependencies: [
                 .product(name: "libdeflate", package: "libdeflate"),
                 .product(name: "Crypto", package: "swift-crypto"),
-                "zlib",
+                "CZlib",
                 "CodeSignKit",
                 "GSACryptoKit"
             ],

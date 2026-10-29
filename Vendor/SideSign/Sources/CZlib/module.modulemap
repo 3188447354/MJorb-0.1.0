@@ -1,4 +1,4 @@
-module zlib [system] {
+module CZlib [system] {
     header "shim.h"
     link "z"
     export *

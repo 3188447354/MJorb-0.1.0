@@ -8,7 +8,7 @@
 
 import Foundation
 import libdeflate
-import zlib
+import CZlib
 
 #if canImport(Darwin)
 import Darwin

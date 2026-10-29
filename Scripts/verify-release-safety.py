@@ -313,7 +313,7 @@ def violations(load=read):
     check(".uninstall(" not in legacy, "R01: legacy installation must not uninstall")
 
     signing = load("Seal/Core/Signing/SigningCoordinator.swift")
-    install = section(signing, "private func installSignedIPA(", "private func removeStaleProfiles(")
+    install = section(signing, "private func installSignedIPA(", "private func settleLateInstall(")
     check("InstalledAppDeviceVerifier.isInstalled" not in install,
           "R02: lookup cannot turn failed replacement into success")
     portal = load("Seal/Infrastructure/Signing/ApplePortalSigningService.swift")
