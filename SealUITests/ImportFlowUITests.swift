@@ -33,7 +33,8 @@ final class ImportFlowUITests: XCTestCase {
 
         let hint = element("appSigning.bundleIDValidationHint", in: app)
         XCTAssertTrue(hint.waitForExistence(timeout: 10))
-        XCTAssertTrue(hint.label.contains("Bundle ID 含不支持的字符"))
+        XCTAssertTrue(hint.label.contains("Bundle ID"))
+        XCTAssertTrue(hint.label.contains("连字符和句点"))
         XCTAssertFalse(app.buttons["去添加 Apple ID"].isEnabled)
     }
 
@@ -71,8 +72,8 @@ final class ImportFlowUITests: XCTestCase {
         let app = launch(with: "--ui-testing-empty")
         XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["已安装，0 个"].exists)
-        // 稳定初始态：等 resolveInitialModeIfNeeded 把 mode 从初始 .installed 异步切到 .unsigned
-        // 完成后再点，避免 tap 命中中转窗口导致分页器不切页（header 竞态）。
+        // Seal 默认打开已安装页；先明确切到待安装页，再检查后续切换。
+        tapStage(app.buttons["待安装，0 个"])
         XCTAssertTrue(app.staticTexts["待安装应用"].waitForExistence(timeout: 10))
 
         // ⚠️ 用 `tapStage` 而不是裸 `tap()` + `waitForExistence`（2026-09-17）。
@@ -90,6 +91,8 @@ final class ImportFlowUITests: XCTestCase {
     @MainActor
     func testTwoStageNavigationSupportsHorizontalSwipe() {
         let app = launch(with: "--ui-testing-empty")
+        XCTAssertTrue(app.buttons["待安装，0 个"].waitForExistence(timeout: 10))
+        tapStage(app.buttons["待安装，0 个"])
         XCTAssertTrue(app.staticTexts["待安装应用"].waitForExistence(timeout: 10))
         let pager = element("apps-stage-pager", in: app)
         XCTAssertTrue(pager.waitForExistence(timeout: 10))
@@ -145,9 +148,8 @@ final class ImportFlowUITests: XCTestCase {
 
     /// 点 tab 并等目标页出现，**点一次不一定生效**。
     ///
-    /// 初始 mode 由 `resolveInitialModeIfNeeded()` 决定，而它是**程序化翻页**：
-    /// 动画未结束时 `tap()` 会被吞掉（`AppsRootView` 里的 `apps-stage-pager` 还在动）。
-    /// 本文件第 40-42 行的注释早就记过这个竞态，但只防住了「切 mode 之前」那一次点击；
+    /// 页面切换由原生分页器同步驱动，动画未结束时 `tap()` 偶尔会被吞掉；
+    /// 因此这里检查按钮选中状态，并在未选中时重试：
     /// 2026-09-17 CI 上红的那次是**点完之后**目标页 5 秒内没出现（第 45 行）。
     ///
     /// ⇒ 用「点 → 等 → 没到就再点」代替 `sleep` 魔法数字。
@@ -196,9 +198,8 @@ final class ImportFlowUITests: XCTestCase {
 
     /// 在分页器上滑动并等**选中态**切换，**滑一次不一定生效**。
     ///
-    /// 与 `tapStage` 同源：`apps-stage-pager` 是横向分页 `ScrollView`，
-    /// 初始 mode 由 `resolveInitialModeIfNeeded()` **程序化翻页**决定 ——
-    /// 动画未结束时手势会被吞掉；也可能手势被接受了、页面没翻。
+    /// `apps-stage-pager` 是横向分页 `ScrollView`，动画未结束时手势可能会被吞掉；
+    /// 因此检查选中状态，并在未选中时重试。
     /// 两者都让「目标页文字出现」变成**不确定信号**（2026-09-18 构建 131 实测）。
     ///
     /// ⇒ 断言落在 `modeButton` 的 `.isSelected`（直接反映 `mode`，手势一旦被接受就立刻成立），
