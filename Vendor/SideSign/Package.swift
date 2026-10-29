@@ -52,11 +52,20 @@ let package = Package(
     ],
 
     targets: [
+        .systemLibrary(
+            name: "zlib",
+            path: "Sources/CZlib",
+            providers: [
+                .apt(["zlib1g-dev"]),
+                .brew(["zlib"])
+            ]
+        ),
         .target(
             name: "SideSign",
             dependencies: [
                 .product(name: "libdeflate", package: "libdeflate"),
                 .product(name: "Crypto", package: "swift-crypto"),
+                "zlib",
                 "CodeSignKit",
                 "GSACryptoKit"
             ],
