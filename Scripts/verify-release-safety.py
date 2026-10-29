@@ -2704,7 +2704,7 @@ def violations(load=read):
     bridge_helper = section(
         load("Seal/Core/Signing/SigningCoordinator.swift"),
         "private func bridgedInstallProgress(",
-        "private func removeStaleProfiles("
+        "private func installDiagnosticsAppended("
     )
     check("InstallStageBridge.shouldEmitInstalling(" in bridge_helper
           and "await progress(SigningStageUpdate(stage: .installing, subject: subject))" in bridge_helper,
