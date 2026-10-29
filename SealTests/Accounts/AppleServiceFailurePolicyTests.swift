@@ -145,7 +145,7 @@ struct AppleServiceFailurePolicyTests {
             title: "账号需要重新验证",
             reason: "认证状态失效",
             recovery: "重新验证 Apple ID",
-            code: "SEAL-AUTH-105"
+            code: "SEAL-AUTH-105a"
         )
         let genericFailure = ImportFailure(
             title: "请求失败",
@@ -208,7 +208,7 @@ struct AppleServiceFailurePolicyTests {
 
     @Test(arguments: [
         ("SEAL-AUTH-102", AccountVerificationFailureReason.credentialsRejected),
-        ("SEAL-AUTH-105", AccountVerificationFailureReason.localCredentialsMissing),
+        ("SEAL-AUTH-105a", AccountVerificationFailureReason.localCredentialsMissing),
         ("SEAL-AUTH-106", AccountVerificationFailureReason.localCredentialsMismatch)
     ])
     func explicitAuthenticationFailuresPersistTheirReason(
@@ -223,6 +223,19 @@ struct AppleServiceFailurePolicyTests {
         )
         #expect(AppleServiceFailurePolicy.verificationFailureReason(for: failure) == expected)
         #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure))
+    }
+
+    @Test
+    func genericAuthentication105DoesNotInvalidateSavedAccount() {
+        let failure = ImportFailure(
+            title: "请求失败",
+            reason: "Apple 服务返回了未细分的 105 错误。",
+            recovery: "稍后重试",
+            code: "SEAL-AUTH-105"
+        )
+
+        #expect(AppleServiceFailurePolicy.verificationFailureReason(for: failure) == nil)
+        #expect(AppleServiceFailurePolicy.shouldRequireReverification(failure) == false)
     }
 
     @Test

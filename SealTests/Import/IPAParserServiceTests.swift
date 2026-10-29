@@ -101,7 +101,7 @@ struct IPAParserServiceTests {
         let result = try IPAParserService().parse(url: url)
 
         #expect(result.importWarnings.contains(
-            "IPA 包含 Watch 或 App Clip 组件，Seal 当前不会删除这些组件；签名会在申请 Apple 资源前停止"
+            "IPA 包含 Watch 或 App Clip 组件；加密 Watch 和免费账号不支持的 App Clip 可能从签名副本移除，其他不支持的组件会阻止签名"
         ))
     }
 
